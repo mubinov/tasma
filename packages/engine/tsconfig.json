@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2023",
+    "noEmit": true,
+    // Empty, so src sees only the @types packages this manifest declares, not
+    // whatever is installed at the workspace root. Tests are a separate
+    // project because vitest references @types/node itself, which no types
+    // array can exclude.
+    "types": []
+  },
+  "include": ["src"]
+}

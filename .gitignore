@@ -1,0 +1,30 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+.playwright-cli/
+
+# Local planning and workflow content, never part of the repository
+.specs/
+CLAUDE.local.md
+
+# Environment and secret files
+.env
+.env.*
+!.env.example
+*.env
+.envrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.p8
+id_rsa
+id_ecdsa
+id_dsa
+id_ed25519
+
+# Nested npmrc files may hold auth tokens; the root one pins the registry only
+.npmrc
+!/.npmrc

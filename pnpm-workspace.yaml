@@ -1,0 +1,22 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Single source of truth for shared dependency versions; packages reference
+# them with "catalog:".
+catalog:
+  "@types/node": ^24.0.0
+  "@vitest/coverage-v8": ^4.1.11
+  typescript: ^7.0.2
+  vitest: ^4.1.11
+  yaml: ^2.8.0
+
+# Links an internal package from the workspace when the local version satisfies
+# the declared range. On a mismatch pnpm still falls back to the public
+# registry, so internal dependencies use the workspace: protocol, which links
+# unconditionally (enforced by test/workspace.test.ts).
+linkWorkspacePackages: true
+
+# Repo-wide supply-chain guard: a dependency version must be at least
+# 7 days old (10080 minutes) before pnpm will install it.
+minimumReleaseAge: 10080
