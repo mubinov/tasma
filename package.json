@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit && pnpm -r typecheck"
   },
   "devDependencies": {
+    "@tasma/engine": "workspace:*",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "typescript": "catalog:",

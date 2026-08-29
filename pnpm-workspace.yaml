@@ -9,7 +9,9 @@ catalog:
   "@vitest/coverage-v8": ^4.1.11
   typescript: ^7.0.2
   vitest: ^4.1.11
-  yaml: ^2.8.0
+  # The floor is the version the format module is tested against; an older
+  # release inside the range is not.
+  yaml: ^2.9.0
 
 # Links an internal package from the workspace when the local version satisfies
 # the declared range. On a mismatch pnpm still falls back to the public

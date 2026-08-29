@@ -19,13 +19,16 @@ catalogs:
       specifier: ^4.1.11
       version: 4.1.11
     yaml:
-      specifier: ^2.8.0
+      specifier: ^2.9.0
       version: 2.9.0
 
 importers:
 
   .:
     devDependencies:
+      '@tasma/engine':
+        specifier: workspace:*
+        version: link:packages/engine
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3
@@ -43,6 +46,10 @@ importers:
         version: 2.9.0
 
   packages/engine:
+    dependencies:
+      yaml:
+        specifier: 'catalog:'
+        version: 2.9.0
     devDependencies:
       typescript:
         specifier: 'catalog:'
