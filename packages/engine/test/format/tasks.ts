@@ -37,6 +37,11 @@ created: "${TIMESTAMP}"
   return parseTask(text).task;
 }
 
+/** The text of a file after the line that closes its frontmatter. */
+export function afterFrontmatter(text: string): string {
+  return text.slice(text.indexOf("\n---\n", 3) + "\n---\n".length);
+}
+
 /** Runs `serializeTask` and returns the `TaskSerializeError` it must throw. */
 export function serializeError(task: Task): TaskSerializeError {
   try {

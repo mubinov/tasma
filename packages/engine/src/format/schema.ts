@@ -1,3 +1,4 @@
+import type { TaskSerializeErrorCode } from "./errors.js";
 import type { CommentFields, Frontmatter } from "./types.js";
 import { isPlainMapping, isRecord } from "./values.js";
 
@@ -182,11 +183,61 @@ const TIMESTAMP: Check = {
   expectation: "must be an ISO 8601 timestamp with a UTC offset",
 };
 
+const LABEL_CHARACTER = /^[a-z0-9-]$/;
+
+/**
+ * What keeps a string from being a label, or `undefined` when it is one. A label
+ * is one or more lowercase ASCII letters, digits or dashes, and carries a dash
+ * at neither end.
+ *
+ * The rule binds a writer alone. A reader accepts a label of any form, so a file
+ * a hand edit or another tool wrote still loads.
+ */
+export function labelFault(label: string): string | undefined {
+  if (label === "") return "is empty";
+  if (label.startsWith("-")) return 'starts with "-"';
+  if (label.endsWith("-")) return 'ends with "-"';
+  for (const character of label) {
+    if (!LABEL_CHARACTER.test(character)) return `carries "${character}"`;
+  }
+  return undefined;
+}
+
+/**
+ * A test the writer runs on a value a write sets, and the reader never runs. It
+ * reports what is wrong with the value, so that the error names the part of it
+ * that failed rather than the key alone.
+ */
+export type WriteCheck = {
+  code: TaskSerializeErrorCode;
+  fault: (value: unknown) => string | undefined;
+};
+
+/**
+ * The form of a label, as a rule about the value a write states. The `check` of
+ * the same key must not carry it: the reader runs `check` and accepts a label of
+ * any form.
+ */
+const LABEL_FORM: WriteCheck = {
+  code: "label-invalid",
+  // The schema check on this key runs before any region is built, so the value
+  // reaching here is a list of strings.
+  fault: (value) => {
+    for (const label of value as string[]) {
+      const fault = labelFault(label);
+      if (fault !== undefined) return `holds the label "${label}", which ${fault}`;
+    }
+    return undefined;
+  },
+};
+
 export type FieldSpec = {
   check: Check;
   required: boolean;
   /** Written with double quotes, so that no YAML library reads the value back as a native date. */
   quoted?: boolean;
+  /** Run on a value a write sets, never on one the writer carries over from the file. */
+  writeCheck?: WriteCheck;
 };
 
 /**
@@ -202,7 +253,7 @@ export const FRONTMATTER: Record<keyof Frontmatter, FieldSpec> = {
   step: { check: STRING, required: false },
   priority: { check: STRING, required: false },
   order: { check: INTEGER, required: false },
-  labels: { check: STRING_LIST, required: false },
+  labels: { check: STRING_LIST, required: false, writeCheck: LABEL_FORM },
   parent: { check: STRING, required: false },
   created: { check: TIMESTAMP, required: true, quoted: true },
   updated: { check: TIMESTAMP, required: true, quoted: true },

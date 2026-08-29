@@ -100,8 +100,9 @@ mapping.
 | `custom` | mapping | Data owned by other components. |
 
 The values of `status`, `priority` and `labels` are not fixed by this format.
-Each project declares its own. The values of `workflow` and `step` are also not
-fixed: they are opaque strings that this format gives no meaning.
+Each project declares its own. The *form* of a label is fixed, and only for a
+writer: see *Values a writer rejects*. The values of `workflow` and `step` are
+also not fixed: they are opaque strings that this format gives no meaning.
 
 The top-level `workflow` key and the `custom.workflow` mapping are different
 things. The first names the workflow the task runs. The second holds data that a
@@ -197,6 +198,28 @@ in a file, and the rule holds at every level of a mapping. This is how a caller
 clears a key. A writer writes no such key, and a region that carries the same
 keys once these are dropped is a region the caller did not change, so the writer
 keeps its bytes.
+
+**The form of a label.** A label is one or more lowercase ASCII letters, digits
+or dashes, and it carries a dash at neither end. A writer rejects a label of any
+other form and names the key that holds it.
+
+This is a rule of its own, not a case of the read-back rule above. A label such
+as `Customer Request` reads back as the string the writer was given. It is
+rejected because a label has a form, not because the text loses the value.
+
+The rule binds a writer. A reader accepts a label of any form, so a file that a
+hand edit or another tool wrote still loads.
+
+**A writer rejects a label it is given, not one it carries over from the file it
+is rewriting.** A change of the title of a task whose file holds the label
+`Backend` is written, and the label stays as it stands. This is narrower than the
+rule that *a writer rejects only a change to the region that holds the value*: a
+regenerated frontmatter carries every key of the file through it, so the region
+alone does not state which values the writer was given.
+
+A writer carries a value over only while it holds the text the value was read
+from. In a task copied in a way that drops that text, every value is a value the
+writer is given, so every label in it is checked.
 
 ### Anchors and aliases a writer rejects
 
@@ -441,4 +464,5 @@ unambiguous but the bookkeeping disagrees with it.
 |---|
 | An unknown key, in the frontmatter or in a marker. A writer preserves it. |
 | A `status`, `priority` or `label` value the project does not declare. These values are checked when a file is written, not when it is read. |
+| A label whose form is not the one *Values a writer rejects* states, such as `Customer Request`. A reader loads it, and a writer that changes another key writes it back unchanged. |
 | The same `order` value on two tasks. `order` is only meaningful inside one status. |

@@ -142,6 +142,16 @@ function applyFields(
   for (const [key, spec] of Object.entries(schema)) {
     const value = values[key];
     if (previous !== undefined && deepEqual(previous[key], value)) continue;
+    // The key set left here is the one this write states. A key whose value
+    // equals the one the snapshot holds was skipped above, so it is a value the
+    // writer carries over from the file. A region with no snapshot carries no
+    // value over at all: every value in it is one the write states, and every
+    // one of them is checked.
+    const rule = spec.writeCheck;
+    if (rule !== undefined && value !== undefined) {
+      const fault = rule.fault(value);
+      if (fault !== undefined) fail(rule.code, 1, `${faults.label} key "${key}" ${fault}`, key, faults.filename);
+    }
     if (anchorIsRead(doc, key, anchors, value === undefined)) {
       const description = `${faults.label} key "${key}" carries a YAML anchor another value points at, so it cannot be changed`;
       fail("anchor-aliased", 1, description, key, faults.filename);

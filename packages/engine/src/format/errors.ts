@@ -13,6 +13,7 @@ export type TaskParseErrorCode =
 export type TaskSerializeErrorCode =
   | "key-missing"
   | "key-type"
+  | "label-invalid"
   | "value-contains-arrow"
   | "frontmatter-collision"
   | "marker-collision"

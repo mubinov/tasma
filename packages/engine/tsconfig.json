@@ -3,11 +3,10 @@
   "compilerOptions": {
     "target": "ES2023",
     "noEmit": true,
-    // Empty, so src sees only the @types packages this manifest declares, not
-    // whatever is installed at the workspace root. Tests are a separate
-    // project because vitest references @types/node itself, which no types
-    // array can exclude.
-    "types": []
+    // Named, so src sees only the @types packages this manifest declares and
+    // not whatever is installed at the workspace root. tsconfig.test.json takes
+    // these options and adds the test files to them.
+    "types": ["node"]
   },
   "include": ["src"]
 }
