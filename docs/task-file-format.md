@@ -165,14 +165,31 @@ several places is written out once per place.
 
 ### Values a writer rejects
 
-A writer is given values by a caller as well as by a file, so it meets values
-that no file can hold. A list with a position that names no value is one of them.
-A caller states such a position in two forms, depending on the language: a list
-that carries no entry there at all, and an entry that names nothing. This format
-has no way to write either: a writer that filled the position with a null value
-would change the data it was given, and a reader would then refuse the file
-wherever a null is not legal, as in `labels`. A writer rejects such a list and
-names the key.
+A writer is given values by a caller as well as by a file. A caller states values
+that no file can hold.
+
+**The rule: the text a writer produces reads back as the values the writer was
+given.** A writer that cannot write a value that way rejects the write. It names
+the key that holds the value. If it cannot find that key, it names the region.
+
+A writer does not write the value in another form to make it fit. A writer does
+not report success when the text it wrote holds another value.
+
+A file can hold a value that no text a writer generates reads back unchanged. A
+reader still reads that file. A writer still writes that file back unchanged. A
+writer rejects only a change to the region that holds the value.
+
+A value is a string, a number, a boolean, or null. A value is also a list of
+values, or a mapping of values. A programming language holds other kinds of
+value: an integer too large for a number, a symbol, a function. This format has
+no form for such a value. A writer rejects it and names the key.
+
+A writer also rejects a list with a position that names no value. A caller states
+such a position in two forms, depending on the language: a list that carries no
+entry there at all, and an entry that names nothing. This format has no way to
+write either: a writer that filled the position with a null value would change
+the data it was given, and a reader would then refuse the file wherever a null
+is not legal, as in `labels`. A writer rejects such a list and names the key.
 
 A mapping key that names no value is a different case, and a writer accepts it.
 It is read as absent, the same way a key written with no value is read as absent
@@ -189,11 +206,16 @@ correct output: removing the anchored value leaves every alias unresolved, and
 rewriting it in place changes what every alias reads, which is a change the
 caller did not ask for.
 
-A writer therefore rejects a change to a key that carries an anchor an alias
-reads, and names the key. A file that uses anchors is still read, is still
-written back unchanged, and still accepts changes to its other keys. To make an
-anchored key changeable, replace each alias with the value it reads and remove
-the anchor.
+An anchor sits on the value of a key, or on the name of the key itself. A writer
+therefore rejects a change to a key whose value carries an anchor an alias reads,
+and it rejects the removal of a key when either the value or the name carries
+one. It names the key. A change to a key whose name carries the anchor is
+written: the change replaces the value alone, so the name, the anchor on it and
+every alias that reads the anchor stay as they stand.
+
+A file that uses anchors is still read, is still written back unchanged, and
+still accepts changes to its other keys. To make an anchored key changeable,
+replace each alias with the value it reads and remove the anchor.
 
 A writer creates no anchor of its own. One value that a caller places under two
 keys is written out under each of them, so no key of the written file becomes

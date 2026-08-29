@@ -21,7 +21,8 @@ export type TaskSerializeErrorCode =
   | "anchor-aliased"
   | "merge-key"
   | "key-unaddressable"
-  | "region-unwritable";
+  | "region-unwritable"
+  | "value-unwritable";
 
 export type TaskFormatErrorCode = TaskParseErrorCode | TaskSerializeErrorCode;
 
@@ -70,4 +71,19 @@ export class TaskSerializeError extends TaskFormatError {
     this.code = code;
     this.field = field;
   }
+}
+
+/** How a fault in one region is reported: the name of the region, and the file it came from. */
+export type Faults = { label: "frontmatter" | "marker"; filename: string | undefined };
+
+/** Raises the fault a write-time check decided on. */
+export function fail(
+  code: TaskSerializeErrorCode,
+  line: number,
+  description: string,
+  field: string | undefined,
+  filename: string | undefined,
+  cause?: unknown,
+): never {
+  throw new TaskSerializeError(code, line, description, field, filename, cause);
 }

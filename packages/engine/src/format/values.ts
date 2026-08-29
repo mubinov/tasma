@@ -16,21 +16,6 @@ export function isPlainMapping(value: unknown): value is Record<string, unknown>
 }
 
 /**
- * Whether the value is a list that names a value at every position. A position
- * a list carries no entry for and a position whose entry names no value read
- * the same way, and neither can be written: a list method such as `every` or
- * `map` steps over the first, so a walk reads fewer values than a writer writes
- * out, and the writer turns the second into a null the caller never supplied.
- */
-export function isDenseList(value: unknown): value is unknown[] {
-  if (!Array.isArray(value)) return false;
-  for (let index = 0; index < value.length; index += 1) {
-    if (value[index] === undefined) return false;
-  }
-  return true;
-}
-
-/**
  * The keys of a mapping that name a value. A key whose value is `undefined`
  * names none: no reader produces one, and the writer drops it. It is how a
  * caller clears a key, at every level of a mapping, so a comparison that
@@ -64,4 +49,33 @@ export function deepEqual(a: unknown, b: unknown): boolean {
     return keys.length === namedKeys(b).length && keys.every((key) => deepEqual(a[key], b[key]));
   }
   return false;
+}
+
+/**
+ * The dotted path of the first value at which `a` differs from `b`, under the
+ * rules `deepEqual` compares them by. A list position is named `tags[1]`. The
+ * caller has established that the two differ, so the walk always names a value:
+ * it descends into the child that carries the difference, and reports the path
+ * it stands on when no child does.
+ */
+export function differencePath(a: unknown, b: unknown, path: string): string {
+  // `b` is read by name alone. `Object` turns a value of any other shape, and
+  // the absence of one, into something that answers every name with `undefined`,
+  // so the walk stops there instead of reaching into nothing.
+  const other = Object(b) as Record<PropertyKey, unknown>;
+  if (Array.isArray(a)) {
+    for (const [index, item] of a.entries()) {
+      if (deepEqual(item, other[index])) continue;
+      return differencePath(item, other[index], `${path}[${index}]`);
+    }
+  } else if (isPlainMapping(a)) {
+    // `deepEqual` counts the keys of both sides, so the difference it found can
+    // sit on a key `b` names and `a` does not. Walking `a` alone would step over
+    // that key and report the mapping itself, which at the root has no name.
+    for (const key of new Set([...namedKeys(a), ...Object.keys(other)])) {
+      if (deepEqual(a[key], other[key])) continue;
+      return differencePath(a[key], other[key], path === "" ? key : `${path}.${key}`);
+    }
+  }
+  return path;
 }

@@ -1,11 +1,12 @@
-import { Document, isCollection, isNode, isScalar, Scalar, visit, type YAMLMap } from "yaml";
-import { TaskFormatError, TaskSerializeError, type TaskSerializeErrorCode } from "./errors.js";
+import { Document, isAlias, isCollection, isNode, isScalar, parseDocument, Scalar, visit, type YAMLMap } from "yaml";
+import { fail, type Faults, TaskFormatError } from "./errors.js";
 import { FenceTracker } from "./fences.js";
 import { FRONTMATTER_DELIMITER, MARKER_PREFIX, MARKER_SUFFIX } from "./grammar.js";
-import { COMMENT, commentFields, type FieldSpec, FRONTMATTER } from "./schema.js";
+import { type PinnedComment, type PinnedTask, pinTask } from "./pin.js";
+import { COMMENT, type FieldSpec, FRONTMATTER } from "./schema.js";
 import { newlines, regionLines, stripCR } from "./text.js";
-import { SNAPSHOT, type SerializeOptions, type Task, type TaskComment } from "./types.js";
-import { deepEqual, isRecord } from "./values.js";
+import type { SerializeOptions, Task } from "./types.js";
+import { deepEqual, differencePath } from "./values.js";
 
 type FrontmatterPiece = { kind: "frontmatter"; text: string };
 type BodyPiece = { kind: "body"; text: string };
@@ -17,20 +18,6 @@ type Piece = FrontmatterPiece | BodyPiece | MarkerPiece;
 /** A piece of output with the file line it starts on. */
 type Located<T> = T & { line: number };
 type Region = Located<FrontmatterPiece> | Located<BodyPiece> | Located<MarkerPiece>;
-
-/** How a fault in one region is reported: the name of the region, and the file it came from. */
-type Faults = { label: "frontmatter" | "marker"; filename: string | undefined };
-
-function fail(
-  code: TaskSerializeErrorCode,
-  line: number,
-  description: string,
-  field: string | undefined,
-  filename: string | undefined,
-  cause?: unknown,
-): never {
-  throw new TaskSerializeError(code, line, description, field, filename, cause);
-}
 
 /**
  * Builds one region, converting a fault the YAML library raises into a
@@ -67,29 +54,44 @@ function nodeFor(doc: Document, spec: FieldSpec, value: unknown): unknown {
   return value;
 }
 
-/** The anchor names that an alias somewhere in the document reads. */
-function aliasedAnchors(doc: Document): Set<string> {
-  const names = new Set<string>();
+/** The anchors of one document that decide whether a key can be written. */
+type Anchors = {
+  /** The anchor names an alias somewhere in the document reads. */
+  read: Set<string>;
+  /** The anchor each top-level key node carries, by the name of its key. */
+  onKey: Map<unknown, string>;
+};
+
+function anchorsOf(doc: Document): Anchors {
+  const read = new Set<string>();
   visit(doc, {
     Alias: (_key, alias) => {
-      names.add(alias.source);
+      read.add(alias.source);
     },
   });
-  return names;
+  const onKey = new Map<unknown, string>();
+  for (const { key } of (doc.contents as YAMLMap).items) {
+    if (isScalar(key) && key.anchor !== undefined) onKey.set(key.value, key.anchor);
+  }
+  return { read, onKey };
 }
 
 /**
- * Whether the value at `key` carries an anchor an alias reads. Writing such a
- * key either replaces the anchored node, which leaves the alias unresolved, or
- * rewrites the anchored value in place, which changes what the alias reads.
+ * Whether writing `key` would break an alias. A change replaces the value node,
+ * which leaves an alias that reads an anchor inside it unresolved, or rewrites
+ * the anchored value in place, which changes what the alias reads. A removal
+ * takes the key node away with the value, so an anchor the key node carries
+ * counts for a removal as well.
  */
-function anchorIsRead(doc: Document, key: string, aliased: Set<string>): boolean {
-  if (aliased.size === 0) return false;
+function anchorIsRead(doc: Document, key: string, anchors: Anchors, removing: boolean): boolean {
+  if (anchors.read.size === 0) return false;
+  const onKey = anchors.onKey.get(key);
+  if (removing && onKey !== undefined && anchors.read.has(onKey)) return true;
   const node = doc.get(key, true);
   if (!isNode(node)) return false;
   let read = false;
   visit(node, (_key, child) => {
-    if (!isNode(child) || child.anchor === undefined || !aliased.has(child.anchor)) return undefined;
+    if (!isNode(child) || child.anchor === undefined || !anchors.read.has(child.anchor)) return undefined;
     read = true;
     return visit.BREAK;
   });
@@ -98,21 +100,20 @@ function anchorIsRead(doc: Document, key: string, aliased: Set<string>): boolean
 
 /**
  * Rejects a region the writer cannot address key by key. The writer reaches a
- * key by its name, which finds a key written as a string and nothing else, while
- * the value reader reports every key the document resolves. Two constructs part
- * the two sets: a merge key (`<<`) lends the region the keys of another mapping,
- * and a key written as an alias resolves to a name the region carries nowhere. A
- * change to such a region loses a removal, or writes the key a second time.
+ * key by its name and every name it writes is a plain string, so a key written
+ * as a number, a boolean or a null names no key the writer addresses and is left
+ * where it stands. Two constructs are different, because either can report the
+ * name of a key this format defines while the region carries no key written
+ * under it: a merge key (`<<`) lends the region the keys of another mapping, and
+ * a key written as an alias resolves to the name its anchor holds. A change to
+ * such a region loses a removal, or writes the key a second time.
  */
 function checkAddressable(doc: Document, faults: Faults): void {
   for (const { key } of (doc.contents as YAMLMap).items) {
-    // The name of a key is a string, held either raw or by a scalar node. Every
-    // other key node names no key the writer can reach.
-    const name = isScalar(key) ? key.value : key;
-    if (typeof name === "string") continue;
     // A resolved merge key is the one key the library represents as a scalar
     // that holds a symbol.
-    const merges = typeof name === "symbol";
+    const merges = isScalar(key) && typeof key.value === "symbol";
+    if (!merges && !isAlias(key)) continue;
     const reason = merges ? "resolves a YAML merge key" : "carries a key the writer cannot address";
     fail(
       merges ? "merge-key" : "key-unaddressable",
@@ -137,11 +138,11 @@ function applyFields(
   faults: Faults,
 ): void {
   checkAddressable(doc, faults);
-  const aliased = aliasedAnchors(doc);
+  const anchors = anchorsOf(doc);
   for (const [key, spec] of Object.entries(schema)) {
     const value = values[key];
     if (previous !== undefined && deepEqual(previous[key], value)) continue;
-    if (anchorIsRead(doc, key, aliased)) {
+    if (anchorIsRead(doc, key, anchors, value === undefined)) {
       const description = `${faults.label} key "${key}" carries a YAML anchor another value points at, so it cannot be changed`;
       fail("anchor-aliased", 1, description, key, faults.filename);
     }
@@ -150,19 +151,40 @@ function applyFields(
   }
 }
 
-function frontmatterRegion(task: Task, filename: string | undefined): string {
-  const snapshot = task[SNAPSHOT];
+/**
+ * Rejects a generated region whose text reads back as other values than the
+ * document it was written from. The YAML library writes some values in a form a
+ * reader resolves to something else — a string of nothing but whitespace becomes
+ * a block scalar that drops it — and reports no fault of its own, so reading the
+ * region back is the only proof that every value survived it. A region written
+ * back from its snapshot is not read: its bytes came off disk unchanged.
+ */
+function checkReadBack(values: Record<string, unknown>, yaml: string, faults: Faults): void {
+  const readBack = parseDocument(yaml).toJS() as Record<string, unknown>;
+  if (deepEqual(values, readBack)) return;
+  const field = differencePath(values, readBack, "");
+  const description = `${faults.label} key "${field}" is written in a form that reads back as a different value`;
+  fail("value-unwritable", 1, description, field, faults.filename);
+}
+
+function frontmatterRegion(task: PinnedTask, filename: string | undefined): string {
+  const snapshot = task.snapshot;
   if (snapshot !== undefined && deepEqual(snapshot.values, task.frontmatter)) return snapshot.raw;
 
   const faults: Faults = { label: "frontmatter", filename };
   return written(faults, () => {
     const doc = snapshot === undefined ? new Document({}) : snapshot.doc.clone();
     applyFields(doc, FRONTMATTER, task.frontmatter, snapshot?.values, faults);
-    return `${FRONTMATTER_DELIMITER}\n${doc.toString({ lineWidth: 0 })}${FRONTMATTER_DELIMITER}\n`;
+    const yaml = doc.toString({ lineWidth: 0 });
+    checkReadBack(doc.toJS() as Record<string, unknown>, yaml, faults);
+    return `${FRONTMATTER_DELIMITER}\n${yaml}${FRONTMATTER_DELIMITER}\n`;
   });
 }
 
-/** One marker: flow style while the mapping is flat and fits one line, block style otherwise. */
+/**
+ * One marker: flow style while the mapping is flat and fits one line, block
+ * style otherwise.
+ */
 function markerText(doc: Document): string {
   // The parser rejects a marker that is not a mapping, and a new document starts as one.
   const map = doc.contents as YAMLMap;
@@ -177,17 +199,22 @@ function markerText(doc: Document): string {
   return `${MARKER_PREFIX}\n${doc.toString({ lineWidth: 0 })}${MARKER_SUFFIX}\n`;
 }
 
+/** The text a marker carries between its opening keyword and the `-->` that closes it. */
+function markerContent(text: string): string {
+  return text.slice(MARKER_PREFIX.length, text.lastIndexOf(MARKER_SUFFIX));
+}
+
 /**
  * The marker text, with the values a reader finds in it so that a check can name
  * a key. Both come out of the converter, so the YAML library raises no exception
  * of its own once the region is built.
  */
 function markerRegion(
-  comment: TaskComment,
+  comment: PinnedComment,
   filename: string | undefined,
 ): { text: string; values: Record<string, unknown> } {
-  const snapshot = comment[SNAPSHOT];
-  const fields = commentFields(comment);
+  const snapshot = comment.snapshot;
+  const fields = comment.fields;
   const faults: Faults = { label: "marker", filename };
   return written(faults, () => {
     if (snapshot !== undefined && deepEqual(snapshot.values, fields)) {
@@ -195,13 +222,11 @@ function markerRegion(
     }
     const doc = snapshot === undefined ? new Document({}) : snapshot.doc.clone();
     applyFields(doc, COMMENT, fields, snapshot?.values, faults);
-    return { text: markerText(doc), values: doc.toJS() as Record<string, unknown> };
+    const text = markerText(doc);
+    const values = doc.toJS() as Record<string, unknown>;
+    checkReadBack(values, markerContent(text), faults);
+    return { text, values };
   });
-}
-
-/** The text a marker carries between its opening keyword and the `-->` that closes it. */
-function markerContent(text: string): string {
-  return text.slice(MARKER_PREFIX.length, text.lastIndexOf(MARKER_SUFFIX));
 }
 
 /**
@@ -240,31 +265,6 @@ function checkFields(schema: Record<string, FieldSpec>, values: Record<string, u
     if (!spec.check.holds(value)) {
       fail("key-type", 1, `${faults.label} key "${key}" ${spec.check.expectation}`, key, faults.filename);
     }
-  }
-}
-
-/**
- * Rejects a task whose shape or field values the writer cannot work with. It
- * runs before any region is built, because a caller outside TypeScript can hand
- * over any value and every step below reads the fields as the types declare
- * them.
- */
-function checkTask(task: Task, filename: string | undefined): void {
-  if (!isRecord(task)) fail("key-type", 1, "the task must be a mapping", undefined, filename);
-  if (!isRecord(task.frontmatter)) {
-    fail("key-type", 1, 'task key "frontmatter" must be a mapping', "frontmatter", filename);
-  }
-  if (typeof task.body !== "string") fail("key-type", 1, 'task key "body" must be a string', "body", filename);
-  if (!Array.isArray(task.comments)) fail("key-type", 1, 'task key "comments" must be a list', "comments", filename);
-
-  checkFields(FRONTMATTER, task.frontmatter, { label: "frontmatter", filename });
-  for (const [index, comment] of task.comments.entries()) {
-    const path = `comments[${index}]`;
-    if (!isRecord(comment)) fail("key-type", 1, `task key "${path}" must be a mapping`, path, filename);
-    if (typeof comment.body !== "string") {
-      fail("key-type", 1, `task key "${path}.body" must be a string`, `${path}.body`, filename);
-    }
-    checkFields(COMMENT, commentFields(comment), { label: "marker", filename });
   }
 }
 
@@ -366,14 +366,19 @@ function validate(regions: Region[], filename: string | undefined): void {
  * the text it was read from; a changed or newly built region is generated.
  */
 export function serializeTask(task: Task, opts: SerializeOptions = {}): string {
-  checkTask(task, opts.filename);
+  const filename = opts.filename;
+  const pinned = pinTask(task, filename);
+  const markerFaults: Faults = { label: "marker", filename };
+  checkFields(FRONTMATTER, pinned.frontmatter, { label: "frontmatter", filename });
+  for (const comment of pinned.comments) checkFields(COMMENT, comment.fields, markerFaults);
 
   const pieces: Piece[] = [
-    { kind: "frontmatter", text: frontmatterRegion(task, opts.filename) },
-    { kind: "body", text: task.body },
+    { kind: "frontmatter", text: frontmatterRegion(pinned, filename) },
+    { kind: "body", text: pinned.body },
   ];
-  for (const comment of task.comments) {
-    pieces.push({ kind: "marker", id: comment.id, ...markerRegion(comment, opts.filename) });
+  for (const comment of pinned.comments) {
+    // Every key of the schema was checked, which is what makes the cast sound.
+    pieces.push({ kind: "marker", id: comment.fields.id as number, ...markerRegion(comment, filename) });
     pieces.push({ kind: "body", text: comment.body });
   }
 
@@ -395,6 +400,6 @@ export function serializeTask(task: Task, opts: SerializeOptions = {}): string {
     atLineStart = piece.text.endsWith("\n");
   }
 
-  validate(regions, opts.filename);
+  validate(regions, filename);
   return parts.join("");
 }

@@ -1,5 +1,5 @@
-import type { CommentFields, Frontmatter, TaskComment } from "./types.js";
-import { isDenseList, isPlainMapping, isRecord } from "./values.js";
+import type { CommentFields, Frontmatter } from "./types.js";
+import { isPlainMapping, isRecord } from "./values.js";
 
 const TIMESTAMP_PATTERN =
   /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})T(?<hour>\d{2}):(?<minute>\d{2}):(?<second>\d{2})(?:\.\d+)?(?:Z|[+-](?<offsetHour>\d{2}):(?<offsetMinute>\d{2}))$/;
@@ -45,16 +45,17 @@ const BOOLEAN: Check = {
   expectation: "must be a boolean",
 };
 
+/** `WRITABLE` runs first on both paths, so a position that names no value is already rejected. */
 const STRING_LIST: Check = {
-  holds: (value) => isDenseList(value) && value.every((item) => typeof item === "string"),
-  expectation: "must be a list of strings that holds a value at every position",
+  holds: (value) => Array.isArray(value) && value.every((item) => typeof item === "string"),
+  expectation: "must be a list of strings",
 };
 
 /**
  * Keys that address `Object.prototype` when a caller merges the mapping into an
  * object of its own. No reader returns a mapping that carries one.
  */
-const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const UNWRITABLE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 /**
  * The deepest a mapping may nest. Every walk over a mapping is recursive, and a
@@ -74,53 +75,106 @@ const MAX_NODES = 10_000;
 type Budget = { left: number };
 
 /**
- * Whether a value is safe to hand to another component and safe to write: every
- * mapping in it is a plain mapping, every list holds a value at every position,
- * none carries a key that addresses the object model, none contains itself, none
- * nests deeper than `MAX_DEPTH`, and the whole value expands to at most
- * `MAX_NODES` values. `path` holds the values between the root and `value`, so a
- * value that appears twice side by side is legal and only a value that contains
- * itself is not.
+ * The scalar types a value may hold. Everything else a language offers — a big
+ * integer, a symbol, a function — either reaches the YAML writer as text that
+ * reads back as another value or as no value at all, so it is rejected before
+ * any text exists. `undefined` names no value: a mapping key that holds it is an
+ * absent key, at every level.
  */
-function isSafe(value: unknown, path: Set<unknown>, depth: number, budget: Budget): boolean {
+const WRITABLE_TYPES = new Set(["string", "number", "boolean", "undefined"]);
+
+/** What a walk returns for a value this format cannot write. */
+export const UNWRITABLE: unique symbol = Symbol("tasma.format.unwritable");
+
+/**
+ * Walks one value under the rule `WRITABLE` states. `path` holds the values
+ * between the root and `value`, so a value that appears twice side by side is
+ * legal and only a value that contains itself is not.
+ *
+ * `copy` selects the mode. In copy mode the walk returns a deep copy, so that an
+ * object which answers a second read with another value cannot be checked as one
+ * value and written as another; in check mode it returns the value itself,
+ * because the reader walks every key of every region it reads and has no use for
+ * a copy. Either mode returns `UNWRITABLE` for a value this format cannot write.
+ */
+function walk(value: unknown, path: Set<unknown>, depth: number, budget: Budget, copy: boolean): unknown {
   budget.left -= 1;
-  if (budget.left < 0) return false;
-  if (typeof value !== "object" || value === null) return true;
-  if (depth > MAX_DEPTH || path.has(value)) return false;
+  if (budget.left < 0) return UNWRITABLE;
+  if (value === null) return null;
+  if (typeof value !== "object") return WRITABLE_TYPES.has(typeof value) ? value : UNWRITABLE;
+  if (depth > MAX_DEPTH || path.has(value)) return UNWRITABLE;
   path.add(value);
-  let safe: boolean;
-  if (isDenseList(value)) safe = value.every((item) => isSafe(item, path, depth + 1, budget));
-  else if (isPlainMapping(value)) {
-    safe = Object.entries(value).every(
-      ([key, nested]) => !UNSAFE_KEYS.has(key) && isSafe(nested, path, depth + 1, budget),
-    );
-  } else safe = false;
+  const walked = walkInto(value, path, depth, budget, copy);
   path.delete(value);
-  return safe;
+  return walked;
 }
 
-function holdsSafely(value: unknown): boolean {
-  return isSafe(value, new Set(), 1, { left: MAX_NODES });
+/**
+ * One collection of a walk, entry by entry. Every entry is read once: a second
+ * read of the same position can answer with another value, which would let a
+ * walk check one value and copy another.
+ */
+function walkInto(value: object, path: Set<unknown>, depth: number, budget: Budget, copy: boolean): unknown {
+  if (Array.isArray(value)) {
+    const items: unknown[] | undefined = copy ? [] : undefined;
+    for (let index = 0; index < value.length; index += 1) {
+      const item: unknown = value[index];
+      // A position that names no value reads the same way as a position the
+      // list carries no entry for, and neither can be written.
+      if (item === undefined) return UNWRITABLE;
+      const walked = walk(item, path, depth + 1, budget, copy);
+      if (walked === UNWRITABLE) return UNWRITABLE;
+      items?.push(walked);
+    }
+    return items ?? value;
+  }
+  if (!isPlainMapping(value)) return UNWRITABLE;
+  // The copy holds no prototype, so no key name can reach a setter of the
+  // object model instead of storing a value.
+  const entries = copy ? (Object.create(null) as Record<string, unknown>) : undefined;
+  for (const [key, nested] of Object.entries(value)) {
+    if (UNWRITABLE_KEYS.has(key)) return UNWRITABLE;
+    const walked = walk(nested, path, depth + 1, budget, copy);
+    if (walked === UNWRITABLE) return UNWRITABLE;
+    if (entries !== undefined) entries[key] = walked;
+  }
+  return entries ?? value;
 }
 
-const SAFE_EXPECTATION =
-  'carries no "__proto__", "constructor" or "prototype" key, holds plain mappings only, ' +
+/** Starts one walk, with the bounds each key of a region is given on its own. */
+function walkRoot(value: unknown, copy: boolean): unknown {
+  return walk(value, new Set(), 1, { left: MAX_NODES }, copy);
+}
+
+/** A deep copy of a value `WRITABLE` accepts, or `UNWRITABLE` for one it does not. */
+export function writableCopy(value: unknown): unknown {
+  return walkRoot(value, true);
+}
+
+const WRITABLE_EXPECTATION =
+  "is built from strings, numbers, booleans, nulls, plain mappings and lists, " +
+  'carries no "__proto__", "constructor" or "prototype" key, ' +
   "holds a value at every position of every list, does not contain itself, " +
   `nests at most ${MAX_DEPTH} levels deep, and expands to at most ${MAX_NODES} values`;
 
 /**
- * The rule `isSafe` states, as one region-wide check. Every key of a region is
+ * The rule the walk states, as one region-wide check. Every key of a region is
  * checked against it, not only the keys this format defines: an unknown key is
  * retained and written back, so it reaches the writer the same way.
  */
 export const WRITABLE: Check = {
-  holds: holdsSafely,
-  expectation: `must hold a value that ${SAFE_EXPECTATION}`,
+  holds: (value) => walkRoot(value, false) !== UNWRITABLE,
+  expectation: `must hold a value that ${WRITABLE_EXPECTATION}`,
 };
 
+/**
+ * The shape of `custom` alone. What it may hold is `WRITABLE`, which the reader
+ * runs over every key of a region and the writer over every value it copies out
+ * of the caller, so running it again here would walk the same values twice.
+ */
 const MAPPING: Check = {
-  holds: (value) => isRecord(value) && holdsSafely(value),
-  expectation: `must be a mapping that ${SAFE_EXPECTATION}`,
+  holds: isRecord,
+  expectation: "must be a mapping",
 };
 
 const TIMESTAMP: Check = {
@@ -166,13 +220,3 @@ export const COMMENT: Record<keyof CommentFields, FieldSpec> = {
   collapsed: { check: BOOLEAN, required: false },
   custom: { check: MAPPING, required: false },
 };
-
-/** The marker fields of a comment, without its body and its parsed position. */
-export function commentFields(comment: TaskComment): CommentFields {
-  const held = comment as Record<string, unknown>;
-  const fields: Record<string, unknown> = {};
-  for (const key of Object.keys(COMMENT)) {
-    if (held[key] !== undefined) fields[key] = held[key];
-  }
-  return fields as CommentFields;
-}
