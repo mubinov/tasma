@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  // Set here, not inherited: a child `types` array replaces the parent's instead
+  // of merging with it, and src declares none. The test project runs on Node, so
+  // its files may use Node globals that `types: []` would block.
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["test", "vitest.config.ts"]
+}

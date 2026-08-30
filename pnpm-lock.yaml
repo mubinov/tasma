@@ -45,11 +45,58 @@ importers:
         specifier: 'catalog:'
         version: 2.9.0
 
+  apps/cli:
+    dependencies:
+      '@tasma/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@types/node@24.13.3)(@vitest/coverage-v8@4.1.11)(vite@8.2.2(@types/node@24.13.3)(yaml@2.9.0))
+
+  apps/daemon:
+    dependencies:
+      '@tasma/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
+      '@tasma/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@types/node@24.13.3)(@vitest/coverage-v8@4.1.11)(vite@8.2.2(@types/node@24.13.3)(yaml@2.9.0))
+
   packages/engine:
     dependencies:
       yaml:
         specifier: 'catalog:'
         version: 2.9.0
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@types/node@24.13.3)(@vitest/coverage-v8@4.1.11)(vite@8.2.2(@types/node@24.13.3)(yaml@2.9.0))
+
+  packages/protocol:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

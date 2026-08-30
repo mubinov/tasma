@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2023",
+    "noEmit": true,
+    // Empty, so no host-specific global is reachable from src. This package holds
+    // the wire contract, which must compile for any host that speaks it; a Node
+    // type declared here restricts the contract to Node.
+    "types": []
+  },
+  "include": ["src"]
+}
