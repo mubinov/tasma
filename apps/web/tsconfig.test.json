@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // A child types array replaces the parent's rather than merging into it, so
+    // vite/client is repeated: node is what the contrast test reads the token
+    // file with, and vite/client is what declares the *.css module.
+    "types": ["node", "vite/client"],
+    // vitest.config.ts imports vite.config.ts by its real path, which is what
+    // Vite's native config loader requires; nothing here is emitted.
+    "allowImportingTsExtensions": true
+  },
+  // The root tsconfig includes "*.config.ts", which is root-level and
+  // non-recursive, so this project is what typechecks this package's configs.
+  "include": ["test", "vite.config.ts", "vitest.config.ts"]
+}

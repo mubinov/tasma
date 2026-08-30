@@ -5,18 +5,38 @@ packages:
 # Single source of truth for shared dependency versions; packages reference
 # them with "catalog:".
 catalog:
+  "@base-ui/react": ^1.7.0
+  "@fontsource/inter": ^5.3.0
+  "@fontsource/inter-tight": ^5.3.0
+  "@fontsource/jetbrains-mono": ^5.3.0
+  "@tailwindcss/vite": ^4.3.0
+  "@tanstack/react-router": ^1.170.0
+  "@tanstack/react-virtual": ^3.14.0
+  "@testing-library/dom": ^10.4.0
+  "@testing-library/react": ^16.3.0
+  "@testing-library/user-event": ^14.6.0
   "@types/node": ^24.0.0
+  "@types/react": ^19.2.0
+  "@types/react-dom": ^19.2.0
+  "@vitejs/plugin-react": ^6.1.0
   "@vitest/coverage-v8": ^4.1.11
+  jsdom: ^30.0.0
+  oxc-transform-react: ^0.145.0
+  react: ^19.2.0
+  react-dom: ^19.2.0
+  tailwindcss: ^4.3.0
   # Pinned to an exact version. typescript-eslint, which this workspace does
   # not install yet, declares a peer range of typescript <6.1.0; the native
   # port, 7.x, is outside it. A caret admits 6.1.0 and a tilde admits a 6.0.x
   # patch, so an exact version makes every compiler change an explicit edit
   # here. Remove the pin when typescript-eslint supports 7.x.
   typescript: 6.0.3
+  vite: ^8.2.0
   vitest: ^4.1.11
   # The floor is the version the format module is tested against; an older
   # release inside the range is not.
   yaml: ^2.9.0
+  zustand: ^5.0.0
 
 # Links an internal package from the workspace when the local version satisfies
 # the declared range. On a mismatch pnpm still falls back to the public
@@ -27,3 +47,9 @@ linkWorkspacePackages: true
 # Repo-wide supply-chain guard: a dependency version must be at least
 # 7 days old (10080 minutes) before pnpm will install it.
 minimumReleaseAge: 10080
+
+# An empty allow list states pnpm's own deny-all default rather than adding to
+# it: no dependency runs an install script until it is named here. It does not
+# cover the prebuilt .node binaries vite and vitest load at build time, which
+# reach the process without an install script.
+allowBuilds: {}

@@ -1,0 +1,26 @@
+@import "tailwindcss";
+@import "./theme.css";
+
+/* Self-hosted and bundled from node_modules: no CDN, so the app works offline. */
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter-tight/500.css";
+@import "@fontsource/inter-tight/600.css";
+@import "@fontsource/jetbrains-mono/400.css";
+
+@layer base {
+  html {
+    background-color: var(--color-bg);
+    color: var(--color-text);
+  }
+
+  /*
+   * A focus ring is meaningful non-text, so it carries the graphic role, which
+   * the contrast test holds at 3:1. An indicator thinner than 3px is asked for
+   * 4.5:1 instead, so the ring is 3px rather than the role being changed.
+   */
+  :focus-visible {
+    outline: 3px solid var(--color-graphic);
+    outline-offset: 2px;
+  }
+}

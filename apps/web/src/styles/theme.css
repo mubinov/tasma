@@ -1,0 +1,122 @@
+/*
+ * The design tokens. Every token is named by the role it plays, never by the
+ * value it holds, so the palette can be replaced without touching a component
+ * and the contrast test can check the real design contract.
+ *
+ * Each namespace is reset with `initial` before the roles are declared:
+ * Tailwind ships 288 colours, 31 text sizes and its own families, radii,
+ * shadows and easings, and leaving them in place keeps `bg-gray-800` and
+ * `text-4xl` valid utilities. Clearing the namespace is what makes the token
+ * list exhaustive rather than advisory. `--spacing` is deliberately not reset:
+ * Tailwind's 4px scale is the spacing system.
+ *
+ * `static` emits every token even when no utility references it yet, which is
+ * what lets hand-written CSS read a token by name.
+ */
+@theme static {
+  --color-*: initial;
+  /* Keywords, not palette entries: they carry no value of their own. */
+  --color-transparent: transparent;
+  --color-current: currentcolor;
+
+  --color-bg: var(--palette-bg);
+  --color-surface: var(--palette-surface);
+  --color-surface-2: var(--palette-surface-2);
+  --color-text: var(--palette-text);
+  --color-muted: var(--palette-muted);
+  --color-dim: var(--palette-dim);
+  --color-signal: var(--palette-signal);
+  --color-running: var(--palette-running);
+  --color-graphic: var(--palette-graphic);
+  --color-line: var(--palette-line);
+
+  /* Three families, three jobs: chrome, prose, and literal machine data. */
+  --font-*: initial;
+  --font-chrome: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
+  --font-prose: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --default-font-family: var(--font-prose);
+
+  /*
+   * Five sizes, all rem so the browser's own text scaling still applies. The
+   * three prose sizes carry a line height of at least 1.5 times the size,
+   * which is what a paragraph needs; lg and xl are heading sizes and set
+   * tighter.
+   */
+  --text-*: initial;
+  --text-xs: 0.6875rem;
+  --text-xs--line-height: 1.0625rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.5rem;
+  --text-xl--line-height: 1.875rem;
+
+  --radius-*: initial;
+  --radius-control: 5px;
+  --radius-card: 8px;
+  --radius-panel: 12px;
+
+  /* Borders separate. The one shadow is for surfaces that genuinely float. */
+  --shadow-*: initial;
+  --shadow-float: 0 12px 32px -8px rgb(0 0 0 / 0.45);
+
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 240ms;
+  --ease-*: initial;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/*
+ * Tailwind's own `dark:` variant is a prefers-color-scheme media query, which
+ * ignores the explicit override the theme control writes. Binding the variant
+ * to the class keeps every dark: utility on the theme the app actually renders.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Both palettes, one declaration per role: light-dark() picks its value from
+ * the colour scheme in force where the token is used. :root follows the
+ * system, so the document is already on the right palette before React runs,
+ * and .light / .dark fix the scheme instead. Those classes go on <html> and
+ * nowhere else; test/base-ui.test.tsx states why and enforces it.
+ */
+:root {
+  color-scheme: light dark;
+
+  --palette-bg: light-dark(#fafafb, #16181c);
+  --palette-surface: light-dark(#ffffff, #1d2025);
+  --palette-surface-2: light-dark(#f1f2f4, #121418);
+  --palette-text: light-dark(#191c20, #e6e9ed);
+  --palette-muted: light-dark(#4c535b, #afb6bf);
+  --palette-dim: light-dark(#5e656e, #8b939d);
+  --palette-signal: light-dark(#8a5a0b, #f0ae4a);
+  --palette-running: light-dark(#136b41, #5fc98a);
+  --palette-graphic: light-dark(#808791, #666e7a);
+  --palette-line: light-dark(#e2e4e8, #343a43);
+}
+
+.light {
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+/*
+ * Reduced motion is honoured on the tokens themselves, so no component has to
+ * remember it. Durations collapse rather than reach zero, which keeps
+ * transition events firing for anything that waits on them.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 1ms;
+    --duration-base: 1ms;
+    --duration-slow: 1ms;
+  }
+}

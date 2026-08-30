@@ -1,0 +1,26 @@
+# apps/web
+
+- Use Base UI for interactive components.
+- No runtime CSS-in-JS.
+- Style from theme tokens. Never hardcode a colour.
+- No colour below `--color-dim`. Hierarchy comes from size, weight, position.
+- `--color-signal` means "needs a human". `--color-running` means "an agent is working now".
+- Tell control states apart by a mark that keeps 3:1, never by two surfaces alone.
+- The page's one `<h1>` opens the main content. Nothing before `<main>` is a heading.
+- A group of controls carries a visible label, never `aria-label` alone.
+- The theme class lives on `<html>`. Moving it breaks tokens inside portals.
+- Text sizes in `rem`. Smallest text is `0.6875rem`.
+- Text holding one unbroken token — a path, a URL, an id — takes `wrap-anywhere`, and its panel pairs `w-full` with `max-w-*`. Without both, a narrow window clips it off the left edge.
+- Animate `transform` and `opacity` only.
+- Routing uses hash history, coupled to `base: "./"`. Changing either alone 404s assets on nested routes.
+- Share state through `src/store/`, never through React Context.
+- Selectors return primitives, or use `useShallow`.
+- Server data belongs in the query cache, never in the store.
+- State that outlives a restart goes through the store's storage adapter and is hydrated in `main.tsx`.
+- Lists that can exceed 50 rows use `VirtualList`.
+- Filtering or searching a long list uses `useDeferredValue`.
+- Do not hand-write `useMemo` or `useCallback`. The compiler does it.
+- `VirtualList` is the one component the compiler skips. Leave its `useVirtualizer` call in the component.
+- A failure screen for a route goes through `ErrorPanel`, wired on the router, never a boundary of its own.
+- No Node APIs in renderer code.
+- The daemon address comes from config, never a literal. Its origin also goes in the meta CSP in `vite.config.ts`.
