@@ -3,6 +3,7 @@ import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseTask, type TaskComment, TaskStoreError } from "@tasma/engine";
+import { causeOf } from "../../src/store/errors.js";
 import { frontmatterNumber } from "../../src/store/ids.js";
 import { projectPaths } from "../../src/store/paths.js";
 import { assertSnapshots, createTaskFile, timestamp } from "../../src/store/store.js";
@@ -98,6 +99,17 @@ describe("a fault that is not a filesystem fault", () => {
       expect(diagnostics).toEqual([]);
     },
   );
+});
+
+describe("causeOf", () => {
+  it.each([
+    [new Error("the file could not be read"), "the file could not be read"],
+    [new TaskStoreError("task-not-found", "there is no task TASM-1"), "there is no task TASM-1"],
+    ["a value of another kind", "a value of another kind"],
+    [undefined, "undefined"],
+  ])("states the explanation of %s without the class that carried it", (thrown, explanation) => {
+    expect(causeOf(thrown)).toBe(explanation);
+  });
 });
 
 describe("a name the rebuild reads after the scan classified it", () => {

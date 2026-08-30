@@ -11,6 +11,10 @@ for the text it produces. A writer that keeps a region it did not change keeps
 the bytes of that region, so a CRLF file that is edited in one region holds both
 endings.
 
+The file carries no byte-order mark. A U+FEFF at the front of it is text like
+any other, so the first line is not exactly `---` and a reader rejects the file.
+A writer emits none, and a reader must not drop one.
+
 ## 1. Overview
 
 A task file has three regions, in this order:

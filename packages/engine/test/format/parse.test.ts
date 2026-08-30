@@ -1,17 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { parseTask, TaskFormatError, TaskParseError } from "@tasma/engine";
 import { fixture } from "./fixtures.js";
+import { parseFault } from "./helpers.js";
 import { withoutSnapshot } from "./snapshot.js";
 
-/** Runs `parseTask` and returns the `TaskParseError` it must throw. */
+/** The `TaskParseError` `parseTask` must throw for this text. */
 function parseError(text: string, filename?: string): TaskParseError {
-  try {
-    parseTask(text, { filename });
-  } catch (error) {
-    if (error instanceof TaskParseError) return error;
-    throw error;
-  }
-  throw new Error("parseTask did not throw");
+  return parseFault(() => parseTask(text, { filename }), "parseTask");
 }
 
 describe("parseTask", () => {

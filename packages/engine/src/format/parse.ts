@@ -1,7 +1,8 @@
 import { isMap, isNode, type Document, parseDocument } from "yaml";
 import { TaskParseError, type TaskParseErrorCode } from "./errors.js";
 import { FenceTracker } from "./fences.js";
-import { FRONTMATTER_DELIMITER, MARKER_PREFIX, MARKER_SUFFIX } from "./grammar.js";
+import { MARKER_PREFIX, MARKER_SUFFIX } from "./grammar.js";
+import { FrontmatterScanner } from "./region.js";
 import { COMMENT, type FieldSpec, FRONTMATTER, WRITABLE } from "./schema.js";
 import { type Line, newlines, splitLines, stripCR } from "./text.js";
 import {
@@ -56,14 +57,7 @@ class Parser {
   }
 
   run(): ParseResult {
-    const closing = this.#frontmatterEnd();
-    const region = this.#readYaml(
-      this.#text.slice(this.#lines[0]!.end, this.#lines[closing]!.start),
-      2,
-      "frontmatter-invalid",
-      "the frontmatter must be a YAML mapping",
-    );
-    const frontmatter = this.#readFrontmatter(region);
+    const { closing, region, frontmatter } = this.#frontmatterRegion();
 
     const bodyStart = this.#lines[closing]!.end;
     let index = this.#scanToMarker(closing + 1);
@@ -100,20 +94,38 @@ class Parser {
     return { task, diagnostics: this.#diagnostics };
   }
 
+  /** The frontmatter alone, for a reader that stops at the closing delimiter. */
+  frontmatter(): Frontmatter {
+    return this.#frontmatterRegion().frontmatter;
+  }
+
+  /**
+   * The frontmatter as both callers need it: the whole parse takes the region
+   * with it, to build the snapshot, to place `stale-next-comment-id` and to find
+   * where the body starts, while a reader of the region alone takes the fields.
+   */
+  #frontmatterRegion(): { closing: number; region: YamlRegion; frontmatter: Frontmatter } {
+    const closing = this.#frontmatterEnd();
+    const region = this.#readYaml(
+      this.#text.slice(this.#lines[0]!.end, this.#lines[closing]!.start),
+      2,
+      "frontmatter-invalid",
+      "the frontmatter must be a YAML mapping",
+    );
+    return { closing, region, frontmatter: this.#readFrontmatter(region) };
+  }
+
   #fail(code: TaskParseErrorCode, line: number, description: string, cause?: unknown): never {
     throw new TaskParseError(code, line, description, this.#filename, cause);
   }
 
   /** The index of the line that closes the frontmatter. */
   #frontmatterEnd(): number {
-    const first = this.#lines[0];
-    if (first === undefined || stripCR(first.text) !== FRONTMATTER_DELIMITER) {
-      this.#fail("frontmatter-missing", 1, 'the file must start with a "---" line');
-    }
-    for (let index = 1; index < this.#lines.length; index += 1) {
-      if (stripCR(this.#lines[index]!.text) === FRONTMATTER_DELIMITER) return index;
-    }
-    this.#fail("frontmatter-unterminated", 1, 'the frontmatter has no closing "---" line');
+    const scanner = new FrontmatterScanner(this.#filename);
+    // The whole text at once, and then the end of it: the scanner reads a source
+    // that arrives in pieces, and one piece is what a file already read holds.
+    if (scanner.push(this.#text) === undefined) scanner.end();
+    return scanner.closing;
   }
 
   /**
@@ -363,4 +375,19 @@ class Parser {
  */
 export function parseTask(text: string, opts: ParseOptions = {}): ParseResult {
   return new Parser(text, opts.filename).run();
+}
+
+/**
+ * Reads the frontmatter of a task file and nothing under it, for a caller that
+ * holds the region alone. The text must start with the opening delimiter and
+ * carry the closing one, because the region is what states where it ends.
+ *
+ * It returns no snapshot, so a writer still goes through `parseTask`: writing a
+ * file back byte for byte needs the source of every region, not of the first.
+ * The faults of the region are raised the way the whole parse raises them, and
+ * a fault below it — an unterminated marker, a duplicate comment id — is
+ * invisible here.
+ */
+export function parseFrontmatter(text: string, opts: ParseOptions = {}): Frontmatter {
+  return new Parser(text, opts.filename).frontmatter();
 }

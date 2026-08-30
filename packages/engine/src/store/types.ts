@@ -6,6 +6,10 @@ import type { Task } from "../format/index.js";
  * still reported: the report is the only signal a caller gets that a hand edit
  * or another writer changed the file. The two codes the reader defines are
  * forwarded here too, so a caller reads one channel and matches one union.
+ *
+ * The codes of the index are named here for the same reason, although it pushes
+ * its findings to a listener rather than returning them: one channel, one union
+ * to match.
  */
 export type StoreDiagnosticCode =
   | "stale-next-comment-id"
@@ -22,7 +26,11 @@ export type StoreDiagnosticCode =
   | "task-file-unreadable"
   | "task-file-foreign"
   | "task-file-unexpected"
-  | "temp-file-left";
+  | "temp-file-left"
+  // What the index raises and no store call does.
+  | "task-file-misnamed"
+  | "tasks-directory-lost"
+  | "index-watch-failed";
 
 export type StoreDiagnostic = {
   code: StoreDiagnosticCode;

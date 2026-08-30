@@ -90,7 +90,22 @@ export function tempPath(target: string): string {
 
 export type TaskEntry = { id: string; number: number; path: string };
 
-export type Scan = { entries: TaskEntry[]; diagnostics: StoreDiagnostic[] };
+/**
+ * The task file one name stands for, or `undefined` for a name that is no task
+ * file of this project. Every reader of a name goes through this — the scan, the
+ * watcher and the wrapper that reads back what it wrote — so how an id and a
+ * path are derived from a name is stated in this module alone.
+ */
+export function taskEntryOf(paths: ProjectPaths, name: string): TaskEntry | undefined {
+  const number = taskNumber(paths.project, name);
+  if (number === undefined) return undefined;
+  return { id: name.slice(0, -".md".length), number, path: join(paths.tasks, name) };
+}
+
+/** A finding of the scan, which always names the directory entry it found. */
+export type ScanDiagnostic = StoreDiagnostic & { path: string };
+
+export type Scan = { entries: TaskEntry[]; diagnostics: ScanDiagnostic[] };
 
 /**
  * The task files of a project, by name alone. The name rule is the contract
@@ -100,7 +115,7 @@ export type Scan = { entries: TaskEntry[]; diagnostics: StoreDiagnostic[] };
  */
 export async function scanTasks(paths: ProjectPaths): Promise<Scan> {
   const entries: TaskEntry[] = [];
-  const diagnostics: StoreDiagnostic[] = [];
+  const diagnostics: ScanDiagnostic[] = [];
   let names;
   try {
     names = await readdir(paths.tasks, { withFileTypes: true });
@@ -111,11 +126,13 @@ export async function scanTasks(paths: ProjectPaths): Promise<Scan> {
   for (const entry of names) {
     if (!entry.isFile()) continue;
     const name = entry.name;
+    const file = taskEntryOf(paths, name);
+    if (file !== undefined) {
+      entries.push(file);
+      continue;
+    }
     const path = join(paths.tasks, name);
-    const number = taskNumber(paths.project, name);
-    if (number !== undefined) {
-      entries.push({ id: name.slice(0, -".md".length), number, path });
-    } else if (TEMP_PATTERN.test(name)) {
+    if (TEMP_PATTERN.test(name)) {
       // Never deleted: removing a file that was never verified is a worse
       // failure than naming it.
       diagnostics.push({ code: "temp-file-left", message: "a write did not remove this temp file", path });

@@ -1,5 +1,5 @@
 import type { Stats } from "node:fs";
-import { constants, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
+import { constants, type FileHandle, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { errnoOf } from "./errors.js";
 import { tempPath } from "./paths.js";
@@ -46,8 +46,8 @@ export async function entryAt(path: string): Promise<Stats | undefined> {
 }
 
 /**
- * The text of one file: `absent` when the name does not exist, `irregular` when
- * it holds a directory, a device or a pipe — and, unless `follow` is set, a
+ * An open handle on one file: `absent` when the name does not exist, `irregular`
+ * when it holds a directory, a device or a pipe — and, unless `follow` is set, a
  * symbolic link. The type comes from the open handle rather than from a stat of
  * the name, so a name replaced between the two decides nothing, and `O_NONBLOCK`
  * keeps the open of a pipe from waiting for a writer while holding a thread.
@@ -55,11 +55,11 @@ export async function entryAt(path: string): Promise<Stats | undefined> {
  * `follow` is set for the two configuration files, which the user places
  * anywhere. Every other name this layer reads is one it wrote itself, so a
  * symbolic link there points outside the tree the caller named.
+ *
+ * A handle it returns belongs to the caller, which closes it. This is the one
+ * place the rules above are stated, so every read of this engine holds them.
  */
-export async function readRegularFile(
-  path: string,
-  follow = false,
-): Promise<{ text: string } | "absent" | "irregular"> {
+export async function openRegularFile(path: string, follow = false): Promise<FileHandle | "absent" | "irregular"> {
   let flags = constants.O_RDONLY | constants.O_NONBLOCK;
   if (!follow) flags |= constants.O_NOFOLLOW;
   let handle;
@@ -72,8 +72,24 @@ export async function readRegularFile(
     if (code === "ELOOP") return "irregular";
     throw error;
   }
+  let kept = false;
   try {
     if (!(await handle.stat()).isFile()) return "irregular";
+    kept = true;
+    return handle;
+  } finally {
+    if (!kept) await handle.close();
+  }
+}
+
+/** The whole text of one file, under the rules `openRegularFile` opens it by. */
+export async function readRegularFile(
+  path: string,
+  follow = false,
+): Promise<{ text: string } | "absent" | "irregular"> {
+  const handle = await openRegularFile(path, follow);
+  if (typeof handle === "string") return handle;
+  try {
     return { text: await handle.readFile("utf8") };
   } finally {
     await handle.close();

@@ -204,6 +204,42 @@ export async function createTaskFile(
   }
 }
 
+/**
+ * The tasks directory as this layer requires it, or absent. A symbolic link is
+ * refused rather than resolved: it would take every task file of the project
+ * outside the tree the caller named, which the guard on a task file — the last
+ * component of its path alone — cannot see.
+ */
+function checkTasksDirectory(paths: ProjectPaths, entry: Stats | undefined): void {
+  if (entry === undefined) return;
+  if (entry.isSymbolicLink()) {
+    fail("project-invalid", "the tasks directory of this project is a symbolic link", paths.tasks);
+  }
+  if (!entry.isDirectory()) {
+    fail("project-invalid", "the tasks directory of this project is not a directory", paths.tasks);
+  }
+}
+
+/**
+ * Every operation checks both directories first, so a project nobody registered
+ * is never reported as a missing task or an empty directory. Whoever registers
+ * the project creates its directory; `tasks/` is engine storage, created on
+ * demand before a write and read as empty when absent.
+ *
+ * It stands on its own so that the index runs the same check at open, rather
+ * than reaching a project that does not exist on its first query.
+ */
+export async function openProjectDirectory(paths: ProjectPaths): Promise<void> {
+  const directory = await entryAt(paths.directory);
+  if (directory?.isSymbolicLink() === true) {
+    fail("project-invalid", "the directory of this project is a symbolic link", paths.directory);
+  }
+  if (directory?.isDirectory() !== true) {
+    fail("project-not-found", "there is no directory for this project", paths.directory);
+  }
+  checkTasksDirectory(paths, await entryAt(paths.tasks));
+}
+
 export type Project = {
   /** Every path of the project, for a caller that watches the directory itself. */
   readonly paths: ProjectPaths;
@@ -228,43 +264,10 @@ class ProjectStore implements Project {
     this.paths = paths;
   }
 
-  /**
-   * The tasks directory as this layer requires it, or absent. A symbolic link is
-   * refused rather than resolved: it would take every task file of the project
-   * outside the tree the caller named, which the guard on a task file — the last
-   * component of its path alone — cannot see.
-   */
-  #checkTasksDirectory(entry: Stats | undefined): void {
-    if (entry === undefined) return;
-    if (entry.isSymbolicLink()) {
-      fail("project-invalid", "the tasks directory of this project is a symbolic link", this.paths.tasks);
-    }
-    if (!entry.isDirectory()) {
-      fail("project-invalid", "the tasks directory of this project is not a directory", this.paths.tasks);
-    }
-  }
-
-  /**
-   * Every operation checks both directories first, so a project nobody
-   * registered is never reported as a missing task or an empty directory.
-   * Whoever registers the project creates its directory; `tasks/` is engine
-   * storage, created on demand before a write and read as empty when absent.
-   */
-  async #openProjectDirectory(): Promise<void> {
-    const directory = await entryAt(this.paths.directory);
-    if (directory?.isSymbolicLink() === true) {
-      fail("project-invalid", "the directory of this project is a symbolic link", this.paths.directory);
-    }
-    if (directory?.isDirectory() !== true) {
-      fail("project-not-found", "there is no directory for this project", this.paths.directory);
-    }
-    this.#checkTasksDirectory(await entryAt(this.paths.tasks));
-  }
-
   /** Creates `tasks/` before the first write, and re-checks what the name holds. */
   async #makeTasksDirectory(): Promise<void> {
     await makeDirectory(this.paths.tasks);
-    this.#checkTasksDirectory(await entryAt(this.paths.tasks));
+    checkTasksDirectory(this.paths, await entryAt(this.paths.tasks));
   }
 
   /**
@@ -299,25 +302,25 @@ class ProjectStore implements Project {
   }
 
   async readTask(id: string): Promise<ReadResult> {
-    await this.#openProjectDirectory();
+    await openProjectDirectory(this.paths);
     const { task, diagnostics } = await this.#open(id);
     return { task, diagnostics };
   }
 
   async config(): Promise<ConfigResult> {
-    await this.#openProjectDirectory();
+    await openProjectDirectory(this.paths);
     const diagnostics: StoreDiagnostic[] = [];
     return { config: await resolveConfig(this.paths, diagnostics), diagnostics };
   }
 
   async listTaskIds(): Promise<ListResult> {
-    await this.#openProjectDirectory();
+    await openProjectDirectory(this.paths);
     const scan = await scanTasks(this.paths);
     return { ids: scan.entries.map((entry) => entry.id), diagnostics: scan.diagnostics };
   }
 
   async createTask(input: TaskChange): Promise<WriteResult> {
-    await this.#openProjectDirectory();
+    await openProjectDirectory(this.paths);
     checkWritable(input, TASK_OWNED, TASK_WRITABLE, "frontmatter key");
     const diagnostics: StoreDiagnostic[] = [];
     const config = await resolveConfig(this.paths, diagnostics);
@@ -346,7 +349,7 @@ class ProjectStore implements Project {
   }
 
   async updateTask(id: string, change: TaskChange): Promise<WriteResult> {
-    await this.#openProjectDirectory();
+    await openProjectDirectory(this.paths);
     checkWritable(change, TASK_OWNED, TASK_WRITABLE, "frontmatter key");
     const diagnostics: StoreDiagnostic[] = [];
     const config = await resolveConfig(this.paths, diagnostics);
@@ -387,7 +390,7 @@ class ProjectStore implements Project {
    * `id-mismatch` guard therefore does not run here.
    */
   async deleteTask(id: string): Promise<WriteResult> {
-    await this.#openProjectDirectory();
+    await openProjectDirectory(this.paths);
     const path = taskPath(this.paths, id);
     try {
       await removeFile(path);
@@ -399,7 +402,7 @@ class ProjectStore implements Project {
   }
 
   async addComment(id: string, input: CommentChange): Promise<WriteResult> {
-    await this.#openProjectDirectory();
+    await openProjectDirectory(this.paths);
     checkWritable(input, COMMENT_OWNED, COMMENT_WRITABLE, "marker key");
     const { path, task, diagnostics } = await this.#open(id);
     const { body, ...fields } = input;
@@ -418,7 +421,7 @@ class ProjectStore implements Project {
   }
 
   async updateComment(id: string, commentId: number, change: CommentChange): Promise<WriteResult> {
-    await this.#openProjectDirectory();
+    await openProjectDirectory(this.paths);
     checkWritable(change, COMMENT_OWNED, COMMENT_WRITABLE, "marker key");
     const { path, task, diagnostics } = await this.#open(id);
     const current = task.comments.find((comment) => comment.id === commentId);
@@ -444,7 +447,7 @@ class ProjectStore implements Project {
   }
 
   async deleteComment(id: string, commentId: number): Promise<WriteResult> {
-    await this.#openProjectDirectory();
+    await openProjectDirectory(this.paths);
     const { path, task, diagnostics } = await this.#open(id);
     if (!task.comments.some((comment) => comment.id === commentId)) {
       fail("comment-not-found", `this file carries no comment ${commentId}`, path);
