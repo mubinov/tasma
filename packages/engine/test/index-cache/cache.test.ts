@@ -99,6 +99,7 @@ describe("the entries of the index", () => {
     expect(entry).toEqual({
       id: "TASM-1",
       path: taskFile(root, "TASM-1"),
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- an asymmetric matcher is typed `any`
       frontmatter: expect.objectContaining({ id: "TASM-1", title: "Planted", priority: "high" }),
     });
   });
@@ -152,6 +153,7 @@ describe("the files the index excludes", () => {
 
     expect(result.entries).toEqual([]);
     expect(result.excluded).toEqual([
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- an asymmetric matcher is typed `any`
       { path: taskFile(root, "TASM-1"), code: "task-file-unreadable", message: expect.stringContaining("---") },
     ]);
     expect(seen.codes()).toEqual(["task-file-unreadable"]);
@@ -244,7 +246,7 @@ describe("the files the index excludes", () => {
     const root = await tempRoot();
     // The newline a terminal breaks on, and the line and paragraph separators a
     // renderer that is not one breaks on.
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", `? "one\\ntwo\\u2028three\\u2029four"\n: &loop [*loop]\n`));
+    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", '? "one\\ntwo\\u2028three\\u2029four"\n: &loop [*loop]\n'));
 
     const [excluded] = (await built(root)).query().excluded;
 

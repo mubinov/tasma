@@ -174,7 +174,7 @@ describe("what the index does with what a watch reports", () => {
       return { ensure: async () => {}, close: async () => {} };
     });
     onTestFinished(() => indexed.close());
-    return { indexed, handlers: handlers as WatchHandlers };
+    return { indexed, handlers: handlers! };
   }
 
   it("reads the file a watch names", async () => {
@@ -274,7 +274,7 @@ describe("what the index does with what a watch reports", () => {
     onTestFinished(() => indexed.close());
     broken = true;
 
-    (handlers as WatchHandlers).onTasksDirectory();
+    handlers!.onTasksDirectory();
 
     await until(() => seen.codes().length > 0, "the failed scan was reported");
     expect(seen.seen[0]?.message.length).toBeLessThan(300);

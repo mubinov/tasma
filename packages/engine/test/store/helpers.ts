@@ -63,7 +63,7 @@ export function read(path: string): Promise<string> {
 }
 
 /** A task file as a hand edit or an earlier write leaves it. `extra` holds further frontmatter lines. */
-export function taskText(id: string, extra: string = ""): string {
+export function taskText(id: string, extra = ""): string {
   return `---
 id: ${id}
 title: Planted

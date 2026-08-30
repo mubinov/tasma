@@ -1,29 +1,29 @@
-export type TaskParseErrorCode =
-  | "frontmatter-missing"
-  | "frontmatter-unterminated"
-  | "frontmatter-invalid"
-  | "frontmatter-key-missing"
-  | "frontmatter-key-type"
-  | "marker-unterminated"
-  | "marker-invalid"
-  | "marker-key-missing"
-  | "marker-key-type"
-  | "comment-id-duplicate";
+export type TaskParseErrorCode
+  = | "frontmatter-missing"
+    | "frontmatter-unterminated"
+    | "frontmatter-invalid"
+    | "frontmatter-key-missing"
+    | "frontmatter-key-type"
+    | "marker-unterminated"
+    | "marker-invalid"
+    | "marker-key-missing"
+    | "marker-key-type"
+    | "comment-id-duplicate";
 
-export type TaskSerializeErrorCode =
-  | "key-missing"
-  | "key-type"
-  | "label-invalid"
-  | "value-contains-arrow"
-  | "frontmatter-collision"
-  | "marker-collision"
-  | "fence-unterminated"
-  | "comment-id-duplicate"
-  | "anchor-aliased"
-  | "merge-key"
-  | "key-unaddressable"
-  | "region-unwritable"
-  | "value-unwritable";
+export type TaskSerializeErrorCode
+  = | "key-missing"
+    | "key-type"
+    | "label-invalid"
+    | "value-contains-arrow"
+    | "frontmatter-collision"
+    | "marker-collision"
+    | "fence-unterminated"
+    | "comment-id-duplicate"
+    | "anchor-aliased"
+    | "merge-key"
+    | "key-unaddressable"
+    | "region-unwritable"
+    | "value-unwritable";
 
 export type TaskFormatErrorCode = TaskParseErrorCode | TaskSerializeErrorCode;
 

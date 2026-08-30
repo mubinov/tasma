@@ -30,8 +30,8 @@ describe("parseTask", () => {
       custom: { workflow: { attempts: 2 } },
     });
     expect(task.body).toBe(
-      "\n# Goal\n\nThis is the body: free markdown. It runs from the end of the\n" +
-        "frontmatter to the first comment marker. The format defines no\nsections inside it.\n\n",
+      "\n# Goal\n\nThis is the body: free markdown. It runs from the end of the\n"
+      + "frontmatter to the first comment marker. The format defines no\nsections inside it.\n\n",
     );
     expect(task.comments.map(withoutSnapshot)).toEqual([
       {

@@ -11,26 +11,26 @@ import type { Task } from "../format/index.js";
  * its findings to a listener rather than returning them: one channel, one union
  * to match.
  */
-export type StoreDiagnosticCode =
-  | "stale-next-comment-id"
-  | "unterminated-fence"
-  | "next-comment-id-repaired"
-  | "next-task-id-rebuilt"
-  | "next-task-id-advanced"
-  | "label-case-converted"
-  | "label-duplicate-dropped"
-  | "status-case-corrected"
-  | "priority-case-corrected"
-  | "config-key-unknown"
-  | "state-key-unknown"
-  | "task-file-unreadable"
-  | "task-file-foreign"
-  | "task-file-unexpected"
-  | "temp-file-left"
-  // What the index raises and no store call does.
-  | "task-file-misnamed"
-  | "tasks-directory-lost"
-  | "index-watch-failed";
+export type StoreDiagnosticCode
+  = | "stale-next-comment-id"
+    | "unterminated-fence"
+    | "next-comment-id-repaired"
+    | "next-task-id-rebuilt"
+    | "next-task-id-advanced"
+    | "label-case-converted"
+    | "label-duplicate-dropped"
+    | "status-case-corrected"
+    | "priority-case-corrected"
+    | "config-key-unknown"
+    | "state-key-unknown"
+    | "task-file-unreadable"
+    | "task-file-foreign"
+    | "task-file-unexpected"
+    | "temp-file-left"
+    // What the index raises and no store call does.
+    | "task-file-misnamed"
+    | "tasks-directory-lost"
+    | "index-watch-failed";
 
 export type StoreDiagnostic = {
   code: StoreDiagnosticCode;

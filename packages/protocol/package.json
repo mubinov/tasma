@@ -7,11 +7,14 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --max-warnings 0 --fix",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "eslint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

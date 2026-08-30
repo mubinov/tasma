@@ -8,15 +8,24 @@
   },
   "scripts": {
     "dev": "pnpm --filter @tasma/web dev",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --max-warnings 0 --fix",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit && pnpm -r typecheck"
   },
   "devDependencies": {
+    "@eslint-react/eslint-plugin": "catalog:",
+    "@eslint/js": "catalog:",
+    "@stylistic/eslint-plugin": "catalog:",
     "@tasma/engine": "workspace:*",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
+    "eslint": "catalog:",
+    "eslint-plugin-react-hooks": "catalog:",
+    "eslint-plugin-react-refresh": "catalog:",
     "typescript": "catalog:",
+    "typescript-eslint": "catalog:",
     "vitest": "catalog:",
     "yaml": "catalog:"
   }

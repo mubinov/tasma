@@ -326,8 +326,8 @@ function checkMarkerKeys(region: Located<MarkerPiece>, filename: string | undefi
 function checkSuffix(region: Located<MarkerPiece>, filename: string | undefined): void {
   if (!markerContent(region.text).includes(MARKER_SUFFIX)) return;
   const field = fieldWithSuffix(region.values, "", new Set());
-  const description =
-    field === undefined
+  const description
+    = field === undefined
       ? `a marker must not contain "${MARKER_SUFFIX}"`
       : `marker key "${field}" must not contain "${MARKER_SUFFIX}"`;
   fail("value-contains-arrow", region.line, description, field, filename);

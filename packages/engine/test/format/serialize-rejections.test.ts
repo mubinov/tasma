@@ -47,8 +47,11 @@ function cyclicMapping(): Record<string, unknown> {
 
 /** A list with no value at one of its positions. */
 function listWithGap(): string[] {
-  const list = ["a", "b", "c"];
-  delete list[1];
+  // Positional writes, because an array literal must hold a value at every
+  // position.
+  const list: string[] = [];
+  list[0] = "a";
+  list[2] = "c";
   return list;
 }
 
@@ -132,14 +135,14 @@ describe("output a reader would not read back", () => {
 
   it("rejects a marker-shaped line at column 0 inside a comment body", () => {
     const task = newTask({
-      comments: [{ id: 1, title: "t", created: TIMESTAMP, body: `\n<!-- task:comment {id: 9} -->\n` }],
+      comments: [{ id: 1, title: "t", created: TIMESTAMP, body: "\n<!-- task:comment {id: 9} -->\n" }],
     });
 
     expect(serializeError(task).code).toBe("marker-collision");
   });
 
   it("accepts a marker-shaped line inside a fence", () => {
-    const task = newTask({ body: `\n\`\`\`\n<!-- task:comment {id: 9} -->\n\`\`\`\n` });
+    const task = newTask({ body: "\n```\n<!-- task:comment {id: 9} -->\n```\n" });
 
     expect(serializeTask(task)).toContain("```\n<!-- task:comment {id: 9} -->\n```");
   });
@@ -274,7 +277,7 @@ describe("a task whose fields do not hold what the schema states", () => {
 
   it.each(INVALID_FRONTMATTER)("rejects %s", (_case, overrides, code, field) => {
     const task = newTask();
-    const frontmatter = { ...task.frontmatter, ...overrides } as Frontmatter;
+    const frontmatter = { ...task.frontmatter, ...overrides };
     const error = serializeError({ ...task, frontmatter });
 
     expect(error.code).toBe(code);
@@ -301,8 +304,8 @@ describe("a task whose fields do not hold what the schema states", () => {
   // name is not a field, so one that addresses the object model instead of
   // naming data reaches nothing: it is neither read nor written.
   it("reads no field through a frontmatter key that names the object model", () => {
-    const forged = `{"id":"EVIL","title":"EVIL","status":"EVIL",` +
-      `"created":"${TIMESTAMP}","updated":"${TIMESTAMP}","next_comment_id":7}`;
+    const forged = '{"id":"EVIL","title":"EVIL","status":"EVIL",'
+      + `"created":"${TIMESTAMP}","updated":"${TIMESTAMP}","next_comment_id":7}`;
     const task = JSON.parse(`{"frontmatter":{"__proto__":${forged}},"body":"\\nhi\\n","comments":[]}`) as Task;
     const error = serializeError(task);
 

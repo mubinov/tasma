@@ -42,10 +42,10 @@ export type IndexEntry = {
 };
 
 /** Why a file named as a task file of this project holds no entry. */
-export type ExclusionCode =
-  | "task-file-unreadable"
-  | "task-file-foreign"
-  | "task-file-misnamed";
+export type ExclusionCode
+  = | "task-file-unreadable"
+    | "task-file-foreign"
+    | "task-file-misnamed";
 
 export type ExcludedFile = {
   path: string;

@@ -164,6 +164,7 @@ describe("updateTask", () => {
     const result = await project(root).updateTask("TASM-1", { title: "Renamed" });
 
     expect(result.diagnostics).toEqual([
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- an asymmetric matcher is typed `any`
       { code: "unterminated-fence", message: expect.any(String), path: taskFile(root, "TASM-1"), line: 12 },
     ]);
   });

@@ -93,7 +93,7 @@ function stringList(key: string, sourced: Sourced): string[] {
     fail("config-invalid", `"${key}" must be a list of strings`, sourced.from);
   }
   if (value.length === 0) fail("config-invalid", `"${key}" must hold at least one entry`, sourced.from);
-  return value as string[];
+  return value;
 }
 
 /**
@@ -111,13 +111,13 @@ export async function resolveConfig(paths: ProjectPaths, diagnostics: StoreDiagn
   const declaredStatuses = pick("statuses", levels);
   const statuses = declaredStatuses === undefined ? BUILT_IN_STATUSES : stringList("statuses", declaredStatuses);
   const declaredPriorities = pick("priorities", levels);
-  const priorities =
-    declaredPriorities === undefined ? BUILT_IN_PRIORITIES : stringList("priorities", declaredPriorities);
+  const priorities
+    = declaredPriorities === undefined ? BUILT_IN_PRIORITIES : stringList("priorities", declaredPriorities);
 
   const stated = pick("default_status", levels);
   if (stated === undefined) {
     // The first entry of the resolved list, which holds at least one.
-    return { statuses, default_status: statuses[0] as string, priorities };
+    return { statuses, default_status: statuses[0]!, priorities };
   }
   if (typeof stated.value !== "string") fail("config-invalid", '"default_status" must be a string', stated.from);
   // The check runs on the resolved pair rather than on one file: the two halves

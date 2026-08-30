@@ -5,7 +5,7 @@ export type Line = { text: string; start: number; end: number };
 
 export function splitLines(text: string): Line[] {
   const lines: Line[] = [];
-  for (let start = 0; start < text.length; ) {
+  for (let start = 0; start < text.length;) {
     const newline = text.indexOf("\n", start);
     if (newline === -1) {
       lines.push({ text: text.slice(start), start, end: text.length });

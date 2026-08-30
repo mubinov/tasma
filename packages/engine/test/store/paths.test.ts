@@ -97,6 +97,7 @@ describe("scanTasks", () => {
 
     expect(scan.entries).toEqual([]);
     expect(scan.diagnostics).toEqual([
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- an asymmetric matcher is typed `any`
       { code: "task-file-unexpected", message: expect.any(String), path: join(tasksDir(root), "notes.md") },
     ]);
   });

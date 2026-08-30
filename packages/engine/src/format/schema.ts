@@ -2,8 +2,8 @@ import type { TaskSerializeErrorCode } from "./errors.js";
 import type { CommentFields, Frontmatter } from "./types.js";
 import { isPlainMapping, isRecord } from "./values.js";
 
-const TIMESTAMP_PATTERN =
-  /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})T(?<hour>\d{2}):(?<minute>\d{2}):(?<second>\d{2})(?:\.\d+)?(?:Z|[+-](?<offsetHour>\d{2}):(?<offsetMinute>\d{2}))$/;
+const TIMESTAMP_PATTERN
+  = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})T(?<hour>\d{2}):(?<minute>\d{2}):(?<second>\d{2})(?:\.\d+)?(?:Z|[+-](?<offsetHour>\d{2}):(?<offsetMinute>\d{2}))$/;
 
 function withinRange(part: string | undefined, limit: number): boolean {
   return part === undefined || Number(part) <= limit;
@@ -17,11 +17,11 @@ function isTimestamp(value: unknown): boolean {
   // The pattern accepts any two digits, so a day the month does not have is rejected here.
   if (new Date(`${parts.year}-${parts.month}-${parts.day}T00:00:00Z`).getUTCDate() !== Number(parts.day)) return false;
   return (
-    withinRange(parts.hour, 23) &&
-    withinRange(parts.minute, 59) &&
-    withinRange(parts.second, 59) &&
-    withinRange(parts.offsetHour, 23) &&
-    withinRange(parts.offsetMinute, 59)
+    withinRange(parts.hour, 23)
+    && withinRange(parts.minute, 59)
+    && withinRange(parts.second, 59)
+    && withinRange(parts.offsetHour, 23)
+    && withinRange(parts.offsetMinute, 59)
   );
 }
 
@@ -118,6 +118,10 @@ function walk(value: unknown, path: Set<unknown>, depth: number, budget: Budget,
 function walkInto(value: object, path: Set<unknown>, depth: number, budget: Budget, copy: boolean): unknown {
   if (Array.isArray(value)) {
     const items: unknown[] | undefined = copy ? [] : undefined;
+    // Read by position, never through the iterator: `Array.isArray` also holds
+    // for a subclass, whose `Symbol.iterator` can yield values other than the
+    // ones the positions hold, which is the substitution this walk exists to stop.
+    // eslint-disable-next-line @typescript-eslint/prefer-for-of
     for (let index = 0; index < value.length; index += 1) {
       const item: unknown = value[index];
       // A position that names no value reads the same way as a position the
@@ -152,11 +156,11 @@ export function writableCopy(value: unknown): unknown {
   return walkRoot(value, true);
 }
 
-const WRITABLE_EXPECTATION =
-  "is built from strings, numbers, booleans, nulls, plain mappings and lists, " +
-  'carries no "__proto__", "constructor" or "prototype" key, ' +
-  "holds a value at every position of every list, does not contain itself, " +
-  `nests at most ${MAX_DEPTH} levels deep, and expands to at most ${MAX_NODES} values`;
+const WRITABLE_EXPECTATION
+  = "is built from strings, numbers, booleans, nulls, plain mappings and lists, "
+    + 'carries no "__proto__", "constructor" or "prototype" key, '
+    + "holds a value at every position of every list, does not contain itself, "
+    + `nests at most ${MAX_DEPTH} levels deep, and expands to at most ${MAX_NODES} values`;
 
 /**
  * The rule the walk states, as one region-wide check. Every key of a region is

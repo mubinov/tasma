@@ -29,7 +29,7 @@ export const CONTENT_SECURITY_POLICY = [
 
 const CSP_META: HtmlTagDescriptor = {
   tag: "meta",
-  attrs: { "http-equiv": "Content-Security-Policy", content: CONTENT_SECURITY_POLICY },
+  attrs: { "http-equiv": "Content-Security-Policy", "content": CONTENT_SECURITY_POLICY },
   injectTo: "head-prepend",
 };
 

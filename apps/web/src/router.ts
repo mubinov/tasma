@@ -21,6 +21,9 @@ export const router = createRouter({
 });
 
 declare module "@tanstack/react-router" {
+  // Declaration merging works on an interface only, so a module augmentation
+  // cannot use the `type` form this repository otherwise requires.
+  // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
   interface Register {
     router: typeof router;
   }

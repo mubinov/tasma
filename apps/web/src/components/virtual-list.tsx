@@ -41,6 +41,7 @@ export function VirtualList<T>({
   className,
 }: VirtualListProps<T>): ReactNode {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line react-hooks/incompatible-library -- the call stays here so the window follows the scroll
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef.current,

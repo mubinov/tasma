@@ -4,23 +4,23 @@
  * diagnostic codes are named in `StoreDiagnosticCode`: a caller holds one
  * project and matches one union, whichever of the two layers refused the call.
  */
-export type TaskStoreErrorCode =
-  | "task-not-found"
-  | "task-exists"
-  | "comment-not-found"
-  | "comment-exists"
-  | "project-not-found"
-  | "project-invalid"
-  | "config-invalid"
-  | "status-unknown"
-  | "priority-unknown"
-  | "label-invalid"
-  | "field-not-writable"
-  | "field-required"
-  | "id-mismatch"
-  | "snapshot-lost"
-  // What the index refuses with once it is closed, and no store call does.
-  | "index-closed";
+export type TaskStoreErrorCode
+  = | "task-not-found"
+    | "task-exists"
+    | "comment-not-found"
+    | "comment-exists"
+    | "project-not-found"
+    | "project-invalid"
+    | "config-invalid"
+    | "status-unknown"
+    | "priority-unknown"
+    | "label-invalid"
+    | "field-not-writable"
+    | "field-required"
+    | "id-mismatch"
+    | "snapshot-lost"
+    // What the index refuses with once it is closed, and no store call does.
+    | "index-closed";
 
 /**
  * A store operation that cannot be carried out. Callers match on `code`, never

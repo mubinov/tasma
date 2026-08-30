@@ -1,7 +1,7 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
+import { inspect, promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { bareRoot, codes, plant, project, projectConfig, storeError, tempRoot, userConfig } from "./helpers.js";
 
@@ -109,7 +109,10 @@ describe("a configuration file the engine refuses", () => {
     expect(error.code).toBe("config-invalid");
     expect(error.message).toContain("line 3");
     expect(error.message).not.toContain("hunter2");
-    expect(String(error.cause ?? "")).not.toContain("hunter2");
+    // The read attaches no cause, so this guards a cause a later change adds.
+    // inspect, not a string conversion: an object cause carrying the parser's
+    // source frame renders as "[object Object]" and the check passes blind.
+    expect(inspect(error.cause, { depth: null })).not.toContain("hunter2");
   });
 
   it("names the file alone for a fault the parser reports no position for", async () => {

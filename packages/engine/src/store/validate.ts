@@ -13,7 +13,7 @@ export function validateLabels(value: unknown, path: string, diagnostics: StoreD
     fail("label-invalid", "labels must hold a list of strings", path);
   }
   const stored: string[] = [];
-  for (const given of value as string[]) {
+  for (const given of value) {
     // Locale-independent, so a Turkish locale cannot turn "I" into another letter.
     const label = given.toLowerCase();
     if (label !== given) {

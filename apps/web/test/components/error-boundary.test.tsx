@@ -67,8 +67,8 @@ it("moves focus onto the message rather than letting it fall to the body", () =>
 it("keeps a long unbroken message inside a narrow window", () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
 
-  const message =
-    "Failed to fetch dynamically imported module: http://localhost:5173/src/features/workspace/board/columns/column-header-menu.tsx?t=1788100727450";
+  const message
+    = "Failed to fetch dynamically imported module: http://localhost:5173/src/features/workspace/board/columns/column-header-menu.tsx?t=1788100727450";
 
   function Broken(): never {
     throw new Error(message);
@@ -96,6 +96,7 @@ it.each([
   vi.spyOn(console, "error").mockImplementation(() => {});
 
   function Broken(): never {
+    // eslint-disable-next-line @typescript-eslint/only-throw-error -- throwing a non-Error is the case under test
     throw thrown;
   }
 

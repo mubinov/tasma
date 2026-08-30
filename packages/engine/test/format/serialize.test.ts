@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasSource, parseTask, serializeTask, SNAPSHOT, type Task } from "@tasma/engine";
+import { hasSource, parseTask, serializeTask, SNAPSHOT } from "@tasma/engine";
 import { fixture, fixturesIn } from "./fixtures.js";
 import { newTask, TIMESTAMP } from "./tasks.js";
 

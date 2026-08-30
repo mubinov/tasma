@@ -5,7 +5,7 @@ import { Component, useEffect, useRef, type ReactNode } from "react";
  * thrown string or object leaves `message` undefined, and a thrown `null` would
  * read as "nothing failed" and re-render the children that just threw.
  */
-export function toError(value: unknown): Error {
+function toError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
 }
 
@@ -15,13 +15,13 @@ export function toError(value: unknown): Error {
  * `defaultErrorComponent` in src/router.ts.
  */
 export function ErrorPanel({ error }: { error: unknown }): ReactNode {
-  const panel = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   // The tree that held the focused element is gone, so focus would fall back to
   // <body>. Moving it onto the panel is also what announces the failure
   // reliably: a live region inserted already populated may not be read at all.
   useEffect(() => {
-    panel.current?.focus();
+    panelRef.current?.focus();
   }, []);
 
   // The panel replaces the whole tree, <main> included, so it carries its own
@@ -35,7 +35,7 @@ export function ErrorPanel({ error }: { error: unknown }): ReactNode {
   return (
     <main className="flex min-h-screen items-center justify-center bg-bg p-6 text-text">
       <div
-        ref={panel}
+        ref={panelRef}
         role="alert"
         tabIndex={-1}
         className="w-full max-w-lg rounded-panel border border-line bg-surface p-6"

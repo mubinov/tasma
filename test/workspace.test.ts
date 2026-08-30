@@ -34,6 +34,27 @@ describe("workspace packages", () => {
     }
   });
 
+  // Root `eslint .` already covers every package; the script exists so a
+  // package can be linted on its own from its own directory, where ESLint
+  // walks up to the root config.
+  it("define a lint script", () => {
+    for (const dir of packageDirs) {
+      expect(readManifest(dir).scripts?.lint, `${dir}/package.json must define a "lint" script`).toBeTypeOf("string");
+    }
+  });
+
+  // Formatting lives in ESLint and no separate formatter is installed, so this
+  // is the only entry point that rewrites a file. It is per package for the
+  // same reason `lint` is.
+  it("define a lint:fix script", () => {
+    for (const dir of packageDirs) {
+      expect(
+        readManifest(dir).scripts?.["lint:fix"],
+        `${dir}/package.json must define a "lint:fix" script`,
+      ).toBeTypeOf("string");
+    }
+  });
+
   // A package-local vitest config is what makes the package's `test` script
   // work: without it, vitest walks up to the root projects config and fails.
   it("have a local vitest.config.ts", () => {

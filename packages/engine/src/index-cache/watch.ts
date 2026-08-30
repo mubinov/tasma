@@ -73,7 +73,12 @@ export class Watches implements Watching {
   #ensuring: Promise<void> = Promise.resolve();
   #closed = false;
 
-  constructor(paths: ProjectPaths, handlers: WatchHandlers, open: WatchOpen = watch, identity: ReadIdentity = identityAt) {
+  constructor(
+    paths: ProjectPaths,
+    handlers: WatchHandlers,
+    open: WatchOpen = watch,
+    identity: ReadIdentity = identityAt,
+  ) {
     this.#paths = paths;
     this.#handlers = handlers;
     this.#open = open;
@@ -139,12 +144,16 @@ export class Watches implements Watching {
    * already fired is reading a name of its own and has no caller to be waited
    * on; what it finds reaches the index, which reports nothing once it is
    * closed.
+   *
+   * Nothing here is waited on. The promise is what `Watching` declares, so that
+   * an implementation with work to finish can be awaited.
    */
-  async close(): Promise<void> {
+  close(): Promise<void> {
     this.#closed = true;
     for (const timer of this.#timers.values()) clearTimeout(timer);
     this.#timers.clear();
     for (const slot of [...this.#watchers.keys()]) this.#drop(slot);
+    return Promise.resolve();
   }
 
   #establish(slot: Slot, path: string, onEvent: (name: string | null) => void): void {

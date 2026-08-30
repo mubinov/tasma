@@ -89,6 +89,7 @@ describe("a fault that is not a filesystem fault", () => {
       const diagnostics: StoreDiagnostic[] = [];
 
       const raised = await createTaskFile(paths, diagnostics, () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- throwing a non-Error is the case under test
         throw thrown;
       }).then(
         () => undefined,

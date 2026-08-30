@@ -97,8 +97,8 @@ function checkWritable(change: object, owned: string[], writable: Set<string>, l
     if (key === "body") continue;
     const named = typeof key === "string";
     if (named && writable.has(key)) continue;
-    const reason =
-      named && owned.includes(key)
+    const reason
+      = named && owned.includes(key)
         ? "is written by the store, not by a change"
         : 'names no field of this format; data of another component belongs under "custom"';
     fail("field-not-writable", `${label} "${String(key)}" ${reason}`);
