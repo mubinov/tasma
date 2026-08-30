@@ -7,7 +7,12 @@ packages:
 catalog:
   "@types/node": ^24.0.0
   "@vitest/coverage-v8": ^4.1.11
-  typescript: ^7.0.2
+  # Pinned to an exact version. typescript-eslint, which this workspace does
+  # not install yet, declares a peer range of typescript <6.1.0; the native
+  # port, 7.x, is outside it. A caret admits 6.1.0 and a tilde admits a 6.0.x
+  # patch, so an exact version makes every compiler change an explicit edit
+  # here. Remove the pin when typescript-eslint supports 7.x.
+  typescript: 6.0.3
   vitest: ^4.1.11
   # The floor is the version the format module is tested against; an older
   # release inside the range is not.
