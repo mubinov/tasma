@@ -21,6 +21,7 @@
     "@stylistic/eslint-plugin": "catalog:",
     "@tasma/cli": "workspace:*",
     "@tasma/engine": "workspace:*",
+    "@tasma/protocol": "workspace:*",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "eslint": "catalog:",

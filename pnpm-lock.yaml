@@ -122,6 +122,9 @@ importers:
       '@tasma/engine':
         specifier: workspace:*
         version: link:packages/engine
+      '@tasma/protocol':
+        specifier: workspace:*
+        version: link:packages/protocol
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3
