@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  binDeclarationFaults,
   packageDirs,
   readLockfile,
   readManifest,
@@ -62,6 +63,12 @@ describe("workspace packages", () => {
       expect(existsSync(join(workspaceRoot, dir, "vitest.config.ts")), `${dir} must have a vitest.config.ts`).toBe(
         true,
       );
+    }
+  });
+
+  it("declare a buildable bin, or none", () => {
+    for (const dir of packageDirs) {
+      expect(binDeclarationFaults(readManifest(dir)), `${dir}/package.json`).toEqual([]);
     }
   });
 
@@ -145,6 +152,54 @@ describe("runtimeCssInJsPackages", () => {
 
   it("takes a lockfile that resolved nothing", () => {
     expect(runtimeCssInJsPackages("lockfileVersion: '9.0'\n")).toEqual([]);
+  });
+});
+
+describe("binDeclarationFaults", () => {
+  it("accepts a map of built targets beside a build script", () => {
+    expect(
+      binDeclarationFaults({
+        bin: { "tasma": "./dist/tasma.js", "tasma-daemon": "dist/tasma-daemon.js" },
+        scripts: { build: "vite build" },
+      }),
+    ).toEqual([]);
+  });
+
+  it("accepts the single-target string form", () => {
+    expect(binDeclarationFaults({ bin: "./dist/tasma.js", scripts: { build: "vite build" } })).toEqual([]);
+  });
+
+  it("rejects a target outside dist/, in either form", () => {
+    expect(binDeclarationFaults({ bin: "src/main.ts", scripts: { build: "vite build" } })).toEqual([
+      'declares a "bin" target outside dist/: src/main.ts',
+    ]);
+    expect(binDeclarationFaults({ bin: { tasma: "../dist/tasma.js" }, scripts: { build: "vite build" } })).toEqual([
+      'declares a "bin" target outside dist/: ../dist/tasma.js',
+    ]);
+  });
+
+  it("rejects a target that traverses back out of dist/", () => {
+    expect(binDeclarationFaults({ bin: "./dist/../src/main.ts", scripts: { build: "vite build" } })).toEqual([
+      'declares a "bin" target outside dist/: ./dist/../src/main.ts',
+    ]);
+  });
+
+  it("rejects a bin that no build script produces", () => {
+    expect(binDeclarationFaults({ bin: { tasma: "./dist/tasma.js" }, scripts: { test: "vitest run" } })).toEqual([
+      'declares "bin" without a "build" script',
+    ]);
+  });
+
+  it("reports the target fault before the missing script when both apply", () => {
+    expect(binDeclarationFaults({ bin: { tasma: "./src/main.ts" } })).toEqual([
+      'declares a "bin" target outside dist/: ./src/main.ts',
+      'declares "bin" without a "build" script',
+    ]);
+  });
+
+  it("says nothing about a package that declares no bin", () => {
+    expect(binDeclarationFaults({ scripts: { build: "vite build" } })).toEqual([]);
+    expect(binDeclarationFaults({ bin: {} })).toEqual([]);
   });
 });
 

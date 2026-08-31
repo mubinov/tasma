@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "pnpm --filter @tasma/web dev",
+    "build": "pnpm -r build",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --max-warnings 0 --fix",
     "test": "vitest run",
@@ -18,6 +19,7 @@
     "@eslint-react/eslint-plugin": "catalog:",
     "@eslint/js": "catalog:",
     "@stylistic/eslint-plugin": "catalog:",
+    "@tasma/cli": "workspace:*",
     "@tasma/engine": "workspace:*",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
@@ -26,6 +28,7 @@
     "eslint-plugin-react-refresh": "catalog:",
     "typescript": "catalog:",
     "typescript-eslint": "catalog:",
+    "vite": "catalog:",
     "vitest": "catalog:",
     "yaml": "catalog:"
   }

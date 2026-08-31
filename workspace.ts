@@ -1,5 +1,5 @@
 import { existsSync, globSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { parse } from "yaml";
 
 /** Scope every package published from this workspace shares. */
@@ -28,6 +28,9 @@ const RUNTIME_CSS_IN_JS = [
 
 export type PackageManifest = {
   name?: string;
+  // npm accepts both forms: one target under the package's own name, or a map
+  // of command name to target.
+  bin?: string | Record<string, string>;
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
@@ -79,6 +82,39 @@ export function runtimeCssInJsDependencies(manifest: PackageManifest): string[] 
   return [...new Set(dependencyFields(manifest).flatMap((deps) => Object.keys(deps ?? {})))].filter((name) =>
     RUNTIME_CSS_IN_JS.includes(name),
   );
+}
+
+/** Every path a manifest's `bin` installs, whichever of the two forms it uses. */
+export function binTargets(manifest: PackageManifest): string[] {
+  return typeof manifest.bin === "string" ? [manifest.bin] : Object.values(manifest.bin ?? {});
+}
+
+/**
+ * Faults in a manifest's `bin` declaration.
+ *
+ * An executable in this workspace is built, never hand-written: pnpm links the
+ * `bin` target at install time, so a target outside `dist/` is a source file
+ * being run as a program, and a `bin` without a `build` script is a target
+ * nothing ever produces.
+ */
+export function binDeclarationFaults(manifest: PackageManifest): string[] {
+  const targets = binTargets(manifest);
+
+  if (targets.length === 0) {
+    return [];
+  }
+
+  // Normalized before the prefix test: `dist/../src/main.ts` carries the prefix
+  // and still names a file outside the directory.
+  const faults = targets
+    .filter((target) => !posix.normalize(target).startsWith("dist/"))
+    .map((target) => `declares a "bin" target outside dist/: ${target}`);
+
+  if (manifest.scripts?.build === undefined) {
+    faults.push('declares "bin" without a "build" script');
+  }
+
+  return faults;
 }
 
 // A lockfile v9 packages: key is `name@version`, and a scoped name starts with
