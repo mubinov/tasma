@@ -26,11 +26,28 @@ export type ProjectPaths = {
   tasks: string;
 };
 
-/** A leading `~/` is the home directory; every other relative root is resolved. */
-function expandRoot(root: string): string {
-  if (root === "~") return homedir();
-  if (root.startsWith("~/")) return join(homedir(), root.slice("~/".length));
-  return resolve(root);
+/** A leading `~/` is the home directory; every other path is left as it stands. */
+function expandHome(path: string): string {
+  if (path === "~") return homedir();
+  return path.startsWith("~/") ? join(homedir(), path.slice("~/".length)) : path;
+}
+
+/**
+ * The tree the engine stores everything under, defaulting to `~/.tasma`. Every
+ * path of this engine is built on it, so a caller that has no project tag —
+ * and therefore cannot call `projectPaths` — expands the root through this.
+ */
+export function expandRoot(root?: string): string {
+  return root === undefined ? join(homedir(), ".tasma") : resolve(expandHome(root));
+}
+
+/**
+ * One path a file the user places states, against the directory holding that
+ * file. An absolute path and a `~/` path each stand for themselves, which is
+ * what lets an instruction document live in a repository outside the root.
+ */
+export function resolveAgainst(base: string, path: string): string {
+  return resolve(base, expandHome(path));
 }
 
 /** Every path of one project. The root is expanded here and nowhere below this point. */
@@ -39,7 +56,7 @@ export function projectPaths(options: ProjectOptions): ProjectPaths {
   if (!TAG_PATTERN.test(project)) {
     fail("project-invalid", `the project tag "${project}" must be uppercase ASCII letters or digits`);
   }
-  const root = options.root === undefined ? join(homedir(), ".tasma") : expandRoot(options.root);
+  const root = expandRoot(options.root);
   const directory = join(root, "projects", project);
   return {
     project,

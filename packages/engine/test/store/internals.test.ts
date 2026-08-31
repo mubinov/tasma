@@ -2,12 +2,13 @@ import { writeFileSync } from "node:fs";
 import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseTask, type TaskComment, TaskStoreError } from "@tasma/engine";
+import { parseTask, type TaskComment, TaskStoreError, type Workflows } from "@tasma/engine";
 import { causeOf } from "../../src/store/errors.js";
 import { frontmatterNumber } from "../../src/store/ids.js";
 import { projectPaths } from "../../src/store/paths.js";
 import { assertSnapshots, createTaskFile, timestamp } from "../../src/store/store.js";
 import type { StoreDiagnostic } from "../../src/store/types.js";
+import { reportWorkflowInto } from "../../src/store/workflow.js";
 import {
   codes,
   plant,
@@ -134,6 +135,26 @@ describe("a name the rebuild reads after the scan classified it", () => {
 
     expect(claimed).toBeUndefined();
     expect(codes(diagnostics)).toEqual(["task-file-unreadable"]);
+  });
+});
+
+describe("reportWorkflowInto", () => {
+  /** A handle whose read raises what the loader never raises. */
+  function raising(error: Error): Workflows {
+    return {
+      directory: "/tmp/tree/workflows",
+      pathsOf: (name) => ({ directory: `/tmp/tree/workflows/${name}`, file: "" }),
+      list: () => Promise.reject(error),
+      read: () => Promise.reject(error),
+      readStep: () => Promise.reject(error),
+    };
+  }
+
+  it("leaves a fault that is no store error as it stands, rather than reporting it", async () => {
+    const frontmatter = parsed().frontmatter;
+    frontmatter.workflow = "dev";
+
+    await expect(reportWorkflowInto(raising(new Error("broken")), frontmatter, PATH, [])).rejects.toThrow("broken");
   });
 });
 

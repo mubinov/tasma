@@ -1,6 +1,6 @@
 import type { TaskSerializeErrorCode } from "./errors.js";
 import type { CommentFields, Frontmatter } from "./types.js";
-import { isPlainMapping, isRecord } from "./values.js";
+import { isPlainMapping, isRecord, isStringList } from "./values.js";
 
 const TIMESTAMP_PATTERN
   = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})T(?<hour>\d{2}):(?<minute>\d{2}):(?<second>\d{2})(?:\.\d+)?(?:Z|[+-](?<offsetHour>\d{2}):(?<offsetMinute>\d{2}))$/;
@@ -46,11 +46,7 @@ const BOOLEAN: Check = {
   expectation: "must be a boolean",
 };
 
-/** `WRITABLE` runs first on both paths, so a position that names no value is already rejected. */
-const STRING_LIST: Check = {
-  holds: (value) => Array.isArray(value) && value.every((item) => typeof item === "string"),
-  expectation: "must be a list of strings",
-};
+const STRING_LIST: Check = { holds: isStringList, expectation: "must be a list of strings" };
 
 /**
  * Keys that address `Object.prototype` when a caller merges the mapping into an

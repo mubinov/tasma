@@ -1,0 +1,4 @@
+stpes:
+  - {name: research, file: research.md}
+steps:
+  - {name: research, file: research.md}

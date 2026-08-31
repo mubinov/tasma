@@ -1,0 +1,3 @@
+instructions: [common.md, 3]
+steps:
+  - {name: research, file: research.md}

@@ -107,6 +107,8 @@ The values of `status`, `priority` and `labels` are not fixed by this format.
 Each project declares its own. The *form* of a label is fixed, and only for a
 writer: see *Values a writer rejects*. The values of `workflow` and `step` are
 also not fixed: they are opaque strings that this format gives no meaning.
+[Workflow file format](workflow-file-format.md) gives them one, and states the
+form of a step name and when the two keys are checked.
 
 The top-level `workflow` key and the `custom.workflow` mapping are different
 things. The first names the workflow the task runs. The second holds data that a

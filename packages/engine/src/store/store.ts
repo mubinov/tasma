@@ -12,6 +12,7 @@ import {
 } from "../format/index.js";
 import { COMMENT, FRONTMATTER } from "../format/schema.js";
 import { deepEqual } from "../format/values.js";
+import { type InstructionsResult, openWorkflows, type Workflows } from "../workflow/index.js";
 import { createExclusive, entryAt, makeDirectory, readRegularFile, removeFile, replaceFile } from "./atomic.js";
 import { resolveConfig } from "./config.js";
 import { errnoOf, fail } from "./errors.js";
@@ -23,12 +24,12 @@ import type {
   ListResult,
   ProjectOptions,
   ReadResult,
-  ResolvedConfig,
   StoreDiagnostic,
   TaskChange,
   WriteResult,
 } from "./types.js";
 import { validateLabels, validateMember } from "./validate.js";
+import { readStepInstructions, reportWorkflowInto, validateWorkflowInto, type WriteContext } from "./workflow.js";
 
 /**
  * The frontmatter fields the store writes itself. A change that states one is
@@ -122,14 +123,12 @@ function forward(diagnostics: Diagnostic[], path: string): StoreDiagnostic[] {
  * writes the value each resolves to back into `frontmatter`. Only the key set of
  * the change is validated, so a task holding a status configuration has since
  * dropped can still have its title edited.
+ *
+ * It is asynchronous because resolving a workflow reads a file, while the checks
+ * of the loop are pure.
  */
-function validateFieldsInto(
-  config: ResolvedConfig,
-  frontmatter: Record<string, unknown>,
-  keys: Iterable<string>,
-  path: string,
-  diagnostics: StoreDiagnostic[],
-): Written {
+async function validateFieldsInto(check: WriteContext): Promise<Written> {
+  const { config, frontmatter, keys, path, diagnostics } = check;
   const written: Written = {};
   for (const key of keys) {
     const value = frontmatter[key];
@@ -146,6 +145,7 @@ function validateFieldsInto(
       frontmatter.labels = written.labels;
     }
   }
+  await validateWorkflowInto(check);
   return written;
 }
 
@@ -252,6 +252,17 @@ export type Project = {
   deleteComment(id: string, commentId: number): Promise<WriteResult>;
   config(): Promise<ConfigResult>;
   listTaskIds(): Promise<ListResult>;
+  /**
+   * Every document that applies to one step of one workflow, in the order the
+   * format states: the instructions of the workflow, then the instructions of
+   * the project, then the step's own file. Broad to narrow.
+   *
+   * It exists so that the order is guaranteed by the engine rather than
+   * re-implemented by each client, and it sits on the project because the
+   * project is what declares which workflows may be named and what its own
+   * instructions are.
+   */
+  stepInstructions(workflow: string, step: string): Promise<InstructionsResult>;
 };
 
 /** One task as it was read, with the path it came from. */
@@ -259,9 +270,15 @@ type Opened = { path: string; task: Task; diagnostics: StoreDiagnostic[] };
 
 class ProjectStore implements Project {
   readonly paths: ProjectPaths;
+  /**
+   * The workflows of the tree, which are shared by every project in it. The
+   * handle touches no disk, and it reads nothing until a call needs a workflow.
+   */
+  readonly #workflows: Workflows;
 
   constructor(paths: ProjectPaths) {
     this.paths = paths;
+    this.#workflows = openWorkflows({ root: paths.root });
   }
 
   /** Creates `tasks/` before the first write, and re-checks what the name holds. */
@@ -303,8 +320,17 @@ class ProjectStore implements Project {
 
   async readTask(id: string): Promise<ReadResult> {
     await openProjectDirectory(this.paths);
-    const { task, diagnostics } = await this.#open(id);
+    const { path, task, diagnostics } = await this.#open(id);
+    await reportWorkflowInto(this.#workflows, task.frontmatter, path, diagnostics);
     return { task, diagnostics };
+  }
+
+  async stepInstructions(workflow: string, step: string): Promise<InstructionsResult> {
+    await openProjectDirectory(this.paths);
+    const diagnostics: StoreDiagnostic[] = [];
+    const config = await resolveConfig(this.paths, diagnostics);
+    const documents = await readStepInstructions(this.#workflows, config, workflow, step, diagnostics);
+    return { documents, diagnostics };
   }
 
   async config(): Promise<ConfigResult> {
@@ -336,7 +362,16 @@ class ProjectStore implements Project {
     checkRequired(frontmatter, TASK_REQUIRED, "a new task", this.paths.tasks);
     // A create writes `status` whether the caller stated it or the default did.
     const keys = new Set([...Object.keys(fields), "status"]);
-    const written = validateFieldsInto(config, frontmatter, keys, this.paths.tasks, diagnostics);
+    // Nothing is stored yet, so a `step` with no `workflow` in the same call
+    // finds no effective workflow and is refused. A migration writes both.
+    const written = await validateFieldsInto({
+      workflows: this.#workflows,
+      config,
+      frontmatter,
+      keys,
+      path: this.paths.tasks,
+      diagnostics,
+    });
 
     await this.#makeTasksDirectory();
     const created = await createTaskFile(this.paths, diagnostics, (id) => {
@@ -362,7 +397,14 @@ class ProjectStore implements Project {
     // writer reproduces byte for byte is stored under a symbol key.
     const frontmatter: Record<string, unknown> = { ...opened.task.frontmatter, ...fields };
     checkRequired(frontmatter, TASK_REQUIRED, "a task", path);
-    const written = validateFieldsInto(config, frontmatter, Object.keys(fields), path, diagnostics);
+    const written = await validateFieldsInto({
+      workflows: this.#workflows,
+      config,
+      frontmatter,
+      keys: new Set(Object.keys(fields)),
+      path,
+      diagnostics,
+    });
     // A key present with the value `undefined` clears the field, and a body
     // cleared is an empty body; a key the change does not state is left alone.
     const body = Object.hasOwn(change, "body") ? (given ?? "") : opened.task.body;

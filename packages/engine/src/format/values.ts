@@ -4,6 +4,10 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function isStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
 /**
  * Whether the value is a mapping whose entries `Object.entries` reports. A YAML
  * tag resolves to other shapes, such as `!!omap` to a `Map` and `!!set` to a

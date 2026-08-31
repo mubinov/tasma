@@ -19,6 +19,8 @@ describe("resolution", () => {
       statuses: BUILT_IN_STATUSES,
       default_status: "Backlog",
       priorities: ["high", "medium", "low"],
+      workflows: [],
+      instructions: [],
     });
     expect(diagnostics).toEqual([]);
   });
@@ -40,7 +42,13 @@ describe("resolution", () => {
 
     const { config } = await project(root).config();
 
-    expect(config).toEqual({ statuses: ["New", "Doing"], default_status: "New", priorities: ["urgent", "later"] });
+    expect(config).toEqual({
+      statuses: ["New", "Doing"],
+      default_status: "New",
+      priorities: ["urgent", "later"],
+      workflows: [],
+      instructions: [],
+    });
   });
 
   it("falls back to the first entry of the resolved status list", async () => {

@@ -1,0 +1,5 @@
+steps:
+  - {name: research, file: research.md}
+transitions:
+  research:
+    __proto__: {polluted: true}

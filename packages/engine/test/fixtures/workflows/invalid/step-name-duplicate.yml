@@ -1,0 +1,3 @@
+steps:
+  - {name: research, file: research.md}
+  - {name: research, file: other.md}

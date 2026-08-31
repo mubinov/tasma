@@ -11,6 +11,7 @@ import type {
 } from "../store/index.js";
 import { taskEntryOf } from "../store/paths.js";
 import { openProjectDirectory } from "../store/store.js";
+import type { InstructionsResult } from "../workflow/index.js";
 import { TaskIndex } from "./cache.js";
 import { REASON_LIMIT, short } from "./message.js";
 import type { IndexedProject, IndexOptions, QueryResult } from "./types.js";
@@ -91,6 +92,11 @@ class IndexedProjectStore implements IndexedProject {
   async listTaskIds(): Promise<ListResult> {
     this.#live();
     return this.#project.listTaskIds();
+  }
+
+  async stepInstructions(workflow: string, step: string): Promise<InstructionsResult> {
+    this.#live();
+    return this.#project.stepInstructions(workflow, step);
   }
 
   async createTask(input: TaskChange): Promise<WriteResult> {

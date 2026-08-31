@@ -3,7 +3,19 @@ import { describe, expect, it } from "vitest";
 import { parseTask, type Project } from "@tasma/engine";
 import { fixture } from "../format/fixtures.js";
 import { afterFrontmatter } from "../format/tasks.js";
-import { codes, plant, project, read, tasksDir, taskFile, taskText, TIMESTAMP, tempRoot } from "./helpers.js";
+import { plantWorkflow, stepsOnly } from "../workflow/helpers.js";
+import {
+  codes,
+  plant,
+  project,
+  projectConfig,
+  read,
+  tasksDir,
+  taskFile,
+  taskText,
+  TIMESTAMP,
+  tempRoot,
+} from "./helpers.js";
 
 /** The reference example under this project's tag: every optional key, YAML comments and two comments. */
 function richTask(): string {
@@ -13,6 +25,8 @@ function richTask(): string {
 describe("createTask", () => {
   it("writes every field it is given and reads them back", async () => {
     const root = await tempRoot();
+    await plant(projectConfig(root), "workflows: [delivery]\n");
+    await plantWorkflow(root, "delivery", stepsOnly("build"));
     const handle = project(root);
 
     const result = await handle.createTask({

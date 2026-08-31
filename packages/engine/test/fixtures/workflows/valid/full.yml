@@ -1,0 +1,12 @@
+# The reference workflow. Every rule of the format applies to it.
+title: Engineering task flow
+instructions:
+  - common.md
+  - ~/notes/house-rules.md
+steps:
+  - {name: "dev:research", file: steps/research.md, owner: agent}
+  - {name: "dev:implement", file: steps/implement.md}
+  - {name: "user:review", file: /srv/flows/shared/user-review.md}
+transitions:
+  "dev:research": [{to: "dev:implement"}]
+  "dev:implement": [{to: "user:review"}]

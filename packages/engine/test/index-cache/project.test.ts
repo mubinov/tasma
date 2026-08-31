@@ -17,6 +17,7 @@ import {
   taskText,
   tempRoot,
 } from "../store/helpers.js";
+import { plantSteps } from "../workflow/helpers.js";
 import { BOM, ids, listener, taskEntry, unwatched, until } from "./helpers.js";
 
 describe("a write made through the index", () => {
@@ -124,6 +125,17 @@ describe("a write made through the index", () => {
     expect((await indexed.listTaskIds()).ids).toEqual([created.id]);
     expect((await indexed.config()).config.statuses).toContain("To Do");
     expect(indexed.paths.project).toBe(PROJECT);
+  });
+
+  it("leaves the instructions of a step to the project it wraps", async () => {
+    const root = await tempRoot();
+    await plant(join(projectDir(root), "config.yml"), "workflows: [dev]\n");
+    await plantSteps(root, "dev", "research");
+    const indexed = await unwatched(project(root));
+
+    const { documents } = await indexed.stepInstructions("dev", "research");
+
+    expect(documents.map((document) => document.text)).toEqual(["Do research.\n"]);
   });
 });
 
@@ -310,6 +322,7 @@ describe("a closed index", () => {
       indexed.addComment("TASM-1", { title: "One" }),
       indexed.updateComment("TASM-1", 1, { title: "One" }),
       indexed.deleteComment("TASM-1", 1),
+      indexed.stepInstructions("dev", "research"),
     ]) {
       expect((await storeError(call)).code).toBe("index-closed");
     }

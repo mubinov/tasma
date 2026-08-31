@@ -1,0 +1,4 @@
+steps:
+  - {name: research, file: research.md}
+transitions: &loop
+  research: *loop

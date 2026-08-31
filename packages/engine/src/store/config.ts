@@ -1,8 +1,9 @@
+import { dirname } from "node:path";
 import { parse } from "yaml";
-import { isPlainMapping } from "../format/values.js";
+import { isPlainMapping, isStringList } from "../format/values.js";
 import { readRegularFile } from "./atomic.js";
 import { fail } from "./errors.js";
-import type { ProjectPaths } from "./paths.js";
+import { type ProjectPaths, resolveAgainst } from "./paths.js";
 import type { ResolvedConfig, StoreDiagnostic } from "./types.js";
 
 /**
@@ -18,9 +19,14 @@ const ENGINE_KEYS = ["statuses", "default_status", "priorities"];
  * The keys each level recognizes, whether or not this layer reads them; a later
  * component adds its own here. A key outside the set is reported, which is what
  * catches a key the user misspelled.
+ *
+ * `workflows` and `instructions` are project-level alone, the same class as
+ * `name` and `path`: a workflow is selected per project, and an instruction
+ * document a user file stated would apply to every project of the machine with
+ * no way to say which one it describes.
  */
 const USER_KEYS = new Set(ENGINE_KEYS);
-const PROJECT_KEYS = new Set([...ENGINE_KEYS, "name", "path"]);
+const PROJECT_KEYS = new Set([...ENGINE_KEYS, "name", "path", "workflows", "instructions"]);
 
 /** The name a message gives the level a value came from. */
 const BUILT_IN = "the built-in defaults";
@@ -83,17 +89,44 @@ function pick(key: string, levels: Level[]): Sourced | undefined {
   return undefined;
 }
 
-/**
- * A declared list of statuses or priorities. An empty list is type-correct but
- * leaves no value any write could pass, so it is refused.
- */
+/** A declared list of strings. An empty list is a statement about the key, not a fault. */
 function stringList(key: string, sourced: Sourced): string[] {
   const value = sourced.value;
-  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
-    fail("config-invalid", `"${key}" must be a list of strings`, sourced.from);
-  }
+  if (!isStringList(value)) fail("config-invalid", `"${key}" must be a list of strings`, sourced.from);
+  return value;
+}
+
+/**
+ * The same for statuses and priorities, where an empty list is type-correct but
+ * leaves no value any write could pass, so it is refused.
+ */
+function nonEmptyStringList(key: string, sourced: Sourced): string[] {
+  const value = stringList(key, sourced);
   if (value.length === 0) fail("config-invalid", `"${key}" must hold at least one entry`, sourced.from);
   return value;
+}
+
+/**
+ * A list of strings a project declares, empty when it declares none. An empty
+ * list means what an absent key means: a project that runs no workflow and
+ * carries no instruction document is an ordinary project.
+ */
+function declaredList(key: string, levels: Level[]): string[] {
+  const sourced = pick(key, levels);
+  return sourced === undefined ? [] : stringList(key, sourced);
+}
+
+/**
+ * The same, as paths against the directory holding the file that stated them,
+ * which is the rule the format states for every path a user file carries. The
+ * level is read from the value rather than assumed, so a key that later joins a
+ * second level resolves against its own file.
+ */
+function declaredPaths(key: string, levels: Level[]): string[] {
+  const sourced = pick(key, levels);
+  if (sourced === undefined) return [];
+  const base = dirname(sourced.from);
+  return stringList(key, sourced).map((entry) => resolveAgainst(base, entry));
 }
 
 /**
@@ -109,15 +142,19 @@ export async function resolveConfig(paths: ProjectPaths, diagnostics: StoreDiagn
   ];
 
   const declaredStatuses = pick("statuses", levels);
-  const statuses = declaredStatuses === undefined ? BUILT_IN_STATUSES : stringList("statuses", declaredStatuses);
+  const statuses
+    = declaredStatuses === undefined ? BUILT_IN_STATUSES : nonEmptyStringList("statuses", declaredStatuses);
   const declaredPriorities = pick("priorities", levels);
   const priorities
-    = declaredPriorities === undefined ? BUILT_IN_PRIORITIES : stringList("priorities", declaredPriorities);
+    = declaredPriorities === undefined ? BUILT_IN_PRIORITIES : nonEmptyStringList("priorities", declaredPriorities);
+
+  const workflows = declaredList("workflows", levels);
+  const instructions = declaredPaths("instructions", levels);
 
   const stated = pick("default_status", levels);
   if (stated === undefined) {
     // The first entry of the resolved list, which holds at least one.
-    return { statuses, default_status: statuses[0]!, priorities };
+    return { statuses, default_status: statuses[0]!, priorities, workflows, instructions };
   }
   if (typeof stated.value !== "string") fail("config-invalid", '"default_status" must be a string', stated.from);
   // The check runs on the resolved pair rather than on one file: the two halves
@@ -131,5 +168,5 @@ export async function resolveConfig(paths: ProjectPaths, diagnostics: StoreDiagn
       stated.from,
     );
   }
-  return { statuses, default_status: stated.value, priorities };
+  return { statuses, default_status: stated.value, priorities, workflows, instructions };
 }

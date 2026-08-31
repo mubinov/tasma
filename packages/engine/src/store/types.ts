@@ -23,6 +23,10 @@ export type StoreDiagnosticCode
     | "priority-case-corrected"
     | "config-key-unknown"
     | "state-key-unknown"
+    | "workflow-key-unknown"
+    | "workflow-missing"
+    | "step-stale"
+    | "instruction-file-unreadable"
     | "task-file-unreadable"
     | "task-file-foreign"
     | "task-file-unexpected"
@@ -78,6 +82,10 @@ export type ResolvedConfig = {
   statuses: string[];
   default_status: string;
   priorities: string[];
+  /** The workflows a task of this project may name. Empty when the project declares none. */
+  workflows: string[];
+  /** The documents that apply to every task of this project, as resolved absolute paths. */
+  instructions: string[];
 };
 
 export type ConfigResult = {
