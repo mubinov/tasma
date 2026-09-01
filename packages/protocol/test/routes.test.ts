@@ -38,7 +38,7 @@ describe("buildPath", () => {
   });
 
   it("percent-encodes every filled segment", () => {
-    expect(buildPath(routes.readTask, { project: "a b", id: "x/y" })).toBe("/projects/a%20b/tasks/x%2Fy");
+    expect(buildPath(routes.readTask, { project: "a b", id: "x?y#z" })).toBe("/projects/a%20b/tasks/x%3Fy%23z");
   });
 
   it("refuses a placeholder no parameter fills", () => {
@@ -54,6 +54,9 @@ describe("buildPath", () => {
     ["a segment a URL removes", "."],
     ["a segment a URL climbs out of", ".."],
     ["an empty segment", ""],
+    ["a value carrying a separator", "x/y"],
+    ["a value carrying a backslash", "x\\y"],
+    ["a value carrying a terminator", "x\0y"],
   ])("refuses %s", (_description, id) => {
     expect(() => buildPath(routes.readTask, { project: "TASM", id })).toThrow(/id/);
   });

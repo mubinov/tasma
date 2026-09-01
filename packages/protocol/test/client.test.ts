@@ -28,6 +28,12 @@ type Invocation = {
 
 const invocations: Invocation[] = [
   {
+    name: "readHealth",
+    send: (client) => client.readHealth(),
+    method: "GET",
+    path: "/health",
+  },
+  {
     name: "listProjects",
     send: (client) => client.listProjects(),
     method: "GET",

@@ -57,7 +57,13 @@ export type SerializeErrorCode
     | "value-unwritable";
 
 /** What the daemon itself refuses with, for a condition no engine code describes. */
-export type DaemonErrorCode = "internal" | "malformed-request";
+export type DaemonErrorCode
+  = | "internal"
+    | "malformed-request"
+    | "route-not-found"
+    | "method-not-allowed"
+    | "unsupported-media-type"
+    | "request-too-large";
 
 /**
  * Why a call was refused. Each arm carries only the fields its engine class has:
