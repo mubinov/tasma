@@ -413,10 +413,15 @@ describe("list", () => {
     expect(await workflows(root).list()).toEqual({ names: [], diagnostics: [] });
   });
 
-  it("lets a fault of the filesystem it gives no meaning through as it stands", async () => {
+  it("reports a default directory that holds a file, where a missing one is silent", async () => {
     const root = await bareRoot();
     await plant(workflowsDir(root), "a file where the directory belongs");
 
-    await expect(workflows(root).list()).rejects.toMatchObject({ code: "ENOTDIR" });
+    const { names, diagnostics } = await workflows(root).list();
+
+    expect(names).toEqual([]);
+    expect(codes(diagnostics)).toEqual(["workflows-path-unusable"]);
+    expect(diagnostics[0]?.path).toBe(workflowsDir(root));
+    expect(diagnostics[0]?.message).toBe("this name holds no directory");
   });
 });

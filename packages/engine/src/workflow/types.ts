@@ -74,10 +74,14 @@ export type Workflows = {
    */
   pathsOf(name: string): WorkflowPaths;
   /**
-   * The name of every workflow the tree holds, ascending. A missing `workflows/`
-   * directory is an empty list, and a directory that holds no workflow is a
-   * diagnostic rather than a fault: a listing never fails because one workflow
-   * of many is broken.
+   * The name of every workflow the tree holds, ascending. A directory that holds
+   * no workflow is a diagnostic rather than a fault: a listing never fails
+   * because one workflow of many is broken.
+   *
+   * A tree that cannot be used at all answers the empty list too. The one silent
+   * case is the built-in default that does not exist; a directory configuration
+   * named, and a default that holds something other than a directory, are
+   * reported as `workflows-path-unusable`.
    */
   list(): Promise<WorkflowList>;
   read(name: string): Promise<WorkflowResult>;

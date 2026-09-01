@@ -31,6 +31,11 @@ and it may hold the step documents beside it.
       tasks/
 ```
 
+**The tree above shows the default place.** `workflows/` beside `projects/` is
+where a reader looks when nothing names another directory. The user's `config.yml`
+can name one, which is what lets the workflows of a machine stand in a git
+repository. Section 7 states the key.
+
 Workflows are central. One definition is shared by every project that selects
 it. A project selects the workflows its tasks may name; it does not copy them and
 it does not change them.
@@ -49,7 +54,7 @@ first and last character is a letter or a digit.** A name of any other form name
 no workflow. This is narrower than the rule for a step name in section 4, because
 the name becomes a directory name: it carries no dot and no path separator, it
 cannot be `.` or `..`, and it stays within the length one path component holds.
-That is what keeps a workflow inside `workflows/`.
+That is what keeps a workflow inside the workflows directory.
 
 A directory whose name breaks the rule, and a directory that holds no
 `workflow.yml`, are reported and left out of the list of workflows. A listing
@@ -152,6 +157,7 @@ A path resolves against the directory that holds the file which states it.
 | `steps[].file` in `workflow.yml` | the directory of the workflow |
 | `instructions[]` in `workflow.yml` | the directory of the workflow |
 | `instructions[]` in a project's `config.yml` | the directory of the project |
+| `workflows_path` in the user's `config.yml` | the directory of that file |
 
 An absolute path and a path that starts with `~/` are each accepted and stand for
 themselves.
@@ -159,6 +165,12 @@ themselves.
 **A path may point anywhere.** A symbolic link is followed, and there is no rule
 that a document must stay inside `~/.tasma`. This is what lets step documents live
 in a git repository outside the tree.
+
+**A path is resolved lexically.** A reader does not call `realpath`, so a `../`
+path stated inside a `workflow.yml` that stands in a symbolically linked workflow
+directory walks the path of the link, not the path the link points at. Naming the
+real directory with `workflows_path` keeps the case from arising rather than
+resolving it.
 
 **A reader does not open the step documents when it loads `workflow.yml`.** It
 resolves their paths and stops. A file that is missing or unreadable is reported
@@ -195,7 +207,47 @@ caller asked for, so a file that is missing or unreadable refuses the call. An
 instructions list is several documents, so one entry that cannot be read is
 reported by path and the other documents are still returned.
 
-## 7. The project side
+## 7. The user side
+
+The user's `config.yml` carries one key for workflows. It is a user-level key.
+A project's `config.yml` does not recognize it.
+
+| Key | Required | Type | Meaning |
+|---|---|---|---|
+| `workflows_path` | no | string | The directory the workflows of this machine stand in. |
+
+```yaml
+workflows_path: ~/Projects/flows/workflows
+```
+
+**The default is `workflows/` beside `projects/` under the root.** A file that
+states no `workflows_path` leaves a reader on it.
+
+**The value is one directory, never a list.** Two directories declaring the same
+workflow name would need a collision rule, and this format states none. One
+workflow that stands elsewhere is reached through a symbolic link inside the
+directory: a link is followed, and the name of the link is the name of the
+workflow.
+
+**The value must not be empty.** The empty string is refused rather than resolved
+to the directory that holds the file.
+
+**The key is user-level alone.** The workflows tree is one shared thing per
+machine. A project's `config.yml` that states the key is reported as an unknown
+key and the value is not read. A project already chooses which workflows its
+tasks may name, through `workflows` in section 8.
+
+Because the key stands at one level, a reader looking for the workflows
+directory of a task it reads consults the user's `config.yml` and no other file.
+A project's `config.yml` that cannot be read leaves the directory where the user
+named it.
+
+**The directory holds workflow directories and nothing else.** Section 2 applies
+to it unchanged, so a directory that is no workflow is reported. The scripts and
+the shared documents a flow refers to therefore stand outside it, and are reached
+by the paths in section 5.
+
+## 8. The project side
 
 A project's `config.yml` carries two keys for workflows. Both are project-level
 keys. The user-level `config.yml` recognizes neither.
@@ -220,7 +272,7 @@ is refused because it would leave no value any write could pass.
 **A project runs every step its workflow declares.** There is no per-project
 subset of the steps.
 
-## 8. A task's `workflow` and `step`
+## 9. A task's `workflow` and `step`
 
 A task file carries two optional keys, defined in
 [Task file format](task-file-format.md):
@@ -277,7 +329,7 @@ remains, and that combination is invalid, so a read has to name it.
 A read does not consult the list of workflows the project declares. That check is
 for a write.
 
-## 9. Malformed files
+## 10. Malformed files
 
 Two behaviors are defined, as in [Task file format](task-file-format.md):
 
@@ -309,12 +361,34 @@ one.
 | Condition |
 |---|
 | An unknown top-level key in `workflow.yml`. The rest of the file loads, and the value of that key is not read. This is what catches a misspelling. |
-| A directory under `workflows/` that holds no `workflow.yml`, or whose name breaks the rule in section 2. It is left out of the list. |
+| A directory in the workflows directory that holds no `workflow.yml`, or whose name breaks the rule in section 2. It is left out of the list. |
 | A task names a workflow that does not exist or does not load. |
 | A task carries a step its workflow does not declare, or carries a step and no workflow. |
 | One entry of an `instructions` list cannot be read. The other documents are still returned. |
+| The workflows directory itself cannot be used, under the rule below. The list is empty and the fault is named. |
+| A reader cannot resolve the user's `config.yml` while it reads a task. It uses the default workflows directory and names the fault, rather than refusing the read. |
 
-### A missing directory
+The last row keeps one broken `config.yml` from making every task of a project
+unreadable. A write is not covered by it: a write validates against the lists the
+user declared, and guessing at those is not acceptable.
 
-A missing `workflows/` directory is a tree that holds no workflow. It is an empty
-list, not a fault.
+### A directory that cannot be used
+
+One rule covers the workflows directory itself:
+
+> The only silent case is the built-in default that does not exist.
+
+| The workflows directory | Missing | Anything else — not a directory, no permission, and so on |
+|---|---|---|
+| the default under the root | silent, empty list | reported, empty list |
+| the one `workflows_path` names | reported, empty list | reported, empty list |
+
+A missing default is a tree that holds no workflow, the way a project with no
+task files holds no task. A directory the user named is reported when it is not
+there, because the user wrote the name and a listing that answers nothing has to
+say why.
+
+A listing never fails on the directory itself. It answers the empty list and
+names the fault. Reading one workflow by name is a different question: a name
+that reaches no directory is a workflow that does not exist, which section 9
+states for the task that names one.

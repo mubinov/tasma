@@ -24,8 +24,12 @@ const ENGINE_KEYS = ["statuses", "default_status", "priorities"];
  * `name` and `path`: a workflow is selected per project, and an instruction
  * document a user file stated would apply to every project of the machine with
  * no way to say which one it describes.
+ *
+ * `workflows_path` is user-level alone, for the converse reason: the workflows
+ * tree is one shared thing per machine, and a project already chooses which of
+ * its workflows its tasks may name through `workflows`.
  */
-const USER_KEYS = new Set(ENGINE_KEYS);
+const USER_KEYS = new Set([...ENGINE_KEYS, "workflows_path"]);
 const PROJECT_KEYS = new Set([...ENGINE_KEYS, "name", "path", "workflows", "instructions"]);
 
 /** The name a message gives the level a value came from. */
@@ -130,6 +134,20 @@ function declaredPaths(key: string, levels: Level[]): string[] {
 }
 
 /**
+ * One path a file states, resolved the same way. The empty string is refused
+ * rather than resolved: it would answer with the directory holding the file
+ * itself, which names a tree the user never wrote.
+ */
+function declaredPath(key: string, levels: Level[]): string | undefined {
+  const sourced = pick(key, levels);
+  if (sourced === undefined) return undefined;
+  const value = sourced.value;
+  if (typeof value !== "string") fail("config-invalid", `"${key}" must be a string`, sourced.from);
+  if (value === "") fail("config-invalid", `"${key}" must not be empty`, sourced.from);
+  return resolveAgainst(dirname(sourced.from), value);
+}
+
+/**
  * The configuration of one project: per key, the project value, else the user
  * value, else the built-in fallback. Nothing is merged, because merging two
  * ordered lists has no correct answer, and nothing is cached, because a hand
@@ -150,11 +168,22 @@ export async function resolveConfig(paths: ProjectPaths, diagnostics: StoreDiagn
 
   const workflows = declaredList("workflows", levels);
   const instructions = declaredPaths("instructions", levels);
+  // Left absent when no file named one, rather than defaulted here: whether the
+  // directory was configured decides what the loader reports about it, and a
+  // default applied at this layer would throw that away.
+  const workflowsPath = declaredPath("workflows_path", levels);
 
   const stated = pick("default_status", levels);
   if (stated === undefined) {
     // The first entry of the resolved list, which holds at least one.
-    return { statuses, default_status: statuses[0]!, priorities, workflows, instructions };
+    return {
+      statuses,
+      default_status: statuses[0]!,
+      priorities,
+      workflows,
+      instructions,
+      workflows_path: workflowsPath,
+    };
   }
   if (typeof stated.value !== "string") fail("config-invalid", '"default_status" must be a string', stated.from);
   // The check runs on the resolved pair rather than on one file: the two halves
@@ -168,5 +197,27 @@ export async function resolveConfig(paths: ProjectPaths, diagnostics: StoreDiagn
       stated.from,
     );
   }
-  return { statuses, default_status: stated.value, priorities, workflows, instructions };
+  return {
+    statuses,
+    default_status: stated.value,
+    priorities,
+    workflows,
+    instructions,
+    workflows_path: workflowsPath,
+  };
+}
+
+/**
+ * The workflows directory the user's file names, read on its own. `workflows_path`
+ * is user-level alone, so a caller that needs nothing else of the configuration
+ * asks the one file that can state it: a project file this engine cannot read
+ * says nothing about where the workflows tree stands, and resolving both levels
+ * would let it move a read onto the wrong tree.
+ *
+ * The findings of the read are discarded. They concern a shared file, and the
+ * one caller reports on a single task — the rule `reportWorkflowInto` states for
+ * the workflow it loads.
+ */
+export async function resolveWorkflowsPath(paths: ProjectPaths): Promise<string | undefined> {
+  return declaredPath("workflows_path", [await readLevel(paths.userConfig, USER_KEYS, [])]);
 }

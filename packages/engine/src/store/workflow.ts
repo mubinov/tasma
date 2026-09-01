@@ -1,8 +1,67 @@
 import type { Frontmatter } from "../format/index.js";
-import type { InstructionDocument, Workflow, Workflows } from "../workflow/index.js";
+import { type InstructionDocument, openWorkflows, type Workflow, type Workflows } from "../workflow/index.js";
 import { declaresStep, noSuchStep, readInstructions, readStepDocument, stepEntry } from "../workflow/load.js";
-import { causeOf, fail, TaskStoreError } from "./errors.js";
+import { causeOf, errnoOf, fail, pathOf, TaskStoreError } from "./errors.js";
 import type { ResolvedConfig, StoreDiagnostic } from "./types.js";
+
+/**
+ * The workflows of one tree, where the resolved configuration places them. Every
+ * operation builds its own: constructing a handle touches no disk, and one held
+ * on the project would pin the directory of the first call and leave a
+ * `workflows_path` the user edited with nothing to invalidate it.
+ */
+export function openConfiguredWorkflows(root: string, config: ResolvedConfig): Workflows {
+  return openWorkflows({ root, path: config.workflows_path });
+}
+
+/**
+ * Whether a fault `resolve` below raised is a fault of the configuration file
+ * itself, which is what a read degrades on. Two classes qualify and no third:
+ * the `config-invalid` the resolution raises for a file it refuses, and a bare
+ * errno, which is what a file the process cannot open reaches here as, since
+ * `openRegularFile` converts `ENOENT` and `ELOOP` alone. A store fault of any
+ * other code, and any error naming no errno, is no fault of the configuration
+ * and passes through.
+ */
+function unreadableConfig(error: unknown): boolean {
+  if (error instanceof TaskStoreError) return error.code === "config-invalid";
+  return errnoOf(error) !== undefined;
+}
+
+/**
+ * The workflows of one tree for a read, which holds no configuration of its own
+ * and asks `resolve` for the directory only where a task names a workflow.
+ *
+ * A configuration that cannot be resolved degrades the read to the built-in
+ * directory instead of failing it: one broken `config.yml` would otherwise make
+ * every task of the project unreadable, and what a read has to tell a caller is
+ * whether the workflow resolves and whether its step is in it. Writes keep
+ * failing, because a write validates against the lists the user declared and
+ * guessing at those is not acceptable.
+ */
+export async function openWorkflowsForRead(
+  root: string,
+  resolve: () => Promise<string | undefined>,
+  diagnostics: StoreDiagnostic[],
+): Promise<Workflows> {
+  let path;
+  try {
+    path = await resolve();
+  } catch (error) {
+    if (!unreadableConfig(error)) throw error;
+    // A file the resolution refused parsed and was rejected; one it could not
+    // open never reached the parser. Both leave the same directory in use, and
+    // a reader looking at the message has to know which of the two happened.
+    const reason = error instanceof TaskStoreError ? "was refused" : "could not be read";
+    diagnostics.push({
+      code: "config-unreadable",
+      message: `the user's configuration ${reason}, so the built-in workflows directory was used: ${causeOf(error)}`,
+      path: pathOf(error),
+    });
+    return openWorkflows({ root });
+  }
+  return openWorkflows({ root, path });
+}
 
 /**
  * Everything one write validation reads. It stands as one value because the two
@@ -112,14 +171,17 @@ export async function validateWorkflowInto(check: WriteContext): Promise<void> {
  * removed step would never learn: the value is refused only on a write, and by
  * then the write is setting a valid step and the stale value is already gone.
  *
- * The list the project declares is not consulted, and configuration is not
- * resolved. That check is write-only: `resolveConfig` refuses a configuration
- * file it cannot read, so one broken `config.yml` would make every task of the
- * project unreadable. What a read has to tell a caller is whether the workflow
- * resolves and whether its step is in it.
+ * The list the project declares is not consulted. What a read has to tell a
+ * caller is whether the workflow resolves and whether its step is in it.
+ *
+ * The handle arrives as a thunk rather than a value, so that a task naming no
+ * workflow reads with the syscalls it takes without one: the caller resolves
+ * configuration to find the workflows directory, and that work belongs on the
+ * branch that needs a directory. The check for it is stated once, here, rather
+ * than repeated by every caller.
  */
 export async function reportWorkflowInto(
-  workflows: Workflows,
+  openHandle: () => Promise<Workflows>,
   frontmatter: Frontmatter,
   path: string,
   diagnostics: StoreDiagnostic[],
@@ -128,12 +190,14 @@ export async function reportWorkflowInto(
   const step = frontmatter.step;
   if (typeof name !== "string") {
     // A task carrying a step and no workflow is the one state a write is
-    // allowed to create and no workflow can account for.
+    // allowed to create and no workflow can account for. It needs no directory
+    // either, so the thunk stays untouched.
     if (typeof step === "string") {
       diagnostics.push({ code: "step-stale", message: staleStep(step, undefined), path });
     }
     return;
   }
+  const workflows = await openHandle();
   let workflow;
   try {
     // The findings of the load itself are not forwarded. They concern a shared

@@ -1,5 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { mkdir, symlink } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { inspect, promisify } from "node:util";
 import { describe, expect, it } from "vitest";
@@ -246,5 +247,69 @@ describe("a configuration file a symbolic link points at", () => {
     expect(config.statuses).toEqual(["New", "Doing"]);
     expect(config.default_status).toBe("Doing");
     expect(diagnostics).toEqual([]);
+  });
+});
+
+describe("workflows_path", () => {
+  it("resolves a relative value against the directory holding the user file", async () => {
+    const root = await tempRoot();
+    await plant(userConfig(root), "workflows_path: flows\n");
+
+    expect((await project(root).config()).config.workflows_path).toBe(join(root, "flows"));
+  });
+
+  it("expands a value that starts with a tilde", async () => {
+    const root = await tempRoot();
+    await plant(userConfig(root), "workflows_path: ~/flows\n");
+
+    expect((await project(root).config()).config.workflows_path).toBe(join(homedir(), "flows"));
+  });
+
+  it("keeps an absolute value as it stands", async () => {
+    const root = await tempRoot();
+    await plant(userConfig(root), "workflows_path: /srv/flows\n");
+
+    expect((await project(root).config()).config.workflows_path).toBe("/srv/flows");
+  });
+
+  it("is absent when no file states the key", async () => {
+    const root = await tempRoot();
+
+    expect((await project(root).config()).config.workflows_path).toBeUndefined();
+  });
+
+  it("reads the key written with no value as absent", async () => {
+    const root = await tempRoot();
+    await plant(userConfig(root), "workflows_path:\n");
+
+    const { config, diagnostics } = await project(root).config();
+
+    expect(config.workflows_path).toBeUndefined();
+    expect(diagnostics).toEqual([]);
+  });
+
+  it.each([
+    ["a value that is not a string", "workflows_path: [flows]\n", "must be a string"],
+    ["the empty string, which would resolve to the root itself", 'workflows_path: ""\n', "must not be empty"],
+  ])("refuses %s", async (_name, text, expected) => {
+    const root = await tempRoot();
+    await plant(userConfig(root), text);
+
+    const error = await storeError(project(root).config());
+
+    expect(error.code).toBe("config-invalid");
+    expect(error.path).toBe(userConfig(root));
+    expect(error.message).toContain(expected);
+  });
+
+  it("is no key of the project file, so a project cannot override it", async () => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "workflows_path: flows\n");
+
+    const { config, diagnostics } = await project(root).config();
+
+    expect(config.workflows_path).toBeUndefined();
+    expect(codes(diagnostics)).toEqual(["config-key-unknown"]);
+    expect(diagnostics[0]?.message).toContain("workflows_path");
   });
 });

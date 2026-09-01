@@ -3,12 +3,12 @@ import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseTask, type TaskComment, TaskStoreError, type Workflows } from "@tasma/engine";
-import { causeOf } from "../../src/store/errors.js";
+import { causeOf, pathOf } from "../../src/store/errors.js";
 import { frontmatterNumber } from "../../src/store/ids.js";
 import { projectPaths } from "../../src/store/paths.js";
 import { assertSnapshots, createTaskFile, timestamp } from "../../src/store/store.js";
 import type { StoreDiagnostic } from "../../src/store/types.js";
-import { reportWorkflowInto } from "../../src/store/workflow.js";
+import { openWorkflowsForRead, reportWorkflowInto } from "../../src/store/workflow.js";
 import {
   codes,
   plant,
@@ -154,7 +154,49 @@ describe("reportWorkflowInto", () => {
     const frontmatter = parsed().frontmatter;
     frontmatter.workflow = "dev";
 
-    await expect(reportWorkflowInto(raising(new Error("broken")), frontmatter, PATH, [])).rejects.toThrow("broken");
+    const workflows = raising(new Error("broken"));
+
+    await expect(reportWorkflowInto(() => Promise.resolve(workflows), frontmatter, PATH, [])).rejects.toThrow("broken");
+  });
+});
+
+describe("openWorkflowsForRead", () => {
+  const ROOT = "/tmp/tree";
+
+  it("stands on the directory the user's configuration names", async () => {
+    const diagnostics: StoreDiagnostic[] = [];
+
+    const workflows = await openWorkflowsForRead(ROOT, () => Promise.resolve("/srv/flows"), diagnostics);
+
+    expect(workflows.directory).toBe("/srv/flows");
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("stands on the built-in directory when the configuration names none", async () => {
+    const workflows = await openWorkflowsForRead(ROOT, () => Promise.resolve(undefined), []);
+
+    expect(workflows.directory).toBe(join(ROOT, "workflows"));
+  });
+
+  it.each([
+    ["a store fault of another code", new TaskStoreError("task-not-found", "no such task")],
+    ["a fault that names no code", new Error("broken")],
+  ])("leaves %s as it stands, rather than degrading the read", async (_name, error) => {
+    await expect(openWorkflowsForRead(ROOT, () => Promise.reject(error), [])).rejects.toThrow(error.message);
+  });
+});
+
+describe("pathOf", () => {
+  it("names the path a fault of the filesystem carries", () => {
+    expect(pathOf(Object.assign(new Error("broken"), { path: "/tmp/x" }))).toBe("/tmp/x");
+  });
+
+  it.each([
+    ["a fault that is no object", "broken"],
+    ["a fault that names none", new Error("broken")],
+    ["a fault whose path is no string", Object.assign(new Error("broken"), { path: 3 })],
+  ])("names no path for %s", (_name, error) => {
+    expect(pathOf(error)).toBeUndefined();
   });
 });
 

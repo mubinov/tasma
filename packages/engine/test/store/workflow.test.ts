@@ -1,8 +1,15 @@
 import { chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { plantWorkflow, stepsOnly, workflowDir, workflowFile } from "../workflow/helpers.js";
-import { codes, plant, project, projectConfig, storeError, taskFile, taskText, tempRoot } from "./helpers.js";
+import {
+  outsideWorkflows,
+  plantWorkflow,
+  plantWorkflowsPath,
+  stepsOnly,
+  workflowDir,
+  workflowFile,
+} from "../workflow/helpers.js";
+import { codes, plant, project, projectConfig, storeError, taskFile, taskText, tempRoot, userConfig } from "./helpers.js";
 
 /** A project declaring `dev`, whose workflow declares the named steps and no step files. */
 async function declaredTree(...steps: string[]): Promise<string> {
@@ -390,5 +397,102 @@ describe("the workflow of one operation", () => {
     const { diagnostics } = await project(root).updateTask("TASM-1", { workflow: "dev", step: "research" });
 
     expect(codes(diagnostics)).toEqual(["workflow-key-unknown"]);
+  });
+});
+
+describe("an operation of the store against a configured workflows directory", () => {
+  /** A tree whose workflows stand outside the root, as `workflows_path` names it. */
+  async function configuredTree(): Promise<{ root: string; path: string }> {
+    const root = await tempRoot();
+    const path = outsideWorkflows(root);
+    await plantWorkflowsPath(root, path);
+    return { root, path };
+  }
+
+  it("is where a write resolves the workflow the project declares", async () => {
+    const { root, path } = await configuredTree();
+    await plant(projectConfig(root), "workflows: [dev]\n");
+    await plantWorkflow(root, "dev", stepsOnly("research"), path);
+
+    const { diagnostics } = await project(root).createTask({ title: "First", workflow: "dev", step: "research" });
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("is where a read resolves it, so a workflow under the default is reported as missing", async () => {
+    const { root, path } = await configuredTree();
+    await plantWorkflow(root, "dev", stepsOnly("research"));
+    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+
+    const { diagnostics } = await project(root).readTask("TASM-1");
+
+    expect(codes(diagnostics)).toEqual(["workflow-missing"]);
+    expect(diagnostics[0]?.path).toBe(join(path, "dev"));
+  });
+
+  it("leaves a read silent when the workflow stands under it", async () => {
+    const { root, path } = await configuredTree();
+    await plantWorkflow(root, "dev", stepsOnly("research"), path);
+    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+
+    expect((await project(root).readTask("TASM-1")).diagnostics).toEqual([]);
+  });
+
+  it("is where a read resolves it although the project's own configuration is refused", async () => {
+    const { root, path } = await configuredTree();
+    await plant(projectConfig(root), "workflows: [\n");
+    await plantWorkflow(root, "dev", stepsOnly("research"), path);
+    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+
+    expect((await project(root).readTask("TASM-1")).diagnostics).toEqual([]);
+  });
+});
+
+describe("a read whose configuration cannot be resolved", () => {
+  it.each([
+    ["is not valid YAML", "was refused", async (path: string) => plant(path, "workflows_path: [\n")],
+    ["names a value of the wrong type", "was refused", async (path: string) => plant(path, "workflows_path: []\n")],
+    [
+      "the process cannot open",
+      "could not be read",
+      async (path: string) => {
+        await plant(path, "workflows_path: /nowhere\n");
+        // Restored so that the temp tree can be taken down.
+        await chmod(path, 0o000);
+        onTestFinished(() => chmod(path, 0o600));
+      },
+    ],
+  ])("falls back to the built-in directory and reports a user file that %s", async (_name, reason, stage) => {
+    const root = await tempRoot();
+    await plantWorkflow(root, "dev", stepsOnly("research"));
+    await stage(userConfig(root));
+    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+
+    const { task, diagnostics } = await project(root).readTask("TASM-1");
+
+    expect(task.frontmatter.step).toBe("research");
+    expect(codes(diagnostics)).toEqual(["config-unreadable"]);
+    expect(diagnostics[0]?.path).toBe(userConfig(root));
+    expect(diagnostics[0]?.message).toContain(`the user's configuration ${reason}, so the built-in`);
+  });
+
+  it("forwards none of the findings the resolution itself produced", async () => {
+    const root = await tempRoot();
+    await plantWorkflow(root, "dev", stepsOnly("research"));
+    await plant(userConfig(root), "statues: [New]\n");
+    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+
+    expect((await project(root).readTask("TASM-1")).diagnostics).toEqual([]);
+  });
+
+  it.each([
+    ["that names neither field", "", []],
+    ["that carries a step and no workflow", "step: research\n", ["step-stale"]],
+  ])("resolves no configuration at all for a task %s", async (_name, extra, expected) => {
+    const root = await tempRoot();
+    await plant(userConfig(root), "workflows_path: [\n");
+    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", extra));
+
+    expect(codes((await project(root).readTask("TASM-1")).diagnostics)).toEqual(expected);
   });
 });

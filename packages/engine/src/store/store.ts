@@ -12,9 +12,9 @@ import {
 } from "../format/index.js";
 import { COMMENT, FRONTMATTER } from "../format/schema.js";
 import { deepEqual } from "../format/values.js";
-import { type InstructionsResult, openWorkflows, type Workflows } from "../workflow/index.js";
+import type { InstructionsResult } from "../workflow/index.js";
 import { createExclusive, entryAt, makeDirectory, readRegularFile, removeFile, replaceFile } from "./atomic.js";
-import { resolveConfig } from "./config.js";
+import { resolveConfig, resolveWorkflowsPath } from "./config.js";
 import { errnoOf, fail } from "./errors.js";
 import { issueCommentId, issueTaskId, rebuildNextTaskId, writeState } from "./ids.js";
 import { type ProjectPaths, projectPaths, scanTasks, taskPath } from "./paths.js";
@@ -29,7 +29,14 @@ import type {
   WriteResult,
 } from "./types.js";
 import { validateLabels, validateMember } from "./validate.js";
-import { readStepInstructions, reportWorkflowInto, validateWorkflowInto, type WriteContext } from "./workflow.js";
+import {
+  openConfiguredWorkflows,
+  openWorkflowsForRead,
+  readStepInstructions,
+  reportWorkflowInto,
+  validateWorkflowInto,
+  type WriteContext,
+} from "./workflow.js";
 
 /**
  * The frontmatter fields the store writes itself. A change that states one is
@@ -270,15 +277,9 @@ type Opened = { path: string; task: Task; diagnostics: StoreDiagnostic[] };
 
 class ProjectStore implements Project {
   readonly paths: ProjectPaths;
-  /**
-   * The workflows of the tree, which are shared by every project in it. The
-   * handle touches no disk, and it reads nothing until a call needs a workflow.
-   */
-  readonly #workflows: Workflows;
 
   constructor(paths: ProjectPaths) {
     this.paths = paths;
-    this.#workflows = openWorkflows({ root: paths.root });
   }
 
   /** Creates `tasks/` before the first write, and re-checks what the name holds. */
@@ -321,7 +322,9 @@ class ProjectStore implements Project {
   async readTask(id: string): Promise<ReadResult> {
     await openProjectDirectory(this.paths);
     const { path, task, diagnostics } = await this.#open(id);
-    await reportWorkflowInto(this.#workflows, task.frontmatter, path, diagnostics);
+    const resolve = () => resolveWorkflowsPath(this.paths);
+    const openHandle = () => openWorkflowsForRead(this.paths.root, resolve, diagnostics);
+    await reportWorkflowInto(openHandle, task.frontmatter, path, diagnostics);
     return { task, diagnostics };
   }
 
@@ -329,7 +332,8 @@ class ProjectStore implements Project {
     await openProjectDirectory(this.paths);
     const diagnostics: StoreDiagnostic[] = [];
     const config = await resolveConfig(this.paths, diagnostics);
-    const documents = await readStepInstructions(this.#workflows, config, workflow, step, diagnostics);
+    const workflows = openConfiguredWorkflows(this.paths.root, config);
+    const documents = await readStepInstructions(workflows, config, workflow, step, diagnostics);
     return { documents, diagnostics };
   }
 
@@ -365,7 +369,7 @@ class ProjectStore implements Project {
     // Nothing is stored yet, so a `step` with no `workflow` in the same call
     // finds no effective workflow and is refused. A migration writes both.
     const written = await validateFieldsInto({
-      workflows: this.#workflows,
+      workflows: openConfiguredWorkflows(this.paths.root, config),
       config,
       frontmatter,
       keys,
@@ -398,7 +402,7 @@ class ProjectStore implements Project {
     const frontmatter: Record<string, unknown> = { ...opened.task.frontmatter, ...fields };
     checkRequired(frontmatter, TASK_REQUIRED, "a task", path);
     const written = await validateFieldsInto({
-      workflows: this.#workflows,
+      workflows: openConfiguredWorkflows(this.paths.root, config),
       config,
       frontmatter,
       keys: new Set(Object.keys(fields)),

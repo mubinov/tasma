@@ -65,3 +65,14 @@ export function errnoOf(error: unknown): string | undefined {
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" ? code : undefined;
 }
+
+/**
+ * The file or directory a fault concerns, or `undefined` for one that names
+ * none. A `TaskStoreError` and a fault of the filesystem both carry it under
+ * `path`, so a report that forwards either reads it through this.
+ */
+export function pathOf(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const path = (error as { path?: unknown }).path;
+  return typeof path === "string" ? path : undefined;
+}

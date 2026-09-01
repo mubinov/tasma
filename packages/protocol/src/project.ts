@@ -8,6 +8,12 @@ export type Config = {
   workflows: string[];
   /** The documents that apply to every task of this project, as resolved absolute paths. */
   instructions: string[];
+  /**
+   * The workflows directory the user named, as a resolved absolute path, and
+   * absent when no file named one. It is user-level alone: the workflows tree is
+   * one shared thing per machine.
+   */
+  workflows_path?: string;
 };
 
 export type Project = {

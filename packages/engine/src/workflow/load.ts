@@ -26,7 +26,7 @@ const WORKFLOW_FILE = "workflow.yml";
  * The form of a workflow name. It is narrower than the form of a step name: the
  * name becomes a directory name, so this is a safety rule. It carries no dot and
  * no path separator, and cannot be `.` or `..`, which is what keeps a workflow
- * inside `workflows/` — without it a task carrying
+ * inside the workflows directory — without it a task carrying
  * `workflow: ../../../Documents` would make a read parse a file outside the
  * tree.
  */
@@ -64,9 +64,24 @@ function workflowNameFault(name: string): string | undefined {
   return holds ? undefined : WORKFLOW_NAME_EXPECTATION;
 }
 
-/** The directory the workflows of one tree stand in, beside `projects/`. */
-function workflowsPath(root: string | undefined): string {
-  return join(expandRoot(root), "workflows");
+/**
+ * The directory the workflows of one tree stand in: the one configuration named,
+ * else the built-in place beside `projects/`.
+ */
+function workflowsPath(root: string | undefined, path: string | undefined): string {
+  return path ?? join(expandRoot(root), "workflows");
+}
+
+/**
+ * Why the workflows directory cannot be used, from the fault reading it raised.
+ * One code carries all three, the way `workflow-missing` carries the two reasons
+ * a directory holds no workflow: what a caller does next is the same.
+ */
+function unusableReason(error: unknown): string {
+  const code = errnoOf(error);
+  if (code === "ENOENT") return "there is no directory under this name";
+  if (code === "ENOTDIR") return "this name holds no directory";
+  return `this workflows directory cannot be read: ${causeOf(error)}`;
 }
 
 /**
@@ -271,9 +286,17 @@ export async function readInstructions(
 
 class WorkflowStore implements Workflows {
   readonly directory: string;
+  /**
+   * Whether configuration named the directory or it is the built-in default.
+   * `list()` alone acts on it, so it stays private: a tree that is not there is
+   * an empty list where the engine chose the place and a finding where the user
+   * did.
+   */
+  readonly #configured: boolean;
 
-  constructor(directory: string) {
+  constructor(directory: string, configured: boolean) {
     this.directory = directory;
+    this.#configured = configured;
   }
 
   pathsOf(name: string): WorkflowPaths {
@@ -293,10 +316,14 @@ class WorkflowStore implements Workflows {
     try {
       entries = await readdir(this.directory, { withFileTypes: true });
     } catch (error) {
-      // A missing `workflows/` directory is a tree that holds no workflow, the
-      // way a missing `tasks/` directory is a project that holds no task.
-      if (errnoOf(error) === "ENOENT") return { names, diagnostics };
-      throw error;
+      // The one silent case is the built-in default that does not exist: a tree
+      // the engine placed and nobody created holds no workflow, the way a
+      // missing `tasks/` directory is a project that holds no task. A directory
+      // the user named is reported when it is not there, because the user wrote
+      // the name and a listing that answers nothing says why.
+      if (errnoOf(error) === "ENOENT" && !this.#configured) return { names, diagnostics };
+      diagnostics.push({ code: "workflows-path-unusable", message: unusableReason(error), path: this.directory });
+      return { names, diagnostics };
     }
     for (const entry of entries) {
       const path = join(this.directory, entry.name);
@@ -340,9 +367,13 @@ class WorkflowStore implements Workflows {
  * the root and returns a handle, the same shape as `openProject`, so a test —
  * and later a daemon — runs against another tree with no environment override.
  *
+ * `path` is the directory `workflows_path` resolved to, absent when no
+ * configuration file named one. It is the resolved absolute path: this layer
+ * holds no configuration file, so it expands nothing.
+ *
  * Nothing is cached between calls. A workflow is read when a call needs it, and
  * a hand edit would leave a cached list stale with nothing to invalidate it.
  */
-export function openWorkflows(options: { root?: string }): Workflows {
-  return new WorkflowStore(workflowsPath(options.root));
+export function openWorkflows(options: { root?: string; path?: string }): Workflows {
+  return new WorkflowStore(workflowsPath(options.root, options.path), options.path !== undefined);
 }
