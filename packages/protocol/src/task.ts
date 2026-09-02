@@ -19,6 +19,7 @@ export type Frontmatter = {
   order?: number;
   labels?: string[];
   parent?: string;
+  blocked_by?: string[];
   custom?: Record<string, unknown>;
 };
 
@@ -84,6 +85,7 @@ export type WriteResult = {
   commentId?: number;
   /** Present when the write set the field: the value as it was stored. */
   labels?: string[];
+  blocked_by?: string[];
   status?: string;
   priority?: string;
 };

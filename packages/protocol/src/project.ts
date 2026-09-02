@@ -3,6 +3,12 @@
 export type Config = {
   statuses: string[];
   default_status: string;
+  /**
+   * The statuses that end a task, always present: the last of `statuses` when no
+   * configuration file states the key. It is what decides whether a blocker
+   * still blocks.
+   */
+  final_statuses: string[];
   priorities: string[];
   /** The workflows a task of this project may name. Empty when the project declares none. */
   workflows: string[];

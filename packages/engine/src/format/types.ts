@@ -32,6 +32,7 @@ export type Frontmatter = {
   order?: number;
   labels?: string[];
   parent?: string;
+  blocked_by?: string[];
   custom?: Record<string, unknown>;
 };
 

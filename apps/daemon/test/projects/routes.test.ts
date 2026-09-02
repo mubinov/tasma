@@ -9,6 +9,7 @@ import type { TestServer } from "../helpers.js";
 const BUILT_IN_CONFIG = {
   statuses: ["Backlog", "To Do", "In Progress", "Done"],
   default_status: "Backlog",
+  final_statuses: ["Done"],
   priorities: ["high", "medium", "low"],
   workflows: [],
   instructions: [],
@@ -69,7 +70,12 @@ describe("GET /projects/{project}", () => {
         tag: "TASM",
         name: "Tasma",
         path: "/srv/tasma",
-        config: { ...BUILT_IN_CONFIG, statuses: ["New", "Doing"], default_status: "New" },
+        config: {
+          ...BUILT_IN_CONFIG,
+          statuses: ["New", "Doing"],
+          default_status: "New",
+          final_statuses: ["Doing"],
+        },
         live: true,
       },
       diagnostics: [],

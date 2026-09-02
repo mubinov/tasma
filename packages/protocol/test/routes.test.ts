@@ -79,6 +79,16 @@ describe("buildPath", () => {
     expect(buildPath(routes.listTasks, { project: "TASM" }, filter)).toBe("/projects/TASM/tasks?label=dev&label=ui");
   });
 
+  it.each([true, false])("writes the boolean filter value %s out in full", (blocked) => {
+    const filter: TaskFilter = { blocked };
+    expect(buildPath(routes.listTasks, { project: "TASM" }, filter)).toBe(`/projects/TASM/tasks?blocked=${blocked}`);
+  });
+
+  it("omits the boolean filter the caller left absent", () => {
+    const filter: TaskFilter = { blocked: undefined, status: "To Do" };
+    expect(buildPath(routes.listTasks, { project: "TASM" }, filter)).toBe("/projects/TASM/tasks?status=To%20Do");
+  });
+
   it("omits an absent key", () => {
     const filter: TaskFilter = { status: undefined, parent: "TASM-1" };
     expect(buildPath(routes.listTasks, { project: "TASM" }, filter)).toBe("/projects/TASM/tasks?parent=TASM-1");

@@ -19,6 +19,7 @@ describe("resolution", () => {
     expect(config).toEqual({
       statuses: BUILT_IN_STATUSES,
       default_status: "Backlog",
+      final_statuses: ["Done"],
       priorities: ["high", "medium", "low"],
       workflows: [],
       instructions: [],
@@ -46,6 +47,7 @@ describe("resolution", () => {
     expect(config).toEqual({
       statuses: ["New", "Doing"],
       default_status: "New",
+      final_statuses: ["Doing"],
       priorities: ["urgent", "later"],
       workflows: [],
       instructions: [],
@@ -247,6 +249,100 @@ describe("a configuration file a symbolic link points at", () => {
     expect(config.statuses).toEqual(["New", "Doing"]);
     expect(config.default_status).toBe("Doing");
     expect(diagnostics).toEqual([]);
+  });
+});
+
+describe("final_statuses", () => {
+  it("is the last of the resolved statuses when no file declares it", async () => {
+    const root = await tempRoot();
+
+    expect((await project(root).config()).config.final_statuses).toEqual(["Done"]);
+  });
+
+  it("is the last of the statuses the project declares", async () => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "statuses: [Icebox, Doing, Shipped]\n");
+
+    expect((await project(root).config()).config.final_statuses).toEqual(["Shipped"]);
+  });
+
+  it("is read from the user file", async () => {
+    const root = await tempRoot();
+    await plant(userConfig(root), "final_statuses: [Done, Backlog]\n");
+
+    expect((await project(root).config()).config.final_statuses).toEqual(["Done", "Backlog"]);
+  });
+
+  it("takes the project value over the user value", async () => {
+    const root = await tempRoot();
+    await plant(userConfig(root), "final_statuses: [Backlog]\n");
+    await plant(projectConfig(root), "final_statuses: [Done]\n");
+
+    expect((await project(root).config()).config.final_statuses).toEqual(["Done"]);
+  });
+
+  it("reads the key written with no value as absent", async () => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "final_statuses:\n");
+
+    expect((await project(root).config()).config.final_statuses).toEqual(["Done"]);
+  });
+
+  it.each([
+    ["a value that is not a list", "final_statuses: Done\n"],
+    ["a list holding a value that is not a string", "final_statuses: [Done, 2]\n"],
+    ["the empty list, which would leave every blocker blocking forever", "final_statuses: []\n"],
+  ])("throws on %s", async (_name, text) => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), text);
+
+    const error = await storeError(project(root).config());
+
+    expect(error.code).toBe("config-invalid");
+    expect(error.path).toBe(projectConfig(root));
+  });
+
+  it("throws on an entry the resolved statuses do not carry, naming it", async () => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "final_statuses: [Shipped]\n");
+
+    const error = await storeError(project(root).config());
+
+    expect(error.code).toBe("config-invalid");
+    expect(error.message).toContain("Shipped");
+  });
+
+  it("checks the entries against the resolved list, not against the file they stand in", async () => {
+    const root = await tempRoot();
+    await plant(userConfig(root), "statuses: [Backlog, Done]\nfinal_statuses: [Done]\n");
+    await plant(projectConfig(root), "statuses: [New, Doing]\n");
+
+    const error = await storeError(project(root).config());
+
+    expect(error.code).toBe("config-invalid");
+    expect(error.message).toContain(userConfig(root));
+    expect(error.message).toContain(projectConfig(root));
+  });
+
+  it("names the built-in defaults when the status list has no file behind it", async () => {
+    const root = await tempRoot();
+    await plant(userConfig(root), "final_statuses: [Shipped]\n");
+
+    expect((await storeError(project(root).config())).message).toContain("built-in");
+  });
+
+  it("compares a status exactly, the way default_status does", async () => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "final_statuses: [done]\n");
+
+    expect((await storeError(project(root).config())).code).toBe("config-invalid");
+  });
+
+  it("is a key of the project file too, so it is read at both levels", async () => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "final_statuses: [Done]\n");
+
+    expect(codes((await project(root).config()).diagnostics)).toEqual([]);
   });
 });
 

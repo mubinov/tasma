@@ -92,6 +92,8 @@ const STORE_STATUS = {
   "status-unknown": 400,
   "priority-unknown": 400,
   "label-invalid": 400,
+  "blocked-by-invalid": 400,
+  "blocked-by-unknown": 400,
   "workflow-unknown": 400,
   "step-unknown": 400,
   "field-not-writable": 400,

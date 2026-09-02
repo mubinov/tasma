@@ -106,6 +106,8 @@ describe("the status of a refusal", () => {
     "status-unknown",
     "priority-unknown",
     "label-invalid",
+    "blocked-by-invalid",
+    "blocked-by-unknown",
     "workflow-unknown",
     "step-unknown",
     "field-not-writable",

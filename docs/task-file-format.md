@@ -42,6 +42,7 @@ priority: high
 order: 4200
 labels: [import]
 parent: PROJ-30
+blocked_by: [PROJ-41]
 created: "2024-05-06T09:15:00+02:00"
 updated: "2024-05-08T16:30:00+02:00"
 next_comment_id: 3
@@ -101,7 +102,13 @@ mapping.
 | `order` | integer | The manual sort position inside one status. |
 | `labels` | list of strings | Free dimensions, for example `backend`. |
 | `parent` | string | The id of a containing task. |
+| `blocked_by` | list of strings | The ids of the tasks that block this one. |
 | `custom` | mapping | Data owned by other components. |
+
+Each entry of `blocked_by` is the id of a task of the same project. The format
+fixes no meaning beyond that: it states no rule about what a blocked task may
+do, and a reader accepts any list of strings, including an id that names no task
+and the file's own id.
 
 The values of `status`, `priority` and `labels` are not fixed by this format.
 Each project declares its own. The *form* of a label is fixed, and only for a
@@ -470,5 +477,6 @@ unambiguous but the bookkeeping disagrees with it.
 |---|
 | An unknown key, in the frontmatter or in a marker. A writer preserves it. |
 | A `status`, `priority` or `label` value the project does not declare. These values are checked when a file is written, not when it is read. |
+| A `blocked_by` entry that names no task. Ids are not resolved when a file is read. |
 | A label whose form is not the one *Values a writer rejects* states, such as `Customer Request`. A reader loads it, and a writer that changes another key writes it back unchanged. |
 | The same `order` value on two tasks. `order` is only meaningful inside one status. |

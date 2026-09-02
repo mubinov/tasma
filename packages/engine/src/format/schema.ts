@@ -255,6 +255,10 @@ export const FRONTMATTER: Record<keyof Frontmatter, FieldSpec> = {
   order: { check: INTEGER, required: false },
   labels: { check: STRING_LIST, required: false, writeCheck: LABEL_FORM },
   parent: { check: STRING, required: false },
+  // The reader accepts any list of strings, including an id that names no task
+  // and the file's own id. Which ids a write may state is a store rule: this
+  // layer has no filesystem to resolve one against.
+  blocked_by: { check: STRING_LIST, required: false },
   created: { check: TIMESTAMP, required: true, quoted: true },
   updated: { check: TIMESTAMP, required: true, quoted: true },
   next_comment_id: { check: INTEGER, required: true },

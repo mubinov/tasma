@@ -117,7 +117,10 @@ describe("regeneration", () => {
 
     // The library spaces a flow collection its own way when it writes the region again.
     expect(out).toBe(
-      text.replace("status: In Progress", "status: Done").replace("labels: [import]", "labels: [ import ]"),
+      text
+        .replace("status: In Progress", "status: Done")
+        .replace("labels: [import]", "labels: [ import ]")
+        .replace("blocked_by: [PROJ-41]", "blocked_by: [ PROJ-41 ]"),
     );
   });
 

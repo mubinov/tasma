@@ -28,7 +28,7 @@ import type {
   TaskChange,
   WriteResult,
 } from "./types.js";
-import { validateLabels, validateMember } from "./validate.js";
+import { validateBlockedBy, validateLabels, validateMember } from "./validate.js";
 import {
   openConfiguredWorkflows,
   openWorkflowsForRead,
@@ -70,7 +70,7 @@ function movesUpdated(key: string): boolean {
 }
 
 /** The fields a write states, as they were stored after validation. */
-type Written = Pick<WriteResult, "status" | "priority" | "labels">;
+type Written = Pick<WriteResult, "status" | "priority" | "labels" | "blocked_by">;
 
 function pad(value: number): string {
   return String(value).padStart(2, "0");
@@ -126,16 +126,17 @@ function forward(diagnostics: Diagnostic[], path: string): StoreDiagnostic[] {
 }
 
 /**
- * Validates `status`, `priority` and `labels` wherever the write states one, and
- * writes the value each resolves to back into `frontmatter`. Only the key set of
- * the change is validated, so a task holding a status configuration has since
- * dropped can still have its title edited.
+ * Validates `status`, `priority`, `labels` and `blocked_by` wherever the write
+ * states one, and writes the value each resolves to back into `frontmatter`.
+ * Only the key set of the change is validated, so a task holding a status
+ * configuration has since dropped, or a blocker the project has since deleted,
+ * can still have its title edited.
  *
- * It is asynchronous because resolving a workflow reads a file, while the checks
- * of the loop are pure.
+ * It is asynchronous because resolving a workflow reads a file and resolving a
+ * blocker stats one, while the other checks of the loop are pure.
  */
 async function validateFieldsInto(check: WriteContext): Promise<Written> {
-  const { config, frontmatter, keys, path, diagnostics } = check;
+  const { config, frontmatter, keys, path, paths, diagnostics } = check;
   const written: Written = {};
   for (const key of keys) {
     const value = frontmatter[key];
@@ -150,6 +151,9 @@ async function validateFieldsInto(check: WriteContext): Promise<Written> {
     } else if (key === "labels") {
       written.labels = validateLabels(value, path, diagnostics);
       frontmatter.labels = written.labels;
+    } else if (key === "blocked_by") {
+      written.blocked_by = await validateBlockedBy(value, paths, frontmatter.id, path, diagnostics);
+      frontmatter.blocked_by = written.blocked_by;
     }
   }
   await validateWorkflowInto(check);
@@ -374,6 +378,7 @@ class ProjectStore implements Project {
       frontmatter,
       keys,
       path: this.paths.tasks,
+      paths: this.paths,
       diagnostics,
     });
 
@@ -407,6 +412,7 @@ class ProjectStore implements Project {
       frontmatter,
       keys: new Set(Object.keys(fields)),
       path,
+      paths: this.paths,
       diagnostics,
     });
     // A key present with the value `undefined` clears the field, and a body

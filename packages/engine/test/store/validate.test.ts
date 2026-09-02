@@ -1,3 +1,4 @@
+import { symlink } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { type Project, SNAPSHOT } from "@tasma/engine";
 import { codes, plant, project, projectConfig, read, storeError, taskFile, taskText, tempRoot } from "./helpers.js";
@@ -198,6 +199,128 @@ describe("status and priority", () => {
     const { handle } = await declaring("statuses: [Triage, Doing]\n");
 
     expect((await storeError(handle.createTask({ title: "First", status: "Done" }))).code).toBe("status-unknown");
+  });
+});
+
+describe("blocked_by", () => {
+  /** A project holding `TASM-1` and `TASM-2`, and the handle that wrote both. */
+  async function twoTasks(root: string): Promise<Project> {
+    const handle = project(root);
+    await handle.createTask({ title: "First" });
+    await handle.createTask({ title: "Second" });
+    return handle;
+  }
+
+  it("stores the ids of tasks the project holds", async () => {
+    const root = await tempRoot();
+    const handle = await twoTasks(root);
+
+    const result = await handle.updateTask("TASM-1", { blocked_by: ["TASM-2"] });
+
+    expect(result.blocked_by).toEqual(["TASM-2"]);
+    expect(result.diagnostics).toEqual([]);
+    expect((await handle.readTask("TASM-1")).task.frontmatter.blocked_by).toEqual(["TASM-2"]);
+  });
+
+  it("rejects a value that is not a list of strings", async () => {
+    const root = await tempRoot();
+    const handle = await twoTasks(root);
+
+    const error = await storeError(handle.updateTask("TASM-1", { blocked_by: "TASM-2" }));
+
+    expect(error.code).toBe("blocked-by-invalid");
+    expect(error.message).toContain("list of strings");
+  });
+
+  it("rejects the task's own id, which no task can be blocked by", async () => {
+    const root = await tempRoot();
+    const handle = await twoTasks(root);
+
+    const error = await storeError(handle.updateTask("TASM-1", { blocked_by: ["TASM-1"] }));
+
+    expect(error.code).toBe("blocked-by-invalid");
+    expect(error.message).toContain("a task cannot block itself");
+  });
+
+  it.each(["", "TASM", "1", "tasm-2", "CLIB-2", "../../etc/passwd", "TASM-1.5"])(
+    "rejects the id %s, which is no task id of this project",
+    async (id) => {
+      const root = await tempRoot();
+      const handle = await twoTasks(root);
+
+      const error = await storeError(handle.updateTask("TASM-1", { blocked_by: [id] }));
+
+      expect(error.code).toBe("blocked-by-unknown");
+      expect(error.message).toContain(id);
+    },
+  );
+
+  it("rejects a well-formed id the project holds no file for", async () => {
+    const root = await tempRoot();
+    const handle = await twoTasks(root);
+
+    const error = await storeError(handle.updateTask("TASM-1", { blocked_by: ["TASM-9"] }));
+
+    expect(error.code).toBe("blocked-by-unknown");
+    expect(error.message).toContain("names no task of project TASM");
+  });
+
+  it("rejects a symbolic link standing at a blocker's name, which is no task file", async () => {
+    const root = await tempRoot();
+    const handle = await twoTasks(root);
+    await symlink(taskFile(root, "TASM-2"), taskFile(root, "TASM-9"));
+
+    expect((await storeError(handle.updateTask("TASM-1", { blocked_by: ["TASM-9"] }))).code).toBe("blocked-by-unknown");
+  });
+
+  it("stores an id stated twice once, in its first position, and reports the drop", async () => {
+    const root = await tempRoot();
+    const handle = await twoTasks(root);
+    await handle.createTask({ title: "Third" });
+
+    const result = await handle.updateTask("TASM-1", { blocked_by: ["TASM-3", "TASM-2", "TASM-3"] });
+
+    expect(result.blocked_by).toEqual(["TASM-3", "TASM-2"]);
+    expect(codes(result.diagnostics)).toEqual(["blocked-by-duplicate-dropped"]);
+  });
+
+  it("stores the ids a create states", async () => {
+    const root = await tempRoot();
+    const handle = await twoTasks(root);
+
+    const result = await handle.createTask({ title: "Third", blocked_by: ["TASM-1"] });
+
+    expect(result.blocked_by).toEqual(["TASM-1"]);
+    expect((await handle.readTask(result.id)).task.frontmatter.blocked_by).toEqual(["TASM-1"]);
+  });
+
+  it("refuses a create that names the id it is about to receive, which no task holds yet", async () => {
+    const root = await tempRoot();
+    const handle = await twoTasks(root);
+
+    expect((await storeError(handle.createTask({ title: "Third", blocked_by: ["TASM-3"] }))).code).toBe(
+      "blocked-by-unknown",
+    );
+  });
+
+  it("clears the field when the change names it with no value", async () => {
+    const root = await tempRoot();
+    const handle = await twoTasks(root);
+    await handle.updateTask("TASM-1", { blocked_by: ["TASM-2"] });
+
+    const result = await handle.updateTask("TASM-1", { blocked_by: undefined });
+
+    expect(result.blocked_by).toBeUndefined();
+    expect((await handle.readTask("TASM-1")).task.frontmatter.blocked_by).toBeUndefined();
+  });
+
+  it("edits the title of a task whose file holds a blocker the project no longer has", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "blocked_by: [TASM-9]\n"));
+
+    await project(root).updateTask("TASM-1", { title: "Renamed" });
+
+    expect((await project(root).readTask("TASM-1")).task.frontmatter.blocked_by).toEqual(["TASM-9"]);
   });
 });
 

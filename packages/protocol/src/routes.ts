@@ -36,6 +36,13 @@ export const routes = {
  * exactly. An absent key is not a filter, and an empty `label` array is the same
  * as an absent one.
  *
+ * `blocked` is written as exactly `true` or `false`, and any other spelling is
+ * refused with `malformed-request`. `true` returns the blocked entries alone and
+ * `false` the unblocked alone; a task is blocked while any id of its
+ * `blocked_by` names a task whose status is not one of the project's
+ * `final_statuses`, or is one the project's listing holds no task for, which
+ * covers an id naming nothing and a file the index could not read alike.
+ *
  * A type alias rather than an interface: only an alias carries an implicit index
  * signature, which `buildPath`'s `query` parameter requires.
  */
@@ -45,6 +52,7 @@ export type TaskFilter = {
   label?: string[];
   parent?: string;
   step?: string;
+  blocked?: boolean;
 };
 
 const PLACEHOLDER = /\{(\w+)\}/g;
@@ -79,7 +87,7 @@ export const UNSAFE_IN_SEGMENT = /[/\\\0]/;
 export function buildPath(
   route: Route,
   params: Record<string, string | number>,
-  query?: Record<string, string | string[] | undefined>,
+  query?: Record<string, string | string[] | boolean | undefined>,
 ): string {
   const path = route.template.replace(PLACEHOLDER, (_match, name: string) => {
     const value = Object.hasOwn(params, name) ? params[name] : undefined;
@@ -98,7 +106,7 @@ export function buildPath(
 
   const pairs = Object.entries(query ?? {}).flatMap(([key, value]) => {
     if (value === undefined) return [];
-    const values = typeof value === "string" ? [value] : value;
+    const values = Array.isArray(value) ? value : [String(value)];
     return values.map((entry) => `${encodeURIComponent(key)}=${encodeURIComponent(entry)}`);
   });
 

@@ -24,6 +24,7 @@ describe("parseTask", () => {
       order: 4200,
       labels: ["import"],
       parent: "PROJ-30",
+      blocked_by: ["PROJ-41"],
       created: "2024-05-06T09:15:00+02:00",
       updated: "2024-05-08T16:30:00+02:00",
       next_comment_id: 3,
@@ -40,7 +41,7 @@ describe("parseTask", () => {
         created: "2024-05-07T10:05:00+02:00",
         author: "alex",
         body: "\nBody of comment 1: free markdown. It runs to the next marker.\n\n",
-        lines: { start: 25, end: 28 },
+        lines: { start: 26, end: 29 },
       },
       {
         id: 2,
@@ -51,7 +52,7 @@ describe("parseTask", () => {
         collapsed: true,
         custom: { workflow: { attempt: 1, outcome: "retry" } },
         body: "\nBody of comment 2. The last comment runs to the end of the file.\n",
-        lines: { start: 29, end: 40 },
+        lines: { start: 30, end: 41 },
       },
     ]);
   });
@@ -79,6 +80,14 @@ describe("parseTask", () => {
     expect(task.frontmatter.labels).toEqual(["design", "research"]);
     expect(task.comments).toEqual([]);
     expect(task.body.endsWith("the end of the file.\n")).toBe(true);
+  });
+
+  it("reads a blocked_by naming a task the project does not hold, without a diagnostic", () => {
+    const text = fixture("valid/minimal.md").replace("next_comment_id: 1", "blocked_by: [PROJ-99]\nnext_comment_id: 1");
+    const { task, diagnostics } = parseTask(text);
+
+    expect(task.frontmatter.blocked_by).toEqual(["PROJ-99"]);
+    expect(diagnostics).toEqual([]);
   });
 
   it("keeps unknown keys out of the typed fields", () => {
@@ -155,6 +164,14 @@ describe("parseTask", () => {
 
       expect(error.code).toBe("frontmatter-key-type");
       expect(error.line).toBe(7);
+    });
+
+    it("rejects a blocked_by that is not a list of strings", () => {
+      const text = fixture("valid/minimal.md").replace("next_comment_id: 1", "blocked_by: PROJ-2\nnext_comment_id: 1");
+      const error = parseError(text);
+
+      expect(error.code).toBe("frontmatter-key-type");
+      expect(error.message).toContain('"blocked_by" must be a list of strings');
     });
 
     it("rejects an optional marker key of the wrong type", () => {

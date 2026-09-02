@@ -2,6 +2,7 @@ import type { Frontmatter } from "../format/index.js";
 import { type InstructionDocument, openWorkflows, type Workflow, type Workflows } from "../workflow/index.js";
 import { declaresStep, noSuchStep, readInstructions, readStepDocument, stepEntry } from "../workflow/load.js";
 import { causeOf, errnoOf, fail, pathOf, TaskStoreError } from "./errors.js";
+import type { ProjectPaths } from "./paths.js";
 import type { ResolvedConfig, StoreDiagnostic } from "./types.js";
 
 /**
@@ -75,7 +76,13 @@ export type WriteContext = {
   frontmatter: Record<string, unknown>;
   /** The keys the change states, which is a narrower set than the frontmatter holds. */
   keys: Set<string>;
+  /**
+   * What a fault of this write names: the file the write lands in, or the tasks
+   * directory on a create, which is issued no file name until it is written.
+   */
   path: string;
+  /** Every path of the project that file belongs to, for a check that resolves another task's name. */
+  paths: ProjectPaths;
   diagnostics: StoreDiagnostic[];
 };
 

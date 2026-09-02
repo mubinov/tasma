@@ -1,5 +1,7 @@
 import { labelFault } from "../format/schema.js";
+import { entryAt } from "./atomic.js";
 import { fail } from "./errors.js";
+import { type ProjectPaths, taskEntryOf } from "./paths.js";
 import type { StoreDiagnostic } from "./types.js";
 
 /**
@@ -34,6 +36,59 @@ export function validateLabels(value: unknown, path: string, diagnostics: StoreD
       continue;
     }
     stored.push(label);
+  }
+  return stored;
+}
+
+/**
+ * The blockers as they are stored: the ids of tasks of this project, each one
+ * naming a file that stands. Deduplication keeps the first position, the rule
+ * `validateLabels` follows.
+ *
+ * It is the one validator of this file that touches the filesystem, because an
+ * id is refused on the ground that the project holds no task under it. The form
+ * of an id is checked before any path is built, which is what keeps a value such
+ * as `../../etc/passwd` from reaching one. The stat is an `lstat`, so a symbolic
+ * link standing at a task's name is no task — the rule the store applies to
+ * every name it wrote itself.
+ *
+ * `ownId` is absent on a create, which has no id until the file is written. Such
+ * a call naming the id it is about to receive is refused by the existence check
+ * instead, because no task stands under it yet.
+ */
+export async function validateBlockedBy(
+  value: unknown,
+  paths: ProjectPaths,
+  ownId: unknown,
+  path: string,
+  diagnostics: StoreDiagnostic[],
+): Promise<string[]> {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    fail("blocked-by-invalid", "blocked_by must hold a list of strings", path);
+  }
+  const stored: string[] = [];
+  for (const id of value) {
+    if (id === ownId) fail("blocked-by-invalid", `"${id}" is this task, and a task cannot block itself`, path);
+    if (stored.includes(id)) {
+      diagnostics.push({
+        code: "blocked-by-duplicate-dropped",
+        message: `the blocker "${id}" was stated more than once and is stored once`,
+        path,
+      });
+      continue;
+    }
+    stored.push(id);
+  }
+  const entries = stored.map((id) => {
+    const entry = taskEntryOf(paths, `${id}.md`);
+    if (entry === undefined) fail("blocked-by-unknown", `"${id}" is not a task id of project ${paths.project}`, path);
+    return entry;
+  });
+  // A task names a handful of blockers, not thousands, so the stats run at once.
+  const stats = await Promise.all(entries.map(async (entry) => ({ entry, stat: await entryAt(entry.path) })));
+  for (const { entry, stat } of stats) {
+    if (stat?.isFile() === true) continue;
+    fail("blocked-by-unknown", `"${entry.id}" names no task of project ${paths.project}`, path);
   }
   return stored;
 }

@@ -12,6 +12,7 @@ export type DiagnosticCode
     | "next-task-id-advanced"
     | "label-case-converted"
     | "label-duplicate-dropped"
+    | "blocked-by-duplicate-dropped"
     | "status-case-corrected"
     | "priority-case-corrected"
     | "config-key-unknown"
@@ -26,6 +27,7 @@ export type DiagnosticCode
     | "task-file-foreign"
     | "task-file-unexpected"
     | "temp-file-left"
+    | "blocked-by-unresolved"
     | "task-file-misnamed"
     | "tasks-directory-lost"
     | "index-watch-failed";

@@ -13,7 +13,7 @@ import type { ProjectDeclaration, ResolvedConfig, StoreDiagnostic } from "./type
 const BUILT_IN_STATUSES = ["Backlog", "To Do", "In Progress", "Done"];
 const BUILT_IN_PRIORITIES = ["high", "medium", "low"];
 
-const ENGINE_KEYS = ["statuses", "default_status", "priorities"];
+const ENGINE_KEYS = ["statuses", "default_status", "priorities", "final_statuses"];
 
 /**
  * The keys each level recognizes, whether or not this layer reads them; a later
@@ -111,6 +111,53 @@ function nonEmptyStringList(key: string, sourced: Sourced): string[] {
 }
 
 /**
+ * The check both keys that name a status run: the value is one of the resolved
+ * statuses, else the key is refused, naming the file that declared them.
+ *
+ * The check runs on the resolved pair rather than on one file, because the two
+ * halves can come from different levels and a per-file check would accept a pair
+ * that leaves every create writing an undeclared status. The comparison is exact
+ * rather than case-insensitive: these are the strings the user declared, so a
+ * near miss is a typing error rather than a spelling the engine may correct.
+ *
+ * Both parameters that name a file are read for a message alone: `from` is the
+ * file that stated the checked value, `declaredStatuses` is read for the name of
+ * the file behind `statuses` and for nothing else.
+ */
+function checkDeclaredStatus(
+  key: string,
+  value: string,
+  statuses: string[],
+  declaredStatuses: Sourced | undefined,
+  from: string,
+): void {
+  if (statuses.includes(value)) return;
+  const source = declaredStatuses === undefined ? BUILT_IN : declaredStatuses.from;
+  fail("config-invalid", `${key} "${value}" is not one of the statuses declared in ${source}`, from);
+}
+
+/**
+ * The statuses that end a task, from the first level that states them, and the
+ * last of the resolved statuses when no level does. Nothing downstream needs to
+ * know which of the two it got, so the default is applied here rather than left
+ * to a caller.
+ *
+ * The empty list is refused rather than read as a statement about the key: it
+ * would mean no status ever ends a task, so every open blocker would block
+ * forever — the reasoning that already refuses an empty `statuses`.
+ */
+function resolveFinalStatuses(levels: Level[], statuses: string[], declaredStatuses: Sourced | undefined): string[] {
+  const stated = pick("final_statuses", levels);
+  // The resolved list holds at least one entry, so its last one is a status.
+  if (stated === undefined) return [statuses.at(-1)!];
+  const final = nonEmptyStringList("final_statuses", stated);
+  for (const entry of final) {
+    checkDeclaredStatus("final_statuses", entry, statuses, declaredStatuses, stated.from);
+  }
+  return final;
+}
+
+/**
  * A list of strings a project declares, empty when it declares none. An empty
  * list means what an absent key means: a project that runs no workflow and
  * carries no instruction document is an ordinary project.
@@ -177,6 +224,7 @@ export async function resolveConfig(paths: ProjectPaths, diagnostics: StoreDiagn
   const declaredPriorities = pick("priorities", levels);
   const priorities
     = declaredPriorities === undefined ? BUILT_IN_PRIORITIES : nonEmptyStringList("priorities", declaredPriorities);
+  const finalStatuses = resolveFinalStatuses(levels, statuses, declaredStatuses);
 
   const workflows = declaredList("workflows", levels);
   const instructions = declaredPaths("instructions", levels);
@@ -193,6 +241,7 @@ export async function resolveConfig(paths: ProjectPaths, diagnostics: StoreDiagn
     return {
       statuses,
       default_status: statuses[0]!,
+      final_statuses: finalStatuses,
       priorities,
       workflows,
       instructions,
@@ -202,20 +251,11 @@ export async function resolveConfig(paths: ProjectPaths, diagnostics: StoreDiagn
     };
   }
   if (typeof stated.value !== "string") fail("config-invalid", '"default_status" must be a string', stated.from);
-  // The check runs on the resolved pair rather than on one file: the two halves
-  // can come from different levels, and a per-file check would accept a pair
-  // that leaves every create writing an undeclared status.
-  if (!statuses.includes(stated.value)) {
-    const source = declaredStatuses === undefined ? BUILT_IN : declaredStatuses.from;
-    fail(
-      "config-invalid",
-      `default_status "${stated.value}" is not one of the statuses declared in ${source}`,
-      stated.from,
-    );
-  }
+  checkDeclaredStatus("default_status", stated.value, statuses, declaredStatuses, stated.from);
   return {
     statuses,
     default_status: stated.value,
+    final_statuses: finalStatuses,
     priorities,
     workflows,
     instructions,

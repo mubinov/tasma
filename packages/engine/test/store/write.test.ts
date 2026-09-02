@@ -61,6 +61,16 @@ describe("createTask", () => {
     expect(task.body).toBe("\n# Goal\n\nText.\n");
   });
 
+  it("writes blocked_by directly under parent, which is where the format emits it", async () => {
+    const root = await tempRoot();
+    const handle = project(root);
+    await handle.createTask({ title: "First" });
+
+    await handle.createTask({ title: "Second", parent: "TASM-1", blocked_by: ["TASM-1"] });
+
+    expect(await read(taskFile(root, "TASM-2"))).toContain("parent: TASM-1\nblocked_by:\n  - TASM-1\n");
+  });
+
   it("writes data of another component under custom", async () => {
     const root = await tempRoot();
 

@@ -19,6 +19,7 @@ export type StoreDiagnosticCode
     | "next-task-id-advanced"
     | "label-case-converted"
     | "label-duplicate-dropped"
+    | "blocked-by-duplicate-dropped"
     | "status-case-corrected"
     | "priority-case-corrected"
     | "config-key-unknown"
@@ -34,6 +35,7 @@ export type StoreDiagnosticCode
     | "task-file-unexpected"
     | "temp-file-left"
     // What the index raises and no store call does.
+    | "blocked-by-unresolved"
     | "task-file-misnamed"
     | IndexLivenessLost;
 
@@ -91,6 +93,7 @@ export type WriteResult = {
   commentId?: number;
   /** Present when the write set the field: the value as it was stored. */
   labels?: string[];
+  blocked_by?: string[];
   status?: string;
   priority?: string;
   diagnostics: StoreDiagnostic[];
@@ -104,6 +107,12 @@ export type ReadResult = {
 export type ResolvedConfig = {
   statuses: string[];
   default_status: string;
+  /**
+   * The statuses that end a task, always present: the last of `statuses` when no
+   * configuration file states the key. It is what decides whether a blocker
+   * still blocks.
+   */
+  final_statuses: string[];
   priorities: string[];
   /** The workflows a task of this project may name. Empty when the project declares none. */
   workflows: string[];

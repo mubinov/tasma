@@ -19,6 +19,8 @@ export type StoreErrorCode
     | "status-unknown"
     | "priority-unknown"
     | "label-invalid"
+    | "blocked-by-invalid"
+    | "blocked-by-unknown"
     | "workflow-invalid"
     | "workflow-unknown"
     | "step-unknown"

@@ -8,6 +8,7 @@ priority: high
 order: 4200
 labels: [import]
 parent: PROJ-30
+blocked_by: [PROJ-41]
 created: "2024-05-06T09:15:00+02:00"
 updated: "2024-05-08T16:30:00+02:00"
 next_comment_id: 3
