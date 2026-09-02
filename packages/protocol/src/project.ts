@@ -16,8 +16,22 @@ export type Config = {
   workflows_path?: string;
 };
 
-export type Project = {
+/** One project of a listing: what identifies it, and what it calls itself. */
+export type ProjectSummary = {
   /** The project tag, which is also the name of its directory and its path segment on every route. */
   tag: string;
+  /** The project's display name. Absent when it declares none, or when its configuration cannot be read. */
+  name?: string;
+  /** The project's repository, as a resolved absolute path. Absent under the same two conditions as the name. */
+  path?: string;
+};
+
+export type Project = ProjectSummary & {
   config: Config;
+  /**
+   * False when the index stopped following the disk, so what a listing of this
+   * project answers may be older than the files under it. A read of the project
+   * repairs the index, so the field states whether the repair worked.
+   */
+  live: boolean;
 };

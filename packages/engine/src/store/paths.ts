@@ -11,7 +11,7 @@ import type { ProjectOptions, StoreDiagnostic } from "./types.js";
  * forbidding the dash keeps a task id unambiguous to split. The registry states
  * the narrower rule a project is created under.
  */
-const TAG_PATTERN = /^[A-Z0-9]+$/;
+export const TAG_PATTERN = /^[A-Z0-9]+$/;
 
 /** A leftover temp file of an interrupted write: `.<name>.<random>.tmp`. */
 const TEMP_PATTERN = /^\..+\.tmp$/;
@@ -42,6 +42,22 @@ export function expandRoot(root?: string): string {
 }
 
 /**
+ * The directory every project of a tree stands under, from a root already
+ * expanded. The one segment the layout is built on is written here alone.
+ */
+function projectsIn(root: string): string {
+  return join(root, "projects");
+}
+
+/**
+ * The same, for a caller that has no project tag and so no expanded root of its
+ * own. It is how such a caller reads the tree.
+ */
+export function projectsDir(root?: string): string {
+  return projectsIn(expandRoot(root));
+}
+
+/**
  * One path a file the user places states, against the directory holding that
  * file. An absolute path and a `~/` path each stand for themselves, which is
  * what lets an instruction document live in a repository outside the root.
@@ -57,7 +73,7 @@ export function projectPaths(options: ProjectOptions): ProjectPaths {
     fail("project-invalid", `the project tag "${project}" must be uppercase ASCII letters or digits`);
   }
   const root = expandRoot(options.root);
-  const directory = join(root, "projects", project);
+  const directory = join(projectsIn(root), project);
   return {
     project,
     root,

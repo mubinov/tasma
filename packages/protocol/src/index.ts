@@ -12,7 +12,7 @@ export type {
   Success,
 } from "./errors.js";
 export type { Health } from "./health.js";
-export type { Config, Project } from "./project.js";
+export type { Config, Project, ProjectSummary } from "./project.js";
 export { buildPath, routes, UNSAFE_IN_SEGMENT } from "./routes.js";
 export type { Method, Route, TaskFilter } from "./routes.js";
 export type {

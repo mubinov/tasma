@@ -22,6 +22,16 @@ export async function tempRoot(project: string = PROJECT): Promise<string> {
   return root;
 }
 
+/**
+ * The same, holding one project directory per tag, for a caller that reads the
+ * whole tree rather than one project of it.
+ */
+export async function projectsRoot(...tags: string[]): Promise<string> {
+  const root = await bareRoot();
+  for (const tag of tags) await mkdir(projectDir(root, tag), { recursive: true });
+  return root;
+}
+
 export function projectDir(root: string, project: string = PROJECT): string {
   return join(root, "projects", project);
 }

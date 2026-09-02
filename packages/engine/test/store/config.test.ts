@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { inspect, promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { bareRoot, codes, plant, project, projectConfig, storeError, tempRoot, userConfig } from "./helpers.js";
+import { bareRoot, codes, plant, project, projectConfig, projectDir, storeError, tempRoot, userConfig } from "./helpers.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -311,5 +311,68 @@ describe("workflows_path", () => {
     expect(config.workflows_path).toBeUndefined();
     expect(codes(diagnostics)).toEqual(["config-key-unknown"]);
     expect(diagnostics[0]?.message).toContain("workflows_path");
+  });
+});
+
+describe("name and path", () => {
+  it("reads both from the project file", async () => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "name: Tasma\npath: /srv/tasma\n");
+
+    const { config, diagnostics } = await project(root).config();
+
+    expect(config.name).toBe("Tasma");
+    expect(config.path).toBe("/srv/tasma");
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("leaves both absent when the project declares neither", async () => {
+    const root = await tempRoot();
+
+    const { config } = await project(root).config();
+
+    expect(config.name).toBeUndefined();
+    expect(config.path).toBeUndefined();
+  });
+
+  it("resolves a relative path against the directory holding the project file", async () => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "path: repository\n");
+
+    expect((await project(root).config()).config.path).toBe(join(projectDir(root), "repository"));
+  });
+
+  it("expands a path that starts with a tilde", async () => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "path: ~/Projects/tasma\n");
+
+    expect((await project(root).config()).config.path).toBe(join(homedir(), "Projects", "tasma"));
+  });
+
+  it.each([
+    ["a name that is not a string", "name: [Tasma]\n", "must be a string"],
+    ["a path that is not a string", "path: 3\n", "must be a string"],
+    ["the empty path, which would resolve to the project directory", 'path: ""\n', "must not be empty"],
+    ["the empty name, which would reach a reader as a blank label", 'name: ""\n', "must not be empty"],
+  ])("refuses %s", async (_name, text, expected) => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), text);
+
+    const error = await storeError(project(root).config());
+
+    expect(error.code).toBe("config-invalid");
+    expect(error.path).toBe(projectConfig(root));
+    expect(error.message).toContain(expected);
+  });
+
+  it("reads neither key from the user file, where they describe no one project", async () => {
+    const root = await tempRoot();
+    await plant(userConfig(root), "name: Tasma\npath: /srv/tasma\n");
+
+    const { config, diagnostics } = await project(root).config();
+
+    expect(config.name).toBeUndefined();
+    expect(config.path).toBeUndefined();
+    expect(codes(diagnostics)).toEqual(["config-key-unknown", "config-key-unknown"]);
   });
 });

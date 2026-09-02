@@ -4,7 +4,7 @@ import { isPlainMapping, isStringList } from "../format/values.js";
 import { readRegularFile } from "./atomic.js";
 import { fail } from "./errors.js";
 import { type ProjectPaths, resolveAgainst } from "./paths.js";
-import type { ResolvedConfig, StoreDiagnostic } from "./types.js";
+import type { ProjectDeclaration, ResolvedConfig, StoreDiagnostic } from "./types.js";
 
 /**
  * The lists the engine uses when no file declares them. A default is a per-key
@@ -134,17 +134,29 @@ function declaredPaths(key: string, levels: Level[]): string[] {
 }
 
 /**
- * One path a file states, resolved the same way. The empty string is refused
- * rather than resolved: it would answer with the directory holding the file
- * itself, which names a tree the user never wrote.
+ * The check `declaredString` and `declaredPath` below share: a string, and never
+ * the empty one. An empty value is type-correct and states nothing — an empty path
+ * would resolve to the directory holding the file itself, and an empty name
+ * would reach a reader as a blank label where an absent key reads as the tag.
  */
-function declaredPath(key: string, levels: Level[]): string | undefined {
-  const sourced = pick(key, levels);
-  if (sourced === undefined) return undefined;
+function stringValue(key: string, sourced: Sourced): string {
   const value = sourced.value;
   if (typeof value !== "string") fail("config-invalid", `"${key}" must be a string`, sourced.from);
   if (value === "") fail("config-invalid", `"${key}" must not be empty`, sourced.from);
-  return resolveAgainst(dirname(sourced.from), value);
+  return value;
+}
+
+/** One string a file states, absent when no level states it. */
+function declaredString(key: string, levels: Level[]): string | undefined {
+  const sourced = pick(key, levels);
+  return sourced === undefined ? undefined : stringValue(key, sourced);
+}
+
+/** One path a file states, resolved against the directory holding that file. */
+function declaredPath(key: string, levels: Level[]): string | undefined {
+  const sourced = pick(key, levels);
+  if (sourced === undefined) return undefined;
+  return resolveAgainst(dirname(sourced.from), stringValue(key, sourced));
 }
 
 /**
@@ -168,6 +180,8 @@ export async function resolveConfig(paths: ProjectPaths, diagnostics: StoreDiagn
 
   const workflows = declaredList("workflows", levels);
   const instructions = declaredPaths("instructions", levels);
+  const name = declaredString("name", levels);
+  const path = declaredPath("path", levels);
   // Left absent when no file named one, rather than defaulted here: whether the
   // directory was configured decides what the loader reports about it, and a
   // default applied at this layer would throw that away.
@@ -182,6 +196,8 @@ export async function resolveConfig(paths: ProjectPaths, diagnostics: StoreDiagn
       priorities,
       workflows,
       instructions,
+      name,
+      path,
       workflows_path: workflowsPath,
     };
   }
@@ -203,8 +219,27 @@ export async function resolveConfig(paths: ProjectPaths, diagnostics: StoreDiagn
     priorities,
     workflows,
     instructions,
+    name,
+    path,
     workflows_path: workflowsPath,
   };
+}
+
+/**
+ * What one project's own file states about the project itself, read on its own.
+ * `name` and `path` are project-level alone, so a caller that needs nothing else
+ * of the configuration asks the one file that can state them: the shared user
+ * file contributes neither value, while reading it would refuse every project of
+ * a tree over one malformed shared file and would cost a read of it per project.
+ *
+ * The findings of the read are discarded, the rule `resolveWorkflowsPath`
+ * follows. The one caller lists a whole tree, and a finding about one project's
+ * configuration belongs on that project's own resource, where it names one file
+ * rather than arriving in a list of many.
+ */
+export async function resolveProjectDeclaration(paths: ProjectPaths): Promise<ProjectDeclaration> {
+  const levels = [await readLevel(paths.projectConfig, PROJECT_KEYS, [])];
+  return { name: declaredString("name", levels), path: declaredPath("path", levels) };
 }
 
 /**

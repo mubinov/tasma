@@ -35,8 +35,29 @@ export type StoreDiagnosticCode
     | "temp-file-left"
     // What the index raises and no store call does.
     | "task-file-misnamed"
-    | "tasks-directory-lost"
-    | "index-watch-failed";
+    | IndexLivenessLost;
+
+/**
+ * The findings that say an index stopped following the disk, named as their own
+ * union so that a caller reporting liveness matches this instead of restating
+ * which codes mean it.
+ */
+export type IndexLivenessLost = "tasks-directory-lost" | "index-watch-failed";
+
+const LIVENESS_LOST = {
+  "tasks-directory-lost": true,
+  "index-watch-failed": true,
+} satisfies Record<IndexLivenessLost, true>;
+
+/**
+ * True for a finding that says the index stopped following the disk. The record
+ * behind it is exhaustive over `IndexLivenessLost`, so a code that later joins
+ * that union fails the typecheck here until it states what it means for
+ * liveness.
+ */
+export function endsLiveness(code: StoreDiagnosticCode): boolean {
+  return Object.hasOwn(LIVENESS_LOST, code);
+}
 
 export type StoreDiagnostic = {
   code: StoreDiagnosticCode;
@@ -88,6 +109,10 @@ export type ResolvedConfig = {
   workflows: string[];
   /** The documents that apply to every task of this project, as resolved absolute paths. */
   instructions: string[];
+  /** The project's display name. Absent when the project declares none. */
+  name?: string;
+  /** The project's repository, as a resolved absolute path. Absent when the project declares none. */
+  path?: string;
   /**
    * The workflows directory the user named, as a resolved absolute path, and
    * absent when no file named one. It is user-level alone: the workflows tree is
@@ -95,6 +120,13 @@ export type ResolvedConfig = {
    */
   workflows_path?: string;
 };
+
+/**
+ * What a project states about itself beyond its tag. Both keys are
+ * project-level alone, so a caller that needs no more than these reads the one
+ * file that can state them rather than resolving the whole configuration.
+ */
+export type ProjectDeclaration = Pick<ResolvedConfig, "name" | "path">;
 
 export type ConfigResult = {
   config: ResolvedConfig;

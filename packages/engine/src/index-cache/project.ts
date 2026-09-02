@@ -54,6 +54,11 @@ class IndexedProjectStore implements IndexedProject {
     return this.#cache.query();
   }
 
+  followsDisk(): boolean {
+    this.#live();
+    return this.#cache.followsDisk();
+  }
+
   async rescan(): Promise<void> {
     this.#live();
     await this.#reconcile(true);

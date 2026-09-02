@@ -67,7 +67,7 @@ describe("the wire contract", () => {
     expectTypeOf<TaskEntry>().toEqualTypeOf<IndexEntry>();
     expectTypeOf<ExcludedFile>().toEqualTypeOf<EngineExcludedFile>();
     expectTypeOf<TaskList>().toEqualTypeOf<QueryResult>();
-    expectTypeOf<Config>().toEqualTypeOf<ResolvedConfig>();
+    expectTypeOf<Config>().toEqualTypeOf<Omit<ResolvedConfig, "name" | "path">>();
   });
 
   it("keeps the task and the write result in step, less what JSON cannot carry", () => {

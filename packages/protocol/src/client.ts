@@ -1,7 +1,7 @@
 import { ProtocolError, TransportError } from "./errors.js";
 import type { Envelope, Failure, Success } from "./errors.js";
 import type { Health } from "./health.js";
-import type { Project } from "./project.js";
+import type { Project, ProjectSummary } from "./project.js";
 import type { Method, Route, TaskFilter } from "./routes.js";
 import { buildPath, routes } from "./routes.js";
 import type { CommentInput, Task, TaskInput, TaskList, WriteResult } from "./task.js";
@@ -32,7 +32,7 @@ export type Transport = (request: TransportRequest) => Promise<TransportReply>;
 
 export type Client = {
   readHealth(): Promise<Success<Health>>;
-  listProjects(): Promise<Success<Project[]>>;
+  listProjects(): Promise<Success<ProjectSummary[]>>;
   readProject(tag: string): Promise<Success<Project>>;
   listTasks(tag: string, filter?: TaskFilter): Promise<Success<TaskList>>;
   createTask(tag: string, input: TaskInput): Promise<Success<WriteResult>>;
@@ -113,7 +113,7 @@ export function createClient(transport: Transport): Client {
 
   return {
     readHealth: () => call<Health>(routes.health, {}),
-    listProjects: () => call<Project[]>(routes.listProjects, {}),
+    listProjects: () => call<ProjectSummary[]>(routes.listProjects, {}),
     readProject: (tag) => call<Project>(routes.readProject, { project: tag }),
     listTasks: (tag, filter) => call<TaskList>(routes.listTasks, { project: tag }, { query: filter }),
     createTask: (tag, input) => call<WriteResult>(routes.createTask, { project: tag }, { body: input }),

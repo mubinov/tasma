@@ -79,6 +79,18 @@ export type QueryResult = {
  */
 export type IndexedProject = Project & {
   query(): QueryResult;
+  /**
+   * Whether the index still follows the disk, as the last read of it left the
+   * project: false while a loss the index reported stands.
+   *
+   * It is what a caller that drove a `rescan()` reads to learn how the rescan
+   * ended, because a loss reaches the listener once per state the index lands
+   * in: a rescan over a tasks directory that is still gone finds the state it
+   * already stood in and so reports nothing at all. The absent tasks directory
+   * of a project that never had one is no loss and never was reported as one, so
+   * such a project follows the disk like any other.
+   */
+  followsDisk(): boolean;
   rescan(): Promise<void>;
   close(): Promise<void>;
 };

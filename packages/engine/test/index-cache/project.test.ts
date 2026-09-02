@@ -1,7 +1,7 @@
 import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { type IndexedProject, openIndexedProject, TaskParseError, TaskStoreError } from "@tasma/engine";
+import { endsLiveness, type IndexedProject, openIndexedProject, TaskParseError, TaskStoreError } from "@tasma/engine";
 import { openIndexed } from "../../src/index-cache/project.js";
 import type { WatchHandlers } from "../../src/index-cache/watch.js";
 import {
@@ -304,6 +304,92 @@ describe("what the index does with what a watch reports", () => {
   });
 });
 
+describe("endsLiveness", () => {
+  it.each([["tasks-directory-lost"], ["index-watch-failed"]] as const)(
+    "reads %s as the index no longer following the disk",
+    (code) => {
+      expect(endsLiveness(code)).toBe(true);
+    },
+  );
+
+  it.each([["config-key-unknown"], ["task-file-misnamed"]] as const)(
+    "reads %s as a finding the index stays live under",
+    (code) => {
+      expect(endsLiveness(code)).toBe(false);
+    },
+  );
+});
+
+describe("whether the index follows the disk", () => {
+  it("follows it for a project holding a tasks directory", async () => {
+    const root = await tempRoot();
+    await mkdir(tasksDir(root), { recursive: true });
+
+    const indexed = await unwatched(project(root));
+
+    expect(indexed.followsDisk()).toBe(true);
+    await indexed.close();
+  });
+
+  it("follows it for a project that never had one, which is no loss but the state every project opens in", async () => {
+    const root = await tempRoot();
+    const seen = listener();
+
+    const indexed = await unwatched(project(root), { onDiagnostic: seen.on });
+
+    expect(indexed.followsDisk()).toBe(true);
+    expect(seen.codes()).toEqual([]);
+    await indexed.close();
+  });
+
+  it("goes on following it over a rescan of a project that never had one, which reports nothing either", async () => {
+    const root = await tempRoot();
+    const seen = listener();
+    const indexed = await unwatched(project(root), { onDiagnostic: seen.on });
+
+    await indexed.rescan();
+
+    // The state the index opens in is the state the rescan finds, and neither
+    // is a loss: a caller that repairs by rescanning reads no loss into it.
+    expect(seen.codes()).toEqual([]);
+    expect(indexed.followsDisk()).toBe(true);
+    await indexed.close();
+  });
+
+  it("stops following it after a rescan over a directory that is still gone, which reports nothing", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    const seen = listener();
+    const indexed = await unwatched(project(root), { onDiagnostic: seen.on });
+    expect(indexed.followsDisk()).toBe(true);
+    await rm(tasksDir(root), { recursive: true, force: true });
+
+    await indexed.rescan();
+    await indexed.rescan();
+
+    // The loss reaches the listener once, on the state it landed in; what the
+    // second rescan found is readable only as the state itself.
+    expect(seen.codes()).toEqual(["tasks-directory-lost"]);
+    expect(indexed.followsDisk()).toBe(false);
+    await indexed.close();
+  });
+
+  it("follows it again once the directory is back", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    const indexed = await unwatched(project(root));
+    await rm(tasksDir(root), { recursive: true, force: true });
+    await indexed.rescan();
+
+    await plant(taskFile(root, "TASM-2"), taskText("TASM-2"));
+    await indexed.rescan();
+
+    expect(indexed.followsDisk()).toBe(true);
+    expect(ids(indexed)).toEqual(["TASM-2"]);
+    await indexed.close();
+  });
+});
+
 describe("a closed index", () => {
   it("throws index-closed on every call that answers for the project", async () => {
     const root = await tempRoot();
@@ -311,6 +397,7 @@ describe("a closed index", () => {
     await indexed.close();
 
     expect(() => indexed.query()).toThrow(TaskStoreError);
+    expect(() => indexed.followsDisk()).toThrow(TaskStoreError);
     for (const call of [
       indexed.rescan(),
       indexed.readTask("TASM-1"),

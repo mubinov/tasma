@@ -79,6 +79,13 @@ export class TaskIndex {
    * is not a loss it reports.
    */
   #lostCause: Lost["cause"] | undefined = "tasks";
+  /**
+   * Whether a loss this index reported still stands. It is not `#lostCause`
+   * read as a boolean: that field starts on the absent tasks directory of a
+   * project that never had one, which the index reports nothing for, so the
+   * state it opens in would otherwise read as a loss to recover from.
+   */
+  #lostStanding = false;
   readonly #queue = new PathQueue();
   readonly #reads = new Gate(READ_LIMIT);
   readonly #open: OpenTaskFile;
@@ -102,6 +109,21 @@ export class TaskIndex {
     this.#onDiagnostic = onDiagnostic;
     this.#open = open;
     this.#readers = readers;
+  }
+
+  /**
+   * Whether the index still follows the disk: false while a loss it reported
+   * stands, true again from the read that finds the project whole.
+   *
+   * It is the state itself rather than a change of it, so a caller that drove a
+   * `rescan()` reads what the rescan found: a loss reaches the listener once per
+   * state, and a directory that was already gone reports nothing at all. The
+   * absent tasks directory of a project that never had one is no loss, so it
+   * reads as following the disk — that is the state every project stands in
+   * until its first write.
+   */
+  followsDisk(): boolean {
+    return !this.#lostStanding;
   }
 
   query(): QueryResult {
@@ -214,6 +236,7 @@ export class TaskIndex {
     const holding = await this.#holding();
     if ("identity" in holding) {
       this.#lostCause = undefined;
+      this.#lostStanding = false;
       return holding.identity;
     }
     this.#lose(holding.lost);
@@ -283,6 +306,7 @@ export class TaskIndex {
   #lose(lost: Lost): void {
     if (this.#lostCause === lost.cause) return;
     this.#lostCause = lost.cause;
+    this.#lostStanding = true;
     this.#entries.clear();
     this.#excluded.clear();
     this.#lastScanFindings = new Map();

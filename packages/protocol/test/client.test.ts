@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createClient, ProtocolError, TransportError } from "@tasma/protocol";
-import type { Client, Failure, Method, Transport, TransportReply, TransportRequest } from "@tasma/protocol";
+import type {
+  Client,
+  Failure,
+  Method,
+  ProjectSummary,
+  Transport,
+  TransportReply,
+  TransportRequest,
+} from "@tasma/protocol";
 
 function recorder(reply: TransportReply): { calls: TransportRequest[]; transport: Transport } {
   const calls: TransportRequest[] = [];
@@ -115,6 +123,13 @@ describe("the client", () => {
       data: { id: "TASM-3" },
       diagnostics,
     });
+  });
+
+  it("returns a project listing as the summaries it carries", async () => {
+    const data: ProjectSummary[] = [{ tag: "CLIB" }, { tag: "TASM", name: "Tasma", path: "/srv/tasma" }];
+    const transport: Transport = async () => ({ status: 200, body: { ok: true, data, diagnostics: [] } });
+
+    await expect(createClient(transport).listProjects()).resolves.toEqual({ data, diagnostics: [] });
   });
 
   it("throws the whole failure of a refusal", async () => {
