@@ -17,6 +17,7 @@
     "@fontsource/inter": "catalog:",
     "@fontsource/inter-tight": "catalog:",
     "@fontsource/jetbrains-mono": "catalog:",
+    "@phosphor-icons/react": "catalog:",
     "@tanstack/react-router": "catalog:",
     "@tanstack/react-virtual": "catalog:",
     "react": "catalog:",

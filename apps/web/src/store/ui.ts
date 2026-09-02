@@ -1,44 +1,52 @@
 import { create } from "zustand";
 
-/** Every theme preference, in the order the interface offers them. */
 export const THEME_PREFERENCES = ["system", "light", "dark"] as const;
 
-/** How the interface picks a theme: follow the system, or override it. */
 export type ThemePreference = (typeof THEME_PREFERENCES)[number];
 
-/** The label each preference carries. A new preference fails to typecheck until it has one. */
 export const THEME_PREFERENCE_LABELS: Record<ThemePreference, string> = {
   system: "System",
   light: "Light",
   dark: "Dark",
 };
 
-const STORAGE_KEY = "tasma.theme";
+const THEME_STORAGE_KEY = "tasma.theme";
+const SIDEBAR_STORAGE_KEY = "tasma.sidebar";
 
-/** Where a preference survives a restart. */
+const SIDEBAR_COLLAPSED = "collapsed";
+const SIDEBAR_EXPANDED = "expanded";
+
+function readSidebarState(stored: string | null): boolean | null {
+  if (stored === SIDEBAR_COLLAPSED) {
+    return true;
+  }
+  if (stored === SIDEBAR_EXPANDED) {
+    return false;
+  }
+  return null;
+}
+
 export type PreferenceStorage = {
-  read: () => ThemePreference;
-  write: (preference: ThemePreference) => void;
+  read: (key: string) => string | null;
+  write: (key: string, value: string) => void;
 };
 
 function isThemePreference(value: unknown): value is ThemePreference {
   return THEME_PREFERENCES.some((preference) => preference === value);
 }
 
-// A desktop shell may load the bundle from a file:// origin, where touching
-// localStorage throws rather than returning null.
+// On a file:// origin, touching localStorage throws rather than returning null.
 export const browserPreferenceStorage: PreferenceStorage = {
-  read() {
+  read(key) {
     try {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
-      return isThemePreference(stored) ? stored : "system";
+      return window.localStorage.getItem(key);
     } catch {
-      return "system";
+      return null;
     }
   },
-  write(preference) {
+  write(key, value) {
     try {
-      window.localStorage.setItem(STORAGE_KEY, preference);
+      window.localStorage.setItem(key, value);
     } catch {
       // A preference that cannot be persisted still applies for this session.
     }
@@ -47,7 +55,6 @@ export const browserPreferenceStorage: PreferenceStorage = {
 
 let storage: PreferenceStorage = browserPreferenceStorage;
 
-/** Replaces the backend every later read and write goes through. */
 export function setPreferenceStorage(next: PreferenceStorage): void {
   storage = next;
 }
@@ -55,30 +62,35 @@ export function setPreferenceStorage(next: PreferenceStorage): void {
 type UiState = {
   themePreference: ThemePreference;
   setThemePreference: (preference: ThemePreference) => void;
+  sidebarCollapsed: boolean;
+  setSidebarCollapsed: (collapsed: boolean) => void;
 };
 
-/**
- * The one piece of state that crosses distant components. Everything narrower
- * belongs in useState, and server data belongs in the query cache.
- *
- * It starts on the default and reads nothing: importing a module must not
- * touch storage, or the starting state cannot be changed by whoever mounts the
- * app. hydrateUiStore loads the persisted value instead.
- */
+// Starts on the defaults and reads nothing: importing a module must not touch
+// storage. hydrateUiStore loads the persisted values.
 export const useUiStore = create<UiState>((set) => ({
   themePreference: "system",
   setThemePreference: (preference) => {
-    storage.write(preference);
+    storage.write(THEME_STORAGE_KEY, preference);
     set({ themePreference: preference });
+  },
+  sidebarCollapsed: false,
+  setSidebarCollapsed: (collapsed) => {
+    storage.write(SIDEBAR_STORAGE_KEY, collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED);
+    set({ sidebarCollapsed: collapsed });
   },
 }));
 
-/**
- * Loads the persisted preference into the store and returns it. The entry
- * calls this before the first render, so nothing paints on the wrong palette.
- */
-export function hydrateUiStore(): ThemePreference {
-  const themePreference = storage.read();
-  useUiStore.setState({ themePreference });
-  return themePreference;
+export type HydratedUi = {
+  themePreference: ThemePreference;
+  sidebarCollapsed: boolean;
+};
+
+export function hydrateUiStore(): HydratedUi {
+  const stored = storage.read(THEME_STORAGE_KEY);
+  const themePreference = isThemePreference(stored) ? stored : "system";
+  const sidebarCollapsed = readSidebarState(storage.read(SIDEBAR_STORAGE_KEY)) ?? false;
+
+  useUiStore.setState({ themePreference, sidebarCollapsed });
+  return { themePreference, sidebarCollapsed };
 }

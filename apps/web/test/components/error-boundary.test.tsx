@@ -4,6 +4,7 @@ import { ErrorBoundary } from "../../src/components/error-boundary";
 
 afterEach(() => {
   cleanup();
+  document.title = "tasma";
   vi.restoreAllMocks();
 });
 
@@ -37,6 +38,28 @@ it("replaces a render error with a message inside a landmark, not a blank window
   expect(alert).toBeTruthy();
   expect(screen.getByText("the shell could not render")).toBeTruthy();
   expect(screen.getByRole("main").contains(alert)).toBe(true);
+});
+
+/*
+ * The screen that named the document is gone with the tree that threw, so
+ * without a title of its own the tab, the window list and a bookmark keep on
+ * saying which screen the user was reading.
+ */
+it("names the document after the failure rather than the screen that is gone", () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  document.title = "Tasks · tasma";
+
+  function Broken(): never {
+    throw new Error("the shell could not render");
+  }
+
+  render(
+    <ErrorBoundary>
+      <Broken />
+    </ErrorBoundary>,
+  );
+
+  expect(document.title).toBe("Stopped rendering · tasma");
 });
 
 // The tree holding the focused element is gone, so focus would fall to <body>,

@@ -1,4 +1,7 @@
+import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
+import { act, render } from "@testing-library/react";
 import { vi } from "vitest";
+import { createAppRouter } from "../src/routes";
 
 /**
  * Replaces matchMedia with one whose answer can be changed mid-test. jsdom's
@@ -34,4 +37,26 @@ export function stubSystemTheme(initial: "light" | "dark") {
       }
     },
   };
+}
+
+/**
+ * Mounts the real route tree at a path. The shell is the root route's component
+ * and the sidebar renders Link, so neither renders outside a router; a memory
+ * history keeps a test off the document's own address.
+ *
+ * The router comes from the application's own factory, so a test cannot run a
+ * differently configured router than the application does — the error and
+ * not-found components included.
+ */
+export async function renderWithRouter(initialPath = "/") {
+  // The router scrolls on mount, which jsdom does not implement.
+  vi.stubGlobal("scrollTo", () => {});
+
+  const router = createAppRouter(createMemoryHistory({ initialEntries: [initialPath] }));
+
+  await act(async () => {
+    render(<RouterProvider router={router} />);
+  });
+
+  return router;
 }

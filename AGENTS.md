@@ -1,12 +1,14 @@
 # apps/web
 
 - Use Base UI for interactive components.
+- Import icons from `src/lib/icons.ts`, never from `@phosphor-icons/react`.
 - No runtime CSS-in-JS.
 - Style from theme tokens. Never hardcode a colour.
 - No colour below `--color-dim`. Hierarchy comes from size, weight, position.
 - `--color-signal` means "needs a human". `--color-running` means "an agent is working now".
 - Tell control states apart by a mark that keeps 3:1, never by two surfaces alone.
 - The page's one `<h1>` opens the main content. Nothing before `<main>` is a heading.
+- Call `useDocumentTitle` in every screen.
 - A group of controls carries a visible label, never `aria-label` alone.
 - The theme class lives on `<html>`. Moving it breaks tokens inside portals.
 - Text sizes in `rem`. Smallest text is `0.6875rem`.
@@ -21,6 +23,8 @@
 - Filtering or searching a long list uses `useDeferredValue`.
 - Do not hand-write `useMemo` or `useCallback`. The compiler does it.
 - `VirtualList` is the one component the compiler skips. Leave its `useVirtualizer` call in the component.
-- A failure screen for a route goes through `ErrorPanel`, wired on the router, never a boundary of its own.
+- A failure screen for a route goes through `ErrorPanel`, wired on the router, never a boundary of its own. Use `ErrorScreen` where no shell renders around it.
+- Build a browser history only in `src/router.tsx`.
+- Mount a document-wide subscription above the router and outside the error boundary.
 - No Node APIs in renderer code.
 - The daemon address comes from config, never a literal. Its origin also goes in the meta CSP in `vite.config.ts`.

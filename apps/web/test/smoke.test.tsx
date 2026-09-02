@@ -1,16 +1,19 @@
 import { act, cleanup, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { stubSystemTheme } from "./helpers";
+
+// The stub is installed once and its handle kept, so a test that changes the
+// system appearance mid-run drives the same stub the entry subscribed to.
+let system: ReturnType<typeof stubSystemTheme>;
 
 beforeEach(() => {
   vi.resetModules();
   // The entry hydrates from storage, so a preference left by an earlier test
-  // would decide this one's starting theme.
+  // would decide this one's starting state.
   window.localStorage.clear();
   // The router scrolls on mount, which jsdom does not implement.
   vi.stubGlobal("scrollTo", () => {});
-  stubSystemTheme("dark");
+  system = stubSystemTheme("dark");
 });
 
 afterEach(() => {
@@ -27,9 +30,8 @@ it("mounts the shell into #root without throwing", async () => {
     await import("../src/main");
   });
 
-  expect(screen.getByRole("banner")).toBeTruthy();
-  expect(screen.getByRole("heading", { level: 1, name: "Workspace" })).toBeTruthy();
-  expect(screen.getByRole("radiogroup", { name: "Theme" })).toBeTruthy();
+  expect(screen.getByRole("navigation")).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1, name: "Dashboard" })).toBeTruthy();
   expect(document.documentElement.classList.contains("dark")).toBe(true);
 });
 
@@ -44,17 +46,44 @@ it("starts on the stored preference rather than the system appearance", async ()
   });
 
   expect(document.documentElement.classList.contains("light")).toBe(true);
-  expect(screen.getByRole("radio", { checked: true }).textContent).toBe("Light");
 });
 
-it("switches the theme through the wired entry path", async () => {
-  const user = userEvent.setup();
+/*
+ * The toggle's state is the only thing this may assert. The collapsed sidebar
+ * leaves no artifact on the document the way the theme does, and by the time a
+ * mount settles every effect has flushed, so a store hydrated before the first
+ * render and one hydrated from an effect paint the same DOM. That hydration
+ * happens synchronously is proved in test/store/ui.test.ts; nothing here may
+ * assert a width or a class.
+ */
+it("starts on the stored sidebar state", async () => {
+  window.localStorage.setItem("tasma.sidebar", "collapsed");
   document.body.innerHTML = '<div id="root"></div>';
 
   await act(async () => {
     await import("../src/main");
   });
-  await user.click(screen.getByRole("radio", { name: "Light" }));
+
+  expect(screen.getByRole("button", { name: "Expand sidebar" }).getAttribute("aria-expanded")).toBe("false");
+});
+
+/*
+ * The theme subscription sits above the router and outside the error boundary,
+ * because either one replaces the tree below it when a screen throws. Once the
+ * entry writes the first class the document stops following prefers-color-scheme
+ * on its own, so without a live subscription the palette freezes until reload.
+ */
+it("follows the system appearance for as long as it runs", async () => {
+  document.body.innerHTML = '<div id="root"></div>';
+
+  await act(async () => {
+    await import("../src/main");
+  });
+  expect(document.documentElement.classList.contains("dark")).toBe(true);
+
+  await act(async () => {
+    system.set("light");
+  });
 
   expect(document.documentElement.classList.contains("light")).toBe(true);
   expect(document.documentElement.classList.contains("dark")).toBe(false);

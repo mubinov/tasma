@@ -73,8 +73,9 @@
 
 /*
  * Tailwind's own `dark:` variant is a prefers-color-scheme media query, which
- * ignores the explicit override the theme control writes. Binding the variant
- * to the class keeps every dark: utility on the theme the app actually renders.
+ * ignores the explicit override a stored light or dark preference writes.
+ * Binding the variant to the class keeps every dark: utility on the theme the
+ * app actually renders.
  */
 @custom-variant dark (&:where(.dark, .dark *));
 
