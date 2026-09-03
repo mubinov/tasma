@@ -18,8 +18,10 @@
     "@fontsource/inter-tight": "catalog:",
     "@fontsource/jetbrains-mono": "catalog:",
     "@phosphor-icons/react": "catalog:",
+    "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
     "@tanstack/react-virtual": "catalog:",
+    "@tasma/protocol": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:",
     "zustand": "catalog:"

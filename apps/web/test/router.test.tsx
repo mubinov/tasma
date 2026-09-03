@@ -1,7 +1,18 @@
-import { RouterProvider } from "@tanstack/react-router";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+import { ProtocolError, TransportError } from "@tasma/protocol";
 import { act, cleanup, render, screen } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AppShell } from "../src/components/app-shell";
+import { ErrorScreen, RouteFailure } from "../src/components/error-boundary";
 import { router } from "../src/router";
+import { createAppRouter } from "../src/routes";
 import config from "../vite.config";
 
 /*
@@ -109,4 +120,172 @@ it("keeps a throw from a child screen inside the shell's one main landmark", asy
   expect(screen.getAllByRole("main")).toHaveLength(1);
   expect(screen.getByRole("main").contains(alert)).toBe(true);
   expect(screen.getByRole("navigation")).toBeTruthy();
+});
+
+/*
+ * Retry is the one recovery the panel offers, and the router is the only place
+ * it can be wired — so this is the only place it can be proved. A panel test
+ * driving a `vi.fn()` reset would pass against a Retry that recovers nothing.
+ */
+describe("recovering from a loader that failed", () => {
+  const NO_DAEMON = new TransportError("GET /health reached no daemon");
+
+  /** A promise a test resolves when it chooses, and the resolver. */
+  function held(): [Promise<unknown>, () => void] {
+    let answer = () => {};
+    const promise = new Promise<unknown>((resolve) => {
+      answer = () => {
+        resolve({});
+      };
+    });
+
+    return [promise, answer];
+  }
+
+  /**
+   * The shell and the failure surface the app uses, over loaders a test drives.
+   * The second route is the navigation the panel did not ask for.
+   */
+  function routerOver(loader: () => Promise<unknown>, elsewhere: () => Promise<unknown> = () => Promise.resolve({})) {
+    const rootRoute = createRootRoute({ component: AppShell, errorComponent: ErrorScreen });
+    const screenRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/",
+      loader,
+      component: () => <h1>Dashboard</h1>,
+    });
+    // A path the app's own tree carries: `navigate` is typed against the
+    // registered router, whatever tree the test builds under it.
+    const elsewhereRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/tasks",
+      loader: elsewhere,
+      component: () => <h1>Elsewhere</h1>,
+    });
+
+    return createRouter({
+      routeTree: rootRoute.addChildren([screenRoute, elsewhereRoute]),
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+      defaultErrorComponent: RouteFailure,
+    });
+  }
+
+  /** Fails the first load, presses Retry, and answers the repeat with `second`. */
+  async function pressRetryAfterAFailedLoad(second: () => Promise<unknown>) {
+    silenceFailureNoise();
+    const loader = vi.fn<() => Promise<unknown>>().mockRejectedValueOnce(NO_DAEMON).mockImplementation(second);
+
+    await act(async () => {
+      render(<RouterProvider router={routerOver(loader)} />);
+    });
+
+    await act(async () => {
+      await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    });
+
+    return loader;
+  }
+
+  // The route tree below is the test's own; this is what ties it to the app's.
+  it("hands every route the same failure surface the app's own router does", () => {
+    expect(createAppRouter(createMemoryHistory({ initialEntries: ["/"] })).options.defaultErrorComponent).toBe(
+      RouteFailure,
+    );
+  });
+
+  it("re-runs the loader and shows the screen it then serves", async () => {
+    const loader = await pressRetryAfterAFailedLoad(() => Promise.resolve({}));
+
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Dashboard");
+  });
+
+  // The button the reader activated leaves the DOM, so focus would otherwise
+  // fall back to <body> and the next tab start at the top of the document.
+  it("puts focus on the content region the screen replaced the panel in", async () => {
+    await pressRetryAfterAFailedLoad(() => Promise.resolve({}));
+
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+  });
+
+  /*
+   * The router reports a load for any pending navigation, the very one that
+   * commits this failure included — so a panel reading that instead of its own
+   * match is inserted as a wait and only then swaps to an alert, on a node
+   * already in the document, where the role change announces nothing.
+   */
+  it("alerts on the first failure rather than reporting a repeat nobody asked for", async () => {
+    silenceFailureNoise();
+
+    await act(async () => {
+      render(<RouterProvider router={routerOver(() => Promise.reject(NO_DAEMON))} />);
+    });
+
+    const alert = screen.getByRole("alert");
+    expect(alert.getAttribute("aria-busy")).toBe("false");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(alert.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "Retry" }));
+  });
+
+  // Somewhere else being slow says nothing about this failure, which is still
+  // just as final: reported as a repeat it relabels the control the reader is
+  // reaching for and reads a wait over words that are not waiting on anything.
+  it("stays an alert while a navigation it did not ask for is pending", async () => {
+    silenceFailureNoise();
+    const [journey, arrive] = held();
+    const router = routerOver(() => Promise.reject(NO_DAEMON), () => journey);
+
+    await act(async () => {
+      render(<RouterProvider router={router} />);
+    });
+
+    await act(async () => {
+      void router.navigate({ to: "/tasks" });
+    });
+
+    expect(screen.getByRole("alert").getAttribute("aria-busy")).toBe("false");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+
+    await act(async () => {
+      arrive();
+    });
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Elsewhere");
+  });
+
+  /*
+   * Invalidating rebuilds the errored match, so an identical panel is mounted
+   * for as long as the load runs. Left to what every other failure wants on
+   * mount, that takes the reader off the button they just pressed and reads the
+   * failure they are waiting out back to them as the answer.
+   */
+  it("holds the reader on the control while the repeat runs, and says it is running", async () => {
+    const [repeat, answer] = held();
+
+    const loader = await pressRetryAfterAFailedLoad(() => repeat);
+
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Retrying…" }));
+    expect(screen.getByRole("status").getAttribute("aria-busy")).toBe("true");
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    await act(async () => {
+      answer();
+    });
+
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Dashboard");
+  });
+
+  // A refusal offers no retry, so the button is removed while the panel stays.
+  it("keeps focus in the content region when the retry is refused instead", async () => {
+    await pressRetryAfterAFailedLoad(() =>
+      Promise.reject(new ProtocolError({ kind: "store", code: "config-invalid", message: "config.yml is not a mapping" }, 422)),
+    );
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("the daemon refused this request");
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.getByRole("main").contains(document.activeElement)).toBe(true);
+  });
 });

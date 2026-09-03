@@ -1,10 +1,18 @@
 // @vitest-environment node
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CONTENT_SECURITY_POLICY, stripLegacyFontSources } from "../vite.config";
+import { DAEMON_PATH_PREFIX } from "../src/api/paths";
+import config, {
+  CONTENT_SECURITY_POLICY,
+  isLoopbackAddress,
+  proxiesHost,
+  resolveDaemonUrl,
+  stripLegacyFontSources,
+} from "../vite.config";
 
 const root = join(import.meta.dirname, "..");
 
@@ -108,6 +116,13 @@ describe("the content security policy", () => {
     expect(directives.get("style-src-attr")).toEqual(["'unsafe-inline'"]);
   });
 
+  // Every daemon call goes through the proxy and is therefore same-origin. A
+  // change that reintroduces a cross-origin call has to widen this directive,
+  // and fails here rather than silently in a browser.
+  it("lets the app connect to its own origin and nowhere else", () => {
+    expect(directives.get("connect-src")).toEqual(["'self'"]);
+  });
+
   it("keeps every directive free of a wildcard", () => {
     expect([...directives.values()].flat().filter((value) => value === "*" || value.includes("*"))).toEqual([]);
   });
@@ -129,5 +144,131 @@ describe("stripLegacyFontSources", () => {
   it("leaves a src list that declares no legacy source", () => {
     const modern = 'src:url(./a.woff2)format("woff2")';
     expect(stripLegacyFontSources(modern)).toBe(modern);
+  });
+});
+
+/*
+ * The proxy is the whole daemon transport in dev and preview: the daemon sends
+ * no CORS headers, so without it the browser has no answer to read. None of it
+ * is reachable from a rendered test, and the build above proves nothing about
+ * it.
+ */
+describe("the daemon proxy", () => {
+  // Looked up by the shared constant, not by the literal "/daemon": the
+  // assertion is that the config and the renderer mount the same prefix.
+  const entry = config.server?.proxy?.[DAEMON_PATH_PREFIX];
+  const proxy = typeof entry === "object" ? entry : undefined;
+  const rewrite = proxy?.rewrite;
+
+  it("is mounted on the prefix the renderer builds every path against", () => {
+    expect(proxy).toBeDefined();
+    expect(proxy?.target).toBe(resolveDaemonUrl(process.env));
+  });
+
+  it("declares a rewrite for the path it forwards", () => {
+    expect(typeof rewrite).toBe("function");
+  });
+
+  it.each([
+    { asked: `${DAEMON_PATH_PREFIX}/health`, reaches: "/health" },
+    { asked: `${DAEMON_PATH_PREFIX}/projects/tasma/tasks?status=To%20Do`, reaches: "/projects/tasma/tasks?status=To%20Do" },
+    { asked: DAEMON_PATH_PREFIX, reaches: "/" },
+  ])("strips the prefix, so $asked reaches the daemon as $reaches", ({ asked, reaches }) => {
+    expect(rewrite?.(asked)).toBe(reaches);
+  });
+
+  it("addresses the daemon by the host it binds, not by the one the browser typed", () => {
+    expect(proxy?.changeOrigin).toBe(true);
+  });
+
+  /*
+   * Which is what blinds the daemon's own loopback guard, so under
+   * `vite dev --host` this is where a peer on the network is turned away — by
+   * both halves. A Host header is a claim `curl -H 'Host: localhost'` makes
+   * freely, and the connection it arrives on is the half that cannot be typed.
+   */
+  it.each([
+    { named: "192.168.1.24:8276", from: "127.0.0.1", forwarded: false },
+    { named: "localhost:8276", from: "192.168.1.9", forwarded: false },
+    { named: "127.0.0.1:8276", from: "192.168.1.9", forwarded: false },
+    { named: "localhost:8276", from: "127.0.0.1", forwarded: true },
+    { named: "localhost:8276", from: "::1", forwarded: true },
+  ])("forwards a request for $named from $from: $forwarded", ({ named, from, forwarded }) => {
+    const options = proxy!;
+    const request = { headers: { host: named }, socket: { remoteAddress: from } } as unknown as IncomingMessage;
+
+    expect(options.bypass?.(request, undefined, options)).toBe(forwarded ? undefined : false);
+  });
+
+  it("serves preview from the same entry it serves dev from", () => {
+    expect(config.preview?.proxy).toBe(config.server?.proxy);
+  });
+});
+
+/*
+ * A default read off the resolved config would fail on any machine or CI job
+ * exporting TASMA_DAEMON_URL — the very variable this feature tells people to
+ * set — so the function is called with an explicit environment instead.
+ */
+// The set is the daemon's own: a name it does not serve must not be carried to
+// it, and a host it would serve must not be turned away here.
+describe("proxiesHost", () => {
+  it.each([
+    { host: "localhost:8276", carried: true },
+    { host: "127.0.0.1:8276", carried: true },
+    { host: "[::1]:8276", carried: true },
+    { host: "192.168.1.24:8276", carried: false },
+    { host: "tasma.local:8276", carried: false },
+    { host: undefined, carried: false },
+    { host: "a host with spaces", carried: false },
+  ])("carries $host: $carried", ({ host, carried }) => {
+    expect(proxiesHost(host)).toBe(carried);
+  });
+});
+
+// A form this rule does not recognise is refused, so a shape nobody anticipated
+// closes the proxy rather than opening it.
+describe("isLoopbackAddress", () => {
+  it.each([
+    { address: "127.0.0.1", loopback: true },
+    { address: "127.0.0.53", loopback: true },
+    { address: "::1", loopback: true },
+    // What Node reports for an IPv4 peer on a dual-stack socket.
+    { address: "::ffff:127.0.0.1", loopback: true },
+    { address: "::FFFF:127.0.0.1", loopback: true },
+    { address: "192.168.1.9", loopback: false },
+    { address: "::ffff:192.168.1.9", loopback: false },
+    { address: "10.0.0.1", loopback: false },
+    { address: "1.127.0.0.1", loopback: false },
+    { address: "", loopback: false },
+    { address: undefined, loopback: false },
+  ])("reads $address as loopback: $loopback", ({ address, loopback }) => {
+    expect(isLoopbackAddress(address)).toBe(loopback);
+  });
+});
+
+describe("resolveDaemonUrl", () => {
+  it("defaults to the address the daemon's own default has to match", () => {
+    expect(resolveDaemonUrl({})).toBe("http://127.0.0.1:8278");
+  });
+
+  it("takes TASMA_DAEMON_URL over the default", () => {
+    expect(resolveDaemonUrl({ TASMA_DAEMON_URL: "http://127.0.0.1:9000" })).toBe("http://127.0.0.1:9000");
+  });
+});
+
+describe.each([
+  { name: "dev", server: config.server, port: 8276 },
+  { name: "preview", server: config.preview, port: 8277 },
+])("the $name server", ({ server, port }) => {
+  it(`serves ${port} or refuses to start`, () => {
+    expect(server?.port).toBe(port);
+    expect(server?.strictPort).toBe(true);
+  });
+
+  // Vite's default runs a permissive CORS middleware ahead of the proxy, so a
+  // header left to it is a header on every daemon reply.
+  it("sends no CORS header, so no other origin can read the daemon through it", () => {
+    expect(server?.cors).toBe(false);
   });
 });

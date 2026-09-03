@@ -1,6 +1,6 @@
 import { createRootRoute, createRoute, createRouter, type RouterHistory } from "@tanstack/react-router";
 import { AppShell } from "./components/app-shell";
-import { ErrorPanel, ErrorScreen } from "./components/error-boundary";
+import { ErrorScreen, RouteFailure } from "./components/error-boundary";
 import { PlaceholderScreen } from "./components/placeholder-screen";
 import { NAVIGATION_BY_PATH, type NavigationPath } from "./navigation";
 
@@ -56,7 +56,7 @@ export function createAppRouter(history: RouterHistory) {
   return createRouter({
     routeTree,
     history,
-    defaultErrorComponent: ErrorPanel,
+    defaultErrorComponent: RouteFailure,
     defaultNotFoundComponent: () => (
       <PlaceholderScreen
         title="Not found"

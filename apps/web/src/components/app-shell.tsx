@@ -4,19 +4,22 @@ import { Sidebar } from "./sidebar";
 
 export function AppShell(): ReactNode {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  // A retry replaces the failure panel without navigating anywhere, which the
+  // path alone cannot see.
+  const failing = useRouterState({ select: (state) => state.matches.some((match) => match.status === "error") });
   const mainRef = useRef<HTMLElement>(null);
-  const shownPathRef = useRef(pathname);
+  const shownRef = useRef({ pathname, failing });
 
-  // The path is compared rather than the renders counted: the first paint has
-  // navigated nowhere, and StrictMode runs every mount effect twice.
+  // What the region shows is compared rather than the renders counted: the first
+  // paint replaced nothing, and StrictMode runs every mount effect twice.
   useEffect(() => {
-    if (shownPathRef.current === pathname) {
+    if (shownRef.current.pathname === pathname && shownRef.current.failing === failing) {
       return;
     }
 
-    shownPathRef.current = pathname;
+    shownRef.current = { pathname, failing };
     mainRef.current?.focus();
-  }, [pathname]);
+  }, [pathname, failing]);
 
   return (
     <div className="flex min-h-screen bg-bg text-text">
