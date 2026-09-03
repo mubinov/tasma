@@ -19,6 +19,7 @@ export const routes = {
   readTask: { method: "GET", template: "/projects/{project}/tasks/{id}" },
   updateTask: { method: "PATCH", template: "/projects/{project}/tasks/{id}" },
   deleteTask: { method: "DELETE", template: "/projects/{project}/tasks/{id}" },
+  listComments: { method: "GET", template: "/projects/{project}/tasks/{id}/comments" },
   addComment: { method: "POST", template: "/projects/{project}/tasks/{id}/comments" },
   updateComment: { method: "PATCH", template: "/projects/{project}/tasks/{id}/comments/{commentId}" },
   deleteComment: { method: "DELETE", template: "/projects/{project}/tasks/{id}/comments/{commentId}" },
@@ -42,9 +43,6 @@ export const routes = {
  * `blocked_by` names a task whose status is not one of the project's
  * `final_statuses`, or is one the project's listing holds no task for, which
  * covers an id naming nothing and a file the index could not read alike.
- *
- * A type alias rather than an interface: only an alias carries an implicit index
- * signature, which `buildPath`'s `query` parameter requires.
  */
 export type TaskFilter = {
   status?: string;
@@ -54,6 +52,22 @@ export type TaskFilter = {
   step?: string;
   blocked?: boolean;
 };
+
+/**
+ * What a read of one task may leave out. `comments: false` answers with the
+ * frontmatter and the body alone, and the reply then carries no `comments` key
+ * at all rather than an empty list.
+ */
+export type TaskReadOptions = { comments?: boolean };
+
+/**
+ * What `buildPath` appends to a path, and what a client method may pass as one.
+ *
+ * Every type written to be passed as one — `TaskFilter`, `TaskReadOptions` — is
+ * a type alias rather than an interface, because only an alias carries the
+ * implicit index signature a record of this shape requires.
+ */
+export type PathQuery = Record<string, string | string[] | boolean | undefined>;
 
 const PLACEHOLDER = /\{(\w+)\}/g;
 
@@ -87,7 +101,7 @@ export const UNSAFE_IN_SEGMENT = /[/\\\0]/;
 export function buildPath(
   route: Route,
   params: Record<string, string | number>,
-  query?: Record<string, string | string[] | boolean | undefined>,
+  query?: PathQuery,
 ): string {
   const path = route.template.replace(PLACEHOLDER, (_match, name: string) => {
     const value = Object.hasOwn(params, name) ? params[name] : undefined;

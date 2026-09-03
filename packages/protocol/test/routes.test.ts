@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildPath, routes } from "@tasma/protocol";
-import type { Route, TaskFilter } from "@tasma/protocol";
+import type { Route, TaskFilter, TaskReadOptions } from "@tasma/protocol";
 
 /** The placeholder names the client fills, which is every name a template may use. */
 const SUPPLIED_PLACEHOLDERS = ["project", "id", "commentId"];
@@ -23,6 +23,11 @@ describe("the route table", () => {
         expect(SUPPLIED_PLACEHOLDERS, `${name} names a placeholder the client cannot fill`).toContain(placeholder);
       }
     }
+  });
+
+  it("carries one template under two methods where a route reads what another writes", () => {
+    expect(routes.listComments.template).toBe(routes.addComment.template);
+    expect(routes.listComments.method).not.toBe(routes.addComment.method);
   });
 });
 
@@ -87,6 +92,18 @@ describe("buildPath", () => {
   it("omits the boolean filter the caller left absent", () => {
     const filter: TaskFilter = { blocked: undefined, status: "To Do" };
     expect(buildPath(routes.listTasks, { project: "TASM" }, filter)).toBe("/projects/TASM/tasks?status=To%20Do");
+  });
+
+  it("writes a read option out as a query key", () => {
+    const options: TaskReadOptions = { comments: false };
+    expect(buildPath(routes.readTask, { project: "TASM", id: "TASM-3" }, options)).toBe(
+      "/projects/TASM/tasks/TASM-3?comments=false",
+    );
+  });
+
+  it("omits a read option the caller left absent", () => {
+    const options: TaskReadOptions = {};
+    expect(buildPath(routes.readTask, { project: "TASM", id: "TASM-3" }, options)).toBe("/projects/TASM/tasks/TASM-3");
   });
 
   it("omits an absent key", () => {

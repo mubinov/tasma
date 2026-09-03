@@ -40,10 +40,22 @@ export type Comment = CommentFields & {
   lines?: { start: number; end: number };
 };
 
+/**
+ * One comment of the map: the comment less its body, plus the size of that body.
+ * It therefore carries the marker fields and `lines` alike. Written against
+ * `Comment` rather than listed again, so a field added to a comment reaches the
+ * map on its own.
+ */
+export type CommentHeader = Omit<Comment, "body"> & {
+  /** The UTF-8 byte length of the body. */
+  bytes: number;
+};
+
 export type Task = {
   frontmatter: Frontmatter;
   body: string;
-  comments: Comment[];
+  /** Absent when the caller asked for the task without its comments. */
+  comments?: Comment[];
 };
 
 /** One task of a listing: the frontmatter alone, never the body. */
@@ -94,8 +106,13 @@ export type WriteResult = {
  * The fields one write sets. An unknown key is carried rather than rejected,
  * because the engine writes an unknown frontmatter key back unchanged and a
  * narrower type here would refuse data the engine keeps.
+ *
+ * A key that is absent leaves the field alone; a key present with the value
+ * `null` clears it. The conversion is shallow, over the body's own top-level
+ * keys alone, so a `null` nested under `custom` is stored as a real null rather
+ * than read as a removal.
  */
 export type TaskInput = { body?: string } & Record<string, unknown>;
 
-/** The same for one comment. */
+/** The same for one comment, under the same rule for an absent key and a `null` one. */
 export type CommentInput = { body?: string } & Record<string, unknown>;

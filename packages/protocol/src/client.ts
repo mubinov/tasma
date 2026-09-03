@@ -2,9 +2,9 @@ import { ProtocolError, TransportError } from "./errors.js";
 import type { Envelope, Failure, Success } from "./errors.js";
 import type { Health } from "./health.js";
 import type { Project, ProjectSummary } from "./project.js";
-import type { Method, Route, TaskFilter } from "./routes.js";
+import type { Method, PathQuery, Route, TaskFilter, TaskReadOptions } from "./routes.js";
 import { buildPath, routes } from "./routes.js";
-import type { CommentInput, Task, TaskInput, TaskList, WriteResult } from "./task.js";
+import type { CommentHeader, CommentInput, Task, TaskInput, TaskList, WriteResult } from "./task.js";
 
 /**
  * One call, as the host that carries it sees it. `body` is a JavaScript value
@@ -36,9 +36,10 @@ export type Client = {
   readProject(tag: string): Promise<Success<Project>>;
   listTasks(tag: string, filter?: TaskFilter): Promise<Success<TaskList>>;
   createTask(tag: string, input: TaskInput): Promise<Success<WriteResult>>;
-  readTask(tag: string, id: string): Promise<Success<Task>>;
+  readTask(tag: string, id: string, options?: TaskReadOptions): Promise<Success<Task>>;
   updateTask(tag: string, id: string, change: TaskInput): Promise<Success<WriteResult>>;
   deleteTask(tag: string, id: string): Promise<Success<WriteResult>>;
+  listComments(tag: string, id: string): Promise<Success<CommentHeader[]>>;
   addComment(tag: string, id: string, input: CommentInput): Promise<Success<WriteResult>>;
   updateComment(tag: string, id: string, commentId: number, change: CommentInput): Promise<Success<WriteResult>>;
   deleteComment(tag: string, id: string, commentId: number): Promise<Success<WriteResult>>;
@@ -90,7 +91,7 @@ export function createClient(transport: Transport): Client {
   async function call<T>(
     route: Route,
     params: Record<string, string | number>,
-    options: { body?: unknown; query?: TaskFilter } = {},
+    options: { body?: unknown; query?: PathQuery } = {},
   ): Promise<Success<T>> {
     const path = buildPath(route, params, options.query);
 
@@ -117,9 +118,10 @@ export function createClient(transport: Transport): Client {
     readProject: (tag) => call<Project>(routes.readProject, { project: tag }),
     listTasks: (tag, filter) => call<TaskList>(routes.listTasks, { project: tag }, { query: filter }),
     createTask: (tag, input) => call<WriteResult>(routes.createTask, { project: tag }, { body: input }),
-    readTask: (tag, id) => call<Task>(routes.readTask, { project: tag, id }),
+    readTask: (tag, id, options) => call<Task>(routes.readTask, { project: tag, id }, { query: options }),
     updateTask: (tag, id, change) => call<WriteResult>(routes.updateTask, { project: tag, id }, { body: change }),
     deleteTask: (tag, id) => call<WriteResult>(routes.deleteTask, { project: tag, id }),
+    listComments: (tag, id) => call<CommentHeader[]>(routes.listComments, { project: tag, id }),
     addComment: (tag, id, input) => call<WriteResult>(routes.addComment, { project: tag, id }, { body: input }),
     updateComment: (tag, id, commentId, change) =>
       call<WriteResult>(routes.updateComment, { project: tag, id, commentId }, { body: change }),

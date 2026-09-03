@@ -8,17 +8,29 @@ import type { StoreDiagnostic } from "./types.js";
  * The labels as they are stored. An uppercase letter is converted rather than
  * refused, because `Backend` and `backend` denote one label; a space or a
  * separator would be a guess about intent. Deduplication is unconditional: two
- * statements of one label store it once either way.
+ * statements of one label store it once either way, and one label carries one
+ * report of each kind, however many times and however spelled it was stated.
  */
 export function validateLabels(value: unknown, path: string, diagnostics: StoreDiagnostic[]): string[] {
   if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
     fail("label-invalid", "labels must hold a list of strings", path);
   }
   const stored: string[] = [];
+  // Membership through a set rather than a scan of what is stored: the list
+  // reaches here from a request body, whose length is the caller's to choose.
+  const seen = new Set<string>();
+  // Both reports are keyed by the label stored, the rule `resolveBlocked`
+  // follows: one diagnostic of a repeat says all a second would. The key has to
+  // be a stored value for the list to stay bounded by what the write stored — a
+  // label of n letters has 2^n spellings, each of them a distinct `given`. The
+  // conversion message quotes the first spelling that produced the label.
+  const converted = new Set<string>();
+  const reported = new Set<string>();
   for (const given of value) {
     // Locale-independent, so a Turkish locale cannot turn "I" into another letter.
     const label = given.toLowerCase();
-    if (label !== given) {
+    if (label !== given && !converted.has(label)) {
+      converted.add(label);
       diagnostics.push({
         code: "label-case-converted",
         message: `the label "${given}" was stored as "${label}"`,
@@ -27,14 +39,18 @@ export function validateLabels(value: unknown, path: string, diagnostics: StoreD
     }
     const fault = labelFault(label);
     if (fault !== undefined) fail("label-invalid", `the label "${given}" ${fault}`, path);
-    if (stored.includes(label)) {
-      diagnostics.push({
-        code: "label-duplicate-dropped",
-        message: `the label "${label}" was stated more than once and is stored once`,
-        path,
-      });
+    if (seen.has(label)) {
+      if (!reported.has(label)) {
+        reported.add(label);
+        diagnostics.push({
+          code: "label-duplicate-dropped",
+          message: `the label "${label}" was stated more than once and is stored once`,
+          path,
+        });
+      }
       continue;
     }
+    seen.add(label);
     stored.push(label);
   }
   return stored;
@@ -67,16 +83,26 @@ export async function validateBlockedBy(
     fail("blocked-by-invalid", "blocked_by must hold a list of strings", path);
   }
   const stored: string[] = [];
+  // Membership through a set, the rule `validateLabels` follows and for the same
+  // reason: the list reaches here from a request body.
+  const seen = new Set<string>();
+  // A report per distinct id, the rule `validateLabels` follows and for the same
+  // reason: the list reaches here from a request body.
+  const reported = new Set<string>();
   for (const id of value) {
     if (id === ownId) fail("blocked-by-invalid", `"${id}" is this task, and a task cannot block itself`, path);
-    if (stored.includes(id)) {
-      diagnostics.push({
-        code: "blocked-by-duplicate-dropped",
-        message: `the blocker "${id}" was stated more than once and is stored once`,
-        path,
-      });
+    if (seen.has(id)) {
+      if (!reported.has(id)) {
+        reported.add(id);
+        diagnostics.push({
+          code: "blocked-by-duplicate-dropped",
+          message: `the blocker "${id}" was stated more than once and is stored once`,
+          path,
+        });
+      }
       continue;
     }
+    seen.add(id);
     stored.push(id);
   }
   const entries = stored.map((id) => {
@@ -84,7 +110,8 @@ export async function validateBlockedBy(
     if (entry === undefined) fail("blocked-by-unknown", `"${id}" is not a task id of project ${paths.project}`, path);
     return entry;
   });
-  // A task names a handful of blockers, not thousands, so the stats run at once.
+  // One stat per blocker, run at once, over the deduplicated list: the fan-out is
+  // the number of distinct ids the write named.
   const stats = await Promise.all(entries.map(async (entry) => ({ entry, stat: await entryAt(entry.path) })));
   for (const { entry, stat } of stats) {
     if (stat?.isFile() === true) continue;

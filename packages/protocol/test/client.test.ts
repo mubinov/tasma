@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createClient, ProtocolError, TransportError } from "@tasma/protocol";
 import type {
   Client,
+  CommentHeader,
   Failure,
   Method,
   ProjectSummary,
@@ -73,6 +74,12 @@ const invocations: Invocation[] = [
     path: "/projects/TASM/tasks/TASM-3",
   },
   {
+    name: "readTask without the comments",
+    send: (client) => client.readTask("TASM", "TASM-3", { comments: false }),
+    method: "GET",
+    path: "/projects/TASM/tasks/TASM-3?comments=false",
+  },
+  {
     name: "updateTask",
     send: (client) => client.updateTask("TASM", "TASM-3", { status: "Done" }),
     method: "PATCH",
@@ -84,6 +91,12 @@ const invocations: Invocation[] = [
     send: (client) => client.deleteTask("TASM", "TASM-3"),
     method: "DELETE",
     path: "/projects/TASM/tasks/TASM-3",
+  },
+  {
+    name: "listComments",
+    send: (client) => client.listComments("TASM", "TASM-3"),
+    method: "GET",
+    path: "/projects/TASM/tasks/TASM-3/comments",
   },
   {
     name: "addComment",
@@ -130,6 +143,15 @@ describe("the client", () => {
     const transport: Transport = async () => ({ status: 200, body: { ok: true, data, diagnostics: [] } });
 
     await expect(createClient(transport).listProjects()).resolves.toEqual({ data, diagnostics: [] });
+  });
+
+  it("returns a comment map as the headers it carries", async () => {
+    const data: CommentHeader[] = [
+      { id: 1, title: "Note", created: "2026-01-01T00:00:00+03:00", collapsed: true, bytes: 12 },
+    ];
+    const transport: Transport = async () => ({ status: 200, body: { ok: true, data, diagnostics: [] } });
+
+    await expect(createClient(transport).listComments("TASM", "TASM-3")).resolves.toEqual({ data, diagnostics: [] });
   });
 
   it("throws the whole failure of a refusal", async () => {

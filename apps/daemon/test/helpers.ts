@@ -5,12 +5,17 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { onTestFinished } from "vitest";
 import type { IndexedProject } from "@tasma/engine";
+import type { Diagnostic } from "@tasma/protocol";
+import { DaemonError } from "../src/http/failure.js";
 import type { RouteEntry } from "../src/http/router.js";
 import { createDaemonServer } from "../src/http/server.js";
+import { createProjectHost } from "../src/projects/host.js";
+import type { ProjectHost } from "../src/projects/host.js";
 
 export type TestServer = { url: string; close(): Promise<void> };
 
-const TIMESTAMP = "2026-01-01T00:00:00+03:00";
+/** The stamp every planted file carries, so a test asserts against a known value. */
+export const TIMESTAMP = "2026-01-01T00:00:00+03:00";
 
 /**
  * A daemon listening on a port the operating system issued, so parallel test
@@ -36,6 +41,42 @@ export async function startTestServer(entries: RouteEntry[]): Promise<TestServer
 
   const { port } = server.address() as AddressInfo;
   return { url: `http://127.0.0.1:${port}`, close };
+}
+
+/**
+ * A daemon serving the routes one module declares over a tree, with the host
+ * they were built over. Both are closed when the test ends.
+ */
+export async function serving(root: string, routesOf: (host: ProjectHost) => RouteEntry[]): Promise<TestServer> {
+  const host = createProjectHost({ root });
+  onTestFinished(() => host.close());
+  return startTestServer(routesOf(host));
+}
+
+/** One request to a test server, with the media type every write route requires. */
+export async function send(server: TestServer, method: string, path: string, body?: unknown): Promise<Response> {
+  return fetch(`${server.url}${path}`, {
+    method,
+    headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+/** The two fields a success carries, without the flag every one of them repeats. */
+export async function success<T>(response: Response): Promise<{ data: T; diagnostics: Diagnostic[] }> {
+  const { data, diagnostics } = (await response.json()) as { data: T; diagnostics: Diagnostic[] };
+  return { data, diagnostics };
+}
+
+/** The refusal a call raised, so a test asserts on the code rather than on the text. */
+export function refused(run: () => unknown): DaemonError {
+  try {
+    run();
+  } catch (error) {
+    if (error instanceof DaemonError) return error;
+    throw error;
+  }
+  throw new Error("the call was not refused");
 }
 
 /**
@@ -66,6 +107,10 @@ export function tasksDir(root: string, tag: string): string {
   return join(projectDir(root, tag), "tasks");
 }
 
+export function taskFile(root: string, tag: string, id: string): string {
+  return join(tasksDir(root, tag), `${id}.md`);
+}
+
 /** Writes a file, creating the directories above it. */
 export async function plant(path: string, text: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
@@ -84,6 +129,41 @@ next_comment_id: 1
 ---
 
 Body.
+`;
+}
+
+/**
+ * A task file carrying two comments: one written inline with an author, one
+ * written as a block with every optional marker field. The first body holds
+ * multi-byte characters, so a size measured in bytes differs from one measured
+ * in characters.
+ */
+export function taskWithComments(id: string): string {
+  return `---
+id: ${id}
+title: Planted
+status: To Do
+created: "${TIMESTAMP}"
+updated: "${TIMESTAMP}"
+next_comment_id: 3
+---
+
+Body.
+
+<!-- task:comment {id: 1, title: "First", created: "${TIMESTAMP}", author: almaz} -->
+
+Ünïcödé.
+
+<!-- task:comment
+id: 2
+title: "Second"
+created: "${TIMESTAMP}"
+updated: "${TIMESTAMP}"
+collapsed: true
+custom: {round: 2}
+-->
+
+Second body.
 `;
 }
 

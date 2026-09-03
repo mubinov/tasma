@@ -8,6 +8,7 @@ import { frontmatterNumber } from "../../src/store/ids.js";
 import { projectPaths } from "../../src/store/paths.js";
 import { assertSnapshots, createTaskFile, timestamp } from "../../src/store/store.js";
 import type { StoreDiagnostic } from "../../src/store/types.js";
+import { validateBlockedBy, validateLabels } from "../../src/store/validate.js";
 import { openWorkflowsForRead, reportWorkflowInto } from "../../src/store/workflow.js";
 import {
   codes,
@@ -57,6 +58,54 @@ describe("assertSnapshots", () => {
     const appended: TaskComment = { id: 2, title: "Two", created: TIMESTAMP, body: "" };
 
     expect(() => assertSnapshots({ ...task, comments: [...task.comments, appended] }, [appended], PATH)).not.toThrow();
+  });
+});
+
+describe("validateLabels over a list as long as a request body carries", () => {
+  // Staged against the validator rather than through a write, because a write of
+  // this list would spend its time in the serializer instead. A scan of what is
+  // stored costs the square of the length here, which is minutes; membership
+  // through a set costs one pass, which is the test's own runtime.
+  it("deduplicates in one pass, so the cost follows the length rather than its square", () => {
+    const labels = Array.from({ length: 100_000 }, (_, at) => `label-${at}`);
+    const diagnostics: StoreDiagnostic[] = [];
+
+    const stored = validateLabels(labels, PATH, diagnostics);
+
+    expect(stored).toEqual(labels);
+    expect(diagnostics).toEqual([]);
+  });
+
+  // A repeat is reported once, not once per element: the reply a write answers
+  // with is a caller's to inflate otherwise, from a body the limit bounds into a
+  // diagnostic list nothing bounds.
+  it("reports a value stated many times once, so the report follows the distinct values", () => {
+    const diagnostics: StoreDiagnostic[] = [];
+
+    const stored = validateLabels(Array.from({ length: 100_000 }, () => "Backend"), PATH, diagnostics);
+
+    expect(stored).toEqual(["backend"]);
+    expect(codes(diagnostics)).toEqual(["label-case-converted", "label-duplicate-dropped"]);
+  });
+});
+
+describe("validateBlockedBy over a list as long as a request body carries", () => {
+  it("reports an id stated many times once, so the report follows the distinct ids", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    const paths = projectPaths({ project: PROJECT, root });
+    const diagnostics: StoreDiagnostic[] = [];
+
+    const stored = await validateBlockedBy(
+      Array.from({ length: 100_000 }, () => "TASM-1"),
+      paths,
+      "TASM-2",
+      PATH,
+      diagnostics,
+    );
+
+    expect(stored).toEqual(["TASM-1"]);
+    expect(codes(diagnostics)).toEqual(["blocked-by-duplicate-dropped"]);
   });
 });
 

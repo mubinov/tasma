@@ -76,6 +76,41 @@ describe("labels", () => {
     expect(codes(result.diagnostics)).toEqual(["label-duplicate-dropped"]);
   });
 
+  it("reports one conversion although two spellings produce one label", async () => {
+    const root = await tempRoot();
+    const handle = await seeded(root);
+
+    const result = await handle.updateTask("TASM-1", { labels: ["Backend", "BACKEND"] });
+
+    expect(result.labels).toEqual(["backend"]);
+    expect(codes(result.diagnostics)).toEqual(["label-case-converted", "label-duplicate-dropped"]);
+  });
+
+  // A label of n letters has 2^n spellings, none of them bounded by what the
+  // write stores, so a report per spelling is a report list the caller sizes.
+  it("holds the reports to the label stored although the spellings are a thousand", async () => {
+    const root = await tempRoot();
+    const handle = await seeded(root);
+    const base = "abcdefghij";
+    const spellings = Array.from({ length: 2 ** base.length }, (_, mask) =>
+      [...base].map((letter, index) => ((mask >> index) & 1) === 1 ? letter.toUpperCase() : letter).join(""));
+
+    const result = await handle.updateTask("TASM-1", { labels: spellings });
+
+    expect(result.labels).toEqual([base]);
+    expect(codes(result.diagnostics)).toEqual(["label-case-converted", "label-duplicate-dropped"]);
+  });
+
+  it("reports one drop for a label stated three times", async () => {
+    const root = await tempRoot();
+    const handle = await seeded(root);
+
+    const result = await handle.updateTask("TASM-1", { labels: ["backend", "backend", "backend"] });
+
+    expect(result.labels).toEqual(["backend"]);
+    expect(codes(result.diagnostics)).toEqual(["label-duplicate-dropped"]);
+  });
+
   it("reports the conversion although the write turns out to change nothing", async () => {
     const root = await tempRoot();
     const handle = await seeded(root);
@@ -281,6 +316,16 @@ describe("blocked_by", () => {
     const result = await handle.updateTask("TASM-1", { blocked_by: ["TASM-3", "TASM-2", "TASM-3"] });
 
     expect(result.blocked_by).toEqual(["TASM-3", "TASM-2"]);
+    expect(codes(result.diagnostics)).toEqual(["blocked-by-duplicate-dropped"]);
+  });
+
+  it("reports one drop for an id stated three times", async () => {
+    const root = await tempRoot();
+    const handle = await twoTasks(root);
+
+    const result = await handle.updateTask("TASM-1", { blocked_by: ["TASM-2", "TASM-2", "TASM-2"] });
+
+    expect(result.blocked_by).toEqual(["TASM-2"]);
     expect(codes(result.diagnostics)).toEqual(["blocked-by-duplicate-dropped"]);
   });
 
