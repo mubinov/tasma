@@ -1,4 +1,5 @@
 import { act, cleanup, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { stubSystemTheme } from "./helpers";
 
@@ -13,11 +14,19 @@ beforeEach(() => {
   window.localStorage.clear();
   // The router scrolls on mount, which jsdom does not implement.
   vi.stubGlobal("scrollTo", () => {});
+  // The hash is the app's address bar and hash history reads it when it is
+  // created, so every test states where it opens before it imports the entry.
+  window.location.hash = "#/";
   system = stubSystemTheme("dark");
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  // The history patches window.history until it is destroyed and vi.resetModules()
+  // gives every test a new one, so a layer left in place runs its own detached
+  // router on the next test's navigation.
+  const { router } = await import("../src/router");
+  router.history.destroy();
   document.body.innerHTML = "";
   document.documentElement.className = "";
   vi.unstubAllGlobals();
@@ -83,6 +92,27 @@ it("follows the system appearance for as long as it runs", async () => {
 
   await act(async () => {
     system.set("light");
+  });
+
+  expect(document.documentElement.classList.contains("light")).toBe(true);
+  expect(document.documentElement.classList.contains("dark")).toBe(false);
+});
+
+/*
+ * The control writes only to the store; what puts the class on <html> is the
+ * subscription the entry mounts, so only a mount of the entry proves the two
+ * are wired to each other.
+ */
+it("switches the theme through the wired entry path", async () => {
+  const user = userEvent.setup();
+  document.body.innerHTML = '<div id="root"></div>';
+  window.location.hash = "#/settings";
+
+  await act(async () => {
+    await import("../src/main");
+  });
+  await act(async () => {
+    await user.click(screen.getByRole("radio", { name: "Light" }));
   });
 
   expect(document.documentElement.classList.contains("light")).toBe(true);

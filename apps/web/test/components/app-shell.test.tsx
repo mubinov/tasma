@@ -1,6 +1,7 @@
 import { act, cleanup, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { FOOTER_NAVIGATION, PRIMARY_NAVIGATION } from "../../src/navigation";
+import { PLACEHOLDER_SUMMARIES } from "../../src/routes";
 import { useUiStore } from "../../src/store/ui";
 import { renderWithRouter } from "../helpers";
 
@@ -101,7 +102,17 @@ it("renders the screen every entry names", async () => {
     await renderWithRouter(entry.path);
 
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(entry.label);
-    expect(screen.getByText(entry.summary)).toBeTruthy();
+    cleanup();
+  }
+});
+
+// The copy and the route that shows it are declared in the same table, so only
+// mounting each one proves a screen carries the sentence declared for it.
+it("shows the sentence each placeholder route declares", async () => {
+  for (const [path, summary] of Object.entries(PLACEHOLDER_SUMMARIES)) {
+    await renderWithRouter(path);
+
+    expect(screen.getByRole("main").textContent).toContain(summary);
     cleanup();
   }
 });

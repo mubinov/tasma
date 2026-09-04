@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useDocumentTitle } from "../lib/document-title";
+import { ScreenHeading } from "./screen-heading";
 
 type PlaceholderScreenProps = {
   title: string;
@@ -11,7 +12,7 @@ export function PlaceholderScreen({ title, summary }: PlaceholderScreenProps): R
 
   return (
     <>
-      <h1 className="font-chrome text-xl font-semibold tracking-tight">{title}</h1>
+      <ScreenHeading>{title}</ScreenHeading>
       <p className="mt-2 mb-7 text-base text-muted">{summary}</p>
     </>
   );
