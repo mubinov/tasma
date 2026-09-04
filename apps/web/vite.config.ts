@@ -1,4 +1,8 @@
 import type { IncomingMessage } from "node:http";
+// The address module rather than the package index: this config is loaded by
+// Node, which resolves an import path literally, and the index re-exports its
+// modules by the `.js` names TypeScript writes.
+import { DEFAULT_DAEMON_URL } from "@tasma/protocol/address";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type HtmlTagDescriptor, type Plugin } from "vite";
@@ -79,14 +83,15 @@ function dropLegacyFontFormats(): Plugin {
 }
 
 /**
- * Where the daemon listens. `TASMA_DAEMON_URL` overrides the default, which the
- * daemon's own default has to match.
+ * Where the daemon listens. `TASMA_DAEMON_URL` overrides the default, which is
+ * the one the daemon binds and the CLI dials, read from the package that
+ * declares it rather than copied.
  *
  * Exported so a test pins the default without reading the machine's environment,
  * which may export the very variable this overrides.
  */
 export function resolveDaemonUrl(env: NodeJS.ProcessEnv): string {
-  return env.TASMA_DAEMON_URL ?? "http://127.0.0.1:8278";
+  return env.TASMA_DAEMON_URL ?? DEFAULT_DAEMON_URL;
 }
 
 const DAEMON_URL = resolveDaemonUrl(process.env);

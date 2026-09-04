@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_DAEMON_URL } from "@tasma/protocol";
 import { build } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DAEMON_PATH_PREFIX } from "../src/api/paths";
@@ -248,8 +249,10 @@ describe("isLoopbackAddress", () => {
 });
 
 describe("resolveDaemonUrl", () => {
-  it("defaults to the address the daemon's own default has to match", () => {
-    expect(resolveDaemonUrl({})).toBe("http://127.0.0.1:8278");
+  // Against the constant, not a copy of its value: a literal here is a second
+  // address the day the constant moves.
+  it("defaults to the address the protocol package declares", () => {
+    expect(resolveDaemonUrl({})).toBe(DEFAULT_DAEMON_URL);
   });
 
   it("takes TASMA_DAEMON_URL over the default", () => {

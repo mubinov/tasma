@@ -178,6 +178,8 @@ describe("the client", () => {
     expect(error).toMatchObject({ status: undefined, cause });
   });
 
+  const hostile = { toString: 1 };
+
   const unusable: [string, unknown][] = [
     ["a body that is not an object", "not an envelope"],
     ["a missing body", undefined],
@@ -190,6 +192,8 @@ describe("the client", () => {
     ["a refusal whose error is not an object", { ok: false, error: "task-not-found" }],
     ["a refusal whose error names no kind", { ok: false, error: { message: "later" } }],
     ["a refusal of a kind this client does not know", { ok: false, error: { kind: "quota", message: "later" } }],
+    ["a refusal whose code is not a string", { ok: false, error: { kind: "store", code: 7, message: "later" } }],
+    ["a message that refuses to coerce", { ok: false, error: { kind: "store", code: "c", message: hostile } }],
   ];
 
   it.each(unusable)("throws a transport fault, carrying the status, on %s", async (_description, body) => {

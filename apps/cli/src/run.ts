@@ -1,38 +1,49 @@
 import { parseArgs } from "node:util";
 import manifest from "../package.json" with { type: "json" };
+import { daemon } from "./commands/daemon.js";
+import { resolveDaemonUrl } from "./daemon/transport.js";
 import { helpText } from "./help.js";
+import { dispatch, errorText, reportUsage } from "./shell.js";
 import type { Command, Io } from "./types.js";
 
 /**
  * Every command the CLI answers to.
  *
- * Empty on purpose, and read by both consumers already: help renders it and
- * dispatch looks up in it, so a command name added here needs no other change.
+ * Read by both consumers: help renders it and dispatch looks up in it, so a
+ * command name added here needs no other change.
  */
-const COMMANDS: Command[] = [];
+const COMMANDS: Command[] = [daemon];
 
-const HINT = "Run 'tasma --help' for usage.\n";
-
-// Characters a reader of this output acts on rather than prints: a terminal
-// takes an escape sequence as a command to clear the screen, retitle the window
-// or overwrite the line so a failure reads as success, and a program splitting
-// the output into lines takes a Unicode line separator as a line of its own.
-// Either way an argument can forge output the CLI never wrote.
-const OPAQUE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
-
-/** argv split at the first token that is not a flag. */
+/** argv split at the first token that is neither a global flag nor the value of one. */
 export type Invocation = { globals: string[]; name?: string; args: string[] };
 
-/** Text safe to print, with every character a reader would act on shown as its escape. */
-export function printable(text: string): string {
-  return text.replace(OPAQUE, (match) =>
-    // By code unit rather than code point, so an astral character keeps both halves.
-    match
-      .split("")
-      .map((unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`)
-      .join(""),
-  );
-}
+/**
+ * Every global option, as the one description the parser, the split below and
+ * the help text are all read against.
+ *
+ * A global taking a value carries no short form, by the type: the walk skips
+ * such a value by the long spelling alone, and `-d <url>` would leave the URL to
+ * become the command name.
+ */
+export const GLOBAL_OPTIONS = {
+  help: { type: "boolean", short: "h" },
+  version: { type: "boolean", short: "v" },
+  daemon: { type: "string" },
+} as const satisfies Record<string, { type: "boolean"; short?: string } | { type: "string"; short?: never }>;
+
+/**
+ * The globals that consume the token after them, so the walk does not read a
+ * value as the command.
+ *
+ * Derived rather than written: a second list would let a global be declared as
+ * taking a value without being added to it, and its value would then silently
+ * become the command name.
+ */
+const VALUED_GLOBALS = new Set(
+  Object.entries(GLOBAL_OPTIONS)
+    .filter(([, option]) => option.type === "string")
+    .map(([name]) => `--${name}`),
+);
 
 /**
  * The global flags, the command name and the command's own arguments.
@@ -41,64 +52,47 @@ export function printable(text: string): string {
  * reach the global parser: `tasma create --title x` is not an unknown option.
  */
 export function splitInvocation(argv: string[]): Invocation {
-  const commandIndex = argv.findIndex((arg) => !arg.startsWith("-"));
+  let index = 0;
 
-  if (commandIndex === -1) {
+  while (index < argv.length) {
+    const arg = argv[index];
+    if (!arg?.startsWith("-")) break;
+    index += VALUED_GLOBALS.has(arg) ? 2 : 1;
+  }
+
+  // A trailing valued global walks past the end, leaving no command name, and
+  // parseArgs reports the missing argument.
+  if (index >= argv.length) {
     return { globals: argv, args: [] };
   }
 
-  return { globals: argv.slice(0, commandIndex), name: argv[commandIndex], args: argv.slice(commandIndex + 1) };
-}
-
-/** The text of a throw, which the language types as `unknown` however narrow the thrower is. */
-export function errorText(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return "invalid arguments";
-}
-
-/** The one path that prints argv-derived text, so it is escaped in exactly one place. */
-function reportUsage(io: Io, detail: string): number {
-  io.stderr.write(`tasma: ${printable(detail)}\n${HINT}`);
-  return 2;
-}
-
-/** Runs the named command, or reports that no command claims the name. */
-export function dispatch(commands: Command[], name: string, args: string[], io: Io): number {
-  const command = commands.find((candidate) => candidate.name === name);
-
-  if (command === undefined) {
-    return reportUsage(io, `unknown command: ${name}`);
-  }
-
-  return command.run(args, io);
+  return { globals: argv.slice(0, index), name: argv[index], args: argv.slice(index + 1) };
 }
 
 /**
- * The whole CLI: arguments in, exit code out, every byte through `io`.
+ * The whole CLI: arguments in, exit code out, every byte through `io` and every
+ * variable through `env`.
  *
  * Reads no global and touches no file, so the entry point is the only place
  * that knows a process exists.
  */
-export function run(argv: string[], io: Io): number {
+export async function run(argv: string[], io: Io, env: Record<string, string | undefined>): Promise<number> {
   const invocation = splitInvocation(argv);
 
   let values;
 
   try {
     // Positionals are not enabled: the split above has already removed them.
-    values = parseArgs({
-      args: invocation.globals,
-      strict: true,
-      options: {
-        help: { type: "boolean", short: "h" },
-        version: { type: "boolean", short: "v" },
-      },
-    }).values;
+    values = parseArgs({ args: invocation.globals, strict: true, options: GLOBAL_OPTIONS }).values;
   } catch (error) {
-    return reportUsage(io, errorText(error));
+    // The parser embeds the offending argument in a message whose sentences it
+    // breaks itself, so there a break argv carried is indistinguishable from
+    // one the parser wrote. Only where no argument carried one are the parser's
+    // sentences named as separate lines.
+    const detail = errorText(error);
+    const carried = invocation.globals.some((token) => token.includes("\n"));
+
+    return reportUsage(io, carried ? detail : detail.split("\n"));
   }
 
   if (values.version === true) {
@@ -113,5 +107,15 @@ export function run(argv: string[], io: Io): number {
     return 0;
   }
 
-  return dispatch(COMMANDS, invocation.name, invocation.args, io);
+  let daemonUrl: string;
+
+  // Resolved once and handed down. A refused value is a fault in the
+  // invocation, so it reports through the same usage path as a bad flag.
+  try {
+    daemonUrl = resolveDaemonUrl(values.daemon, env);
+  } catch (error) {
+    return reportUsage(io, errorText(error));
+  }
+
+  return dispatch(COMMANDS, "", invocation.name, invocation.args, io, daemonUrl);
 }

@@ -47,9 +47,17 @@ export type Client = {
 
 const FAILURE_KINDS: Failure["kind"][] = ["store", "parse", "serialize", "daemon"];
 
+/**
+ * The discriminant, plus the two fields every arm carries. `ProtocolError`
+ * passes the message to `Error`, which coerces it, so a message that refuses to
+ * coerce — an own `toString` that is not callable, which `JSON.parse` builds
+ * from a field of that name — would throw inside the constructor rather than
+ * reach the caller as the refusal it describes.
+ */
 function isFailure(value: unknown): value is Failure {
   if (typeof value !== "object" || value === null) return false;
-  const kind = (value as { kind?: unknown }).kind;
+  const { kind, code, message } = value as { kind?: unknown; code?: unknown; message?: unknown };
+  if (typeof code !== "string" || typeof message !== "string") return false;
   return typeof kind === "string" && (FAILURE_KINDS as string[]).includes(kind);
 }
 
