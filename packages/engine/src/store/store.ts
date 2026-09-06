@@ -340,7 +340,9 @@ class ProjectStore implements Project {
   async readTask(id: string): Promise<ReadResult> {
     await openProjectDirectory(this.paths);
     const { path, task, diagnostics } = await this.#open(id);
-    const resolve = () => resolveWorkflowsPath(this.paths);
+    // A read reports on this task, so the findings of the shared user file are
+    // dropped: one unknown key in it would otherwise arrive once per task read.
+    const resolve = () => resolveWorkflowsPath(this.paths.userConfig, []);
     const openHandle = () => openWorkflowsForRead(this.paths.root, resolve, diagnostics);
     await reportWorkflowInto(openHandle, task.frontmatter, path, diagnostics);
     return { task, diagnostics };

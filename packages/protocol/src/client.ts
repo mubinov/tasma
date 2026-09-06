@@ -5,6 +5,7 @@ import type { Project, ProjectChange, ProjectInput, ProjectSummary } from "./pro
 import type { Method, PathQuery, Route, TaskFilter, TaskReadOptions } from "./routes.js";
 import { buildPath, routes } from "./routes.js";
 import type { CommentHeader, CommentInput, Task, TaskInput, TaskList, WriteResult } from "./task.js";
+import type { StepDefinition, Workflow } from "./workflow.js";
 
 /**
  * One call, as the host that carries it sees it. `body` is a JavaScript value
@@ -46,6 +47,9 @@ export type Client = {
   addComment(tag: string, id: string, input: CommentInput): Promise<Success<WriteResult>>;
   updateComment(tag: string, id: string, commentId: number, change: CommentInput): Promise<Success<WriteResult>>;
   deleteComment(tag: string, id: string, commentId: number): Promise<Success<WriteResult>>;
+  listWorkflows(): Promise<Success<string[]>>;
+  readWorkflow(name: string): Promise<Success<Workflow>>;
+  readWorkflowStep(name: string, step: string): Promise<Success<StepDefinition>>;
 };
 
 const FAILURE_KINDS: Failure["kind"][] = ["store", "parse", "serialize", "daemon"];
@@ -141,5 +145,9 @@ export function createClient(transport: Transport): Client {
       call<WriteResult>(routes.updateComment, { project: tag, id, commentId }, { body: change }),
     deleteComment: (tag, id, commentId) =>
       call<WriteResult>(routes.deleteComment, { project: tag, id, commentId }),
+    listWorkflows: () => call<string[]>(routes.listWorkflows, {}),
+    readWorkflow: (name) => call<Workflow>(routes.readWorkflow, { workflow: name }),
+    readWorkflowStep: (name, step) =>
+      call<StepDefinition>(routes.readWorkflowStep, { workflow: name, step }),
   };
 }

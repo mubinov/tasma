@@ -114,6 +114,9 @@ describe("starting a daemon", () => {
 
     expect(await daemonAnswers(port)).toBe(true);
     expect(await readRecord(root)).toEqual({ port, pid: process.pid });
+    // The tree-level routes stand in the array too, and they are the one group
+    // built over the root rather than over the host.
+    await expect((await fetch(`${start.url}/workflows`)).json()).resolves.toMatchObject({ ok: true, data: [] });
   });
 
   it("finds the daemon already serving this tree and binds nothing", async () => {

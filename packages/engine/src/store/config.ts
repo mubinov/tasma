@@ -291,10 +291,18 @@ export async function resolveProjectDeclaration(
  * says nothing about where the workflows tree stands, and resolving both levels
  * would let it move a read onto the wrong tree.
  *
- * The findings of the read are discarded. They concern a shared file, and the
- * one caller reports on a single task — the rule `reportWorkflowInto` states for
- * the workflow it loads.
+ * Where the findings of the read go is the caller's to decide: a caller
+ * reporting on one task drops them, since a finding about the shared file would
+ * otherwise arrive once per task read, while a caller whose whole subject is
+ * that file carries them.
+ *
+ * It takes the path of that file rather than a project's paths, because the
+ * workflows tree is one shared thing per machine and a caller with no project in
+ * scope resolves it too.
  */
-export async function resolveWorkflowsPath(paths: ProjectPaths): Promise<string | undefined> {
-  return declaredPath("workflows_path", [await readLevel(paths.userConfig, USER_KEYS, [])]);
+export async function resolveWorkflowsPath(
+  userConfig: string,
+  diagnostics: StoreDiagnostic[],
+): Promise<string | undefined> {
+  return declaredPath("workflows_path", [await readLevel(userConfig, USER_KEYS, diagnostics)]);
 }

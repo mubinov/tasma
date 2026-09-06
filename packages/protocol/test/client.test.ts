@@ -138,6 +138,26 @@ const invocations: Invocation[] = [
     method: "DELETE",
     path: "/projects/TASM/tasks/TASM-3/comments/7",
   },
+  {
+    name: "listWorkflows",
+    send: (client) => client.listWorkflows(),
+    method: "GET",
+    path: "/workflows",
+  },
+  {
+    name: "readWorkflow",
+    send: (client) => client.readWorkflow("dev"),
+    method: "GET",
+    path: "/workflows/dev",
+  },
+  {
+    // The colon a flow puts in front of a step is part of the name, so the
+    // segment it travels in carries it encoded.
+    name: "readWorkflowStep",
+    send: (client) => client.readWorkflowStep("dev", "dev:research"),
+    method: "GET",
+    path: "/workflows/dev/steps/dev%3Aresearch",
+  },
 ];
 
 describe("the client", () => {

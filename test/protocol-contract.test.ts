@@ -6,6 +6,7 @@ import type {
   ExclusionCode as EngineExclusionCode,
   Frontmatter as EngineFrontmatter,
   IndexEntry,
+  InstructionDocument as EngineInstructionDocument,
   ProjectChange as EngineProjectChange,
   ProjectDeclaration,
   QueryResult,
@@ -17,6 +18,9 @@ import type {
   TaskParseErrorCode,
   TaskSerializeErrorCode,
   TaskStoreErrorCode,
+  Workflow as EngineWorkflow,
+  WorkflowStep as EngineWorkflowStep,
+  WorkflowStepResult,
   WriteResult as EngineWriteResult,
 } from "@tasma/engine";
 import type {
@@ -28,15 +32,19 @@ import type {
   ExcludedFile,
   ExclusionCode,
   Frontmatter,
+  InstructionDocument,
   ParseErrorCode,
   ProjectChange,
   ProjectInput,
   ProjectSummary,
   SerializeErrorCode,
+  StepDefinition,
   StoreErrorCode,
   Task,
   TaskEntry,
   TaskList,
+  Workflow,
+  WorkflowStep,
   WriteResult,
 } from "@tasma/protocol";
 
@@ -81,6 +89,11 @@ describe("the wire contract", () => {
     // A summary is the declaration plus the tag, so a field added to either side
     // of a project breaks the typecheck until the wire carries it.
     expectTypeOf<Omit<ProjectSummary, "tag">>().toEqualTypeOf<ProjectDeclaration>();
+    expectTypeOf<WorkflowStep>().toEqualTypeOf<EngineWorkflowStep>();
+    expectTypeOf<Workflow>().toEqualTypeOf<EngineWorkflow>();
+    expectTypeOf<InstructionDocument>().toEqualTypeOf<EngineInstructionDocument>();
+    // The envelope carries the diagnostics, so the wire's step read is the engine's less them.
+    expectTypeOf<StepDefinition>().toEqualTypeOf<Omit<WorkflowStepResult, "diagnostics">>();
   });
 
   it("keeps the task and the write result in step, less what JSON cannot carry", () => {

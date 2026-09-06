@@ -1,6 +1,7 @@
 import { chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
+import { openTreeWorkflows } from "@tasma/engine";
 import {
   outsideWorkflows,
   plantWorkflow,
@@ -8,8 +9,20 @@ import {
   stepsOnly,
   workflowDir,
   workflowFile,
+  workflowsDir,
 } from "../workflow/helpers.js";
-import { codes, plant, project, projectConfig, storeError, taskFile, taskText, tempRoot, userConfig } from "./helpers.js";
+import {
+  bareRoot,
+  codes,
+  plant,
+  project,
+  projectConfig,
+  storeError,
+  taskFile,
+  taskText,
+  tempRoot,
+  userConfig,
+} from "./helpers.js";
 
 /** A project declaring `dev`, whose workflow declares the named steps and no step files. */
 async function declaredTree(...steps: string[]): Promise<string> {
@@ -494,5 +507,57 @@ describe("a read whose configuration cannot be resolved", () => {
     await plant(taskFile(root, "TASM-1"), taskText("TASM-1", extra));
 
     expect(codes((await project(root).readTask("TASM-1")).diagnostics)).toEqual(expected);
+  });
+});
+
+describe("the workflows of a tree with no project in scope", () => {
+  it("stands on the built-in directory when no configuration names one", async () => {
+    const root = await bareRoot();
+    await plantWorkflow(root, "dev", stepsOnly("research"));
+
+    const { workflows, diagnostics } = await openTreeWorkflows(root);
+
+    expect(workflows.directory).toBe(workflowsDir(root));
+    expect((await workflows.list()).names).toEqual(["dev"]);
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("stands on the directory the user's configuration names", async () => {
+    const root = await bareRoot();
+    const path = outsideWorkflows(root);
+    await plantWorkflowsPath(root, path);
+    await plantWorkflow(root, "dev", stepsOnly("research"), path);
+
+    const { workflows, diagnostics } = await openTreeWorkflows(root);
+
+    expect(workflows.directory).toBe(path);
+    expect((await workflows.list()).names).toEqual(["dev"]);
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("degrades to the built-in directory and reports a configuration it cannot resolve", async () => {
+    const root = await bareRoot();
+    await plant(userConfig(root), "workflows_path: [\n");
+    await plantWorkflow(root, "dev", stepsOnly("research"));
+
+    const { workflows, diagnostics } = await openTreeWorkflows(root);
+
+    expect(workflows.directory).toBe(workflowsDir(root));
+    expect((await workflows.list()).names).toEqual(["dev"]);
+    expect(codes(diagnostics)).toEqual(["config-unreadable"]);
+    expect(diagnostics[0]?.path).toBe(userConfig(root));
+  });
+
+  it("reports a key of the user's file this engine does not know", async () => {
+    const root = await bareRoot();
+    await plant(userConfig(root), "workflow_path: /elsewhere\n");
+    await plantWorkflow(root, "dev", stepsOnly("research"));
+
+    const { workflows, diagnostics } = await openTreeWorkflows(root);
+
+    expect(workflows.directory).toBe(workflowsDir(root));
+    expect(codes(diagnostics)).toEqual(["config-key-unknown"]);
+    expect(diagnostics[0]?.message).toContain('"workflow_path"');
+    expect(diagnostics[0]?.path).toBe(userConfig(root));
   });
 });

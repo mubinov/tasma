@@ -33,3 +33,9 @@ export type {
   TaskList,
   WriteResult,
 } from "./task.js";
+export type {
+  InstructionDocument,
+  StepDefinition,
+  Workflow,
+  WorkflowStep,
+} from "./workflow.js";

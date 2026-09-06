@@ -19,6 +19,7 @@ import { createProjectHost } from "../projects/host.js";
 import type { ProjectHost } from "../projects/host.js";
 import { projectRoutes } from "../projects/routes.js";
 import { taskRoutes } from "../tasks/routes.js";
+import { workflowRoutes } from "../workflows/routes.js";
 import { resolveDaemonPort } from "./port.js";
 import { daemonAnswers, daemonUrl } from "./probe.js";
 import { claimRecord, readRecord, recordPath, removeRecord } from "./record.js";
@@ -136,7 +137,7 @@ export async function startDaemon(options: {
   }
 
   const host = createProjectHost({ root });
-  const server = createDaemonServer([...projectRoutes(host), ...taskRoutes(host)]);
+  const server = createDaemonServer([...projectRoutes(host), ...taskRoutes(host), ...workflowRoutes({ root })]);
 
   async function closeServing(): Promise<void> {
     await drain(server, drainMs);

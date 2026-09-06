@@ -1,8 +1,9 @@
 import type { Frontmatter } from "../format/index.js";
 import { type InstructionDocument, openWorkflows, type Workflow, type Workflows } from "../workflow/index.js";
 import { declaresStep, noSuchStep, readInstructions, readStepDocument, stepEntry } from "../workflow/load.js";
+import { resolveWorkflowsPath } from "./config.js";
 import { causeOf, errnoOf, fail, pathOf, TaskStoreError } from "./errors.js";
-import type { ProjectPaths } from "./paths.js";
+import { expandRoot, type ProjectPaths, userConfigPath } from "./paths.js";
 import type { ResolvedConfig, StoreDiagnostic } from "./types.js";
 
 /**
@@ -62,6 +63,28 @@ export async function openWorkflowsForRead(
     return openWorkflows({ root });
   }
   return openWorkflows({ root, path });
+}
+
+/**
+ * The workflows of one tree, where the user's configuration places them, for a
+ * caller with no project in scope. The handle is built per call and holds
+ * nothing, so a hand edit is seen by the next call.
+ *
+ * It reads the user's file alone, so it inherits the rule above: a file that
+ * cannot be read, or that the resolution refuses, degrades to the built-in
+ * directory and is reported rather than failing the call.
+ *
+ * The findings of that read are carried, unlike a task read's: the user's file
+ * is the whole subject of the call, so a key it states that this engine does not
+ * know is what accounts for the directory the answer stands on.
+ */
+export async function openTreeWorkflows(
+  root?: string,
+): Promise<{ workflows: Workflows; diagnostics: StoreDiagnostic[] }> {
+  const expanded = expandRoot(root);
+  const diagnostics: StoreDiagnostic[] = [];
+  const resolve = () => resolveWorkflowsPath(userConfigPath(expanded), diagnostics);
+  return { workflows: await openWorkflowsForRead(expanded, resolve, diagnostics), diagnostics };
 }
 
 /**

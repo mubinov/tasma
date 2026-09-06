@@ -58,6 +58,15 @@ export function projectsDir(root?: string): string {
 }
 
 /**
+ * The user's configuration file of a tree, from a root already expanded. The one
+ * name that file stands under is written here alone, so a caller with no project
+ * tag reaches it the way `projectsIn` reaches the projects directory.
+ */
+export function userConfigPath(root: string): string {
+  return join(root, "config.yml");
+}
+
+/**
  * One path a file the user places states, against the directory holding that
  * file. An absolute path and a `~/` path each stand for themselves, which is
  * what lets an instruction document live in a repository outside the root.
@@ -77,7 +86,7 @@ export function projectPaths(options: ProjectOptions): ProjectPaths {
   return {
     project,
     root,
-    userConfig: join(root, "config.yml"),
+    userConfig: userConfigPath(root),
     directory,
     projectConfig: join(directory, "config.yml"),
     state: join(directory, "state.yml"),

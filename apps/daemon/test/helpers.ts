@@ -141,6 +141,44 @@ export async function plant(path: string, text: string): Promise<void> {
   await writeFile(path, text, "utf8");
 }
 
+// The workflow planters below carry the names the engine's own test helpers
+// use, so one thing is not named twice across the two suites.
+
+/** The built-in tree the workflows of one test stand in. */
+function workflowsDir(root: string): string {
+  return join(root, "workflows");
+}
+
+export function workflowDir(root: string, name: string): string {
+  return join(workflowsDir(root), name);
+}
+
+function workflowFile(root: string, name: string): string {
+  return join(workflowDir(root, name), "workflow.yml");
+}
+
+/** Writes `workflow.yml` of one workflow, creating the directories above it. */
+export async function plantWorkflow(root: string, name: string, text: string): Promise<void> {
+  await plant(workflowFile(root, name), text);
+}
+
+/** A workflow file declaring one step per name, each with a file beside it under `steps/`. */
+export function stepsOnly(...names: string[]): string {
+  const lines = names.map((name) => `  - {name: "${name}", file: steps/${name.replace(":", "-")}.md}`);
+  return `steps:\n${lines.join("\n")}\n`;
+}
+
+/** The path the file of one step of `stepsOnly` stands under. */
+export function stepFile(root: string, workflow: string, step: string): string {
+  return join(workflowDir(root, workflow), "steps", `${step.replace(":", "-")}.md`);
+}
+
+/** A workflow whose steps each have a file on disk, which a read of a step needs. */
+export async function plantSteps(root: string, name: string, ...steps: string[]): Promise<void> {
+  await plantWorkflow(root, name, stepsOnly(...steps));
+  for (const step of steps) await plant(stepFile(root, name, step), `Do ${step}.\n`);
+}
+
 /** A task file as a hand edit or an earlier write leaves it. */
 export function taskText(id: string): string {
   return `---

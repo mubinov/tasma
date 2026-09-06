@@ -3,7 +3,19 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { TaskList, WriteResult } from "@tasma/protocol";
 import { taskRoutes } from "../../src/tasks/routes.js";
-import { plant, projectsRoot, send, serving, success, taskFile, tasksDir, taskText, taskWithComments } from "../helpers.js";
+import {
+  plant,
+  plantSteps,
+  projectConfig,
+  projectsRoot,
+  send,
+  serving,
+  success,
+  taskFile,
+  tasksDir,
+  taskText,
+  taskWithComments,
+} from "../helpers.js";
 import type { TestServer } from "../helpers.js";
 
 /** A planted task under another status, and the frontmatter fields it also carries. */
@@ -334,6 +346,63 @@ describe("the write routes over a task", () => {
     await expect(response.json()).resolves.toMatchObject({
       ok: false,
       error: { kind: "daemon", code: "malformed-request" },
+    });
+  });
+});
+
+/**
+ * A step is set through the task patch and no route of its own, so this is where
+ * the daemon pins that. Every rule below is the engine's, and the daemon adds no
+ * check of its own.
+ */
+describe("the step of a task, set through the patch that writes it", () => {
+  let root: string;
+  let server: TestServer;
+
+  beforeEach(async () => {
+    root = await projectsRoot("TASM");
+    await plant(projectConfig(root, "TASM"), "workflows: [dev]\n");
+    await plantSteps(root, "dev", "dev:research", "dev:implement");
+    await plant(taskFile(root, "TASM", "TASM-1"), entryText("TASM-1", "To Do", ["workflow: dev"]));
+    server = await serving(root, taskRoutes);
+  });
+
+  it("writes a step the task's workflow declares", async () => {
+    const response = await send(server, "PATCH", "/projects/TASM/tasks/TASM-1", { step: "dev:research" });
+
+    expect(response.status).toBe(200);
+    await expect(success<WriteResult>(response)).resolves.toEqual({ data: { id: "TASM-1" }, diagnostics: [] });
+    await expect(readFile(taskFile(root, "TASM", "TASM-1"), "utf8")).resolves.toContain("step: dev:research");
+  });
+
+  it("clears the step named with null", async () => {
+    await send(server, "PATCH", "/projects/TASM/tasks/TASM-1", { step: "dev:research" });
+
+    const response = await send(server, "PATCH", "/projects/TASM/tasks/TASM-1", { step: null });
+
+    expect(response.status).toBe(200);
+    await expect(readFile(taskFile(root, "TASM", "TASM-1"), "utf8")).resolves.not.toContain("step:");
+  });
+
+  it("refuses a step the task's workflow does not declare", async () => {
+    const response = await send(server, "PATCH", "/projects/TASM/tasks/TASM-1", { step: "dev:release" });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ ok: false, error: { kind: "store", code: "step-unknown" } });
+  });
+
+  it("refuses a workflow the project does not declare, along with the step of it", async () => {
+    await plantSteps(root, "review", "review:read");
+
+    const response = await send(server, "PATCH", "/projects/TASM/tasks/TASM-1", {
+      workflow: "review",
+      step: "review:read",
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "store", code: "workflow-unknown" },
     });
   });
 });

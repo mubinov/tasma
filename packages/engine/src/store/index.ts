@@ -25,3 +25,4 @@ export type {
   TaskChange,
   WriteResult,
 } from "./types.js";
+export { openTreeWorkflows } from "./workflow.js";

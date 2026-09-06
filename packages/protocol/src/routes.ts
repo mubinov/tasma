@@ -26,6 +26,9 @@ export const routes = {
   addComment: { method: "POST", template: "/projects/{project}/tasks/{id}/comments" },
   updateComment: { method: "PATCH", template: "/projects/{project}/tasks/{id}/comments/{commentId}" },
   deleteComment: { method: "DELETE", template: "/projects/{project}/tasks/{id}/comments/{commentId}" },
+  listWorkflows: { method: "GET", template: "/workflows" },
+  readWorkflow: { method: "GET", template: "/workflows/{workflow}" },
+  readWorkflowStep: { method: "GET", template: "/workflows/{workflow}/steps/{step}" },
 } as const satisfies Record<string, Route>;
 
 /**

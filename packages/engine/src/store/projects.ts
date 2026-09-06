@@ -61,9 +61,9 @@ export async function discoverProjects(root?: string): Promise<string[]> {
  * it, so a directory that a symbolic link replaced between the discovery and
  * this read is refused rather than followed out of the tree.
  *
- * The findings of the read are dropped, the rule `resolveWorkflowsPath` follows:
- * a finding about one project's configuration belongs on the read of that one
- * project, `readProject`, rather than in a list of many.
+ * The findings of the read are dropped: a finding about one project's
+ * configuration belongs on the read of that one project, `readProject`, rather
+ * than in a list of many.
  */
 export async function readProjectDeclaration(options: ProjectOptions): Promise<ProjectDeclaration> {
   const paths = projectPaths(options);
