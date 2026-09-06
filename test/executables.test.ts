@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { execPath } from "node:process";
@@ -61,6 +61,13 @@ describe("the built executables", () => {
         // outside the project root unless it is told to.
         build: { outDir: join(outRoot, app.dir, outDir), emptyOutDir: true },
       });
+
+      // A build leaves the real dependencies external, so an artifact resolves
+      // them by walking up out of its own directory. The mirror gives each
+      // package the dependency root that walk reaches in place — its own, not
+      // the workspace's, so a dependency the package does not declare fails here
+      // as it would in an install of that package alone.
+      symlinkSync(join(root, "node_modules"), join(outRoot, app.dir, "node_modules"), "dir");
     }
   }, 30_000);
 
@@ -98,11 +105,15 @@ describe("the built executables", () => {
     expect(stdout).toMatch(/^tasma \d+\.\d+\.\d+\n$/);
   });
 
-  it("report that the daemon is not implemented, on stderr", async () => {
-    const { code, stdout, stderr } = await node(executable("apps/daemon"), []);
+  // Run with a port it must refuse, so the artifact reports and exits instead of
+  // starting a daemon against the real home tree. That still proves what the
+  // build has to get right: the artifact imports the engine, and its
+  // extension-bearing specifiers resolve inside the bundle.
+  it("refuse a bad daemon port on stderr, without starting a daemon", async () => {
+    const { code, stdout, stderr } = await node(executable("apps/daemon"), ["--port", "nonsense"]);
 
     expect(code).toBe(1);
-    expect(stderr).toBe("tasma-daemon: not implemented\n");
+    expect(stderr).toBe('tasma-daemon: --port must be a whole number from 0 to 65535: "nonsense"\n');
     expect(stdout).toBe("");
   });
 });

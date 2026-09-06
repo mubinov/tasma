@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import manifest from "../package.json" with { type: "json" };
 // Relative: this package declares no exports, so its own name does not resolve.
 import { run, splitInvocation } from "../src/run.js";
-import { dispatch, errorText, printable, reportUsage } from "../src/shell.js";
+import { dispatch, errorText, reportUsage } from "../src/shell.js";
 import type { Command } from "../src/types.js";
 import { capture, startServer } from "./helpers.js";
 
@@ -219,23 +219,6 @@ describe("splitInvocation", () => {
 
   it("names no command when a valued global ends the arguments", () => {
     expect(splitInvocation(["--daemon"])).toEqual({ globals: ["--daemon"], args: [] });
-  });
-});
-
-describe("printable", () => {
-  it("leaves ordinary text alone", () => {
-    expect(printable("unknown command: frobnicate")).toBe("unknown command: frobnicate");
-  });
-
-  it("escapes a control or format character, an astral one by both its code units", () => {
-    expect(printable("a\u001b\u200eb")).toBe("a\\u001b\\u200eb");
-    expect(printable("\u{110bd}")).toBe("\\ud804\\udcbd");
-  });
-
-  // No terminal acts on these, but a consumer splitting the output into lines
-  // does, so an argument carrying one forges a line the CLI never wrote.
-  it("escapes the two Unicode line separators", () => {
-    expect(printable("a\u2028b\u2029c")).toBe("a\\u2028b\\u2029c");
   });
 });
 

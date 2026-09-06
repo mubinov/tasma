@@ -11,3 +11,12 @@
 export const DEFAULT_DAEMON_HOST = "127.0.0.1";
 export const DEFAULT_DAEMON_PORT = 8278;
 export const DEFAULT_DAEMON_URL = `http://${DEFAULT_DAEMON_HOST}:${DEFAULT_DAEMON_PORT}`;
+
+// The record a running daemon writes into the root of the tree, so a client
+// finds a daemon that bound a port other than the default. The name and the
+// shape live here because a client reads them and only the daemon writes them.
+
+export const DAEMON_RECORD_FILE = "daemon.json";
+
+/** Where the daemon listens, and which process to signal to stop it. */
+export type DaemonRecord = { port: number; pid: number };

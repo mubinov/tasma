@@ -1,25 +1,8 @@
+import { printable } from "@tasma/protocol";
 import { commandTable } from "./help.js";
 import type { Command, Io } from "./types.js";
 
 const HINT = "Run 'tasma --help' for usage.\n";
-
-// Characters a reader of this output acts on rather than prints: a terminal
-// takes an escape sequence as a command to clear the screen, retitle the window
-// or overwrite the line so a failure reads as success, and a program splitting
-// the output into lines takes a Unicode line separator as a line of its own.
-// Either way an argument can forge output the CLI never wrote.
-const OPAQUE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
-
-/** Text safe to print, with every character a reader would act on shown as its escape. */
-export function printable(text: string): string {
-  return text.replace(OPAQUE, (match) =>
-    // By code unit rather than code point, so an astral character keeps both halves.
-    match
-      .split("")
-      .map((unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`)
-      .join(""),
-  );
-}
 
 /**
  * A value an answer carried, as text safe to print.

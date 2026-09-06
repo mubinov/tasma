@@ -1,11 +1,13 @@
 import { once } from "node:events";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { onTestFinished } from "vitest";
 import type { IndexedProject } from "@tasma/engine";
-import type { Diagnostic } from "@tasma/protocol";
+import { DAEMON_RECORD_FILE } from "@tasma/protocol";
+import type { DaemonRecord, Diagnostic } from "@tasma/protocol";
 import { DaemonError } from "../src/http/failure.js";
 import type { RouteEntry } from "../src/http/router.js";
 import { createDaemonServer } from "../src/http/server.js";
@@ -89,6 +91,11 @@ export async function projectsRoot(...tags: string[]): Promise<string> {
   onTestFinished(() => rm(root, { recursive: true, force: true }));
   for (const tag of tags) await mkdir(projectDir(root, tag), { recursive: true });
   return root;
+}
+
+/** A record standing under the name a claim takes, as a daemon that is gone left one. */
+export async function seedRecord(root: string, record: DaemonRecord): Promise<void> {
+  await writeFile(join(root, DAEMON_RECORD_FILE), JSON.stringify(record), "utf8");
 }
 
 export function projectDir(root: string, tag: string): string {
@@ -204,4 +211,39 @@ export async function until(holds: () => boolean, what: string, change?: () => P
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
+}
+
+/**
+ * A port held by a process that is not a Tasma daemon, answering one body to
+ * every call. `startTestServer` cannot stand in for one: it goes through
+ * `createDaemonServer`, which prepends the real health route unconditionally.
+ *
+ * Node drops the body for a status that carries none, such as 204.
+ */
+export async function foreignPort(body: string, status = 200): Promise<number> {
+  const server = createServer((_request, response) => {
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(body);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  onTestFinished(async () => {
+    server.closeAllConnections();
+    server.close();
+    await once(server, "close");
+  });
+
+  return (server.address() as AddressInfo).port;
+}
+
+/** A port nothing listens on: taken by a server, then given back. */
+export async function freePort(): Promise<number> {
+  const server = createServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  server.close();
+  await once(server, "close");
+
+  return port;
 }

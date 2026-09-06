@@ -192,6 +192,9 @@ importers:
       '@tasma/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      yaml:
+        specifier: 'catalog:'
+        version: 2.9.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { stderr } from "node:process";
+import { argv, env, stderr, stdout } from "node:process";
+import { runDaemon } from "./lifecycle/run.js";
 
-// A daemon that exited 0 in silence would read as one that started.
-stderr.write("tasma-daemon: not implemented\n");
-process.exitCode = 1;
+// Not process.exit(): a write to stderr is asynchronous when it is a pipe, and
+// exiting would truncate it.
+process.exitCode = await runDaemon(argv.slice(2), { stdout, stderr }, env);

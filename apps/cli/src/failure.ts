@@ -1,7 +1,7 @@
-import { ProtocolError, TransportError } from "@tasma/protocol";
+import { printable, ProtocolError, TransportError } from "@tasma/protocol";
 import type { Diagnostic, Success } from "@tasma/protocol";
 import { RequestTimeoutError } from "./daemon/transport.js";
-import { printable, wireText } from "./shell.js";
+import { wireText } from "./shell.js";
 import type { Io } from "./types.js";
 
 /** A call that produced no answer this CLI can act on. */
