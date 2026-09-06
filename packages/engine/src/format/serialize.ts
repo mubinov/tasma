@@ -1,4 +1,5 @@
-import { Document, isAlias, isCollection, isNode, isScalar, parseDocument, Scalar, visit, type YAMLMap } from "yaml";
+import { Document, isCollection, parseDocument, Scalar, type YAMLMap } from "yaml";
+import { anchorIsRead, anchorsOf, unaddressableKey } from "./anchors.js";
 import { fail, type Faults, TaskFormatError } from "./errors.js";
 import { FenceTracker } from "./fences.js";
 import { FRONTMATTER_DELIMITER, MARKER_PREFIX, MARKER_SUFFIX } from "./grammar.js";
@@ -54,75 +55,19 @@ function nodeFor(doc: Document, spec: FieldSpec, value: unknown): unknown {
   return value;
 }
 
-/** The anchors of one document that decide whether a key can be written. */
-type Anchors = {
-  /** The anchor names an alias somewhere in the document reads. */
-  read: Set<string>;
-  /** The anchor each top-level key node carries, by the name of its key. */
-  onKey: Map<unknown, string>;
-};
-
-function anchorsOf(doc: Document): Anchors {
-  const read = new Set<string>();
-  visit(doc, {
-    Alias: (_key, alias) => {
-      read.add(alias.source);
-    },
-  });
-  const onKey = new Map<unknown, string>();
-  for (const { key } of (doc.contents as YAMLMap).items) {
-    if (isScalar(key) && key.anchor !== undefined) onKey.set(key.value, key.anchor);
-  }
-  return { read, onKey };
-}
-
-/**
- * Whether writing `key` would break an alias. A change replaces the value node,
- * which leaves an alias that reads an anchor inside it unresolved, or rewrites
- * the anchored value in place, which changes what the alias reads. A removal
- * takes the key node away with the value, so an anchor the key node carries
- * counts for a removal as well.
- */
-function anchorIsRead(doc: Document, key: string, anchors: Anchors, removing: boolean): boolean {
-  if (anchors.read.size === 0) return false;
-  const onKey = anchors.onKey.get(key);
-  if (removing && onKey !== undefined && anchors.read.has(onKey)) return true;
-  const node = doc.get(key, true);
-  if (!isNode(node)) return false;
-  let read = false;
-  visit(node, (_key, child) => {
-    if (!isNode(child) || child.anchor === undefined || !anchors.read.has(child.anchor)) return undefined;
-    read = true;
-    return visit.BREAK;
-  });
-  return read;
-}
-
-/**
- * Rejects a region the writer cannot address key by key. The writer reaches a
- * key by its name and every name it writes is a plain string, so a key written
- * as a number, a boolean or a null names no key the writer addresses and is left
- * where it stands. Two constructs are different, because either can report the
- * name of a key this format defines while the region carries no key written
- * under it: a merge key (`<<`) lends the region the keys of another mapping, and
- * a key written as an alias resolves to the name its anchor holds. A change to
- * such a region loses a removal, or writes the key a second time.
- */
+/** Rejects a region holding a key the writer cannot address by its name. */
 function checkAddressable(doc: Document, faults: Faults): void {
-  for (const { key } of (doc.contents as YAMLMap).items) {
-    // A resolved merge key is the one key the library represents as a scalar
-    // that holds a symbol.
-    const merges = isScalar(key) && typeof key.value === "symbol";
-    if (!merges && !isAlias(key)) continue;
-    const reason = merges ? "resolves a YAML merge key" : "carries a key the writer cannot address";
-    fail(
-      merges ? "merge-key" : "key-unaddressable",
-      1,
-      `the ${faults.label} ${reason}, so a change to it cannot be written`,
-      undefined,
-      faults.filename,
-    );
-  }
+  const unaddressable = unaddressableKey(doc);
+  if (unaddressable === undefined) return;
+  const reason
+    = unaddressable === "merge-key" ? "resolves a YAML merge key" : "carries a key the writer cannot address";
+  fail(
+    unaddressable,
+    1,
+    `the ${faults.label} ${reason}, so a change to it cannot be written`,
+    undefined,
+    faults.filename,
+  );
 }
 
 /**

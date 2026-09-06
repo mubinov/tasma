@@ -24,6 +24,7 @@ export type StoreDiagnosticCode
     | "priority-case-corrected"
     | "config-key-unknown"
     | "config-unreadable"
+    | "path-missing"
     | "state-key-unknown"
     | "workflow-key-unknown"
     | "workflows-path-unusable"
@@ -136,6 +137,31 @@ export type ResolvedConfig = {
  * file that can state them rather than resolving the whole configuration.
  */
 export type ProjectDeclaration = Pick<ResolvedConfig, "name" | "path">;
+
+/**
+ * The project a create registers. `path` is the repository the project stands
+ * for, absolute or `~/`; `name` and `tag` both default to what the last folder
+ * name of the path it resolves to gives.
+ */
+export type CreateProjectInput = {
+  root?: string;
+  path: string;
+  name?: string;
+  tag?: string;
+};
+
+/**
+ * One write of a project. Clearing `name` deletes the key, and the reader then
+ * falls back to the tag. `path` cannot be cleared: every project states one. A
+ * project is renamed by its own operation, so `tag` is no field here.
+ */
+export type ProjectChange = { name?: string | null; path?: string };
+
+/** One project as the registry answers with it, whichever call read or wrote it. */
+export type ProjectInfo = ProjectDeclaration & {
+  tag: string;
+  diagnostics: StoreDiagnostic[];
+};
 
 export type ConfigResult = {
   config: ResolvedConfig;

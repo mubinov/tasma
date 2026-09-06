@@ -17,6 +17,7 @@ export type DiagnosticCode
     | "priority-case-corrected"
     | "config-key-unknown"
     | "config-unreadable"
+    | "path-missing"
     | "state-key-unknown"
     | "workflow-key-unknown"
     | "workflows-path-unusable"

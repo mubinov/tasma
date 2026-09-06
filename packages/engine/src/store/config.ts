@@ -45,8 +45,8 @@ type Sourced = { value: unknown; from: string };
  * Reads one level. An absent file declares no keys; a file the engine cannot
  * read throws, because configuration is human intent and guessing at it means
  * validating writes against a list the user did not choose. A symbolic link is
- * followed here alone: the user places both configuration files, and this layer
- * writes neither.
+ * followed here alone: the user places both configuration files, so a link on
+ * one leads where the user pointed it.
  */
 async function readLevel(path: string, known: Set<string>, diagnostics: StoreDiagnostic[]): Promise<Level> {
   const read = await readRegularFile(path, true);
@@ -272,13 +272,15 @@ export async function resolveConfig(paths: ProjectPaths, diagnostics: StoreDiagn
  * file contributes neither value, while reading it would refuse every project of
  * a tree over one malformed shared file and would cost a read of it per project.
  *
- * The findings of the read are discarded, the rule `resolveWorkflowsPath`
- * follows. The one caller lists a whole tree, and a finding about one project's
- * configuration belongs on that project's own resource, where it names one file
- * rather than arriving in a list of many.
+ * Where the findings of the read go is the caller's to decide: a finding about
+ * one project's configuration belongs on that project's own resource, where it
+ * names one file, and never in a listing of a whole tree.
  */
-export async function resolveProjectDeclaration(paths: ProjectPaths): Promise<ProjectDeclaration> {
-  const levels = [await readLevel(paths.projectConfig, PROJECT_KEYS, [])];
+export async function resolveProjectDeclaration(
+  paths: ProjectPaths,
+  diagnostics: StoreDiagnostic[],
+): Promise<ProjectDeclaration> {
+  const levels = [await readLevel(paths.projectConfig, PROJECT_KEYS, diagnostics)];
   return { name: declaredString("name", levels), path: declaredPath("path", levels) };
 }
 

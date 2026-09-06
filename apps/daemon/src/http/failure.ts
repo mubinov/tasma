@@ -82,6 +82,9 @@ const STORE_STATUS = {
   "task-exists": 409,
   "comment-exists": 409,
   "snapshot-lost": 409,
+  // The tag a create asked for is taken, which the caller answers by choosing
+  // another rather than by sending the same call again.
+  "project-exists": 409,
   // Each of these is a file on disk that cannot be used, not a bad call.
   "project-invalid": 422,
   "config-invalid": 422,
@@ -99,6 +102,9 @@ const STORE_STATUS = {
   "field-not-writable": 400,
   "field-required": 400,
   "id-mismatch": 400,
+  "tag-invalid": 400,
+  "tag-not-generated": 400,
+  "path-invalid": 400,
 } satisfies Record<StoreErrorCode, number>;
 
 // A file on disk that cannot be read. The caller sent nothing wrong and

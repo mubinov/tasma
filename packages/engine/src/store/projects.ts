@@ -7,6 +7,21 @@ import { openProjectDirectory } from "./store.js";
 import type { ProjectDeclaration, ProjectOptions } from "./types.js";
 
 /**
+ * The directory every project of a tree stands under, refused when a symbolic
+ * link holds it. A link there takes the whole tree outside the root the caller
+ * named, and each entry below really is a directory at the target, so no check
+ * further down can see it. A create and a remove reach below it, so the rule
+ * guards a write as much as a read.
+ */
+export async function checkedProjectsDirectory(root?: string): Promise<string> {
+  const directory = projectsDir(root);
+  if ((await entryAt(directory))?.isSymbolicLink() === true) {
+    fail("project-invalid", "the projects directory of this tree is a symbolic link", directory);
+  }
+  return directory;
+}
+
+/**
  * Every project of a tree, by tag, ascending.
  *
  * A project is a directory whose name is a tag, and nothing more: no
@@ -23,17 +38,9 @@ import type { ProjectDeclaration, ProjectOptions } from "./types.js";
  * A missing `projects/` is an empty tree rather than a fault, the rule
  * `scanTasks` applies to a missing `tasks/`: the directory is engine storage.
  * Every other fault of the read is thrown.
- *
- * The name itself is refused when a symbolic link holds it, the rule every
- * directory below it stands under: a link there takes every project of the tree
- * outside the root the caller named, and each entry it answers with really is a
- * directory at the target, so no check below this one can see it.
  */
 export async function discoverProjects(root?: string): Promise<string[]> {
-  const directory = projectsDir(root);
-  if ((await entryAt(directory))?.isSymbolicLink() === true) {
-    fail("project-invalid", "the projects directory of this tree is a symbolic link", directory);
-  }
+  const directory = await checkedProjectsDirectory(root);
   let entries;
   try {
     entries = await readdir(directory, { withFileTypes: true });
@@ -53,9 +60,13 @@ export async function discoverProjects(root?: string): Promise<string[]> {
  * The project directory is checked first, the way every other operation checks
  * it, so a directory that a symbolic link replaced between the discovery and
  * this read is refused rather than followed out of the tree.
+ *
+ * The findings of the read are dropped, the rule `resolveWorkflowsPath` follows:
+ * a finding about one project's configuration belongs on the read of that one
+ * project, `readProject`, rather than in a list of many.
  */
 export async function readProjectDeclaration(options: ProjectOptions): Promise<ProjectDeclaration> {
   const paths = projectPaths(options);
   await openProjectDirectory(paths);
-  return resolveProjectDeclaration(paths);
+  return resolveProjectDeclaration(paths, []);
 }

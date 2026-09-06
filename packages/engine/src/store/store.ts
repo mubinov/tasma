@@ -216,6 +216,26 @@ export async function createTaskFile(
 }
 
 /**
+ * The project's own directory as this layer requires it, and nothing about what
+ * it holds. A symbolic link is refused rather than resolved, for the reason
+ * `checkTasksDirectory` states.
+ *
+ * It stands apart from `openProjectDirectory` for the delete of a whole project,
+ * which is the one operation a project holding something this layer cannot use
+ * must still be open to: the delete clears exactly that state, and `tasks/` goes
+ * with the directory.
+ */
+export async function checkProjectDirectory(paths: ProjectPaths): Promise<void> {
+  const directory = await entryAt(paths.directory);
+  if (directory?.isSymbolicLink() === true) {
+    fail("project-invalid", "the directory of this project is a symbolic link", paths.directory);
+  }
+  if (directory?.isDirectory() !== true) {
+    fail("project-not-found", "there is no directory for this project", paths.directory);
+  }
+}
+
+/**
  * The tasks directory as this layer requires it, or absent. A symbolic link is
  * refused rather than resolved: it would take every task file of the project
  * outside the tree the caller named, which the guard on a task file — the last
@@ -241,13 +261,7 @@ function checkTasksDirectory(paths: ProjectPaths, entry: Stats | undefined): voi
  * than reaching a project that does not exist on its first query.
  */
 export async function openProjectDirectory(paths: ProjectPaths): Promise<void> {
-  const directory = await entryAt(paths.directory);
-  if (directory?.isSymbolicLink() === true) {
-    fail("project-invalid", "the directory of this project is a symbolic link", paths.directory);
-  }
-  if (directory?.isDirectory() !== true) {
-    fail("project-not-found", "there is no directory for this project", paths.directory);
-  }
+  await checkProjectDirectory(paths);
   checkTasksDirectory(paths, await entryAt(paths.tasks));
 }
 

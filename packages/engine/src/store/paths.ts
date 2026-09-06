@@ -27,7 +27,7 @@ export type ProjectPaths = {
 };
 
 /** A leading `~/` is the home directory; every other path is left as it stands. */
-function expandHome(path: string): string {
+export function expandHome(path: string): string {
   if (path === "~") return homedir();
   return path.startsWith("~/") ? join(homedir(), path.slice("~/".length)) : path;
 }

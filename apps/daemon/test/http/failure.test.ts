@@ -88,7 +88,7 @@ describe("the status of a refusal", () => {
     (code) => expect(statusOfStore(code)).toBe(404),
   );
 
-  it.each<StoreErrorCode>(["task-exists", "comment-exists", "snapshot-lost"])(
+  it.each<StoreErrorCode>(["task-exists", "comment-exists", "snapshot-lost", "project-exists"])(
     "answers 409 for the store code %s",
     (code) => expect(statusOfStore(code)).toBe(409),
   );
@@ -113,6 +113,9 @@ describe("the status of a refusal", () => {
     "field-not-writable",
     "field-required",
     "id-mismatch",
+    "tag-invalid",
+    "tag-not-generated",
+    "path-invalid",
   ])("answers 400 for the store code %s", (code) => expect(statusOfStore(code)).toBe(400));
 
   it.each<ParseErrorCode>([

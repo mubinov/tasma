@@ -1,5 +1,5 @@
 import type { Stats } from "node:fs";
-import { constants, type FileHandle, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
+import { constants, type FileHandle, lstat, mkdir, open, rename, rm, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { errnoOf } from "./errors.js";
 import { tempPath } from "./paths.js";
@@ -52,12 +52,12 @@ export async function entryAt(path: string): Promise<Stats | undefined> {
  * the name, so a name replaced between the two decides nothing, and `O_NONBLOCK`
  * keeps the open of a pipe from waiting for a writer while holding a thread.
  *
- * `follow` is set for the files the user places and this engine never writes:
- * the two configuration files, a `workflow.yml`, the file of a step and an
- * instruction document. The user chose where each of those stands, so a link on
- * one leads where the user pointed it. Every other name this layer reads is one
- * it wrote itself, so a symbolic link there points outside the tree the caller
- * named and holds nothing this layer will read.
+ * `follow` is set for the files the user places: the two configuration files, a
+ * `workflow.yml`, the file of a step and an instruction document. The user chose
+ * where each of those stands, so a link on one leads where the user pointed it.
+ * Every other name this layer reads is one it wrote itself, so a symbolic link
+ * there points outside the tree the caller named and holds nothing this layer
+ * will read.
  *
  * A handle it returns belongs to the caller, which closes it. This is the one
  * place the rules above are stated, so every read of this engine holds them.
@@ -110,6 +110,23 @@ export async function makeDirectory(path: string): Promise<void> {
   } catch (error) {
     if (errnoOf(error) !== "EEXIST") throw error;
   }
+}
+
+/**
+ * Creates a directory that must not exist yet, the rule `createExclusive` states
+ * for a file. `EEXIST` reaches the caller unchanged, which is what makes this
+ * create the collision guard on a name two writers can reach for at once.
+ */
+export async function createExclusiveDirectory(path: string): Promise<void> {
+  await mkdir(path, { mode: DIRECTORY_MODE });
+}
+
+/**
+ * Removes a directory and everything under it. A symbolic link inside is removed
+ * as the entry it is, so nothing outside the directory is followed.
+ */
+export async function removeTree(path: string): Promise<void> {
+  await rm(path, { recursive: true });
 }
 
 /**
