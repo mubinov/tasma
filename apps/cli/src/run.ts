@@ -1,10 +1,10 @@
 import { parseArgs } from "node:util";
 import manifest from "../package.json" with { type: "json" };
 import { daemon } from "./commands/daemon.js";
-import { resolveDaemonUrl } from "./daemon/transport.js";
+import { resolveTarget } from "./daemon/transport.js";
 import { helpText } from "./help.js";
 import { dispatch, errorText, reportUsage } from "./shell.js";
-import type { Command, Io } from "./types.js";
+import type { Command, Io, Target } from "./types.js";
 
 /**
  * Every command the CLI answers to.
@@ -107,15 +107,15 @@ export async function run(argv: string[], io: Io, env: Record<string, string | u
     return 0;
   }
 
-  let daemonUrl: string;
+  let target: Target;
 
   // Resolved once and handed down. A refused value is a fault in the
   // invocation, so it reports through the same usage path as a bad flag.
   try {
-    daemonUrl = resolveDaemonUrl(values.daemon, env);
+    target = resolveTarget(values.daemon, env);
   } catch (error) {
     return reportUsage(io, errorText(error));
   }
 
-  return dispatch(COMMANDS, "", invocation.name, invocation.args, io, daemonUrl);
+  return dispatch(COMMANDS, "", invocation.name, invocation.args, io, target);
 }

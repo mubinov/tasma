@@ -1,65 +1,93 @@
-import { DEFAULT_DAEMON_URL } from "@tasma/protocol";
 import type { IncomingMessage } from "node:http";
+import { homedir } from "node:os";
 import { describe, expect, it } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
-import { createFetchTransport, RequestTimeoutError, resolveDaemonUrl } from "../../src/daemon/transport.js";
+import {
+  createFetchTransport, REPLY_LIMIT, replyText, RequestTimeoutError, resolveTarget,
+} from "../../src/daemon/transport.js";
 import { startServer } from "../helpers.js";
 
-describe("resolveDaemonUrl", () => {
-  it("takes the flag first, the variable next and the built-in default last", () => {
-    expect(resolveDaemonUrl("http://localhost:9000", { TASMA_DAEMON_URL: "http://127.0.0.1:9001" }))
+/** The address a target states, for the cases that state one. */
+function address(flag: string | undefined, env: Record<string, string | undefined> = {}): string {
+  const target = resolveTarget(flag, env);
+
+  if (target.kind !== "explicit") throw new Error("the target states no address");
+
+  return target.url;
+}
+
+describe("resolveTarget", () => {
+  it("takes the flag first and the variable next", () => {
+    expect(address("http://localhost:9000", { TASMA_DAEMON_URL: "http://127.0.0.1:9001" }))
       .toBe("http://localhost:9000");
-    expect(resolveDaemonUrl(undefined, { TASMA_DAEMON_URL: "http://127.0.0.1:9001" })).toBe("http://127.0.0.1:9001");
-    expect(resolveDaemonUrl(undefined, {})).toBe(DEFAULT_DAEMON_URL);
+    expect(address(undefined, { TASMA_DAEMON_URL: "http://127.0.0.1:9001" })).toBe("http://127.0.0.1:9001");
+  });
+
+  // A verb that refuses an address says which channel to clear, and the two are
+  // cleared differently.
+  it("names the channel that stated the address", () => {
+    expect(resolveTarget("http://127.0.0.1:9000", {}))
+      .toEqual({ kind: "explicit", url: "http://127.0.0.1:9000", stated: "--daemon" });
+    expect(resolveTarget(undefined, { TASMA_DAEMON_URL: "http://127.0.0.1:9001" }))
+      .toEqual({ kind: "explicit", url: "http://127.0.0.1:9001", stated: "TASMA_DAEMON_URL" });
+  });
+
+  // With no address stated a command acts on the tree, and the home is where
+  // the record naming its daemon stands.
+  it("answers the tree where neither channel states an address, reading HOME before the account's own home", () => {
+    expect(resolveTarget(undefined, { HOME: "/tmp/home" })).toEqual({ kind: "tree", home: "/tmp/home" });
+    expect(resolveTarget(undefined, {})).toEqual({ kind: "tree", home: homedir() });
+    expect(resolveTarget(undefined, { HOME: "" })).toEqual({ kind: "tree", home: homedir() });
   });
 
   // Without this, `${base}${path}` produces //health.
   it("keeps the origin alone, so a trailing slash, a case and a redundant :80 all normalise away", () => {
-    expect(resolveDaemonUrl("http://127.0.0.1:9000/", {})).toBe("http://127.0.0.1:9000");
-    expect(resolveDaemonUrl("HTTP://LOCALHOST:9000", {})).toBe("http://localhost:9000");
-    expect(resolveDaemonUrl("http://127.0.0.1:80", {})).toBe("http://127.0.0.1");
+    expect(address("http://127.0.0.1:9000/")).toBe("http://127.0.0.1:9000");
+    expect(address("HTTP://LOCALHOST:9000")).toBe("http://localhost:9000");
+    expect(address("http://127.0.0.1:80")).toBe("http://127.0.0.1");
   });
 
   // URL.hostname reports an IPv6 literal with its brackets, so a set written
   // from the prose alone would refuse an address the daemon does serve.
   it("accepts the bracketed IPv6 loopback literal", () => {
-    expect(resolveDaemonUrl("http://[::1]:8278", {})).toBe("http://[::1]:8278");
+    expect(address("http://[::1]:8278")).toBe("http://[::1]:8278");
   });
 
   it("refuses a value that is not a URL, through either channel", () => {
-    expect(() => resolveDaemonUrl("nonsense", {})).toThrow(/nonsense/);
-    expect(() => resolveDaemonUrl(undefined, { TASMA_DAEMON_URL: "nonsense" })).toThrow(/nonsense/);
+    expect(() => resolveTarget("nonsense", {})).toThrow(/nonsense/);
+    expect(() => resolveTarget(undefined, { TASMA_DAEMON_URL: "nonsense" })).toThrow(/nonsense/);
   });
 
   it("refuses a host that is not loopback, through either channel", () => {
-    expect(() => resolveDaemonUrl("http://somewhere.example", {})).toThrow(/somewhere\.example/);
-    expect(() => resolveDaemonUrl(undefined, { TASMA_DAEMON_URL: "http://10.0.0.1:8278" })).toThrow(/10\.0\.0\.1/);
+    expect(() => resolveTarget("http://somewhere.example", {})).toThrow(/somewhere\.example/);
+    expect(() => resolveTarget(undefined, { TASMA_DAEMON_URL: "http://10.0.0.1:8278" })).toThrow(/10\.0\.0\.1/);
   });
 
   it("refuses a scheme the daemon does not speak, through either channel", () => {
-    expect(() => resolveDaemonUrl("https://127.0.0.1:8278", {})).toThrow(/https/);
-    expect(() => resolveDaemonUrl(undefined, { TASMA_DAEMON_URL: "https://localhost:8278" })).toThrow(/https/);
+    expect(() => resolveTarget("https://127.0.0.1:8278", {})).toThrow(/https/);
+    expect(() => resolveTarget(undefined, { TASMA_DAEMON_URL: "https://localhost:8278" })).toThrow(/https/);
   });
 
   // An exported-but-empty variable is an ordinary shell and CI shape, and a
   // message naming no address gives the reader nothing to act on.
   it("takes an empty value as unset, through either channel", () => {
-    expect(resolveDaemonUrl("", {})).toBe(DEFAULT_DAEMON_URL);
-    expect(resolveDaemonUrl(undefined, { TASMA_DAEMON_URL: "" })).toBe(DEFAULT_DAEMON_URL);
-    expect(resolveDaemonUrl("", { TASMA_DAEMON_URL: "http://127.0.0.1:9001" })).toBe("http://127.0.0.1:9001");
+    expect(resolveTarget("", { HOME: "/tmp/home" })).toEqual({ kind: "tree", home: "/tmp/home" });
+    expect(resolveTarget(undefined, { HOME: "/tmp/home", TASMA_DAEMON_URL: "" }))
+      .toEqual({ kind: "tree", home: "/tmp/home" });
+    expect(address("", { TASMA_DAEMON_URL: "http://127.0.0.1:9001" })).toBe("http://127.0.0.1:9001");
   });
 
   // A refusal reaches a CI log, scrollback or a pasted report, and an address
   // copied from a tunnel recipe carries a token in its userinfo.
   it("quotes a refused address back without its credentials", () => {
-    expect(() => resolveDaemonUrl("https://user:token@127.0.0.1:8278", {})).toThrow(/https:\/\/127\.0\.0\.1:8278$/);
-    expect(() => resolveDaemonUrl("https://user:token@127.0.0.1:8278", {})).not.toThrow(/token/);
+    expect(() => resolveTarget("https://user:token@127.0.0.1:8278", {})).toThrow(/https:\/\/127\.0\.0\.1:8278$/);
+    expect(() => resolveTarget("https://user:token@127.0.0.1:8278", {})).not.toThrow(/token/);
   });
 
   // A scheme with no authority is followed by an opaque path, which is the
   // value's own and can carry anything.
   it("quotes the scheme alone for a value that parsed to no host", () => {
-    expect(() => resolveDaemonUrl(undefined, { TASMA_DAEMON_URL: "user:token@nowhere" })).toThrow(/localhost: user:$/);
+    expect(() => resolveTarget(undefined, { TASMA_DAEMON_URL: "user:token@nowhere" })).toThrow(/localhost: user:$/);
   });
 
   // A `/` is legal in a base64 secret and illegal in userinfo, so an unparsable
@@ -68,8 +96,8 @@ describe("resolveDaemonUrl", () => {
   // token behind the path.
   it("quotes the scheme alone when an unparsable value carries an @", () => {
     for (const stated of ["http://user:aB3/xY9z@127.0.0.1:8278", "http://127.0.0.1:99999/callback@SECRETVALUE"]) {
-      expect(() => resolveDaemonUrl(stated, {})).toThrow(/^not a daemon address: http:\/\/$/);
-      expect(() => resolveDaemonUrl(undefined, { TASMA_DAEMON_URL: stated })).toThrow(/^not a daemon address: http:\/\/$/);
+      expect(() => resolveTarget(stated, {})).toThrow(/^not a daemon address: http:\/\/$/);
+      expect(() => resolveTarget(undefined, { TASMA_DAEMON_URL: stated })).toThrow(/^not a daemon address: http:\/\/$/);
     }
   });
 
@@ -78,15 +106,15 @@ describe("resolveDaemonUrl", () => {
   // the delimiter with them and quotes the userinfo in full.
   it("quotes the scheme alone when an unparsable value carries an @ behind a ? or a #", () => {
     for (const stated of ["http://user:SECRETVALUE#x@127.0.0.1:99999", "http://user:SECRETVALUE?x@127.0.0.1:99999"]) {
-      expect(() => resolveDaemonUrl(stated, {})).toThrow(/^not a daemon address: http:\/\/$/);
-      expect(() => resolveDaemonUrl(undefined, { TASMA_DAEMON_URL: stated })).toThrow(/^not a daemon address: http:\/\/$/);
+      expect(() => resolveTarget(stated, {})).toThrow(/^not a daemon address: http:\/\/$/);
+      expect(() => resolveTarget(undefined, { TASMA_DAEMON_URL: stated })).toThrow(/^not a daemon address: http:\/\/$/);
     }
   });
 
   // A backslash separates a path from the host for a special scheme, so it ends
   // the authority exactly as a slash does.
   it("ends an unparsable value's host at a backslash as it does at a slash", () => {
-    expect(() => resolveDaemonUrl("http://127.0.0.1:99999\\SECRETVALUE", {})).toThrow(
+    expect(() => resolveTarget("http://127.0.0.1:99999\\SECRETVALUE", {})).toThrow(
       /^not a daemon address: http:\/\/127\.0\.0\.1:99999$/,
     );
   });
@@ -94,7 +122,7 @@ describe("resolveDaemonUrl", () => {
   // With no scheme either there is nothing left to show, so the line names the
   // fault and quotes none of the value.
   it("quotes nothing from an unparsable value that carries an @ and no scheme", () => {
-    expect(() => resolveDaemonUrl("127.0.0.1:99999/callback@SECRETVALUE", {})).toThrow(/^not a daemon address$/);
+    expect(() => resolveTarget("127.0.0.1:99999/callback@SECRETVALUE", {})).toThrow(/^not a daemon address$/);
   });
 
   // The scheme and the host decide the refusal; a path, a query and a fragment
@@ -106,14 +134,14 @@ describe("resolveDaemonUrl", () => {
       "https://tunnel.example/#access_token=SECRETVALUE",
       "https://tunnel.example/services/SECRETVALUE",
     ]) {
-      expect(() => resolveDaemonUrl(undefined, { TASMA_DAEMON_URL: stated })).toThrow(/tunnel\.example$/);
-      expect(() => resolveDaemonUrl(stated, {})).not.toThrow(/SECRETVALUE/);
+      expect(() => resolveTarget(undefined, { TASMA_DAEMON_URL: stated })).toThrow(/tunnel\.example$/);
+      expect(() => resolveTarget(stated, {})).not.toThrow(/SECRETVALUE/);
     }
 
     // An invalid port is the unparsable half of the same shape.
-    expect(() => resolveDaemonUrl("http://127.0.0.1:99999/?token=SECRETVALUE", {}))
+    expect(() => resolveTarget("http://127.0.0.1:99999/?token=SECRETVALUE", {}))
       .toThrow("not a daemon address: http://127.0.0.1:99999");
-    expect(() => resolveDaemonUrl("http://127.0.0.1:99999/services/SECRETVALUE", {})).not.toThrow(/SECRETVALUE/);
+    expect(() => resolveTarget("http://127.0.0.1:99999/services/SECRETVALUE", {})).not.toThrow(/SECRETVALUE/);
   });
 
   // The refusal is a line in a log, not a payload, and no host anybody typed
@@ -121,8 +149,8 @@ describe("resolveDaemonUrl", () => {
   it("caps how much of a refused address it quotes back", () => {
     const long = `https://${"a".repeat(5000)}.example`;
 
-    expect(() => resolveDaemonUrl(long, {})).toThrow(/a\.\.\.$/);
-    expect(() => resolveDaemonUrl(long, {})).not.toThrow(long);
+    expect(() => resolveTarget(long, {})).toThrow(/a\.\.\.$/);
+    expect(() => resolveTarget(long, {})).not.toThrow(long);
   });
 });
 
@@ -225,6 +253,26 @@ describe("createFetchTransport", () => {
     }
   });
 
+  // The address can be one a record named rather than one a caller typed, so
+  // whatever holds it cannot make the CLI hold everything it sends.
+  it("reads no more of a reply than the limit, whatever the answer keeps sending", async () => {
+    const server = await startServer((_request, response) => {
+      // The client leaves the stream early, and a write onto the socket it
+      // closed is the ordinary end of this case rather than a fault.
+      response.on("error", () => undefined);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true, data: { name: "x".repeat(REPLY_LIMIT) }, diagnostics: [] }));
+    });
+
+    try {
+      const reply = await createFetchTransport(server.url)({ method: "GET", path: "/health" });
+
+      expect(reply).toEqual({ status: 200, body: undefined });
+    } finally {
+      await server.close();
+    }
+  });
+
   // The loopback-only rule governs the first hop alone unless a redirect is
   // refused, and a followed one would carry the body to any host it named.
   it("refuses a redirect rather than following it off the address it validated", async () => {
@@ -243,5 +291,17 @@ describe("createFetchTransport", () => {
       await redirector.close();
       await target.close();
     }
+  });
+});
+
+describe("replyText", () => {
+  it("answers the whole of a reply inside the limit, and refuses one past it", async () => {
+    expect(await replyText(new Response("hi"), 10)).toBe("hi");
+    await expect(replyText(new Response("hello"), 2)).rejects.toThrow("longer than 2 bytes");
+  });
+
+  // A status that carries no body at all is one no envelope can be read off.
+  it("refuses a reply that carries no body", async () => {
+    await expect(replyText(new Response(null, { status: 204 }), 10)).rejects.toThrow("carried no body");
   });
 });

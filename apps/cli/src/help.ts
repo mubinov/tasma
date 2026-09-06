@@ -1,4 +1,5 @@
-import { DEFAULT_DAEMON_URL } from "@tasma/protocol";
+import { DAEMON_RECORD_FILE, DEFAULT_DAEMON_URL } from "@tasma/protocol";
+import { TREE_DIRNAME } from "./daemon/record.js";
 import type { Command } from "./types.js";
 
 /**
@@ -17,9 +18,9 @@ export function commandTable(commands: Command[]): string[] {
 /**
  * The usage text, with the command table rendered from the registry it is given.
  *
- * It documents the variable beside the flag and the address both fall back to,
- * because the address is resolved from all three and this is the only
- * documentation the CLI carries.
+ * It documents the variable beside the flag, where a command looks when neither
+ * states an address, and that an address stated by hand turns start-on-demand
+ * off, because this is the only documentation the CLI carries.
  */
 export function helpText(commands: Command[]): string {
   return [
@@ -39,7 +40,9 @@ export function helpText(commands: Command[]): string {
     "Environment:",
     "  TASMA_DAEMON_URL    Where the daemon listens, unless --daemon says otherwise",
     "",
-    `Both default to ${DEFAULT_DAEMON_URL}.`,
+    `Without either, tasma reads ~/${TREE_DIRNAME}/${DAEMON_RECORD_FILE} and falls back to ${DEFAULT_DAEMON_URL}.`,
+    "A command that needs a daemon starts one there when none answers; daemon status never does.",
+    "An address given either way is never started, and daemon start and daemon stop refuse one.",
     "",
   ].join("\n");
 }

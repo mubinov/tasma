@@ -1,6 +1,6 @@
 import { printable } from "@tasma/protocol";
 import { commandTable } from "./help.js";
-import type { Command, Io } from "./types.js";
+import type { Command, Io, Target } from "./types.js";
 
 const HINT = "Run 'tasma --help' for usage.\n";
 
@@ -62,7 +62,7 @@ export async function dispatch(
   name: string,
   args: string[],
   io: Io,
-  daemonUrl: string,
+  target: Target,
 ): Promise<number> {
   const command = commands.find((candidate) => candidate.name === name);
 
@@ -70,7 +70,7 @@ export async function dispatch(
     return reportUsage(io, `unknown command: ${parent === "" ? name : `${parent} ${name}`}`);
   }
 
-  return command.run(args, io, daemonUrl);
+  return command.run(args, io, target);
 }
 
 /**
@@ -84,7 +84,7 @@ export function noun(name: string, summary: string, verbs: Command[]): Command {
   return {
     name,
     summary,
-    run: (args, io, daemonUrl) => {
+    run: (args, io, target) => {
       const [verb, ...rest] = args;
 
       if (verb === undefined || verb === "--help" || verb === "-h") {
@@ -92,7 +92,7 @@ export function noun(name: string, summary: string, verbs: Command[]): Command {
         return Promise.resolve(0);
       }
 
-      return dispatch(verbs, name, verb, rest, io, daemonUrl);
+      return dispatch(verbs, name, verb, rest, io, target);
     },
   };
 }

@@ -4,14 +4,16 @@ import manifest from "../package.json" with { type: "json" };
 // Relative: this package declares no exports, so its own name does not resolve.
 import { run, splitInvocation } from "../src/run.js";
 import { dispatch, errorText, reportUsage } from "../src/shell.js";
-import type { Command } from "../src/types.js";
-import { capture, startServer } from "./helpers.js";
+import type { Command, Target } from "../src/types.js";
+import { capture, startServer, treeHome } from "./helpers.js";
+
+const TARGET: Target = { kind: "explicit", url: "http://127.0.0.1:8278", stated: "--daemon" };
 
 /*
  * A refused address, passed as the environment to the paths that answer above
  * the address is resolved. Documentation stays reachable on a machine exporting
  * a variable the CLI would refuse, which holds only while those three paths
- * return before `resolveDaemonUrl`.
+ * return before `resolveTarget`.
  */
 const REFUSED_ENV = { TASMA_DAEMON_URL: "nonsense" };
 
@@ -149,6 +151,16 @@ describe("run", () => {
     }
   });
 
+  // With no address stated the target is the tree, and the home is what a verb
+  // reads the record under.
+  it("carries the tree's home to the command, from HOME", async () => {
+    const { io, out, err } = capture();
+
+    expect(await run(["daemon", "stop"], io, { HOME: treeHome() })).toBe(0);
+    expect(out.join("")).toBe("no daemon is running\n");
+    expect(err).toEqual([]);
+  });
+
   it("reports an address it refuses as a usage error, not as a daemon that is down", async () => {
     const { io, out, err } = capture();
 
@@ -223,28 +235,28 @@ describe("splitInvocation", () => {
 });
 
 describe("dispatch", () => {
-  it("runs the named command with the arguments after it, the io and the address", async () => {
+  it("runs the named command with the arguments after it, the io and the target", async () => {
     const { io } = capture();
-    const seen: { args: string[]; daemonUrl: string }[] = [];
+    const seen: { args: string[]; target: Target }[] = [];
     const commands: Command[] = [
       {
         name: "list",
         summary: "List the tasks",
-        run: (args, _io, daemonUrl) => {
-          seen.push({ args, daemonUrl });
+        run: (args, _io, target) => {
+          seen.push({ args, target });
           return Promise.resolve(1);
         },
       },
     ];
 
-    expect(await dispatch(commands, "", "list", ["--json"], io, "http://127.0.0.1:9000")).toBe(1);
-    expect(seen).toEqual([{ args: ["--json"], daemonUrl: "http://127.0.0.1:9000" }]);
+    expect(await dispatch(commands, "", "list", ["--json"], io, TARGET)).toBe(1);
+    expect(seen).toEqual([{ args: ["--json"], target: TARGET }]);
   });
 
   it("reports a name the registry does not hold", async () => {
     const { io, err } = capture();
 
-    expect(await dispatch([], "", "list", [], io, "http://127.0.0.1:8278")).toBe(2);
+    expect(await dispatch([], "", "list", [], io, TARGET)).toBe(2);
     expect(err.join("")).toBe("tasma: unknown command: list\nRun 'tasma --help' for usage.\n");
   });
 
@@ -253,7 +265,7 @@ describe("dispatch", () => {
   it("names the parent noun in front of a verb the table does not hold", async () => {
     const { io, err } = capture();
 
-    expect(await dispatch([], "daemon", "frobnicate", [], io, "http://127.0.0.1:8278")).toBe(2);
+    expect(await dispatch([], "daemon", "frobnicate", [], io, TARGET)).toBe(2);
     expect(err.join("")).toBe("tasma: unknown command: daemon frobnicate\nRun 'tasma --help' for usage.\n");
   });
 });

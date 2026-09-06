@@ -1,12 +1,25 @@
-import { ProtocolError, TransportError } from "@tasma/protocol";
-import type { Diagnostic, Success } from "@tasma/protocol";
+import { DEFAULT_DAEMON_URL, ProtocolError, TransportError } from "@tasma/protocol";
+import type { DaemonRecord, Diagnostic, Success } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
+import { recordPath } from "../src/daemon/record.js";
+import type { StartOutcome } from "../src/daemon/start.js";
 import { REQUEST_TIMEOUT_MS, RequestTimeoutError } from "../src/daemon/transport.js";
 import { attempt, reportForeign } from "../src/failure.js";
+import type { Reach } from "../src/failure.js";
+import type { Target } from "../src/types.js";
 import { capture } from "./helpers.js";
 
 const DAEMON_URL = "http://127.0.0.1:8278";
+
+/** An address stated by hand, which is the target that is never started. */
+const EXPLICIT: Target = { kind: "explicit", url: DAEMON_URL, stated: "--daemon" };
+
+const HOME = "/tmp/tasma-tree";
+const TREE: Target = { kind: "tree", home: HOME };
+const RECORD_PATH = recordPath(HOME);
+
+const UNREACHED = new TransportError("GET /health reached no daemon", undefined, new Error("connect ECONNREFUSED"));
 
 function ok<T>(data: T, diagnostics: Diagnostic[] = []): () => Promise<Success<T>> {
   return () => Promise.resolve({ data, diagnostics });
@@ -14,6 +27,37 @@ function ok<T>(data: T, diagnostics: Diagnostic[] = []): () => Promise<Success<T
 
 function throwing(error: Error): () => Promise<never> {
   return () => Promise.reject(error);
+}
+
+/** A call that fails the first time and answers the second, as a retry against a new address does. */
+function reachedOnRetry<T>(data: T, fault: TransportError = UNREACHED): () => Promise<Success<T>> {
+  let first = true;
+
+  return () => {
+    if (!first) return Promise.resolve({ data, diagnostics: [] });
+
+    first = false;
+    return Promise.reject(fault);
+  };
+}
+
+/** The tree as the test states it: what the record holds, and what a start of one comes to. */
+function reaching(record: DaemonRecord | undefined, outcome?: StartOutcome): { reach: Reach; starts: string[] } {
+  const starts: string[] = [];
+
+  return {
+    starts,
+    reach: {
+      readRecord: () => Promise.resolve(record),
+      start: ({ home }) => {
+        starts.push(home);
+
+        if (outcome === undefined) throw new Error("this target must never be started");
+
+        return Promise.resolve(outcome);
+      },
+    },
+  };
 }
 
 /** A value `JSON.parse` accepts and `JSON.stringify` overflows the stack rendering. */
@@ -34,7 +78,7 @@ describe("attempt", () => {
       { code: "index-watch-failed", message: "the index is not watching" },
     ];
 
-    const code = await attempt(io, DAEMON_URL, ok("payload", diagnostics), (data) => {
+    const code = await attempt(io, EXPLICIT, ok("payload", diagnostics), (data) => {
       io.stdout.write(`${data}\n`);
       return 0;
     });
@@ -53,7 +97,7 @@ describe("attempt", () => {
     const { io, err } = capture();
     const diagnostic: Diagnostic = { code: "step-stale", message: "the step is stale", line: 9 };
 
-    await attempt(io, DAEMON_URL, ok(null, [diagnostic]), () => 0);
+    await attempt(io, EXPLICIT, ok(null, [diagnostic]), () => 0);
 
     expect(err.join("")).toBe("tasma: note: step-stale: the step is stale\n");
   });
@@ -63,7 +107,7 @@ describe("attempt", () => {
   it("returns the code print chose rather than 0", async () => {
     const { io } = capture();
 
-    expect(await attempt(io, DAEMON_URL, ok("payload"), () => 3)).toBe(3);
+    expect(await attempt(io, EXPLICIT, ok("payload"), () => 3)).toBe(3);
   });
 
   // The envelope check reads the diagnostics as an array and no further, so an
@@ -73,7 +117,7 @@ describe("attempt", () => {
     const { io, out, err } = capture();
     const wire: unknown[] = [null, "note", 7, { code: "step-stale", message: "the step is stale" }];
 
-    const code = await attempt(io, DAEMON_URL, ok("payload", wire as Diagnostic[]), (data) => {
+    const code = await attempt(io, EXPLICIT, ok("payload", wire as Diagnostic[]), (data) => {
       io.stdout.write(`${data}\n`);
       return 0;
     });
@@ -89,7 +133,7 @@ describe("attempt", () => {
     const text = '{"toString":"x"}';
     const wire = [{ code: hostile, message: hostile, path: hostile, line: hostile }];
 
-    const code = await attempt(io, DAEMON_URL, ok("payload", wire as unknown as Diagnostic[]), (data) => {
+    const code = await attempt(io, EXPLICIT, ok("payload", wire as unknown as Diagnostic[]), (data) => {
       io.stdout.write(`${data}\n`);
       return 0;
     });
@@ -106,7 +150,7 @@ describe("attempt", () => {
     const deep = nested(30_000);
     const wire = [{ code: deep, message: deep, path: deep, line: deep }];
 
-    const code = await attempt(io, DAEMON_URL, ok("payload", wire as unknown as Diagnostic[]), (data) => {
+    const code = await attempt(io, EXPLICIT, ok("payload", wire as unknown as Diagnostic[]), (data) => {
       io.stdout.write(`${data}\n`);
       return 0;
     });
@@ -122,15 +166,14 @@ describe("attempt", () => {
     const { io, err } = capture();
     const diagnostic: Diagnostic = { code: "index-watch-failed", message: "the index is not watching" };
 
-    expect(await attempt(io, DAEMON_URL, ok(null, [diagnostic]), () => 3)).toBe(3);
+    expect(await attempt(io, EXPLICIT, ok(null, [diagnostic]), () => 3)).toBe(3);
     expect(err).toEqual([]);
   });
 
   it("reports a call nothing answered", async () => {
     const { io, out, err } = capture();
-    const error = new TransportError("GET /health reached no daemon", undefined, new Error("connect ECONNREFUSED"));
 
-    expect(await attempt(io, DAEMON_URL, throwing(error), () => 0)).toBe(3);
+    expect(await attempt(io, EXPLICIT, throwing(UNREACHED), () => 0)).toBe(3);
     expect(out).toEqual([]);
     expect(err.join("")).toBe(`tasma: no daemon answered at ${DAEMON_URL}\n`);
   });
@@ -142,7 +185,7 @@ describe("attempt", () => {
       const { io, err } = capture();
       const error = new TransportError("GET /health reached no daemon", undefined, new RequestTimeoutError(timeoutMs));
 
-      expect(await attempt(io, DAEMON_URL, throwing(error), () => 0)).toBe(3);
+      expect(await attempt(io, EXPLICIT, throwing(error), () => 0)).toBe(3);
       expect(err.join("")).toBe(`tasma: the daemon at ${DAEMON_URL} did not answer within ${seconds} seconds\n`);
     }
   });
@@ -151,7 +194,7 @@ describe("attempt", () => {
     const { io, err } = capture();
     const error = new TransportError("GET /health answered with no envelope", 502);
 
-    expect(await attempt(io, DAEMON_URL, throwing(error), () => 0)).toBe(3);
+    expect(await attempt(io, EXPLICIT, throwing(error), () => 0)).toBe(3);
     expect(err.join("")).toBe(`tasma: ${DAEMON_URL} answered 502, but not as a Tasma daemon\n`);
   });
 
@@ -161,7 +204,7 @@ describe("attempt", () => {
     const { io, out, err } = capture();
     const failure = { kind: "store", code: "task-not-found", message: "/tasks/A-99.md: no task with this id" } as const;
 
-    expect(await attempt(io, DAEMON_URL, throwing(new ProtocolError(failure, 404)), () => 0)).toBe(1);
+    expect(await attempt(io, EXPLICIT, throwing(new ProtocolError(failure, 404)), () => 0)).toBe(1);
     expect(out).toEqual([]);
     expect(err.join("")).toBe("tasma: store/task-not-found: /tasks/A-99.md: no task with this id\n");
   });
@@ -170,8 +213,8 @@ describe("attempt", () => {
     const { io, err } = capture();
     const failure = { kind: "daemon", code: "internal", message: "\u001b[2Jfaked" } as const;
 
-    await attempt(io, DAEMON_URL, throwing(new ProtocolError(failure, 500)), () => 0);
-    await attempt(io, DAEMON_URL, ok(null, [{ code: "config-unreadable", message: "m", path: "/c\u001bfg" }]), () => 0);
+    await attempt(io, EXPLICIT, throwing(new ProtocolError(failure, 500)), () => 0);
+    await attempt(io, EXPLICIT, ok(null, [{ code: "config-unreadable", message: "m", path: "/c\u001bfg" }]), () => 0);
 
     expect(err.join("")).not.toContain("\u001b");
     expect(err[0]).toBe("tasma: daemon/internal: \\u001b[2Jfaked\n");
@@ -183,7 +226,117 @@ describe("attempt", () => {
   it("lets anything that is neither a transport nor a protocol fault escape", async () => {
     const { io } = capture();
 
-    await expect(attempt(io, DAEMON_URL, throwing(new RangeError("boom")), () => 0)).rejects.toThrow("boom");
+    await expect(attempt(io, EXPLICIT, throwing(new RangeError("boom")), () => 0)).rejects.toThrow("boom");
+  });
+
+  it("calls the address the tree's record names, and the built-in one where it holds no record", async () => {
+    for (const [record, expected] of [
+      [{ port: 9000, pid: 4242 }, "http://127.0.0.1:9000"],
+      [undefined, DEFAULT_DAEMON_URL],
+    ] as const) {
+      const { io } = capture();
+      const { reach } = reaching(record);
+      let seen = "";
+
+      expect(await attempt(io, TREE, ok("payload"), (_data, url) => {
+        seen = url;
+        return 0;
+      }, { reach })).toBe(0);
+      expect(seen).toBe(expected);
+    }
+  });
+
+  // Somebody who named an address is pointing at a daemon that is meant to be
+  // there already, so the address is the off switch for start-on-demand.
+  it("starts nothing for an address stated by hand", async () => {
+    const { io, err } = capture();
+    const { reach, starts } = reaching(undefined);
+
+    expect(await attempt(io, EXPLICIT, throwing(UNREACHED), () => 0, { reach })).toBe(3);
+    expect(starts).toEqual([]);
+    expect(err.join("")).toBe(`tasma: no daemon answered at ${DAEMON_URL}\n`);
+  });
+
+  // The port answering nothing is what makes the record stale, so the reader is
+  // told which file describes a daemon that is gone.
+  it("names the record as stale where the address it gave answered nothing and no start was allowed", async () => {
+    const { io, err } = capture();
+    const { reach, starts } = reaching({ port: 9000, pid: 4242 });
+
+    expect(await attempt(io, TREE, throwing(UNREACHED), () => 0, { reach, start: false })).toBe(3);
+    expect(starts).toEqual([]);
+    expect(err.join("")).toBe(`tasma: no daemon answered at http://127.0.0.1:9000; the record at ${RECORD_PATH} is stale\n`);
+  });
+
+  it("starts a daemon for the tree and retries once against the address it answered", async () => {
+    const { io, err } = capture();
+    const { reach, starts } = reaching(undefined, { url: "http://127.0.0.1:9100" });
+    let seen = "";
+
+    expect(await attempt(io, TREE, reachedOnRetry("payload"), (_data, url) => {
+      seen = url;
+      return 0;
+    }, { reach })).toBe(0);
+    expect(starts).toEqual([HOME]);
+    expect(seen).toBe("http://127.0.0.1:9100");
+    expect(err).toEqual([]);
+  });
+
+  it("reports a start that failed, at the code of a daemon that cannot be reached", async () => {
+    const { io, out, err } = capture();
+    const { reach } = reaching(undefined, { failure: "tasma-daemon exited with code 1: port 8278 cannot be bound" });
+
+    expect(await attempt(io, TREE, throwing(UNREACHED), () => 0, { reach })).toBe(3);
+    expect(out).toEqual([]);
+    expect(err.join("")).toBe("tasma: tasma-daemon exited with code 1: port 8278 cannot be bound\n");
+  });
+
+  // The retry's outcome is final: a second start would spawn a daemon for a
+  // tree that has just produced one.
+  it("reports a retry that reached nothing, without naming a record and without starting again", async () => {
+    const { io, err } = capture();
+    const { reach, starts } = reaching({ port: 9000, pid: 4242 }, { url: "http://127.0.0.1:9100" });
+
+    expect(await attempt(io, TREE, throwing(UNREACHED), () => 0, { reach })).toBe(3);
+    expect(starts).toEqual([HOME]);
+    expect(err.join("")).toBe("tasma: no daemon answered at http://127.0.0.1:9100\n");
+  });
+
+  // Something accepted the call and did not answer in time, and that something
+  // may be this tree's own daemon with its event loop held. A second daemon over
+  // one tree is what the daemon's per-process write queue cannot order, and the
+  // record is not stale either: the port it names is held.
+  it("starts nothing behind a call that ran out of time, and calls its record nothing", async () => {
+    const { io, err } = capture();
+    const { reach, starts } = reaching({ port: 9000, pid: 4242 });
+    const error = new TransportError("GET /health reached no daemon", undefined, new RequestTimeoutError(500));
+
+    expect(await attempt(io, TREE, throwing(error), () => 0, { reach })).toBe(3);
+    expect(starts).toEqual([]);
+    expect(err.join("")).toBe("tasma: the daemon at http://127.0.0.1:9000 did not answer within 0.5 seconds\n");
+  });
+
+  // A record whose port another program has taken is exactly what a start
+  // repairs: the daemon it spawns finds no daemon of this tree and claims it.
+  it("starts a daemon where the recorded port answered as something other than a daemon", async () => {
+    const { io, err } = capture();
+    const { reach, starts } = reaching({ port: 9000, pid: 4242 }, { url: "http://127.0.0.1:9100" });
+    const answered = new TransportError("GET /health answered with no envelope", 502);
+
+    expect(await attempt(io, TREE, reachedOnRetry("payload", answered), () => 0, { reach })).toBe(0);
+    expect(starts).toEqual([HOME]);
+    expect(err).toEqual([]);
+  });
+
+  // A daemon answered and refused, which no start would change.
+  it("starts nothing behind a refusal", async () => {
+    const { io, err } = capture();
+    const { reach, starts } = reaching(undefined);
+    const failure = { kind: "store", code: "task-not-found", message: "no such task" } as const;
+
+    expect(await attempt(io, TREE, throwing(new ProtocolError(failure, 404)), () => 0, { reach })).toBe(1);
+    expect(starts).toEqual([]);
+    expect(err.join("")).toBe("tasma: store/task-not-found: no such task\n");
   });
 });
 
