@@ -7,6 +7,7 @@ import {
   type CreateProjectInput,
   discoverProjects,
   openProject,
+  pathMissing,
   type ProjectChange,
   readProject,
   removeProject,
@@ -324,6 +325,22 @@ describe("reading a project", () => {
     await plant(projectConfig(root), "name: [Tasma\n");
 
     expect((await storeError(readProject({ project: PROJECT, root }))).code).toBe("config-invalid");
+  });
+});
+
+describe("the finding a read adds about the folder a project stands for", () => {
+  it("answers with nothing where the path names a directory", async () => {
+    await expect(pathMissing(await target())).resolves.toBeUndefined();
+  });
+
+  it("answers with the finding, naming the path, where it names nothing", async () => {
+    const gone = join(await bareRoot(), "gone");
+
+    await expect(pathMissing(gone)).resolves.toEqual({
+      code: "path-missing",
+      message: "the project path does not name a directory",
+      path: gone,
+    });
   });
 });
 

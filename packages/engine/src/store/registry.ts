@@ -59,17 +59,21 @@ async function namesDirectory(path: string): Promise<boolean> {
 }
 
 /**
- * The same for the folder a project's own file already names, where every fault
- * is an answer. A read of a project reports on that folder and repairs nothing,
- * so one this account may not stat is reported as gone rather than taking the
- * whole read of the project with it.
+ * The finding a read adds when the folder a project stands for is gone, or
+ * nothing when it is there. The link is followed, as it is for a path a caller
+ * states.
+ *
+ * Every fault is an answer here. A read of a project reports on that folder and
+ * repairs nothing, so one this account may not stat is reported as gone rather
+ * than taking the whole read of the project with it.
  */
-async function reachesDirectory(path: string): Promise<boolean> {
+export async function pathMissing(path: string): Promise<StoreDiagnostic | undefined> {
   try {
-    return (await stat(path)).isDirectory();
+    if ((await stat(path)).isDirectory()) return undefined;
   } catch {
-    return false;
+    // Swallowed on purpose, so a stat that failed reads as a folder that is gone.
   }
+  return { code: "path-missing", message: "the project path does not name a directory", path };
 }
 
 /**
@@ -214,13 +218,8 @@ export async function readProject(options: ProjectOptions): Promise<ProjectInfo>
   await openProjectDirectory(paths);
   const diagnostics: StoreDiagnostic[] = [];
   const declaration = await resolveProjectDeclaration(paths, diagnostics);
-  if (declaration.path !== undefined && !(await reachesDirectory(declaration.path))) {
-    diagnostics.push({
-      code: "path-missing",
-      message: "the project path does not name a directory",
-      path: declaration.path,
-    });
-  }
+  const missing = declaration.path === undefined ? undefined : await pathMissing(declaration.path);
+  if (missing !== undefined) diagnostics.push(missing);
   return { tag: paths.project, ...declaration, diagnostics };
 }
 

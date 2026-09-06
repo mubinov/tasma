@@ -4,10 +4,10 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { onTestFinished } from "vitest";
+import { expect, onTestFinished } from "vitest";
 import type { IndexedProject } from "@tasma/engine";
 import { DAEMON_RECORD_FILE } from "@tasma/protocol";
-import type { DaemonRecord, Diagnostic } from "@tasma/protocol";
+import type { DaemonRecord, Diagnostic, Failure } from "@tasma/protocol";
 import { DaemonError } from "../src/http/failure.js";
 import type { RouteEntry } from "../src/http/router.js";
 import { createDaemonServer } from "../src/http/server.js";
@@ -70,6 +70,16 @@ export async function success<T>(response: Response): Promise<{ data: T; diagnos
   return { data, diagnostics };
 }
 
+/**
+ * The refusal one response carries, having read the flag that states there is
+ * one, so a test asserts the kind and the code rather than the text.
+ */
+export async function failure(response: Response): Promise<Failure> {
+  const body = (await response.json()) as { ok: boolean; error: Failure };
+  expect(body.ok).toBe(false);
+  return body.error;
+}
+
 /** The refusal a call raised, so a test asserts on the code rather than on the text. */
 export function refused(run: () => unknown): DaemonError {
   try {
@@ -91,6 +101,13 @@ export async function projectsRoot(...tags: string[]): Promise<string> {
   onTestFinished(() => rm(root, { recursive: true, force: true }));
   for (const tag of tags) await mkdir(projectDir(root, tag), { recursive: true });
   return root;
+}
+
+/** A directory a project can stand for, outside the tree that registers it. */
+export async function target(): Promise<string> {
+  const path = join(await projectsRoot(), "tasma");
+  await mkdir(path);
+  return path;
 }
 
 /** A record standing under the name a claim takes, as a daemon that is gone left one. */

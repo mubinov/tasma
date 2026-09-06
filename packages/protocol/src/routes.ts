@@ -13,7 +13,10 @@ export type Route = {
 export const routes = {
   health: { method: "GET", template: "/health" },
   listProjects: { method: "GET", template: "/projects" },
+  createProject: { method: "POST", template: "/projects" },
   readProject: { method: "GET", template: "/projects/{project}" },
+  updateProject: { method: "PATCH", template: "/projects/{project}" },
+  deleteProject: { method: "DELETE", template: "/projects/{project}" },
   listTasks: { method: "GET", template: "/projects/{project}/tasks" },
   createTask: { method: "POST", template: "/projects/{project}/tasks" },
   readTask: { method: "GET", template: "/projects/{project}/tasks/{id}" },

@@ -1,8 +1,8 @@
-// What each task route was asked for in its query, and which entries a listing
-// answers with. Every route reads its query here — the listing its filter, the
-// read of one task its options, and the comment map and the six writes alike the
-// assertion that they carry no query at all — so one set of rules covers all
-// nine of them.
+// What a route was asked for in its query, and which entries a listing answers
+// with. Every route that reads a query reads it here — the task listing its
+// filter, the read of one task its options, and the comment map and every write
+// of a task or a project alike the assertion that they carry no query at all —
+// so one set of rules covers them all.
 //
 // A route declares the query keys it takes, and a key it does not declare is
 // refused rather than passed over: a mistyped `?stauts=To+Do` that silently

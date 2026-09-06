@@ -32,6 +32,22 @@ export type ProjectSummary = {
   path?: string;
 };
 
+/**
+ * What a create states. `path` is the repository the project stands for,
+ * absolute or starting with `~/`; `name` defaults to the last folder name of the
+ * path it resolves to. `tag` is used as given when present, and generated from
+ * the same folder name otherwise.
+ */
+export type ProjectInput = { path: string; name?: string; tag?: string };
+
+/**
+ * One change of a project. A key present with `null` clears the field and an
+ * absent key leaves it alone, so `{ name: null }` deletes the name and the
+ * reader falls back to the tag. `path` cannot be cleared: every project states
+ * one. `tag` is no field here.
+ */
+export type ProjectChange = { name?: string | null; path?: string };
+
 export type Project = ProjectSummary & {
   config: Config;
   /**

@@ -16,7 +16,7 @@ export type {
 export { DAEMON_NAME } from "./health.js";
 export type { Health } from "./health.js";
 export { printable } from "./printable.js";
-export type { Config, Project, ProjectSummary } from "./project.js";
+export type { Config, Project, ProjectChange, ProjectInput, ProjectSummary } from "./project.js";
 export { buildPath, routes, UNSAFE_IN_SEGMENT } from "./routes.js";
 export type { Method, PathQuery, Route, TaskFilter, TaskReadOptions } from "./routes.js";
 export type {

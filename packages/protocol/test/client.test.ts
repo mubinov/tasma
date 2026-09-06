@@ -49,9 +49,29 @@ const invocations: Invocation[] = [
     path: "/projects",
   },
   {
+    name: "createProject",
+    send: (client) => client.createProject({ path: "/srv/tasma", name: "Tasma" }),
+    method: "POST",
+    path: "/projects",
+    body: { path: "/srv/tasma", name: "Tasma" },
+  },
+  {
     name: "readProject",
     send: (client) => client.readProject("TASM"),
     method: "GET",
+    path: "/projects/TASM",
+  },
+  {
+    name: "updateProject",
+    send: (client) => client.updateProject("TASM", { name: null }),
+    method: "PATCH",
+    path: "/projects/TASM",
+    body: { name: null },
+  },
+  {
+    name: "deleteProject",
+    send: (client) => client.deleteProject("TASM"),
+    method: "DELETE",
     path: "/projects/TASM",
   },
   {

@@ -1,19 +1,22 @@
-// One open index per project, and the discovery every route reads the tree
-// through.
+// One open index per project, and the discovery every route reads and writes the
+// tree through.
 //
 // The host is created by whoever owns the process and closed by it, so nothing
 // below this file decides when a watch handle is released.
 
 import {
+  createProject,
   discoverProjects,
   endsLiveness,
   openIndexedProject,
   openProject,
   readProjectDeclaration,
+  removeProject,
   TaskStoreError,
+  updateProject,
 } from "@tasma/engine";
 import type { IndexedProject } from "@tasma/engine";
-import type { ProjectSummary } from "@tasma/protocol";
+import type { ProjectChange, ProjectInput, ProjectSummary } from "@tasma/protocol";
 
 /**
  * How many projects one listing reads the configuration of at a time. A tree
@@ -39,6 +42,12 @@ export type ProjectHost = {
   list(): Promise<ProjectSummary[]>;
   /** The open index for one tag, and whether it is still live. */
   open(tag: string): Promise<{ index: IndexedProject; live: boolean }>;
+  /** Registers a project and answers with its tag. */
+  create(input: ProjectInput): Promise<string>;
+  /** Sets what one project states about itself. */
+  update(tag: string, change: ProjectChange): Promise<void>;
+  /** Deletes one project and closes the index held for it. Answers with what the project stated. */
+  remove(tag: string): Promise<ProjectSummary>;
   /** Closes every open index. */
   close(): Promise<void>;
 };
@@ -159,9 +168,9 @@ export function createProjectHost(options: {
 
   /**
    * The tags of the tree, having closed every held index whose project the tree
-   * no longer holds. Both routes read the tree through this, so one directory
-   * read answers three questions: which projects exist, which held index is
-   * stale, and whether a tag names a project at all.
+   * no longer holds. Every call naming the tree or one project of it starts
+   * here, so one directory read answers three questions: which projects exist,
+   * which held index is stale, and whether a tag names a project at all.
    */
   async function discover(): Promise<string[]> {
     const tags = await discoverProjects(root);
@@ -177,20 +186,35 @@ export function createProjectHost(options: {
   }
 
   /**
-   * One project of the listing, read from the project's own configuration file
-   * alone: it is the one file that can state either field, and the shared user
-   * file it does not read can neither contribute a value nor refuse the tree.
+   * Refuses a tag the tree does not list, which every call naming one project
+   * makes after its discovery. Whatever the reason the tree does not list it: a
+   * tag nobody created and a name that is no tag are one answer, so neither
+   * states which. Without it a write would answer the engine's own refusal of
+   * the name while a read of the same tag answers 404.
+   */
+  function assertListed(tags: string[], tag: string): void {
+    if (!tags.includes(tag)) {
+      throw new TaskStoreError("project-not-found", `no project of this tree is tagged "${tag}"`);
+    }
+  }
+
+  /**
+   * What one project declares about itself, read from the project's own
+   * configuration file alone: it is the one file that can state either field,
+   * and the shared user file it does not read can neither contribute a value nor
+   * refuse the tree.
    *
-   * A project this read fails on is listed by its tag alone and nothing is
-   * reported: the listing answers which projects exist, and a finding about one
-   * project's file belongs on that project's own resource, where it names one
-   * file rather than arriving in a list of many.
+   * A project this read fails on is answered by its tag alone and nothing is
+   * reported. The listing answers which projects exist and a delete answers what
+   * it took, and a finding about one project's file belongs on that project's
+   * own resource, where it names one file rather than arriving in a list of many
+   * or in the receipt for a directory that is already gone.
    *
    * Every fault is taken that way, not the refusals of the store alone. The read
    * names this project's directory and this project's own configuration file and
    * nothing else, so a permission or a descriptor limit met under either of them
    * says as little about the rest of the tree as a file that will not parse — and
-   * failing the whole listing over one project would answer nothing about the
+   * failing a whole listing over one project would answer nothing about the
    * healthy ones. Only a fault of the tree itself, which `discover` raises,
    * refuses the listing.
    */
@@ -239,11 +263,7 @@ export function createProjectHost(options: {
       // awaited between here and the insert below, so no close can land inside
       // that window.
       assertServing();
-      if (!tags.includes(tag)) {
-        // Whatever the reason the tree does not list it: a tag nobody created
-        // and a name that is no tag are one answer, so neither states which.
-        throw new TaskStoreError("project-not-found", `no project of this tree is tagged "${tag}"`);
-      }
+      assertListed(tags, tag);
 
       let entry = held.get(tag);
       if (entry === undefined) {
@@ -268,6 +288,59 @@ export function createProjectHost(options: {
       }
       if (running !== undefined) await running;
       return { index, live: entry.live };
+    },
+
+    async create(input) {
+      assertServing();
+      // The discovery is what closes an index whose project went by hand, so a
+      // create taking that tag again opens a fresh one rather than answering
+      // through the index of the project that stood there.
+      await discover();
+      assertServing();
+      // The tree a daemon serves is no field of a request, and a caller that
+      // stated one believes it was used, so a stated root is refused rather than
+      // passed over. The test is presence rather than value: a body carrying
+      // `null` arrives as a key holding `undefined`, which a value test would
+      // pass over in silence.
+      if (Object.hasOwn(input, "root")) {
+        throw new TaskStoreError("field-not-writable", '"root" is no field of a create the daemon serves');
+      }
+      // The engine's exclusive create of the directory is the collision guard,
+      // so two creates racing on one tag settle on two projects with no turn
+      // taken here.
+      return (await createProject({ ...input, root })).tag;
+    },
+
+    async update(tag, change) {
+      assertServing();
+      const tags = await discover();
+      assertServing();
+      assertListed(tags, tag);
+      // The engine reads the project back after the write; the route answers
+      // through the index instead, so that read-back is discarded.
+      await updateProject({ project: tag, root }, change);
+    },
+
+    async remove(tag) {
+      assertServing();
+      const tags = await discover();
+      assertServing();
+      assertListed(tags, tag);
+      // Read before the delete, so the answer states what was removed even for a
+      // project whose own file cannot be read.
+      const summary = await summarize(tag);
+      await removeProject({ project: tag, root });
+      // Dropped after the delete, never before it: an open landing between a
+      // close and the delete would build a fresh index on a directory being
+      // deleted, and nothing would close that one until the next discovery. An
+      // open that lands after this one meets a directory that is gone, and the
+      // catch on `Held.index` takes its entry back out.
+      const entry = held.get(tag);
+      if (entry !== undefined) {
+        held.delete(tag);
+        await drop(entry);
+      }
+      return summary;
     },
 
     async close() {

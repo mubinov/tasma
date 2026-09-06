@@ -1,12 +1,17 @@
-// The turn two writes take when they reach one file at once.
+// The turn two writes take when they reach one task or one project at once.
 //
-// A write route is `host.open` → `index.<write>` → the store's
+// A task or a comment write is `host.open` → `index.<write>` → the store's
 // read-modify-write, and nothing between the read of the file and the rename
 // that replaces it re-checks what is on disk. Two writes that overlap read one
 // snapshot, and the later rename carries the earlier one away: both callers are
 // answered with a receipt and only one change survives. An added comment is
 // worse than a field — the id comes off the snapshot, so both callers are given
 // the same one and the loser holds a receipt for a comment no file carries.
+//
+// A project patch and a project delete reach the directory a project stands for
+// rather than one file, and what a turn keeps them from is different: a patch
+// that runs against a directory being removed answers a raw filesystem fault
+// instead of the 404 the delete leaves behind.
 //
 // The daemon is the first caller that can overlap two writes. The CLI drives the
 // same engine one write per invocation, which is why the store was never asked

@@ -13,10 +13,10 @@ import { DaemonError } from "../http/failure.js";
 const DECIMAL_INTEGER = /^-?\d+$/;
 
 /**
- * The fields one write sets, which is what the engine's `TaskChange` and its
- * `CommentChange` each are. Named apart from both, because one conversion feeds
- * the task writes and the comment writes alike and neither call site should read
- * as if it were about the other.
+ * The fields one write sets, which is what the engine's `TaskChange`, its
+ * `CommentChange` and its two project writes each are. Named apart from all of
+ * them, because one conversion feeds every write the daemon serves and no call
+ * site should read as if it were about another one's fields.
  */
 type WriteFields = { body?: string } & Record<string, unknown>;
 

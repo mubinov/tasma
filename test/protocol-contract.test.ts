@@ -1,10 +1,13 @@
 import { describe, expectTypeOf, it } from "vitest";
 import type {
   CommentFields as EngineCommentFields,
+  CreateProjectInput,
   ExcludedFile as EngineExcludedFile,
   ExclusionCode as EngineExclusionCode,
   Frontmatter as EngineFrontmatter,
   IndexEntry,
+  ProjectChange as EngineProjectChange,
+  ProjectDeclaration,
   QueryResult,
   ResolvedConfig,
   SNAPSHOT,
@@ -26,6 +29,9 @@ import type {
   ExclusionCode,
   Frontmatter,
   ParseErrorCode,
+  ProjectChange,
+  ProjectInput,
+  ProjectSummary,
   SerializeErrorCode,
   StoreErrorCode,
   Task,
@@ -68,6 +74,13 @@ describe("the wire contract", () => {
     expectTypeOf<ExcludedFile>().toEqualTypeOf<EngineExcludedFile>();
     expectTypeOf<TaskList>().toEqualTypeOf<QueryResult>();
     expectTypeOf<Config>().toEqualTypeOf<Omit<ResolvedConfig, "name" | "path">>();
+    // The tree a daemon serves is no field of the wire, so a create states every
+    // key of the engine's input but the root.
+    expectTypeOf<ProjectInput>().toEqualTypeOf<Omit<CreateProjectInput, "root">>();
+    expectTypeOf<ProjectChange>().toEqualTypeOf<EngineProjectChange>();
+    // A summary is the declaration plus the tag, so a field added to either side
+    // of a project breaks the typecheck until the wire carries it.
+    expectTypeOf<Omit<ProjectSummary, "tag">>().toEqualTypeOf<ProjectDeclaration>();
   });
 
   it("keeps the task and the write result in step, less what JSON cannot carry", () => {

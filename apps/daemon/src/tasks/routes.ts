@@ -4,8 +4,8 @@
 // Each handler reaches its project through `host.open`, which returns an
 // `IndexedProject`, so a write made through it updates the index before the call
 // returns and a listing that follows sees the change without waiting for the
-// watcher. The `live` flag the open returns is ignored here: `GET
-// /projects/{project}` is where liveness is reported.
+// watcher. The `live` flag the open returns is ignored here: the project
+// resource is where liveness is reported.
 
 import { resolveBlocked } from "@tasma/engine";
 import { routes } from "@tasma/protocol";

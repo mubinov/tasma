@@ -2,9 +2,21 @@ import { chmod, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { TaskStoreError } from "@tasma/engine";
+import type { ProjectInput } from "@tasma/protocol";
 import { createProjectHost } from "../../src/projects/host.js";
 import type { ProjectHost } from "../../src/projects/host.js";
-import { loseTasks, plant, projectConfig, projectDir, projectsRoot, tasksDir, taskText, userConfig } from "../helpers.js";
+import {
+  loseTasks,
+  plant,
+  projectConfig,
+  projectDir,
+  projectsRoot,
+  target,
+  taskFile,
+  tasksDir,
+  taskText,
+  userConfig,
+} from "../helpers.js";
 
 /** A host closed when the test ends, whether or not the test closes it. */
 function host(root: string, repairInterval?: number): ProjectHost {
@@ -131,6 +143,118 @@ describe("opening one project", () => {
   });
 });
 
+describe("registering a project", () => {
+  it("writes the project and answers with the tag it took", async () => {
+    const root = await projectsRoot();
+    const path = await target();
+    const opened = host(root);
+
+    await expect(opened.create({ path })).resolves.toBe("TASM");
+
+    await expect(opened.list()).resolves.toEqual([{ tag: "TASM", name: "tasma", path }]);
+  });
+
+  it("takes the tag and the name the caller states", async () => {
+    const root = await projectsRoot();
+    const path = await target();
+    const opened = host(root);
+
+    await expect(opened.create({ path, tag: "CLIB", name: "Claude Lib" })).resolves.toBe("CLIB");
+
+    await expect(opened.list()).resolves.toEqual([{ tag: "CLIB", name: "Claude Lib", path }]);
+  });
+
+  it.each([
+    ["a tree of its own", "/srv/elsewhere"],
+    ["a tree with no value, which is how a body carrying null arrives", undefined],
+  ])("refuses a create naming %s, which is no field of a request", async (_name, stated) => {
+    const root = await projectsRoot();
+    const path = await target();
+    const opened = host(root);
+
+    const error = await storeError(opened.create({ path, root: stated } as ProjectInput));
+
+    expect(error.code).toBe("field-not-writable");
+    await expect(opened.list()).resolves.toEqual([]);
+  });
+
+  it("closes the index held for a project whose directory went by hand", async () => {
+    const root = await projectsRoot("TASM");
+    const opened = host(root);
+    const { index } = await opened.open("TASM");
+    await rm(projectDir(root, "TASM"), { recursive: true, force: true });
+
+    await expect(opened.create({ path: await target() })).resolves.toBe("TASM");
+
+    expect((await storeError(index.config())).code).toBe("index-closed");
+  });
+});
+
+describe("writing what a project states", () => {
+  it("sets the name and clears it", async () => {
+    const root = await projectsRoot("TASM");
+    await plant(projectConfig(root, "TASM"), "path: /srv/tasma\n");
+    const opened = host(root);
+
+    await opened.update("TASM", { name: "Tasma" });
+    await expect(opened.list()).resolves.toEqual([{ tag: "TASM", name: "Tasma", path: "/srv/tasma" }]);
+
+    await opened.update("TASM", { name: null });
+    await expect(opened.list()).resolves.toEqual([{ tag: "TASM", name: undefined, path: "/srv/tasma" }]);
+  });
+
+  it.each([
+    ["a tag no project of the tree carries", "NOPE"],
+    ["a tag in a case no directory of the tree carries", "tasm"],
+  ])("refuses %s as project-not-found", async (_name, tag) => {
+    const root = await projectsRoot("TASM");
+
+    expect((await storeError(host(root).update(tag, { name: "Tasma" }))).code).toBe("project-not-found");
+  });
+});
+
+describe("removing a project", () => {
+  it("answers with what the project stated and takes the directory with it", async () => {
+    const root = await projectsRoot("TASM");
+    await plant(projectConfig(root, "TASM"), "name: Tasma\npath: /srv/tasma\n");
+    await plant(taskFile(root, "TASM", "TASM-1"), taskText("TASM-1"));
+    const opened = host(root);
+
+    await expect(opened.remove("TASM")).resolves.toEqual({ tag: "TASM", name: "Tasma", path: "/srv/tasma" });
+
+    await expect(opened.list()).resolves.toEqual([]);
+  });
+
+  it("closes the index it held, with no request after it", async () => {
+    const root = await projectsRoot("TASM");
+    const opened = host(root);
+    const { index } = await opened.open("TASM");
+
+    await opened.remove("TASM");
+
+    expect((await storeError(index.config())).code).toBe("index-closed");
+  });
+
+  it("removes a project whose own file cannot be read, and answers with its tag alone", async () => {
+    const root = await projectsRoot("TASM");
+    await plant(projectConfig(root, "TASM"), "name: [Tasma\n");
+    const opened = host(root);
+
+    await expect(opened.remove("TASM")).resolves.toEqual({ tag: "TASM" });
+
+    await expect(opened.list()).resolves.toEqual([]);
+  });
+
+  it.each([
+    ["a tag no project of the tree carries", "NOPE"],
+    ["a tag in a case no directory of the tree carries", "tasm"],
+  ])("refuses %s as project-not-found", async (_name, tag) => {
+    const root = await projectsRoot("TASM");
+
+    expect((await storeError(host(root).remove(tag))).code).toBe("project-not-found");
+  });
+});
+
 describe("a project the tree no longer holds", () => {
   it("is closed and dropped by the next call, whichever route makes it", async () => {
     const root = await projectsRoot("TASM", "CLIB");
@@ -182,6 +306,16 @@ describe("a host that is closing", () => {
     await opened.close();
 
     expect((await storeError(pending)).code).toBe("index-closed");
+  });
+
+  it("refuses every write of the tree, so a shutdown leaves none of them half made", async () => {
+    const opened = host(await projectsRoot("TASM"));
+
+    await opened.close();
+
+    expect((await storeError(opened.create({ path: "/srv/tasma" }))).code).toBe("index-closed");
+    expect((await storeError(opened.update("TASM", { name: "Tasma" }))).code).toBe("index-closed");
+    expect((await storeError(opened.remove("TASM"))).code).toBe("index-closed");
   });
 
   it("closes twice without raising, so a second shutdown is harmless", async () => {
