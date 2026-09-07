@@ -10,6 +10,8 @@ import type { Client } from "@tasma/protocol";
 export const daemonKeys = {
   all: ["daemon"] as const,
   health: () => [...daemonKeys.all, "health"] as const,
+  projects: () => [...daemonKeys.all, "projects"] as const,
+  project: (tag: string) => [...daemonKeys.projects(), tag] as const,
 };
 
 /**
@@ -20,5 +22,19 @@ export function healthQuery(client: Client) {
   return queryOptions({
     queryKey: daemonKeys.health(),
     queryFn: () => client.readHealth(),
+  });
+}
+
+export function projectsQuery(client: Client) {
+  return queryOptions({
+    queryKey: daemonKeys.projects(),
+    queryFn: () => client.listProjects(),
+  });
+}
+
+export function projectQuery(client: Client, tag: string) {
+  return queryOptions({
+    queryKey: daemonKeys.project(tag),
+    queryFn: () => client.readProject(tag),
   });
 }

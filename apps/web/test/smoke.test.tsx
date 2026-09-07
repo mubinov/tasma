@@ -119,6 +119,30 @@ it("switches the theme through the wired entry path", async () => {
   expect(document.documentElement.classList.contains("dark")).toBe(false);
 });
 
+/*
+ * The one test that proves main.tsx, the provider, the router context, the
+ * loader, the transport and the proxy path are wired to each other: everything
+ * between the entry module and the daemon runs, and only fetch is stubbed.
+ */
+it("lists the daemon's projects through the wired entry path", async () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  window.location.hash = "#/projects";
+  vi.stubGlobal("fetch", (input: string) =>
+    input.endsWith("/daemon/projects")
+      ? Promise.resolve(Response.json({ ok: true, data: [{ tag: "TASM", name: "tasma" }], diagnostics: [] }))
+      : Promise.reject(new Error(`no stub answers ${input}`)));
+
+  await act(async () => {
+    await import("../src/main");
+  });
+
+  const row = screen.getByRole("list", { name: "Projects" }).querySelector("a");
+
+  expect(screen.getByRole("heading", { level: 1, name: "Projects" })).toBeTruthy();
+  expect(row?.getAttribute("href")).toBe("/#/projects/TASM");
+  expect(row?.textContent).toBe("tasmaTASM");
+});
+
 it("fails loudly when the document carries no #root", async () => {
   await expect(import("../src/main")).rejects.toThrow("#root");
 });

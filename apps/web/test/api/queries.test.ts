@@ -2,17 +2,21 @@ import { ProtocolError, TransportError } from "@tasma/protocol";
 import { afterEach, expect, it, vi } from "vitest";
 import { createAppQueryClient, createDaemonClient, shouldRetry } from "../../src/api/client";
 import { DAEMON_PATH_PREFIX } from "../../src/api/paths";
-import { daemonKeys, healthQuery } from "../../src/api/queries";
+import { daemonKeys, healthQuery, projectQuery, projectsQuery } from "../../src/api/queries";
 
 const HEALTH = { name: "tasma-daemon", version: "0.0.0" };
 
-/** Answers every call with one health envelope, and records the paths asked for. */
-function stubDaemon() {
+const PROJECTS = [{ tag: "TASM", name: "tasma", path: "/repos/tasma" }];
+
+const PROJECT = { tag: "TASM", name: "tasma" };
+
+/** Answers every call with one envelope, and records the paths asked for. */
+function stubDaemon(data: unknown = HEALTH) {
   const paths: string[] = [];
 
   vi.stubGlobal("fetch", (input: string) => {
     paths.push(input);
-    return Promise.resolve(Response.json({ ok: true, data: HEALTH, diagnostics: [] }));
+    return Promise.resolve(Response.json({ ok: true, data, diagnostics: [] }));
   });
 
   return paths;
@@ -46,9 +50,49 @@ it("caches the whole success envelope, diagnostics included", async () => {
   expect(queryClient.getQueryData(daemonKeys.health())).toEqual({ data: HEALTH, diagnostics: [] });
 });
 
-// The property one prefix invalidation depends on.
+/*
+ * The property one prefix invalidation depends on, asked of every key there is.
+ * The builders are read off `daemonKeys` rather than listed, so a key added
+ * there is covered by existing; the tag argument the keys that take none ignore.
+ */
 it("descends every key from the one prefix that invalidates the daemon's answers", () => {
-  expect(daemonKeys.health().slice(0, daemonKeys.all.length)).toEqual([...daemonKeys.all]);
+  const builders: ((tag: string) => readonly string[])[] = Object.values(daemonKeys).filter(
+    (value) => typeof value === "function",
+  );
+
+  expect(builders.length).toBeGreaterThan(0);
+  for (const build of builders) {
+    const key = build("TASM");
+    expect(key.slice(0, daemonKeys.all.length), key.join("/")).toEqual([...daemonKeys.all]);
+  }
+});
+
+it("resolves the projects list through the same chain and caches the whole envelope", async () => {
+  const paths = stubDaemon(PROJECTS);
+  const queryClient = createAppQueryClient();
+
+  const success = await queryClient.ensureQueryData(projectsQuery(createDaemonClient()));
+
+  expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects`]);
+  expect(success).toEqual({ data: PROJECTS, diagnostics: [] });
+  expect(queryClient.getQueryData(daemonKeys.projects())).toEqual({ data: PROJECTS, diagnostics: [] });
+});
+
+it("asks for one project by the tag it is given", async () => {
+  const paths = stubDaemon(PROJECT);
+
+  const success = await createAppQueryClient().ensureQueryData(projectQuery(createDaemonClient(), "TASM"));
+
+  expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects/TASM`]);
+  expect(success).toEqual({ data: PROJECT, diagnostics: [] });
+});
+
+// The nesting a write depends on: invalidating the list drops every project
+// under it, and one project's key drops that project alone.
+it("nests one project's key inside the list's", () => {
+  const projects = daemonKeys.projects();
+
+  expect(daemonKeys.project("TASM").slice(0, projects.length)).toEqual([...projects]);
 });
 
 // A transport fault and nothing else, once and no more.

@@ -14,6 +14,7 @@ import { ErrorScreen, RouteFailure } from "../src/components/error-boundary";
 import { router } from "../src/router";
 import { createAppRouter } from "../src/routes";
 import config from "../vite.config";
+import { testContext } from "./helpers";
 
 /*
  * Which component throws is chosen per test. Both failures are caught by the
@@ -188,7 +189,7 @@ describe("recovering from a loader that failed", () => {
 
   // The route tree below is the test's own; this is what ties it to the app's.
   it("hands every route the same failure surface the app's own router does", () => {
-    expect(createAppRouter(createMemoryHistory({ initialEntries: ["/"] })).options.defaultErrorComponent).toBe(
+    expect(createAppRouter(createMemoryHistory({ initialEntries: ["/"] }), testContext()).options.defaultErrorComponent).toBe(
       RouteFailure,
     );
   });
