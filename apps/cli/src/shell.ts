@@ -1,8 +1,24 @@
-import { printable } from "@tasma/protocol";
+import { printable, UNSAFE_IN_SEGMENT } from "@tasma/protocol";
 import { commandTable } from "./help.js";
 import type { Command, Io, Target } from "./types.js";
 
 const HINT = "Run 'tasma --help' for usage.\n";
+
+/** Segments a URL resolver removes or climbs out of. */
+const UNUSABLE_SEGMENTS = ["", ".", ".."];
+
+/**
+ * Whether a value can stand as one path component.
+ *
+ * `buildPath` throws a plain `Error` on one that cannot, before the call leaves
+ * and where `attempt` does not catch it, so every value a command sends as a
+ * path parameter is tested here first and refused as a usage fault. Each caller
+ * writes its own line: a bad tag inside a task id is reported as the whole id
+ * the caller typed rather than as the part that failed.
+ */
+export function isPathComponent(value: string): boolean {
+  return !UNUSABLE_SEGMENTS.includes(value) && !UNSAFE_IN_SEGMENT.test(value);
+}
 
 /**
  * A value an answer carried, as text safe to print.
@@ -50,6 +66,26 @@ export function reportUsage(io: Io, detail: string | string[]): number {
 }
 
 /**
+ * Parsed arguments, or the code the fault in them reported with.
+ *
+ * The parser embeds the offending argument in a message whose sentences it
+ * breaks itself, so there a break argv carried is indistinguishable from one the
+ * parser wrote. Only where no argument carried one are the parser's sentences
+ * named as separate lines. Every entry into `parseArgs` goes through here, the
+ * globals as much as a verb's own table, so the rule has one place to be
+ * corrected in.
+ */
+export function readArgs<T>(io: Io, args: string[], parse: () => T): T | number {
+  try {
+    return parse();
+  } catch (error) {
+    const detail = errorText(error);
+
+    return reportUsage(io, args.some((token) => token.includes("\n")) ? detail : detail.split("\n"));
+  }
+}
+
+/**
  * Runs the named command, or reports that no command claims the name.
  *
  * `parent` is the noun this table sits under, empty at the top level, so an
@@ -84,6 +120,7 @@ export function noun(name: string, summary: string, verbs: Command[]): Command {
   return {
     name,
     summary,
+    verbs,
     run: (args, io, target) => {
       const [verb, ...rest] = args;
 

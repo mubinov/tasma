@@ -8,7 +8,7 @@ import { DAEMON_NAME } from "@tasma/protocol";
 import type { DaemonRecord } from "@tasma/protocol";
 import { onTestFinished } from "vitest";
 import { readRecord, recordPath } from "../src/daemon/record.js";
-import type { Io } from "../src/types.js";
+import type { Command, Io, Target } from "../src/types.js";
 
 export type Handler = (request: IncomingMessage, response: ServerResponse) => void;
 
@@ -78,6 +78,64 @@ export function serveHealth(data: unknown): Handler {
 
 /** Answers every path as a Tasma daemon would answer `/health`. */
 export const tasmaHealth: Handler = serveHealth({ name: DAEMON_NAME, version: TEST_VERSION });
+
+/** A stand-in daemon: what it answers each call with, and the calls it received. */
+export type Answers = { handle: Handler; seen: string[] };
+
+/**
+ * A server answering each `METHOD path` of a table with the envelope it holds,
+ * and 404 with a refusal for every other call.
+ *
+ * The key carries the query as it arrived, so a test asserts the exact path a
+ * verb built rather than only that it reached the route. `seen` is what proves a
+ * verb sent no query at all, which no answer can show.
+ */
+export function serveAnswers(table: Record<string, unknown>): Answers {
+  const seen: string[] = [];
+
+  return {
+    seen,
+    handle: (request, response) => {
+      const key = `${request.method ?? ""} ${request.url ?? ""}`;
+      const envelope = table[key];
+
+      seen.push(key);
+      response.writeHead(envelope === undefined ? 404 : 200, { "content-type": "application/json" });
+      response.end(JSON.stringify(envelope ?? {
+        ok: false,
+        error: { kind: "daemon", code: "route-not-found", message: `this test server answers no ${key}` },
+      }));
+    },
+  };
+}
+
+/** The address the flag carried, as the target a command acts on. */
+export function at(url: string): Target {
+  return { kind: "explicit", url, stated: "--daemon" };
+}
+
+/** A success envelope, as a route answers one. */
+export function ok(data: unknown, diagnostics: unknown[] = []): unknown {
+  return { ok: true, data, diagnostics };
+}
+
+/** What one command wrote, the code it returned, and the calls the server saw. */
+export type Ran = { code: number; out: string; err: string; seen: string[] };
+
+/** Runs a command against a server answering the table, and reports what it wrote. */
+export async function runCommand(command: Command, args: string[], table: Record<string, unknown>): Promise<Ran> {
+  const answers = serveAnswers(table);
+  const server = await startServer(answers.handle);
+  const { io, out, err } = capture();
+
+  try {
+    const code = await command.run(args, io, at(server.url));
+
+    return { code, out: out.join(""), err: err.join(""), seen: answers.seen };
+  } finally {
+    await server.close();
+  }
+}
 
 /** A tree of the test's own, removed with it, so nothing reads or writes the real home. */
 export function treeHome(): string {

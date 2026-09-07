@@ -17,15 +17,31 @@ export type Target
   = | { kind: "explicit"; url: string; stated: "--daemon" | "TASMA_DAEMON_URL" }
     | { kind: "tree"; home: string };
 
+/** What a verb's parser is given, and what its usage block is read against. */
+export type Options = Record<string, { type: "string" | "boolean"; short?: string; multiple?: boolean }>;
+
+/**
+ * One verb's arguments, as the one description its parser and its usage block
+ * are both read against: a flag added to the table and left out of the block is
+ * a flag the CLI accepts and documents nowhere.
+ */
+export type Usage = { help: string[]; options: Options };
+
 /**
  * One command, or one verb below a noun: the two have the same shape, so one
  * dispatcher serves both levels.
  *
  * The target is resolved once above and handed down, so no command resolves an
  * address of its own.
+ *
+ * A noun carries the verbs below it and parses no argument of its own; a verb
+ * carries its arguments and holds no verb. Both are read off the registry, so
+ * the set of verbs and the documentation of each have one place to be stated.
  */
 export type Command = {
   name: string;
   summary: string;
   run(args: string[], io: Io, target: Target): Promise<number>;
+  verbs?: Command[];
+  usage?: Usage;
 };

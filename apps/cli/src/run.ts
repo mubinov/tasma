@@ -1,18 +1,22 @@
 import { parseArgs } from "node:util";
 import manifest from "../package.json" with { type: "json" };
 import { daemon } from "./commands/daemon.js";
+import { project } from "./commands/project.js";
+import { task } from "./commands/task.js";
 import { resolveTarget } from "./daemon/transport.js";
 import { helpText } from "./help.js";
-import { dispatch, errorText, reportUsage } from "./shell.js";
+import { dispatch, errorText, readArgs, reportUsage } from "./shell.js";
 import type { Command, Io, Target } from "./types.js";
 
 /**
- * Every command the CLI answers to.
+ * Every command the CLI answers to, and through each noun's own verbs every verb
+ * as well.
  *
- * Read by both consumers: help renders it and dispatch looks up in it, so a
- * command name added here needs no other change.
+ * Read by all three consumers: help renders it, dispatch looks up in it and the
+ * usage blocks are checked against it, so a command added here needs no other
+ * change.
  */
-const COMMANDS: Command[] = [daemon];
+export const COMMANDS: Command[] = [daemon, project, task];
 
 /** argv split at the first token that is neither a global flag nor the value of one. */
 export type Invocation = { globals: string[]; name?: string; args: string[] };
@@ -79,21 +83,13 @@ export function splitInvocation(argv: string[]): Invocation {
 export async function run(argv: string[], io: Io, env: Record<string, string | undefined>): Promise<number> {
   const invocation = splitInvocation(argv);
 
-  let values;
+  // Positionals are not enabled: the split above has already removed them.
+  const parsed = readArgs(io, invocation.globals, () =>
+    parseArgs({ args: invocation.globals, strict: true, options: GLOBAL_OPTIONS }));
 
-  try {
-    // Positionals are not enabled: the split above has already removed them.
-    values = parseArgs({ args: invocation.globals, strict: true, options: GLOBAL_OPTIONS }).values;
-  } catch (error) {
-    // The parser embeds the offending argument in a message whose sentences it
-    // breaks itself, so there a break argv carried is indistinguishable from
-    // one the parser wrote. Only where no argument carried one are the parser's
-    // sentences named as separate lines.
-    const detail = errorText(error);
-    const carried = invocation.globals.some((token) => token.includes("\n"));
+  if (typeof parsed === "number") return parsed;
 
-    return reportUsage(io, carried ? detail : detail.split("\n"));
-  }
+  const { values } = parsed;
 
   if (values.version === true) {
     io.stdout.write(`tasma ${manifest.version}\n`);

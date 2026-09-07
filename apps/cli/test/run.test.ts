@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import manifest from "../package.json" with { type: "json" };
 // Relative: this package declares no exports, so its own name does not resolve.
 import { run, splitInvocation } from "../src/run.js";
-import { dispatch, errorText, reportUsage } from "../src/shell.js";
+import { dispatch, errorText, isPathComponent, reportUsage } from "../src/shell.js";
 import type { Command, Target } from "../src/types.js";
-import { capture, startServer, treeHome } from "./helpers.js";
+import { capture, ok, serveAnswers, startServer, treeHome } from "./helpers.js";
 
 const TARGET: Target = { kind: "explicit", url: "http://127.0.0.1:8278", stated: "--daemon" };
 
@@ -161,6 +161,31 @@ describe("run", () => {
     expect(err).toEqual([]);
   });
 
+  // A noun answers for itself in its own tests; this is the proof that the
+  // registry holds it, so the whole invocation reaches it.
+  it("reaches the project and the task noun through the registry", async () => {
+    const answers = serveAnswers({
+      "GET /projects": ok([{ tag: "TASM" }]),
+      "GET /projects/TASM/tasks/TASM-1/text?collapsed=false": ok({ text: "x", hidden: [] }),
+    });
+    const server = await startServer(answers.handle);
+
+    try {
+      for (const invocation of [
+        { argv: ["project", "list"], text: "TASM  -  -\n" },
+        { argv: ["task", "view", "TASM-1"], text: "x\n" },
+      ]) {
+        const { io, out, err } = capture();
+
+        expect(await run(["--daemon", server.url, ...invocation.argv], io, {})).toBe(0);
+        expect(out.join("")).toBe(invocation.text);
+        expect(err).toEqual([]);
+      }
+    } finally {
+      await server.close();
+    }
+  });
+
   it("reports an address it refuses as a usage error, not as a daemon that is down", async () => {
     const { io, out, err } = capture();
 
@@ -267,6 +292,19 @@ describe("dispatch", () => {
 
     expect(await dispatch([], "daemon", "frobnicate", [], io, TARGET)).toBe(2);
     expect(err.join("")).toBe("tasma: unknown command: daemon frobnicate\nRun 'tasma --help' for usage.\n");
+  });
+});
+
+describe("isPathComponent", () => {
+  it("admits a value a URL carries as one segment", () => {
+    expect(isPathComponent("TASM")).toBe(true);
+    expect(isPathComponent("a b")).toBe(true);
+  });
+
+  it("refuses one a URL resolver would remove, climb out of, or read as two", () => {
+    for (const value of ["", ".", "..", "a/b", "a\\b", "a\0b"]) {
+      expect(isPathComponent(value), value).toBe(false);
+    }
   });
 });
 

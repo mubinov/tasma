@@ -81,6 +81,12 @@ export function reportForeign(io: Io, url: string, name: unknown): number {
   return UNREACHABLE;
 }
 
+/** A well-formed answer whose top-level shape is not the route's, named by what the route answers. */
+export function refuseAnswer(io: Io, url: string, what: string): number {
+  io.stderr.write(`tasma: ${url} answered, but not with ${what}\n`);
+  return UNREACHABLE;
+}
+
 /** The address to call, and the record it came from where one named it. */
 type Located = { url: string; recorded?: string };
 
@@ -109,6 +115,10 @@ async function locate(target: Target, reach: Reach): Promise<Located> {
  * the content: a command that has to refuse a well-formed answer says so by
  * returning a code of its own, and one with nothing to reject returns 0. It is
  * handed the address that answered, which a start on demand decides.
+ *
+ * It is handed the answer as the wire carried it, whatever the type reads: the
+ * envelope check reads no further than its discriminant, so no field may be read
+ * off an answer before its shape is tested — `null` and a scalar included.
  *
  * A tree target no daemon answered for is started on demand and the call is
  * retried once, except where the call ran out of time; an address stated by hand

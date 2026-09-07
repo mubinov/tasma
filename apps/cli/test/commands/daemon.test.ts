@@ -10,9 +10,9 @@ import { daemon, stop } from "../../src/commands/daemon.js";
 import { PROBE_TIMEOUT_MS, recordPath } from "../../src/daemon/record.js";
 import { OUTPUT_FILE, startDaemon } from "../../src/daemon/start.js";
 import { run } from "../../src/run.js";
-import type { Target } from "../../src/types.js";
 import {
-  capture, fakeDaemon, seedRecord, serveHealth, startServer, tasmaHealth, TEST_VERSION, treeHome, unusedUrl, UNUSED_PID,
+  at, capture, fakeDaemon, seedRecord, serveHealth, startServer, tasmaHealth, TEST_VERSION, treeHome, unusedUrl,
+  UNUSED_PID,
 } from "../helpers.js";
 
 /** A wire field that refuses to coerce, as JSON.parse builds it, and how it prints. */
@@ -24,11 +24,6 @@ const SLOW_REPLY_MS = PROBE_TIMEOUT_MS + 500;
 
 /** Long enough for a tick of the wait and short enough to spend, for the case that runs the budget out. */
 const SHORT_BUDGET_MS = 300;
-
-/** The address the flag carried, which is the target every `status` case below acts on. */
-function at(url: string): Target {
-  return { kind: "explicit", url, stated: "--daemon" };
-}
 
 /** A daemon of this tree, as the fake standing in for one, at the address its record names. */
 async function runningIn(home: string, scenario = "serves"): Promise<string> {
@@ -164,9 +159,19 @@ describe("daemon status", () => {
   it("refuses an argument of its own rather than ignoring it", async () => {
     const { io, out, err } = capture();
 
-    expect(await daemon.run(["status", "--daemon", "http://127.0.0.1:9000"], io, at("http://127.0.0.1:8278"))).toBe(2);
+    expect(await daemon.run(["status", "TASM"], io, at("http://127.0.0.1:8278"))).toBe(2);
     expect(out).toEqual([]);
-    expect(err.join("")).toBe("tasma: daemon status takes no arguments: --daemon\nRun 'tasma --help' for usage.\n");
+    expect(err.join("")).toBe("tasma: daemon status takes no arguments: TASM\nRun 'tasma --help' for usage.\n");
+  });
+
+  // A verb is handed every token after it, so a global typed after the command
+  // name lands here; accepted silently it would act on a daemon nobody asked
+  // about.
+  it("refuses a flag of its own through the parser's own message", async () => {
+    const { io, err } = capture();
+
+    expect(await daemon.run(["status", "--daemon", "http://127.0.0.1:9000"], io, at("http://127.0.0.1:8278"))).toBe(2);
+    expect(err.join("")).toContain("tasma: Unknown option '--daemon'");
   });
 
   it("reports a port nothing listens on", async () => {
@@ -209,8 +214,15 @@ describe("daemon start", () => {
   it("refuses an argument of its own rather than ignoring it", async () => {
     const { io, err } = capture();
 
+    expect(await run(["daemon", "start", "now"], io, { HOME: "/tmp" })).toBe(2);
+    expect(err.join("")).toBe("tasma: daemon start takes no arguments: now\nRun 'tasma --help' for usage.\n");
+  });
+
+  it("refuses a flag of its own through the parser's own message", async () => {
+    const { io, err } = capture();
+
     expect(await run(["daemon", "start", "--now"], io, { HOME: "/tmp" })).toBe(2);
-    expect(err.join("")).toBe("tasma: daemon start takes no arguments: --now\nRun 'tasma --help' for usage.\n");
+    expect(err.join("")).toContain("tasma: Unknown option '--now'");
   });
 
   // A daemon already serving is the goal state, so the verb prints the line
@@ -365,8 +377,15 @@ describe("daemon stop", () => {
   it("refuses an argument of its own rather than ignoring it", async () => {
     const { io, err } = capture();
 
+    expect(await run(["daemon", "stop", "force"], io, { HOME: "/tmp" })).toBe(2);
+    expect(err.join("")).toBe("tasma: daemon stop takes no arguments: force\nRun 'tasma --help' for usage.\n");
+  });
+
+  it("refuses a flag of its own through the parser's own message", async () => {
+    const { io, err } = capture();
+
     expect(await run(["daemon", "stop", "--force"], io, { HOME: "/tmp" })).toBe(2);
-    expect(err.join("")).toBe("tasma: daemon stop takes no arguments: --force\nRun 'tasma --help' for usage.\n");
+    expect(err.join("")).toContain("tasma: Unknown option '--force'");
   });
 
   // No SIGKILL follows: a daemon that will not end is reported and left alone.
@@ -436,5 +455,19 @@ describe("the daemon noun", () => {
     expect(await daemon.run(["frobnicate"], io, at("http://127.0.0.1:8278"))).toBe(2);
     expect(out).toEqual([]);
     expect(err.join("")).toBe("tasma: unknown command: daemon frobnicate\nRun 'tasma --help' for usage.\n");
+  });
+
+  // Every verb of every noun answers the flag the same way, so a reader who
+  // learned it on one noun does not meet a usage error on the next.
+  it("prints a usage block for every verb, reaching no daemon and starting none", async () => {
+    for (const verb of ["start", "status", "stop"]) {
+      for (const flag of ["--help", "-h"]) {
+        const { io, out, err } = capture();
+
+        expect(await run(["daemon", verb, flag], io, { HOME: "/tmp" }), `${verb} ${flag}`).toBe(0);
+        expect(out.join("")).toContain(`tasma daemon ${verb}`);
+        expect(err).toEqual([]);
+      }
+    }
   });
 });

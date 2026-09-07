@@ -1,24 +1,33 @@
+import { parseArgs } from "node:util";
 import { DAEMON_NAME, printable } from "@tasma/protocol";
 import { daemonUrl, probe, readRecord, recordPath } from "../daemon/record.js";
 import { delay, TICK_MS } from "../daemon/start.js";
 import { REQUEST_TIMEOUT_MS } from "../daemon/transport.js";
 import { attempt, reportForeign, UNREACHABLE } from "../failure.js";
+import { fieldsOf } from "../output.js";
 import { noun, reportUsage, wireText } from "../shell.js";
-import type { Io, Target } from "../types.js";
+import type { Io, Options, Target } from "../types.js";
+import { HELP_OPTION, readVerb, usageBlock } from "./verb.js";
 
 /** How long `stop` waits for the daemon to remove its own record. No escalation follows it. */
 const STOP_BUDGET_MS = 10_000;
 
-/**
- * The fault where a verb was handed an argument of its own.
- *
- * A verb is handed every token after it, so an option meant for the top level
- * lands here; accepted silently it would act on a daemon nobody asked about.
- */
-function refuseArgument(io: Io, verb: string, args: string[]): number | undefined {
-  const [first] = args;
+/** Every daemon verb takes the same arguments: none of its own, and the flag printing its usage. */
+const VERB_OPTIONS = { ...HELP_OPTION } as const satisfies Options;
 
-  return first === undefined ? undefined : reportUsage(io, `daemon ${verb} takes no arguments: ${first}`);
+const START_HELP = usageBlock("daemon start");
+const STATUS_HELP = usageBlock("daemon status");
+const STOP_HELP = usageBlock("daemon stop");
+
+/**
+ * The code a verb returns before it acts, or nothing where its arguments left it
+ * free to act: none of these verbs reads a value off its own table.
+ */
+function readDaemonVerb(io: Io, verb: string, args: string[], help: string[]): number | undefined {
+  const parsed = readVerb(io, args, { command: `daemon ${verb}`, help, takes: 0 }, () =>
+    parseArgs({ args, strict: true, allowPositionals: true, options: VERB_OPTIONS }));
+
+  return typeof parsed === "number" ? parsed : undefined;
 }
 
 /**
@@ -44,16 +53,13 @@ function refuseAddress(io: Io, verb: string, stated: Extract<Target, { kind: "ex
  */
 function report(io: Io, target: Target, options: { start: boolean }): Promise<number> {
   return attempt(io, target, (client) => client.readHealth(), (health, url) => {
-    // Read as the wire carries it. The envelope check reads no further than its
-    // discriminant, so the answer is whatever the port sent — `null` and a
-    // scalar included — and no field can be read off it until it is an object.
     const answer: unknown = health;
 
     if (typeof answer !== "object" || answer === null) {
       return reportForeign(io, url, answer);
     }
 
-    const { name, version } = answer as { name?: unknown; version?: unknown };
+    const { name, version } = fieldsOf(answer);
 
     if (name !== DAEMON_NAME) {
       return reportForeign(io, url, name);
@@ -65,11 +71,11 @@ function report(io: Io, target: Target, options: { start: boolean }): Promise<nu
 }
 
 async function status(args: string[], io: Io, target: Target): Promise<number> {
-  return refuseArgument(io, "status", args) ?? report(io, target, { start: false });
+  return readDaemonVerb(io, "status", args, STATUS_HELP) ?? report(io, target, { start: false });
 }
 
 async function start(args: string[], io: Io, target: Target): Promise<number> {
-  const refusal = refuseArgument(io, "start", args);
+  const refusal = readDaemonVerb(io, "start", args, START_HELP);
 
   if (refusal !== undefined) return refusal;
   if (target.kind === "explicit") return refuseAddress(io, "start", target.stated);
@@ -145,7 +151,7 @@ async function waitForStop(path: string, pid: number, budgetMs: number): Promise
  * in milliseconds.
  */
 export async function stop(args: string[], io: Io, target: Target, budgetMs = STOP_BUDGET_MS): Promise<number> {
-  const refusal = refuseArgument(io, "stop", args);
+  const refusal = readDaemonVerb(io, "stop", args, STOP_HELP);
 
   if (refusal !== undefined) return refusal;
   if (target.kind === "explicit") return refuseAddress(io, "stop", target.stated);
@@ -204,7 +210,22 @@ export async function stop(args: string[], io: Io, target: Target, budgetMs = ST
 }
 
 export const daemon = noun("daemon", "Work with the daemon", [
-  { name: "start", summary: "Start the daemon of this tree", run: start },
-  { name: "status", summary: "Report whether a daemon is running", run: status },
-  { name: "stop", summary: "Stop the daemon of this tree", run: stop },
+  {
+    name: "start",
+    summary: "Start the daemon of this tree",
+    usage: { help: START_HELP, options: VERB_OPTIONS },
+    run: start,
+  },
+  {
+    name: "status",
+    summary: "Report whether a daemon is running",
+    usage: { help: STATUS_HELP, options: VERB_OPTIONS },
+    run: status,
+  },
+  {
+    name: "stop",
+    summary: "Stop the daemon of this tree",
+    usage: { help: STOP_HELP, options: VERB_OPTIONS },
+    run: stop,
+  },
 ]);

@@ -26,6 +26,49 @@ const DAEMON = "apps/daemon";
  */
 const UNUSED_PID = 2_147_483_647;
 
+/**
+ * The task file the read steps below run against, in three parts, because some
+ * steps print a part of it rather than the whole.
+ *
+ * It is written by this test rather than through the engine: the repository root
+ * imports no package, so the one way to put a task in the tree is to write the
+ * bytes. It states no workflow and no step, which is what keeps every step's
+ * stderr exactly what the verb wrote.
+ */
+const TASK_HEAD = `---
+id: TASM-1
+title: Read the tree through the CLI
+status: To Do
+created: "2026-09-07T10:00:00+02:00"
+updated: "2026-09-07T10:00:00+02:00"
+next_comment_id: 3
+---
+
+# Goal
+
+The body of the planted task.
+
+<!-- task:comment {id: 1, title: "Dev notes #1", created: "2026-09-07T10:05:00+02:00", author: almaz} -->
+
+The body of comment 1.
+
+`;
+
+/** The second marker, written in the block style so it can carry `collapsed`. */
+const COLLAPSED_MARKER = `<!-- task:comment
+id: 2
+title: "Review #1: FAIL"
+created: "2026-09-07T10:10:00+02:00"
+collapsed: true
+-->
+`;
+
+const COLLAPSED_BODY = `
+The body of comment 2, which the default view leaves out.
+`;
+
+const TASK_FILE = `${TASK_HEAD}${COLLAPSED_MARKER}${COLLAPSED_BODY}`;
+
 let outRoot = "";
 
 /** Where each app's own config puts its output, relative to the package. */
@@ -211,6 +254,15 @@ describe("the built executables", () => {
       home = mkdtempSync(join(tmpdir(), "tasma-tree-"));
       mkdirSync(dirname(recordPathIn(home)), { recursive: true });
       writeFileSync(recordPathIn(home), JSON.stringify({ port: await freePort(), pid: UNUSED_PID }));
+
+      // A project is a directory whose name is a tag, so planting one is
+      // creating the directory its task file stands in. It declares no
+      // configuration file, which is what makes its name and its path absent and
+      // its statuses the built-in ones.
+      const tasks = join(home, ".tasma", "projects", "TASM", "tasks");
+
+      mkdirSync(tasks, { recursive: true });
+      writeFileSync(join(tasks, "TASM-1.md"), TASK_FILE);
     });
 
     afterAll(() => {
@@ -246,6 +298,61 @@ describe("the built executables", () => {
 
       expect(code).toBe(0);
       expect(stdout).toContain(` at ${url}\n`);
+    });
+
+    // The reads, against the real daemon, the real engine and the built CLI:
+    // the one place the whole path from an argument to a file on disk is proved.
+    it("lists the projects of the tree", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["project", "list"], treeEnv(home));
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe("TASM  -  -\n");
+    });
+
+    it("lists the tasks of one project", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "list", "--project", "TASM"], treeEnv(home));
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe("TASM-1  To Do  -  -  Read the tree through the CLI\n");
+    });
+
+    it("prints the task without the collapsed body, and names what it left out", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "view", "TASM-1"], treeEnv(home));
+
+      expect(code).toBe(0);
+      expect(stdout).toBe(`${TASK_HEAD}${COLLAPSED_MARKER}`);
+      expect(stderr).toBe("tasma: 1 comment collapsed (2): task comment TASM-1 <n> prints one, --full prints all\n");
+    });
+
+    it("prints the whole file with --full, the collapsed body included", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "view", "TASM-1", "--full"], treeEnv(home));
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe(TASK_FILE);
+    });
+
+    it("maps the comments of the task", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "comments", "TASM-1"], treeEnv(home));
+      const lines = stdout.split("\n").filter((line) => line !== "");
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toContain("almaz");
+      expect(lines[0]).toContain("Dev notes #1");
+      expect(lines[1]).toContain("collapsed");
+      expect(lines[1]).toContain("Review #1: FAIL");
+    });
+
+    it("prints one collapsed comment alone, whole", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "comment", "TASM-1", "2"], treeEnv(home));
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe(`${COLLAPSED_MARKER}${COLLAPSED_BODY}`);
     });
 
     it("stops it and leaves no record behind", async () => {
