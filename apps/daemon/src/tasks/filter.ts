@@ -1,8 +1,9 @@
 // What a route was asked for in its query, and which entries a listing answers
 // with. Every route that reads a query reads it here — the task listing its
-// filter, the read of one task its options, and the comment map and every write
-// of a task or a project alike the assertion that they carry no query at all —
-// so one set of rules covers them all.
+// filter, the read of one task its options, the read of a task's text its
+// selection, and the comment map and every write of a task or a project alike
+// the assertion that they carry no query at all — so one set of rules covers
+// them all.
 //
 // A route declares the query keys it takes, and a key it does not declare is
 // refused rather than passed over: a mistyped `?stauts=To+Do` that silently
@@ -10,9 +11,10 @@
 // argument for ignoring one — an older daemon meeting a newer client — does not
 // apply to a daemon and a client that ship from one repository at one version.
 
-import type { IndexEntry } from "@tasma/engine";
-import type { TaskFilter, TaskReadOptions } from "@tasma/protocol";
+import type { IndexEntry, TextSelection } from "@tasma/engine";
+import type { TaskFilter, TaskReadOptions, TaskTextOptions } from "@tasma/protocol";
 import { DaemonError } from "../http/failure.js";
+import { commentIdOf } from "./input.js";
 
 /**
  * The keys each route declares, written as a table over the contract type the
@@ -30,6 +32,8 @@ const LISTING_KEYS = Object.keys({
 } satisfies Record<keyof TaskFilter, true>);
 
 const READ_KEYS = Object.keys({ comments: true } satisfies Record<keyof TaskReadOptions, true>);
+
+const TEXT_KEYS = Object.keys({ collapsed: true, comment: true } satisfies Record<keyof TaskTextOptions, true>);
 
 /**
  * Refuses every key the route does not declare. The key is named, because the
@@ -103,6 +107,22 @@ export function readTaskFilter(query: URLSearchParams): TaskFilter {
 export function readTaskOptions(query: URLSearchParams): TaskReadOptions {
   assertDeclared(query, READ_KEYS);
   return { comments: flag(query, "comments") };
+}
+
+/**
+ * What a text read selects, as the engine takes it: the wire carries the two
+ * keys side by side so they can travel in a query, while the engine takes one
+ * selection or the other, so a request that states both is refused here.
+ */
+export function readTextSelection(query: URLSearchParams): TextSelection {
+  assertDeclared(query, TEXT_KEYS);
+  const collapsed = flag(query, "collapsed");
+  const comment = text(query, "comment");
+  if (comment === undefined) return { collapsed };
+  if (collapsed !== undefined) {
+    throw new DaemonError("malformed-request", 'the query key "comment" does not combine with "collapsed"');
+  }
+  return { comment: commentIdOf(comment) };
 }
 
 /**

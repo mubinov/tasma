@@ -18,6 +18,8 @@ import type {
   TaskParseErrorCode,
   TaskSerializeErrorCode,
   TaskStoreErrorCode,
+  TextResult,
+  TextSelection,
   Workflow as EngineWorkflow,
   WorkflowStep as EngineWorkflowStep,
   WorkflowStepResult,
@@ -43,6 +45,8 @@ import type {
   Task,
   TaskEntry,
   TaskList,
+  TaskText,
+  TaskTextOptions,
   Workflow,
   WorkflowStep,
   WriteResult,
@@ -106,5 +110,11 @@ describe("the wire contract", () => {
     expectTypeOf<Omit<Task, "comments">>().toEqualTypeOf<Omit<EngineTask, typeof SNAPSHOT | "comments">>();
     expectTypeOf<Flat<Comment>>().toEqualTypeOf<Omit<EngineComment, typeof SNAPSHOT>>();
     expectTypeOf<WriteResult>().toEqualTypeOf<Omit<EngineWriteResult, "diagnostics">>();
+    expectTypeOf<TaskText>().toEqualTypeOf<Omit<TextResult, "diagnostics">>();
+  });
+
+  it("refuses a text selection that states both of its keys", () => {
+    expectTypeOf<{ collapsed: false; comment: 2 }>().not.toExtend<TaskTextOptions>();
+    expectTypeOf<{ collapsed: false; comment: 2 }>().not.toExtend<TextSelection>();
   });
 });

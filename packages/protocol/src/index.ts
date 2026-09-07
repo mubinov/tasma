@@ -18,7 +18,7 @@ export type { Health } from "./health.js";
 export { printable } from "./printable.js";
 export type { Config, Project, ProjectChange, ProjectInput, ProjectSummary } from "./project.js";
 export { buildPath, routes, UNSAFE_IN_SEGMENT } from "./routes.js";
-export type { Method, PathQuery, Route, TaskFilter, TaskReadOptions } from "./routes.js";
+export type { Method, PathQuery, Route, TaskFilter, TaskReadOptions, TaskTextOptions } from "./routes.js";
 export type {
   Comment,
   CommentFields,
@@ -31,6 +31,7 @@ export type {
   TaskEntry,
   TaskInput,
   TaskList,
+  TaskText,
   WriteResult,
 } from "./task.js";
 export type {

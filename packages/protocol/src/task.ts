@@ -58,6 +58,17 @@ export type Task = {
   comments?: Comment[];
 };
 
+/** A task's text, as the file holds it, and what a selection left out of it. */
+export type TaskText = {
+  text: string;
+  /**
+   * The ids of the collapsed comments this selection left the body out of, in
+   * file order. Empty for every other selection, one comment read alone
+   * included: it names what the marker says is collapsed, not what was cut.
+   */
+  hidden: number[];
+};
+
 /** One task of a listing: the frontmatter alone, never the body. */
 export type TaskEntry = {
   id: string;

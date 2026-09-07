@@ -2,6 +2,7 @@ import type { Stats } from "node:fs";
 // A public name of the format layer comes from the barrel the package
 // publishes; a name it does not export comes from the file that holds it.
 import {
+  commentRegion,
   type Diagnostic,
   type Frontmatter,
   hasSource,
@@ -9,6 +10,7 @@ import {
   serializeTask,
   type Task,
   type TaskComment,
+  withoutCollapsedBodies,
 } from "../format/index.js";
 import { COMMENT, FRONTMATTER } from "../format/schema.js";
 import { deepEqual } from "../format/values.js";
@@ -26,6 +28,8 @@ import type {
   ReadResult,
   StoreDiagnostic,
   TaskChange,
+  TextResult,
+  TextSelection,
   WriteResult,
 } from "./types.js";
 import { validateBlockedBy, validateLabels, validateMember } from "./validate.js";
@@ -269,6 +273,13 @@ export type Project = {
   /** Every path of the project, for a caller that watches the directory itself. */
   readonly paths: ProjectPaths;
   readTask(id: string): Promise<ReadResult>;
+  /**
+   * The text of one task file: byte for byte with no `selection`, and cut down
+   * by one where the selection asks for it. It reports what `readTask` reports
+   * over the same file, so a caller printing the text is told what a caller
+   * reading the task would be told.
+   */
+  readTaskText(id: string, selection?: TextSelection): Promise<TextResult>;
   createTask(input: TaskChange): Promise<WriteResult>;
   updateTask(id: string, change: TaskChange): Promise<WriteResult>;
   deleteTask(id: string): Promise<WriteResult>;
@@ -290,8 +301,8 @@ export type Project = {
   stepInstructions(workflow: string, step: string): Promise<InstructionsResult>;
 };
 
-/** One task as it was read, with the path it came from. */
-type Opened = { path: string; task: Task; diagnostics: StoreDiagnostic[] };
+/** One task as it was read, with the text it was parsed from and the path it came from. */
+type Opened = { path: string; text: string; task: Task; diagnostics: StoreDiagnostic[] };
 
 class ProjectStore implements Project {
   readonly paths: ProjectPaths;
@@ -328,7 +339,18 @@ class ProjectStore implements Project {
       // put the change in the wrong file.
       fail("id-mismatch", `this file carries the id "${carried}", so it is not task ${id}`, path);
     }
-    return { path, task, diagnostics: forward(diagnostics, path) };
+    return { path, text, task, diagnostics: forward(diagnostics, path) };
+  }
+
+  /**
+   * Reports on the workflow one task names, into the diagnostics of a read. The
+   * findings of the shared user file are dropped: one unknown key in it would
+   * otherwise arrive once per task read.
+   */
+  async #reportWorkflow(task: Task, path: string, diagnostics: StoreDiagnostic[]): Promise<void> {
+    const resolve = () => resolveWorkflowsPath(this.paths.userConfig, []);
+    const openHandle = () => openWorkflowsForRead(this.paths.root, resolve, diagnostics);
+    await reportWorkflowInto(openHandle, task.frontmatter, path, diagnostics);
   }
 
   /** The tail every rewrite shares: assert every snapshot, then serialize and rename. */
@@ -340,12 +362,23 @@ class ProjectStore implements Project {
   async readTask(id: string): Promise<ReadResult> {
     await openProjectDirectory(this.paths);
     const { path, task, diagnostics } = await this.#open(id);
-    // A read reports on this task, so the findings of the shared user file are
-    // dropped: one unknown key in it would otherwise arrive once per task read.
-    const resolve = () => resolveWorkflowsPath(this.paths.userConfig, []);
-    const openHandle = () => openWorkflowsForRead(this.paths.root, resolve, diagnostics);
-    await reportWorkflowInto(openHandle, task.frontmatter, path, diagnostics);
+    await this.#reportWorkflow(task, path, diagnostics);
     return { task, diagnostics };
+  }
+
+  async readTaskText(id: string, selection: TextSelection = {}): Promise<TextResult> {
+    await openProjectDirectory(this.paths);
+    const { path, text, task, diagnostics } = await this.#open(id);
+    await this.#reportWorkflow(task, path, diagnostics);
+
+    if (selection.comment !== undefined) {
+      const commentId = selection.comment;
+      const current = task.comments.find((comment) => comment.id === commentId);
+      if (current === undefined) fail("comment-not-found", `this file carries no comment ${commentId}`, path);
+      return { text: commentRegion(text, current), hidden: [], diagnostics };
+    }
+    if (selection.collapsed === false) return { ...withoutCollapsedBodies(text, task), diagnostics };
+    return { text, hidden: [], diagnostics };
   }
 
   async stepInstructions(workflow: string, step: string): Promise<InstructionsResult> {

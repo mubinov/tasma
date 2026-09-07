@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { TaskList, WriteResult } from "@tasma/protocol";
+import type { TaskList, TaskText, WriteResult } from "@tasma/protocol";
 import { taskRoutes } from "../../src/tasks/routes.js";
 import {
   plant,
@@ -227,6 +227,87 @@ describe("GET /projects/{project}/tasks/{id}", () => {
       ok: false,
       error: { kind: "parse", code: "frontmatter-missing" },
     });
+  });
+});
+
+describe("GET /projects/{project}/tasks/{id}/text", () => {
+  /** A tree holding the planted task, and the bytes it was planted with. */
+  async function planted(text = taskWithComments("TASM-1")): Promise<{ server: TestServer; text: string }> {
+    const root = await projectsRoot("TASM");
+    await plant(taskFile(root, "TASM", "TASM-1"), text);
+    return { server: await serving(root, taskRoutes), text };
+  }
+
+  async function textOf(server: TestServer, search: string): Promise<TaskText> {
+    const response = await send(server, "GET", `/projects/TASM/tasks/TASM-1/text${search}`);
+    expect(response.status).toBe(200);
+    return (await success<TaskText>(response)).data;
+  }
+
+  it("answers with the file byte for byte", async () => {
+    const { server, text } = await planted();
+
+    await expect(textOf(server, "")).resolves.toEqual({ text, hidden: [] });
+  });
+
+  it("leaves the body of a collapsed comment out under collapsed=false, and names it", async () => {
+    const { server, text } = await planted();
+
+    await expect(textOf(server, "?collapsed=false")).resolves.toEqual({
+      text: text.replace("\nSecond body.\n", ""),
+      hidden: [2],
+    });
+  });
+
+  it("answers with one comment alone, its marker and its body", async () => {
+    const { server, text } = await planted();
+
+    await expect(textOf(server, "?comment=2")).resolves.toEqual({
+      text: text.slice(text.indexOf("<!-- task:comment\n")),
+      hidden: [],
+    });
+  });
+
+  it("refuses a comment id the file carries no comment under", async () => {
+    const { server } = await planted();
+
+    const response = await send(server, "GET", "/projects/TASM/tasks/TASM-1/text?comment=9");
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "store", code: "comment-not-found" },
+    });
+  });
+
+  it("forwards a store refusal of a task that does not exist", async () => {
+    const { server } = await planted();
+
+    const response = await send(server, "GET", "/projects/TASM/tasks/TASM-9/text");
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ ok: false, error: { kind: "store", code: "task-not-found" } });
+  });
+
+  it("refuses the two selections together", async () => {
+    const { server } = await planted();
+
+    const response = await send(server, "GET", "/projects/TASM/tasks/TASM-1/text?comment=2&collapsed=false");
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "daemon", code: "malformed-request" },
+    });
+  });
+
+  it("carries the findings of the file it read on the envelope", async () => {
+    const { server } = await planted(taskWithComments("TASM-1").replace("next_comment_id: 3", "next_comment_id: 2"));
+
+    const response = await send(server, "GET", "/projects/TASM/tasks/TASM-1/text");
+
+    const { diagnostics } = await success<TaskText>(response);
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["stale-next-comment-id"]);
   });
 });
 

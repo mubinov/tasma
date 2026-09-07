@@ -6,6 +6,7 @@ import type {
   Failure,
   Method,
   ProjectSummary,
+  TaskText,
   Transport,
   TransportReply,
   TransportRequest,
@@ -100,6 +101,24 @@ const invocations: Invocation[] = [
     path: "/projects/TASM/tasks/TASM-3?comments=false",
   },
   {
+    name: "readTaskText",
+    send: (client) => client.readTaskText("TASM", "TASM-3"),
+    method: "GET",
+    path: "/projects/TASM/tasks/TASM-3/text",
+  },
+  {
+    name: "readTaskText without the collapsed bodies",
+    send: (client) => client.readTaskText("TASM", "TASM-3", { collapsed: false }),
+    method: "GET",
+    path: "/projects/TASM/tasks/TASM-3/text?collapsed=false",
+  },
+  {
+    name: "readTaskText of one comment",
+    send: (client) => client.readTaskText("TASM", "TASM-3", { comment: 2 }),
+    method: "GET",
+    path: "/projects/TASM/tasks/TASM-3/text?comment=2",
+  },
+  {
     name: "updateTask",
     send: (client) => client.updateTask("TASM", "TASM-3", { status: "Done" }),
     method: "PATCH",
@@ -192,6 +211,16 @@ describe("the client", () => {
     const transport: Transport = async () => ({ status: 200, body: { ok: true, data, diagnostics: [] } });
 
     await expect(createClient(transport).listComments("TASM", "TASM-3")).resolves.toEqual({ data, diagnostics: [] });
+  });
+
+  it("returns a task's text as the text and the comments left out of it", async () => {
+    const data: TaskText = { text: "---\nid: TASM-3\n---\n", hidden: [2] };
+    const transport: Transport = async () => ({ status: 200, body: { ok: true, data, diagnostics: [] } });
+
+    await expect(createClient(transport).readTaskText("TASM", "TASM-3", { collapsed: false })).resolves.toEqual({
+      data,
+      diagnostics: [],
+    });
   });
 
   it("throws the whole failure of a refusal", async () => {

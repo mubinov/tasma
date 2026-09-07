@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Frontmatter, IndexEntry } from "@tasma/engine";
 import type { TaskFilter } from "@tasma/protocol";
-import { assertNoQuery, readTaskFilter, readTaskOptions, selectEntries } from "../../src/tasks/filter.js";
+import { assertNoQuery, readTaskFilter, readTaskOptions, readTextSelection, selectEntries } from "../../src/tasks/filter.js";
 import { refused, TIMESTAMP } from "../helpers.js";
 
 function entry(id: string, frontmatter: Partial<Frontmatter> = {}): IndexEntry {
@@ -120,6 +120,57 @@ describe("readTaskOptions", () => {
 
     expect(error.code).toBe("malformed-request");
     expect(error.message).toContain("status");
+  });
+});
+
+describe("readTextSelection", () => {
+  it("reads a query that states nothing as the whole file", () => {
+    expect(readTextSelection(query(""))).toEqual({ collapsed: undefined });
+  });
+
+  it("reads collapsed=false as the selection that leaves the collapsed bodies out", () => {
+    expect(readTextSelection(query("collapsed=false"))).toEqual({ collapsed: false });
+  });
+
+  it("reads collapsed=true as the whole file, which is what an absent key asks for", () => {
+    expect(readTextSelection(query("collapsed=true"))).toEqual({ collapsed: true });
+  });
+
+  it("reads comment as the selection of that comment alone, stating no collapsed at all", () => {
+    const selection = readTextSelection(query("comment=2"));
+
+    expect(selection).toEqual({ comment: 2 });
+    expect("collapsed" in selection).toBe(false);
+  });
+
+  it("refuses a key the route does not declare", () => {
+    const error = refused(() => readTextSelection(query("comments=false")));
+
+    expect(error.code).toBe("malformed-request");
+    expect(error.message).toContain("comments");
+  });
+
+  it.each(["collapsed", "comment"])("refuses %s given twice", (key) => {
+    const error = refused(() => readTextSelection(query(`${key}=1&${key}=2`)));
+
+    expect(error.code).toBe("malformed-request");
+    expect(error.message).toContain(key);
+  });
+
+  it("refuses a collapsed that is neither true nor false", () => {
+    expect(refused(() => readTextSelection(query("collapsed=1"))).code).toBe("malformed-request");
+  });
+
+  it.each(["two", "2.5", "1e3", " 2"])("refuses comment=%s, which is no decimal integer", (value) => {
+    expect(refused(() => readTextSelection(query(`comment=${encodeURIComponent(value)}`))).code)
+      .toBe("malformed-request");
+  });
+
+  it("refuses the two keys together, which select different things", () => {
+    const error = refused(() => readTextSelection(query("comment=2&collapsed=false")));
+
+    expect(error.code).toBe("malformed-request");
+    expect(error.message).toContain("comment");
   });
 });
 

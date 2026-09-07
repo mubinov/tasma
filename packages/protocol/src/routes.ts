@@ -20,6 +20,7 @@ export const routes = {
   listTasks: { method: "GET", template: "/projects/{project}/tasks" },
   createTask: { method: "POST", template: "/projects/{project}/tasks" },
   readTask: { method: "GET", template: "/projects/{project}/tasks/{id}" },
+  readTaskText: { method: "GET", template: "/projects/{project}/tasks/{id}/text" },
   updateTask: { method: "PATCH", template: "/projects/{project}/tasks/{id}" },
   deleteTask: { method: "DELETE", template: "/projects/{project}/tasks/{id}" },
   listComments: { method: "GET", template: "/projects/{project}/tasks/{id}/comments" },
@@ -67,13 +68,24 @@ export type TaskFilter = {
 export type TaskReadOptions = { comments?: boolean };
 
 /**
+ * What a text read selects. `collapsed=false` leaves the body of every collapsed
+ * comment out and the marker in; `comment=<n>` answers that comment alone,
+ * marker and body, whether or not it is collapsed.
+ *
+ * The two do not combine, and each member states the other's key as `never`
+ * because a union on its own admits a property any member of it declares — the
+ * request a daemon answers 400 would otherwise compile.
+ */
+export type TaskTextOptions = { collapsed?: boolean; comment?: never } | { comment?: number; collapsed?: never };
+
+/**
  * What `buildPath` appends to a path, and what a client method may pass as one.
  *
- * Every type written to be passed as one — `TaskFilter`, `TaskReadOptions` — is
- * a type alias rather than an interface, because only an alias carries the
- * implicit index signature a record of this shape requires.
+ * Every type written to be passed as one — `TaskFilter`, `TaskReadOptions`,
+ * `TaskTextOptions` — is a type alias rather than an interface, because only an
+ * alias carries the implicit index signature a record of this shape requires.
  */
-export type PathQuery = Record<string, string | string[] | boolean | undefined>;
+export type PathQuery = Record<string, string | string[] | boolean | number | undefined>;
 
 const PLACEHOLDER = /\{(\w+)\}/g;
 

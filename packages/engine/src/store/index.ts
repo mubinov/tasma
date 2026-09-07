@@ -23,6 +23,8 @@ export type {
   StoreDiagnostic,
   StoreDiagnosticCode,
   TaskChange,
+  TextResult,
+  TextSelection,
   WriteResult,
 } from "./types.js";
 export { openTreeWorkflows } from "./workflow.js";

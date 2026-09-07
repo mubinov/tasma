@@ -105,6 +105,27 @@ export type ReadResult = {
   diagnostics: StoreDiagnostic[];
 };
 
+/**
+ * What a text read selects: the whole file, the whole file less the collapsed
+ * bodies where `collapsed` is exactly `false`, or one comment alone.
+ *
+ * Each member states the other's key as `never` because a union on its own
+ * admits a property any member of it declares, so `{ collapsed, comment }`
+ * would otherwise compile and lose one of the two.
+ */
+export type TextSelection = { collapsed?: boolean; comment?: never } | { comment: number; collapsed?: never };
+
+export type TextResult = {
+  text: string;
+  /**
+   * The ids of the collapsed comments this selection left the body out of, in
+   * file order. Empty for every other selection, one comment read alone
+   * included: it names what the marker says is collapsed, not what was cut.
+   */
+  hidden: number[];
+  diagnostics: StoreDiagnostic[];
+};
+
 export type ResolvedConfig = {
   statuses: string[];
   default_status: string;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildPath, routes } from "@tasma/protocol";
-import type { Route, TaskFilter, TaskReadOptions } from "@tasma/protocol";
+import type { Route, TaskFilter, TaskReadOptions, TaskTextOptions } from "@tasma/protocol";
 
 /** The placeholder names the client fills, which is every name a template may use. */
 const SUPPLIED_PLACEHOLDERS = ["project", "id", "commentId", "workflow", "step"];
@@ -98,6 +98,20 @@ describe("buildPath", () => {
     const options: TaskReadOptions = { comments: false };
     expect(buildPath(routes.readTask, { project: "TASM", id: "TASM-3" }, options)).toBe(
       "/projects/TASM/tasks/TASM-3?comments=false",
+    );
+  });
+
+  it("writes a boolean text option out as a query key", () => {
+    const options: TaskTextOptions = { collapsed: false };
+    expect(buildPath(routes.readTaskText, { project: "TASM", id: "TASM-3" }, options)).toBe(
+      "/projects/TASM/tasks/TASM-3/text?collapsed=false",
+    );
+  });
+
+  it("writes a number query value out in full", () => {
+    const options: TaskTextOptions = { comment: 3 };
+    expect(buildPath(routes.readTaskText, { project: "TASM", id: "TASM-3" }, options)).toBe(
+      "/projects/TASM/tasks/TASM-3/text?comment=3",
     );
   });
 

@@ -1,5 +1,5 @@
-// What a request carries into a write: the body as a change, and the comment id
-// the path names.
+// What a request carries beyond its route: the body as a change, and the comment
+// id a path or a query names.
 //
 // No field rule lives here. A caller naming `id`, `created`, `updated` or
 // `next_comment_id` is refused by the engine's `field-not-writable`; a bad
@@ -54,8 +54,8 @@ export function toChange(body: unknown): WriteFields {
 }
 
 /**
- * The comment id one path names. It is refused here rather than passed on,
- * because everything a path holds is text and the engine takes a number.
+ * The comment id a path or a query names. It is refused here rather than passed
+ * on, because everything a URL holds is text and the engine takes a number.
  */
 export function commentIdOf(raw: string): number {
   const id = Number(raw);

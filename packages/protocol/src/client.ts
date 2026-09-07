@@ -2,9 +2,9 @@ import { ProtocolError, TransportError } from "./errors.js";
 import type { Envelope, Failure, Success } from "./errors.js";
 import type { Health } from "./health.js";
 import type { Project, ProjectChange, ProjectInput, ProjectSummary } from "./project.js";
-import type { Method, PathQuery, Route, TaskFilter, TaskReadOptions } from "./routes.js";
+import type { Method, PathQuery, Route, TaskFilter, TaskReadOptions, TaskTextOptions } from "./routes.js";
 import { buildPath, routes } from "./routes.js";
-import type { CommentHeader, CommentInput, Task, TaskInput, TaskList, WriteResult } from "./task.js";
+import type { CommentHeader, CommentInput, Task, TaskInput, TaskList, TaskText, WriteResult } from "./task.js";
 import type { StepDefinition, Workflow } from "./workflow.js";
 
 /**
@@ -41,6 +41,7 @@ export type Client = {
   listTasks(tag: string, filter?: TaskFilter): Promise<Success<TaskList>>;
   createTask(tag: string, input: TaskInput): Promise<Success<WriteResult>>;
   readTask(tag: string, id: string, options?: TaskReadOptions): Promise<Success<Task>>;
+  readTaskText(tag: string, id: string, options?: TaskTextOptions): Promise<Success<TaskText>>;
   updateTask(tag: string, id: string, change: TaskInput): Promise<Success<WriteResult>>;
   deleteTask(tag: string, id: string): Promise<Success<WriteResult>>;
   listComments(tag: string, id: string): Promise<Success<CommentHeader[]>>;
@@ -137,6 +138,7 @@ export function createClient(transport: Transport): Client {
     listTasks: (tag, filter) => call<TaskList>(routes.listTasks, { project: tag }, { query: filter }),
     createTask: (tag, input) => call<WriteResult>(routes.createTask, { project: tag }, { body: input }),
     readTask: (tag, id, options) => call<Task>(routes.readTask, { project: tag, id }, { query: options }),
+    readTaskText: (tag, id, options) => call<TaskText>(routes.readTaskText, { project: tag, id }, { query: options }),
     updateTask: (tag, id, change) => call<WriteResult>(routes.updateTask, { project: tag, id }, { body: change }),
     deleteTask: (tag, id) => call<WriteResult>(routes.deleteTask, { project: tag, id }),
     listComments: (tag, id) => call<CommentHeader[]>(routes.listComments, { project: tag, id }),

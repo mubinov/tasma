@@ -7,6 +7,8 @@ import type {
   ProjectPaths,
   ReadResult,
   TaskChange,
+  TextResult,
+  TextSelection,
   WriteResult,
 } from "../store/index.js";
 import { taskEntryOf } from "../store/paths.js";
@@ -87,6 +89,11 @@ class IndexedProjectStore implements IndexedProject {
   async readTask(id: string): Promise<ReadResult> {
     this.#live();
     return this.#project.readTask(id);
+  }
+
+  async readTaskText(id: string, selection?: TextSelection): Promise<TextResult> {
+    this.#live();
+    return this.#project.readTaskText(id, selection);
   }
 
   async config(): Promise<ConfigResult> {

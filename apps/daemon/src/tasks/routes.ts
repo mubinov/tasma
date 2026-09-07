@@ -1,4 +1,4 @@
-// Every route over the tasks of one project: the five over the task itself, and
+// Every route over the tasks of one project: the six over the task itself, and
 // the four over its comments.
 //
 // Each handler reaches its project through `host.open`, which returns an
@@ -9,11 +9,11 @@
 
 import { resolveBlocked } from "@tasma/engine";
 import { routes } from "@tasma/protocol";
-import type { Diagnostic, Success, Task, TaskList, WriteResult } from "@tasma/protocol";
+import type { Diagnostic, Success, Task, TaskList, TaskText, WriteResult } from "@tasma/protocol";
 import type { RouteEntry } from "../http/router.js";
 import type { ProjectHost } from "../projects/host.js";
 import { commentRoutes } from "./comments.js";
-import { assertNoQuery, readTaskFilter, readTaskOptions, selectEntries } from "./filter.js";
+import { assertNoQuery, readTaskFilter, readTaskOptions, readTextSelection, selectEntries } from "./filter.js";
 import { toChange } from "./input.js";
 import { createKey, taskKey, WriteQueue } from "./serialize.js";
 
@@ -85,6 +85,15 @@ export function taskRoutes(host: ProjectHost): RouteEntry[] {
           return { data: trimmed, diagnostics };
         }
         return { data: task, diagnostics };
+      },
+    },
+    {
+      route: routes.readTaskText,
+      handler: async (request): Promise<Success<TaskText>> => {
+        const selection = readTextSelection(request.query);
+        const { index } = await host.open(request.params.project!);
+        const { diagnostics, ...data } = await index.readTaskText(request.params.id!, selection);
+        return { data, diagnostics };
       },
     },
     {
