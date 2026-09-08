@@ -10,6 +10,7 @@ import { expandRoot, resolveAgainst } from "../store/paths.js";
 import type { StoreDiagnostic } from "../store/types.js";
 import type {
   InstructionDocument,
+  StepOwner,
   Workflow,
   WorkflowList,
   WorkflowPaths,
@@ -50,6 +51,28 @@ const STEP_NAME = /^[a-z0-9](?:[a-z0-9:_-]*[a-z0-9])?$/;
 /** The top-level keys of a workflow file. A key outside the set is reported and not read. */
 const WORKFLOW_KEYS = new Set(["title", "steps", "instructions", "transitions"]);
 
+/**
+ * The keys of a step entry this format defines. A key outside the set is kept
+ * under `custom`. The table is exhaustive over the typed fields of
+ * `WorkflowStep`, so a field that later joins the type fails the typecheck here
+ * until it is named, rather than reaching a reader twice.
+ */
+const STEP_KEYS = new Set(Object.keys({
+  name: true,
+  file: true,
+  owner: true,
+} satisfies Record<Exclude<keyof WorkflowStep, "custom">, true>));
+
+/**
+ * The owners this format states. The record is exhaustive over `StepOwner`, so a
+ * value that later joins the union fails the typecheck here until it is named,
+ * and the guard and the refusal below both read it rather than restating it.
+ */
+const STEP_OWNERS = {
+  agent: true,
+  human: true,
+} satisfies Record<StepOwner, true>;
+
 const WORKFLOW_NAME_EXPECTATION
   = `must be 1 to ${WORKFLOW_NAME_LIMIT} characters from "a-z", "0-9", "-" and "_", `
     + "and start and end with a letter or a digit";
@@ -57,6 +80,8 @@ const WORKFLOW_NAME_EXPECTATION
 const STEP_NAME_EXPECTATION
   = 'must be one or more characters from "a-z", "0-9", "-", "_" and ":", '
     + "and start and end with a letter or a digit";
+
+const STEP_OWNER_EXPECTATION = Object.keys(STEP_OWNERS).map((owner) => `"${owner}"`).join(" or ");
 
 /** What keeps a string from being a workflow name, or `undefined` when it is one. */
 function workflowNameFault(name: string): string | undefined {
@@ -125,6 +150,15 @@ export function stepEntry(workflow: Workflow, step: string, file: string): Workf
   return entry;
 }
 
+/**
+ * Whether one value is an owner. The set alone, matched exactly, so a missing
+ * key, a null, a value of another type and a string outside the set are one
+ * fault rather than four.
+ */
+function isStepOwner(value: unknown): value is StepOwner {
+  return typeof value === "string" && Object.hasOwn(STEP_OWNERS, value);
+}
+
 /** The `steps` list as this format requires it, in the order the file declares. */
 function readSteps(content: Record<string, unknown>, directory: string, file: string): WorkflowStep[] {
   const declared = content.steps;
@@ -140,11 +174,13 @@ function readSteps(content: Record<string, unknown>, directory: string, file: st
     if (seen.has(name)) fail("workflow-invalid", `the step name "${name}" is declared more than once`, file);
     const stated = entry.file;
     if (typeof stated !== "string") fail("workflow-invalid", `the step "${name}" needs a "file" that is a string`, file);
+    const owner = entry.owner;
+    if (!isStepOwner(owner)) fail("workflow-invalid", `the step "${name}" needs an "owner" that is ${STEP_OWNER_EXPECTATION}`, file);
     seen.add(name);
-    const step: WorkflowStep = { name, file: resolveAgainst(directory, stated) };
+    const step: WorkflowStep = { name, file: resolveAgainst(directory, stated), owner };
     // A key this format does not define survives the load, under a name of its
-    // own rather than beside the two the format checks.
-    const custom = Object.fromEntries(Object.entries(entry).filter(([key]) => key !== "name" && key !== "file"));
+    // own rather than beside the three the format checks.
+    const custom = Object.fromEntries(Object.entries(entry).filter(([key]) => !STEP_KEYS.has(key)));
     if (Object.keys(custom).length > 0) step.custom = custom;
     steps.push(step);
   }

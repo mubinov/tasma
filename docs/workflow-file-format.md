@@ -4,9 +4,9 @@ This document defines the workflow file format. It is written for anyone who
 wants to read or write workflow files with their own tools, in any language. It
 describes the files on disk. It does not describe how any program is built.
 
-A workflow says which steps a task can be on, and which document a reader must
-read for each of them. It says nothing about when a task moves from one step to
-the next. That is the subject of a later document.
+A workflow says which steps a task can be on, which document a reader must read
+for each of them, and who performs each of them. It says nothing about when a
+task moves from one step to the next. That is the subject of a later document.
 
 ## 1. Overview
 
@@ -73,8 +73,8 @@ instructions:
   - ~/notes/house-rules.md
 steps:
   - {name: "dev:research", file: steps/research.md, owner: agent}
-  - {name: "dev:implement", file: steps/implement.md}
-  - {name: "user:review", file: /srv/flows/shared/user-review.md}
+  - {name: "dev:implement", file: steps/implement.md, owner: agent, retries: 2}
+  - {name: "user:review", file: /srv/flows/shared/user-review.md, owner: human}
 transitions:
   "dev:research": [{to: "dev:implement"}]
   "dev:implement": [{to: "user:review"}]
@@ -93,8 +93,18 @@ hands on whatever the file held, including nothing.
 
 ### `steps`
 
-`steps` is a non-empty list of mappings. Each mapping carries `name` and `file`,
-both required strings. An entry states identity and location, and nothing else.
+`steps` is a non-empty list of mappings. Each mapping carries three keys, all
+required:
+
+| Key | Type | Meaning |
+|---|---|---|
+| `name` | string | The name of the step. Section 4. |
+| `file` | string | The document of the step, a path. Section 5. |
+| `owner` | `agent` or `human` | Who performs the step. |
+
+An entry states identity, location and who performs the step, and nothing else.
+
+`agent` is a step an agent runs; `human` is a step a person performs.
 
 The order of the list is the order of the steps.
 
@@ -144,7 +154,8 @@ Two rules deserve a note:
   not the string `dev:`, so a name that ends in a colon cannot be written bare.
 
 **The prefix is part of the name.** `dev:research` is one opaque string. This
-format does not split it, name its parts, or define a role.
+format does not split it, name its parts, or define a role. Who performs a step
+is stated by `owner` in section 3, and is never read from the prefix.
 
 No two steps of one workflow carry the same name.
 
@@ -347,6 +358,7 @@ Two behaviors are defined, as in [Task file format](task-file-format.md):
 | A step entry is not a mapping. |
 | A step entry has no `name`, or holds `name` as a value that is not a string. |
 | A step entry has no `file`, or holds `file` as a value that is not a string. |
+| A step entry has no `owner`, or holds `owner` as a value other than `agent` or `human`. |
 | A step name breaks the rule in section 4. |
 | Two step entries carry the same name. |
 | `title` is present and is not a string. |

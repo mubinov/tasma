@@ -5,8 +5,8 @@ instructions:
   - ~/notes/house-rules.md
 steps:
   - {name: "dev:research", file: steps/research.md, owner: agent}
-  - {name: "dev:implement", file: steps/implement.md}
-  - {name: "user:review", file: /srv/flows/shared/user-review.md}
+  - {name: "dev:implement", file: steps/implement.md, owner: agent, retries: 2}
+  - {name: "user:review", file: /srv/flows/shared/user-review.md, owner: human}
 transitions:
   "dev:research": [{to: "dev:implement"}]
   "dev:implement": [{to: "user:review"}]

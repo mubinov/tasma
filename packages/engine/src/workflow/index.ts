@@ -2,6 +2,7 @@ export { openWorkflows } from "./load.js";
 export type {
   InstructionDocument,
   InstructionsResult,
+  StepOwner,
   Workflow,
   WorkflowList,
   WorkflowPaths,

@@ -24,6 +24,7 @@ describe("read", () => {
     expect(workflow.name).toBe("dev");
     expect(workflow.title).toBe("Engineering task flow");
     expect(workflow.steps.map((step) => step.name)).toEqual(["dev:research", "dev:implement", "user:review"]);
+    expect(workflow.steps.map((step) => step.owner)).toEqual(["agent", "agent", "human"]);
     expect(workflow.steps.map((step) => step.file)).toEqual([
       join(workflowDir(root, "dev"), "steps", "research.md"),
       join(workflowDir(root, "dev"), "steps", "implement.md"),
@@ -41,9 +42,11 @@ describe("read", () => {
 
     const { steps } = (await workflows(root).read("dev")).workflow;
 
-    expect(steps[0]?.custom).toEqual({ owner: "agent" });
-    // An entry that states nothing beyond the two keys carries no custom at all.
-    expect(steps[1]?.custom).toBeUndefined();
+    expect(steps[1]?.custom).toEqual({ retries: 2 });
+    // An entry that states nothing beyond the three defined keys carries no
+    // custom at all, which is also where an owner would land if it were kept.
+    expect(steps[0]?.custom).toBeUndefined();
+    expect(steps[2]?.custom).toBeUndefined();
   });
 
   it("returns transitions exactly as read and consults nothing in them", async () => {
@@ -113,6 +116,10 @@ describe("a file the loader refuses", () => {
     ["two steps under one name", "step-name-duplicate.yml", "more than once"],
     ["a step with no file", "step-file-missing.yml", '"file"'],
     ["a step file that is not a string", "step-file-type.yml", '"file"'],
+    ["a step with no owner", "step-owner-missing.yml", '"owner"'],
+    ["a step owner written with no value", "step-owner-empty.yml", '"owner"'],
+    ["a step owner that is not a string", "step-owner-type.yml", '"owner"'],
+    ["a step owner outside the two the format states", "step-owner-value.yml", '"owner"'],
     ["instructions that are not a list", "instructions-not-list.yml", '"instructions"'],
     ["an instructions entry that is not a string", "instructions-entry-type.yml", '"instructions"'],
     ["a title that is not a string", "title-type.yml", '"title"'],
@@ -242,7 +249,7 @@ describe("a name that reaches no workflow directory", () => {
 describe("the step name rule", () => {
   it.each(["research", "dev:research", "dev:research-2", "a_b", "0", "user:crit"])("accepts %j", async (name) => {
     const root = await bareRoot();
-    await plantWorkflow(root, "dev", `steps:\n  - {name: "${name}", file: step.md}\n`);
+    await plantWorkflow(root, "dev", `steps:\n  - {name: "${name}", file: step.md, owner: agent}\n`);
 
     expect((await workflows(root).read("dev")).workflow.steps[0]?.name).toBe(name);
   });
@@ -251,7 +258,7 @@ describe("the step name rule", () => {
     "refuses %j",
     async (name) => {
       const root = await bareRoot();
-      await plantWorkflow(root, "dev", `steps:\n  - {name: "${name}", file: step.md}\n`);
+      await plantWorkflow(root, "dev", `steps:\n  - {name: "${name}", file: step.md, owner: agent}\n`);
 
       expect((await storeError(workflows(root).read("dev"))).code).toBe("workflow-invalid");
     },
@@ -317,7 +324,7 @@ describe("readStep", () => {
 
   it("reports a step file the filesystem refuses to open at all", async () => {
     const root = await bareRoot();
-    await plantWorkflow(root, "dev", "steps:\n  - {name: research, file: notes/research.md}\n");
+    await plantWorkflow(root, "dev", "steps:\n  - {name: research, file: notes/research.md, owner: agent}\n");
     await plant(join(workflowDir(root, "dev"), "notes"), "a file where the directory belongs");
 
     const error = await storeError(workflows(root).readStep("dev", "research"));

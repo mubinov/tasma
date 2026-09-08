@@ -162,9 +162,12 @@ export async function plantWorkflow(root: string, name: string, text: string): P
   await plant(workflowFile(root, name), text);
 }
 
-/** A workflow file declaring one step per name, each with a file beside it under `steps/`. */
+/**
+ * A workflow file declaring one step per name, each owned by an agent and with a
+ * file beside it under `steps/`.
+ */
 export function stepsOnly(...names: string[]): string {
-  const lines = names.map((name) => `  - {name: "${name}", file: steps/${name.replace(":", "-")}.md}`);
+  const lines = names.map((name) => `  - {name: "${name}", file: steps/${name.replace(":", "-")}.md, owner: agent}`);
   return `steps:\n${lines.join("\n")}\n`;
 }
 

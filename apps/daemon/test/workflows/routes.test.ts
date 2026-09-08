@@ -139,7 +139,7 @@ describe("GET /workflows/{workflow}", () => {
       data: {
         name: "dev",
         title: "Development",
-        steps: [{ name: "research", file: stepFile(root, "dev", "research") }],
+        steps: [{ name: "research", file: stepFile(root, "dev", "research"), owner: "agent" }],
         instructions: [join(workflowDir(root, "dev"), "shared.md")],
         transitions: { research: ["implement"] },
       },
@@ -209,7 +209,7 @@ describe("GET /workflows/{workflow}/steps/{step}", () => {
     await expect(response.json()).resolves.toEqual({
       ok: true,
       data: {
-        step: { name: "dev:research", file },
+        step: { name: "dev:research", file, owner: "agent" },
         document: { path: file, text: "Do dev:research.\n" },
       },
       diagnostics: [],

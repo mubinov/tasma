@@ -2,19 +2,23 @@
 // a name it does not export comes from the file that holds it.
 import type { StoreDiagnostic } from "../store/types.js";
 
+/** Who performs a step. The step's default turn, never the state of a running session. */
+export type StepOwner = "agent" | "human";
+
 /**
- * One step a workflow declares: identity and location, and nothing else.
+ * One step a workflow declares: identity, location and owner, and nothing else.
  *
  * `file` is a resolved absolute path.
  */
 export type WorkflowStep = {
   name: string;
   file: string;
+  owner: StepOwner;
   /**
-   * Every key the entry states beyond `name` and `file`, exactly as read, and
-   * absent when it states none. The entry is the one reserved place for a
-   * per-step property a later component needs; they stand under a name of their
-   * own so that a key this format does define stays type-checked.
+   * Every key the entry states beyond `name`, `file` and `owner`, exactly as
+   * read, and absent when it states none. The entry is the one reserved place
+   * for a per-step property a later component needs; they stand under a name of
+   * their own so that a key this format does define stays type-checked.
    */
   custom?: Record<string, unknown>;
 };

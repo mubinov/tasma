@@ -1,2 +1,2 @@
 steps:
-  - {name: research, file: research.md}
+  - {name: research, file: research.md, owner: agent}

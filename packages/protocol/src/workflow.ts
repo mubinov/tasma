@@ -1,10 +1,14 @@
 // A workflow, its steps, and the documents a step is defined in.
 
+/** Who performs a step. The step's default turn, never the state of a running session. */
+export type StepOwner = "agent" | "human";
+
 /** One step a workflow declares. `file` is a resolved absolute path. */
 export type WorkflowStep = {
   name: string;
   file: string;
-  /** Every key the entry states beyond `name` and `file`, exactly as read. Absent when none. */
+  owner: StepOwner;
+  /** Every key the entry states beyond `name`, `file` and `owner`, exactly as read. Absent when none. */
   custom?: Record<string, unknown>;
 };
 

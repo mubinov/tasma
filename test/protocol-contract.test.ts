@@ -12,6 +12,7 @@ import type {
   QueryResult,
   ResolvedConfig,
   SNAPSHOT,
+  StepOwner as EngineStepOwner,
   StoreDiagnostic,
   StoreDiagnosticCode,
   Task as EngineTask,
@@ -41,6 +42,7 @@ import type {
   ProjectSummary,
   SerializeErrorCode,
   StepDefinition,
+  StepOwner,
   StoreErrorCode,
   Task,
   TaskEntry,
@@ -76,6 +78,7 @@ describe("the wire contract", () => {
     expectTypeOf<ParseErrorCode>().toEqualTypeOf<TaskParseErrorCode>();
     expectTypeOf<SerializeErrorCode>().toEqualTypeOf<TaskSerializeErrorCode>();
     expectTypeOf<ExclusionCode>().toEqualTypeOf<EngineExclusionCode>();
+    expectTypeOf<StepOwner>().toEqualTypeOf<EngineStepOwner>();
   });
 
   it("repeats the engine's shapes", () => {

@@ -37,6 +37,7 @@ export type {
 export type {
   InstructionDocument,
   StepDefinition,
+  StepOwner,
   Workflow,
   WorkflowStep,
 } from "./workflow.js";
