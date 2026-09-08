@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
-import { task, taskIdOf } from "../../src/commands/task.js";
+import { task } from "../../src/commands/task.js";
+import { taskIdOf } from "../../src/commands/task-id.js";
 import { at, capture, ok, runCommand } from "../helpers.js";
 import type { Ran } from "../helpers.js";
 
@@ -415,18 +416,18 @@ describe("taskIdOf", () => {
 });
 
 describe("the task noun", () => {
-  it("lists its four verbs for a bare noun", async () => {
+  it("lists its seven verbs for a bare noun", async () => {
     const { io, out } = capture();
 
     expect(await task.run([], io, at("http://127.0.0.1:8278"))).toBe(0);
 
-    for (const verb of ["list", "view", "comments", "comment"]) {
+    for (const verb of ["list", "view", "comments", "comment", "create", "edit", "delete"]) {
       expect(out.join("")).toContain(`  ${verb}`);
     }
   });
 
   it("prints a usage block for every verb, reaching no daemon", async () => {
-    for (const verb of ["list", "view", "comments", "comment"]) {
+    for (const verb of ["list", "view", "comments", "comment", "create", "edit", "delete"]) {
       for (const flag of ["--help", "-h"]) {
         const { code, out, err, seen } = await runTask([verb, flag]);
 

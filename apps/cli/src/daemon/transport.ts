@@ -127,7 +127,7 @@ export class RequestTimeoutError extends Error {
 }
 
 /** The two names an aborted request rejects under, whichever of the headers and the body it stalled in. */
-function ranOutOfTime(cause: unknown): boolean {
+export function ranOutOfTime(cause: unknown): boolean {
   return cause instanceof Error && (cause.name === "TimeoutError" || cause.name === "AbortError");
 }
 

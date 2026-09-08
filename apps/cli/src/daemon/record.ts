@@ -6,9 +6,9 @@
 
 import { constants, open } from "node:fs/promises";
 import { join } from "node:path";
-import { createClient, DAEMON_NAME, DAEMON_RECORD_FILE, DEFAULT_DAEMON_HOST } from "@tasma/protocol";
+import { createClient, DAEMON_NAME, DAEMON_RECORD_FILE, DEFAULT_DAEMON_HOST, TransportError } from "@tasma/protocol";
 import type { DaemonRecord, Transport } from "@tasma/protocol";
-import { replyText } from "./transport.js";
+import { ranOutOfTime, replyText } from "./transport.js";
 
 /**
  * The directory the tree stands in, under the home. It repeats the engine's own
@@ -135,11 +135,21 @@ export function daemonUrl(port: number): string {
 }
 
 /**
- * Whether a Tasma daemon answers at this address.
+ * What a probe found at an address: a Tasma daemon, a listener that had not
+ * answered within the budget, or neither — nothing listening, an answer from
+ * something that is not a daemon, and every other fault.
+ *
+ * The budget running out is its own answer because something accepted the
+ * connection. A caller that starts a daemon where nothing answered would
+ * otherwise start a second one over the tree a slow daemon already serves.
+ */
+export type Probed = "daemon" | "late" | "none";
+
+/**
+ * What answers at this address.
  *
  * The one field that identifies a daemon decides, because a stale record names a
- * port another program may hold and answer well-formed JSON on. Any fault at all
- * answers `false`.
+ * port another program may hold and answer well-formed JSON on.
  *
  * The reply is bounded at what a health answer takes rather than at the ceiling
  * the client transport carries: the port is held by whatever now holds it, and
@@ -148,7 +158,7 @@ export function daemonUrl(port: number): string {
  * Nothing in production passes `timeoutMs`; it is there so the budget can be
  * driven in milliseconds.
  */
-export async function probe(url: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<boolean> {
+export async function probe(url: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<Probed> {
   // Health is the one route this transport carries: a read, so it sends no body
   // and needs no media type. A redirect is refused rather than followed, which
   // is what keeps the call on the loopback address it was given.
@@ -168,8 +178,15 @@ export async function probe(url: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<
     // discriminant, so the answer is whatever the port sent.
     const answer = data as { name?: unknown } | null | undefined;
 
-    return answer?.name === DAEMON_NAME;
-  } catch {
-    return false;
+    return answer?.name === DAEMON_NAME ? "daemon" : "none";
+  } catch (error) {
+    // The client wraps whatever the transport threw, so the budget is read off
+    // the cause rather than off the error the call rejected with.
+    return error instanceof TransportError && ranOutOfTime(error.cause) ? "late" : "none";
   }
+}
+
+/** Whether a Tasma daemon answers at this address. One that had not answered within the budget is not one yet. */
+export async function daemonAnswers(url: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<boolean> {
+  return (await probe(url, timeoutMs)) === "daemon";
 }

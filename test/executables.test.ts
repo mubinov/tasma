@@ -69,6 +69,9 @@ The body of comment 2, which the default view leaves out.
 
 const TASK_FILE = `${TASK_HEAD}${COLLAPSED_MARKER}${COLLAPSED_BODY}`;
 
+/** The body the write steps create their task with, and the one an append adds to. */
+const SECOND_BODY = "The body of the second task.\n";
+
 let outRoot = "";
 
 /** Where each app's own config puts its output, relative to the package. */
@@ -77,13 +80,20 @@ const outDirs = new Map<string, string>();
 function node(
   file: string,
   args: string[],
-  env?: Record<string, string>,
+  options: { env?: Record<string, string>; input?: string } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
+  const { env, input = "" } = options;
+
   return new Promise((resolve) => {
-    execFile(execPath, [file, ...args], { env: env === undefined ? process.env : { ...process.env, ...env } },
+    const child = execFile(execPath, [file, ...args],
+      { env: env === undefined ? process.env : { ...process.env, ...env } },
       (error, stdout, stderr) => {
         resolve({ code: typeof error?.code === "number" ? error.code : 0, stdout, stderr });
       });
+
+    // Ended in every case: a step reading standard input waits for the end of
+    // it, and a step that reads none never sees the bytes.
+    child.stdin?.end(input);
   });
 }
 
@@ -118,6 +128,21 @@ function treeEnv(home: string): Record<string, string> {
 /** Where the tree of a home records its daemon. */
 function recordPathIn(home: string): string {
   return join(home, ".tasma", "daemon.json");
+}
+
+/** Where the tree of a home holds the planted project. */
+function projectDirIn(home: string): string {
+  return join(home, ".tasma", "projects", "TASM");
+}
+
+/** Where that project holds its task files. */
+function tasksDirIn(home: string): string {
+  return join(projectDirIn(home), "tasks");
+}
+
+/** Where one of them stands, which a store note quotes as its location. */
+function taskPathIn(home: string, id: string): string {
+  return join(tasksDirIn(home), `${id}.md`);
 }
 
 /** What the tree's record states, or nothing where it holds none. */
@@ -259,7 +284,7 @@ describe("the built executables", () => {
       // creating the directory its task file stands in. It declares no
       // configuration file, which is what makes its name and its path absent and
       // its statuses the built-in ones.
-      const tasks = join(home, ".tasma", "projects", "TASM", "tasks");
+      const tasks = tasksDirIn(home);
 
       mkdirSync(tasks, { recursive: true });
       writeFileSync(join(tasks, "TASM-1.md"), TASK_FILE);
@@ -282,7 +307,7 @@ describe("the built executables", () => {
     });
 
     it("starts one on demand, and records where it listens", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["daemon", "start"], treeEnv(home));
+      const { code, stdout, stderr } = await node(executable(CLI), ["daemon", "start"], { env: treeEnv(home) });
       const record = recordIn(home);
 
       expect(stderr).toBe("");
@@ -294,7 +319,7 @@ describe("the built executables", () => {
     });
 
     it("reports the same daemon through the record", async () => {
-      const { code, stdout } = await node(executable(CLI), ["daemon", "status"], treeEnv(home));
+      const { code, stdout } = await node(executable(CLI), ["daemon", "status"], { env: treeEnv(home) });
 
       expect(code).toBe(0);
       expect(stdout).toContain(` at ${url}\n`);
@@ -303,7 +328,7 @@ describe("the built executables", () => {
     // The reads, against the real daemon, the real engine and the built CLI:
     // the one place the whole path from an argument to a file on disk is proved.
     it("lists the projects of the tree", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["project", "list"], treeEnv(home));
+      const { code, stdout, stderr } = await node(executable(CLI), ["project", "list"], { env: treeEnv(home) });
 
       expect(stderr).toBe("");
       expect(code).toBe(0);
@@ -311,7 +336,7 @@ describe("the built executables", () => {
     });
 
     it("lists the tasks of one project", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["task", "list", "--project", "TASM"], treeEnv(home));
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "list", "--project", "TASM"], { env: treeEnv(home) });
 
       expect(stderr).toBe("");
       expect(code).toBe(0);
@@ -319,7 +344,7 @@ describe("the built executables", () => {
     });
 
     it("prints the task without the collapsed body, and names what it left out", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["task", "view", "TASM-1"], treeEnv(home));
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "view", "TASM-1"], { env: treeEnv(home) });
 
       expect(code).toBe(0);
       expect(stdout).toBe(`${TASK_HEAD}${COLLAPSED_MARKER}`);
@@ -327,7 +352,7 @@ describe("the built executables", () => {
     });
 
     it("prints the whole file with --full, the collapsed body included", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["task", "view", "TASM-1", "--full"], treeEnv(home));
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "view", "TASM-1", "--full"], { env: treeEnv(home) });
 
       expect(stderr).toBe("");
       expect(code).toBe(0);
@@ -335,7 +360,7 @@ describe("the built executables", () => {
     });
 
     it("maps the comments of the task", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["task", "comments", "TASM-1"], treeEnv(home));
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "comments", "TASM-1"], { env: treeEnv(home) });
       const lines = stdout.split("\n").filter((line) => line !== "");
 
       expect(stderr).toBe("");
@@ -348,15 +373,91 @@ describe("the built executables", () => {
     });
 
     it("prints one collapsed comment alone, whole", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["task", "comment", "TASM-1", "2"], treeEnv(home));
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "comment", "TASM-1", "2"], { env: treeEnv(home) });
 
       expect(stderr).toBe("");
       expect(code).toBe(0);
       expect(stdout).toBe(`${COLLAPSED_MARKER}${COLLAPSED_BODY}`);
     });
 
+    // The writes, as one sequence: each step acts on what the step before it
+    // left, so they hold only in the order they stand in.
+    it("creates a task from a file, and reports what the write corrected", async () => {
+      const path = join(home, "body.md");
+
+      writeFileSync(path, SECOND_BODY);
+
+      const { code, stdout, stderr } = await node(executable(CLI), [
+        "task", "create", "-p", "TASM", "--title", "Second",
+        "--priority", "high", "--label", "Infra", "--body-file", path,
+      ], { env: treeEnv(home) });
+
+      expect(code).toBe(0);
+      expect(stdout).toBe("TASM-2\n");
+      // Validation runs before the file has a name, so its note quotes the
+      // directory the task is about to stand in.
+      expect(stderr).toBe(
+        `tasma: note: label-case-converted: the label "Infra" was stored as "infra" (${tasksDirIn(home)})\n`
+        + "tasma: note: next-task-id-rebuilt: the task counter was rebuilt from the files on disk and is now 2 "
+        + `(${join(projectDirIn(home), "state.yml")})\n`,
+      );
+    });
+
+    it("shows the task the create wrote", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "view", "TASM-2"], { env: treeEnv(home) });
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toContain("priority: high\n");
+      expect(stdout).toContain("  - infra\n");
+      expect(stdout).toContain(SECOND_BODY);
+    });
+
+    it("corrects the case of a status it stores, and removes the field a clear names", async () => {
+      const written = await node(executable(CLI),
+        ["task", "edit", "TASM-2", "--status", "in progress", "--clear", "priority"], { env: treeEnv(home) });
+
+      expect(written.code).toBe(0);
+      expect(written.stdout).toBe("TASM-2\n");
+      expect(written.stderr).toBe(
+        'tasma: note: status-case-corrected: status "in progress" was stored as the declared "In Progress" '
+        + `(${taskPathIn(home, "TASM-2")})\n`,
+      );
+
+      const { stdout } = await node(executable(CLI), ["task", "view", "TASM-2"], { env: treeEnv(home) });
+
+      expect(stdout).toContain("status: In Progress\n");
+      expect(stdout).not.toContain("priority:");
+    });
+
+    it("adds text after the stored body, read from a pipe", async () => {
+      const written = await node(executable(CLI),
+        ["task", "edit", "TASM-2", "--body-file", "-", "--append"], { env: treeEnv(home), input: "more" });
+
+      expect(written.stderr).toBe("");
+      expect(written.code).toBe(0);
+      expect(written.stdout).toBe("TASM-2\n");
+
+      const { stdout } = await node(executable(CLI), ["task", "view", "TASM-2"], { env: treeEnv(home) });
+
+      expect(stdout).toContain(`${SECOND_BODY.trimEnd()}\n\nmore\n`);
+    });
+
+    it("deletes the task, and the file with it", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "delete", "TASM-2"], { env: treeEnv(home) });
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe("TASM-2\n");
+      expect(existsSync(taskPathIn(home, "TASM-2"))).toBe(false);
+
+      const listed = await node(executable(CLI), ["task", "list", "-p", "TASM"], { env: treeEnv(home) });
+
+      expect(listed.stdout).toBe("TASM-1  To Do  -  -  Read the tree through the CLI\n");
+    });
+
     it("stops it and leaves no record behind", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["daemon", "stop"], treeEnv(home));
+      const { code, stdout, stderr } = await node(executable(CLI), ["daemon", "stop"], { env: treeEnv(home) });
 
       expect(stderr).toBe("");
       expect(code).toBe(0);
@@ -366,7 +467,7 @@ describe("the built executables", () => {
 
     // Reaching the goal state is exit 0, whether this call did the stopping.
     it("says so when there is nothing left to stop", async () => {
-      const { code, stdout } = await node(executable(CLI), ["daemon", "stop"], treeEnv(home));
+      const { code, stdout } = await node(executable(CLI), ["daemon", "stop"], { env: treeEnv(home) });
 
       expect(code).toBe(0);
       expect(stdout).toBe("no daemon is running\n");

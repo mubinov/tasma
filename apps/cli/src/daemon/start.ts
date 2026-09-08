@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { printable } from "@tasma/protocol";
-import { daemonUrl, probe, readRecord, recordPath } from "./record.js";
+import { daemonAnswers, daemonUrl, readRecord, recordPath } from "./record.js";
 
 /** Where the spawned daemon's stdout and stderr are captured. Appended to and never rotated: it is stdio, not a log. */
 export const OUTPUT_FILE = "tasma-daemon.out";
@@ -266,7 +266,7 @@ export async function startDaemon(options: StartOptions): Promise<StartOutcome> 
     if (record !== undefined) {
       const url = daemonUrl(record.port);
 
-      if (await probe(url)) return { url };
+      if (await daemonAnswers(url)) return { url };
     }
 
     if (child.failure !== undefined) return { failure: child.failure };

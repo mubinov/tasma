@@ -337,7 +337,7 @@ describe("daemon stop", () => {
   it("signals a daemon that is slow to answer rather than reporting none running", async () => {
     const home = treeHome();
     const server = await startServer((request, response) => {
-      setTimeout(() => tasmaHealth(request, response), SLOW_REPLY_MS);
+      setTimeout(() => void tasmaHealth(request, response), SLOW_REPLY_MS);
     });
     const idle = spawn(execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
     const ended = once(idle, "exit");

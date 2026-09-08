@@ -1,8 +1,11 @@
 /** Anything a byte can be written to. Structural, so a test collects what a stream would print. */
 export type Sink = { write(text: string): unknown };
 
-/** The two streams a command may write to, injected so nothing below the entry point reads a global. */
-export type Io = { stdout: Sink; stderr: Sink };
+/** Anything bytes or text can be read from to its end. Node's `Readable` is one. */
+export type Source = AsyncIterable<Uint8Array | string>;
+
+/** The three streams a command may use, injected so nothing below the entry point reads a global. */
+export type Io = { stdin: Source; stdout: Sink; stderr: Sink };
 
 /**
  * Which daemon a command acts on: the one an address named, or the one serving

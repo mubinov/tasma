@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { DAEMON_NAME, DAEMON_RECORD_FILE } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
-import { daemonUrl, probe, readRecord, RECORD_LIMIT, recordPath, TREE_DIRNAME } from "../../src/daemon/record.js";
+import {
+  daemonAnswers, daemonUrl, probe, readRecord, RECORD_LIMIT, recordPath, TREE_DIRNAME,
+} from "../../src/daemon/record.js";
 import { seedRecord, serveHealth, startServer, tasmaHealth, treeHome, unusedUrl } from "../helpers.js";
 
 describe("recordPath", () => {
@@ -93,11 +95,11 @@ describe("daemonUrl", () => {
 });
 
 describe("probe", () => {
-  it("answers true where a Tasma daemon replies", async () => {
+  it("names a Tasma daemon where one replies", async () => {
     const server = await startServer(tasmaHealth);
 
     try {
-      expect(await probe(server.url)).toBe(true);
+      expect(await probe(server.url)).toBe("daemon");
     } finally {
       await server.close();
     }
@@ -105,69 +107,110 @@ describe("probe", () => {
 
   // Another program can hold the recorded port, and answer well-formed JSON on
   // it, so the one field that identifies a Tasma daemon decides.
-  it("answers false for an answer that is not a Tasma daemon's", async () => {
+  it("finds none in an answer that is not a Tasma daemon's", async () => {
     for (const data of [{ name: "other-daemon", version: "1" }, {}, null, 7]) {
       const server = await startServer(serveHealth(data));
 
       try {
-        expect(await probe(server.url), JSON.stringify(data)).toBe(false);
+        expect(await probe(server.url), JSON.stringify(data)).toBe("none");
       } finally {
         await server.close();
       }
     }
   });
 
-  it("answers false for an answer carrying no envelope", async () => {
+  it("finds none in an answer carrying no envelope", async () => {
     const server = await startServer((_request, response) => {
       response.writeHead(502, { "content-type": "text/html" });
       response.end("<html>bad gateway</html>");
     });
 
     try {
-      expect(await probe(server.url)).toBe(false);
+      expect(await probe(server.url)).toBe("none");
     } finally {
       await server.close();
     }
   });
 
-  it("answers false where nothing listens", async () => {
-    expect(await probe(await unusedUrl())).toBe(false);
+  it("finds none where nothing listens", async () => {
+    expect(await probe(await unusedUrl())).toBe("none");
   });
 
   // A stale record names a port whatever program now holds it, and the budget
   // alone would let one that answers send for a whole second.
-  it("answers false for a reply longer than a health answer can be", async () => {
+  it("finds none in a reply longer than a health answer can be", async () => {
     const server = await startServer(serveHealth({ name: DAEMON_NAME, version: "v".repeat(128 * 1024) }));
 
     try {
-      expect(await probe(server.url)).toBe(false);
+      expect(await probe(server.url)).toBe("none");
     } finally {
       await server.close();
     }
   });
 
-  it("answers false for a status that carries no body at all", async () => {
+  it("finds none in a status that carries no body at all", async () => {
     const server = await startServer((_request, response) => {
       response.writeHead(204);
       response.end();
     });
 
     try {
-      expect(await probe(server.url)).toBe(false);
+      expect(await probe(server.url)).toBe("none");
     } finally {
       await server.close();
     }
   });
 
   // A process that accepts the connection and never replies is the one case a
-  // loopback call does not settle at once.
-  it("answers false where a server accepts and never replies, within the budget it is given", async () => {
+  // loopback call does not settle at once, and it is not an absent daemon: it
+  // is told apart so that nothing starts a second daemon over the tree a slow
+  // one already serves.
+  it("calls a server that accepts and never replies late, within the budget it is given", async () => {
     const server = await startServer(() => {});
 
     try {
-      expect(await probe(server.url, 50)).toBe(false);
+      expect(await probe(server.url, 50)).toBe("late");
     } finally {
       await server.close();
+    }
+  });
+
+  // A stall after the headers is the same budget running out as one before them.
+  it("calls a server that answers its headers and stalls late", async () => {
+    const server = await startServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.write('{"ok":true,');
+    });
+
+    try {
+      expect(await probe(server.url, 50)).toBe("late");
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe("daemonAnswers", () => {
+  it("answers true for a Tasma daemon alone", async () => {
+    const server = await startServer(tasmaHealth);
+
+    try {
+      expect(await daemonAnswers(server.url)).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  // A daemon too slow to answer within the budget is one a caller waiting for a
+  // start cannot act on yet.
+  it("answers false for an address nothing answered and for one that answered late", async () => {
+    const slow = await startServer(() => {});
+
+    try {
+      expect(await daemonAnswers(await unusedUrl())).toBe(false);
+      expect(await daemonAnswers(slow.url, 50)).toBe(false);
+    } finally {
+      await slow.close();
     }
   });
 });

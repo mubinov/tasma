@@ -1,5 +1,5 @@
-// The `task` noun: the listing, the two views of a task's text, and the map of
-// its comments. Every one of them reads; none writes.
+// The `task` noun: the listing, the two views of a task's text, the map of its
+// comments, and the three write verbs the file beside this one holds.
 //
 // A task id carries its project tag, so only the listing states a project. The
 // working directory names nothing here.
@@ -8,8 +8,10 @@ import { parseArgs } from "node:util";
 import type { TaskFilter } from "@tasma/protocol";
 import { attempt, refuseAnswer } from "../failure.js";
 import { cell, fieldsOf, table, withLineBreak } from "../output.js";
-import { isPathComponent, noun, reportUsage, wireText } from "../shell.js";
+import { noun, reportUsage, wireText } from "../shell.js";
 import type { Io, Options, Target } from "../types.js";
+import { readProjectTag, readTaskId } from "./task-id.js";
+import { WRITE_VERBS } from "./task-write.js";
 import { HELP_OPTION, readVerb, usageBlock } from "./verb.js";
 
 const LIST_OPTIONS = {
@@ -58,27 +60,6 @@ const COMMENT_HELP = usageBlock("task comment <id> <n>");
 /** A comment id as it may be typed: a decimal run, and nothing else. */
 const DECIMAL = /^\d+$/;
 
-/** A task id, and the project tag it carries. */
-export type TaskId = { tag: string; id: string };
-
-/**
- * The task id one argument states, or nothing where it states none.
- *
- * The tag is what stands before the first `-`, which the engine's own name rule
- * makes unambiguous: a tag holds letters and digits alone, so the first `-` of
- * an id ends it. Whether that tag names a project, and whether the rest names a
- * task, is the daemon's to say.
- */
-export function taskIdOf(text: string): TaskId | undefined {
-  const dash = text.indexOf("-");
-
-  if (dash <= 0 || dash === text.length - 1) return undefined;
-
-  const tag = text.slice(0, dash);
-
-  return isPathComponent(tag) && isPathComponent(text) ? { tag, id: text } : undefined;
-}
-
 /** The comment id one argument states, or nothing where it states none. */
 function commentIdOf(text: string): number | undefined {
   if (!DECIMAL.test(text)) return undefined;
@@ -86,13 +67,6 @@ function commentIdOf(text: string): number | undefined {
   const value = Number(text);
 
   return Number.isSafeInteger(value) ? value : undefined;
-}
-
-/** The task the verb acts on, or the code the fault in its id reported with. */
-function readTaskId(io: Io, command: string, text: string | undefined): TaskId | number {
-  if (text === undefined) return reportUsage(io, `${command} needs a task id`);
-
-  return taskIdOf(text) ?? reportUsage(io, `not a task id: ${text}`);
 }
 
 /**
@@ -187,13 +161,12 @@ async function list(args: string[], io: Io, target: Target): Promise<number> {
   if (typeof parsed === "number") return parsed;
 
   const { values } = parsed;
-  const tag = stated(values.project);
+  const tag = readProjectTag(io, "task list", values.project);
 
-  if (tag === undefined) return reportUsage(io, "task list needs --project <tag>");
+  if (typeof tag === "number") return tag;
   if (values.blocked === true && values.unblocked === true) {
     return reportUsage(io, "--blocked and --unblocked exclude each other");
   }
-  if (!isPathComponent(tag)) return reportUsage(io, `not a project tag: ${tag}`);
 
   // Every value a filter states travels as it was typed: the CLI lowercases
   // nothing, trims nothing and matches nothing.
@@ -319,4 +292,5 @@ export const task = noun("task", "Work with tasks", [
     usage: { help: COMMENT_HELP, options: COMMENT_OPTIONS },
     run: comment,
   },
+  ...WRITE_VERBS,
 ]);

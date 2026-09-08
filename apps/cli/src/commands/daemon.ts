@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import { DAEMON_NAME, printable } from "@tasma/protocol";
-import { daemonUrl, probe, readRecord, recordPath } from "../daemon/record.js";
+import { daemonAnswers, daemonUrl, readRecord, recordPath } from "../daemon/record.js";
 import { delay, TICK_MS } from "../daemon/start.js";
 import { REQUEST_TIMEOUT_MS } from "../daemon/transport.js";
 import { attempt, reportForeign, UNREACHABLE } from "../failure.js";
@@ -171,7 +171,7 @@ export async function stop(args: string[], io: Io, target: Target, budgetMs = ST
   // one a bare probe defaults to: a daemon whose event loop is held for a moment
   // is one `status` reports as running, and calling it absent here would report
   // the goal state reached and signal nothing.
-  if (!(await probe(url, REQUEST_TIMEOUT_MS))) {
+  if (!(await daemonAnswers(url, REQUEST_TIMEOUT_MS))) {
     io.stdout.write("no daemon is running\n");
     io.stderr.write(staleNote);
     return 0;
