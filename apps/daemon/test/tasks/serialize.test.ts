@@ -74,6 +74,60 @@ describe("WriteQueue", () => {
   });
 });
 
+describe("a write over more than one key", () => {
+  it("holds a write under either of the keys it names", async () => {
+    const queue = new WriteQueue();
+    const first = held();
+    const started = held();
+    const ran: string[] = [];
+
+    const both = queue.runAll(["two", "one"], async () => {
+      ran.push("both");
+      started.release();
+      await first.promise;
+    });
+    // The turn of the second key is taken once the first is granted, so a write
+    // that arrives before that runs ahead of this one rather than behind it.
+    await started.promise;
+    const behind = [
+      queue.run("one", () => {
+        ran.push("one");
+        return Promise.resolve();
+      }),
+      queue.run("two", () => {
+        ran.push("two");
+        return Promise.resolve();
+      }),
+    ];
+    await Promise.resolve();
+
+    expect(ran).toEqual(["both"]);
+    first.release();
+    await Promise.all([both, ...behind]);
+    expect(ran.slice(1).sort()).toEqual(["one", "two"]);
+  });
+
+  it("takes one pair of keys in one order, whichever order each write states them in", async () => {
+    const queue = new WriteQueue();
+
+    const answers = await Promise.all([
+      queue.runAll(["one", "two"], () => Promise.resolve("first")),
+      queue.runAll(["two", "one"], () => Promise.resolve("second")),
+    ]);
+
+    expect(answers).toEqual(["first", "second"]);
+    expect(queue.size).toBe(0);
+  });
+
+  it("takes one turn for a key stated twice", async () => {
+    const queue = new WriteQueue();
+
+    await expect(queue.runAll(["one", "one"], () => Promise.resolve("written"))).resolves.toBe("written");
+
+    expect(queue.size).toBe(0);
+  });
+});
+
 describe("the keys the queue is driven by", () => {
   it("keys one task apart from another, from another project, and from the creates of its own", () => {
     expect(taskKey("TASM", "TASM-1")).toBe(taskKey("TASM", "TASM-1"));

@@ -238,6 +238,12 @@ export type FieldSpec = {
   quoted?: boolean;
   /** Run on a value a write sets, never on one the writer carries over from the file. */
   writeCheck?: WriteCheck;
+  /**
+   * That the field holds task ids, and whether it holds one or a list of them.
+   * A rename of a project relabels every such field, so a field added here
+   * without the mark is one a rename would leave naming the old project.
+   */
+  ids?: "one" | "list";
 };
 
 /**
@@ -246,7 +252,7 @@ export type FieldSpec = {
  * key is added to the format in one place.
  */
 export const FRONTMATTER: Record<keyof Frontmatter, FieldSpec> = {
-  id: { check: STRING, required: true },
+  id: { check: STRING, required: true, ids: "one" },
   title: { check: STRING, required: true },
   status: { check: STRING, required: true },
   workflow: { check: STRING, required: false },
@@ -254,11 +260,11 @@ export const FRONTMATTER: Record<keyof Frontmatter, FieldSpec> = {
   priority: { check: STRING, required: false },
   order: { check: INTEGER, required: false },
   labels: { check: STRING_LIST, required: false, writeCheck: LABEL_FORM },
-  parent: { check: STRING, required: false },
+  parent: { check: STRING, required: false, ids: "one" },
   // The reader accepts any list of strings, including an id that names no task
   // and the file's own id. Which ids a write may state is a store rule: this
   // layer has no filesystem to resolve one against.
-  blocked_by: { check: STRING_LIST, required: false },
+  blocked_by: { check: STRING_LIST, required: false, ids: "list" },
   created: { check: TIMESTAMP, required: true, quoted: true },
   updated: { check: TIMESTAMP, required: true, quoted: true },
   next_comment_id: { check: INTEGER, required: true },

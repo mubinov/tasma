@@ -459,3 +459,50 @@ describe("the live flag", { timeout: 20000, retry: 3 }, () => {
     expect(second).toMatchObject({ status: "rejected", reason: { code: "EACCES" } });
   });
 });
+
+describe("renaming a project", () => {
+  it("answers the tasks of the tree under the new tag, and holds the old one no more", async () => {
+    const root = await projectsRoot("TASM");
+    await plant(taskFile(root, "TASM", "TASM-1"), taskText("TASM-1"));
+    const opened = host(root);
+
+    await expect(opened.rename("TASM", { tag: "NEW" })).resolves.toEqual([]);
+
+    await expect(opened.list()).resolves.toEqual([{ tag: "NEW" }]);
+    const { index } = await opened.open("NEW");
+    expect(index.query().entries.map((entry) => entry.id)).toEqual(["NEW-1"]);
+  });
+
+  it("closes the index it held for the old tag, with no request after it", async () => {
+    const root = await projectsRoot("TASM");
+    const opened = host(root);
+    const { index } = await opened.open("TASM");
+
+    await opened.rename("TASM", { tag: "NEW" });
+
+    expect((await storeError(index.config())).code).toBe("index-closed");
+  });
+
+  it("carries the findings of the rename", async () => {
+    const root = await projectsRoot("TASM");
+    await plant(join(tasksDir(root, "TASM"), "notes.md"), "not a task file");
+    const opened = host(root);
+
+    await expect(opened.rename("TASM", { tag: "NEW" })).resolves.toEqual([
+      { code: "task-file-unexpected", message: expect.any(String) as string, path: join(tasksDir(root, "NEW"), "notes.md") },
+    ]);
+  });
+
+  it("refuses a source the tree does not list", async () => {
+    const opened = host(await projectsRoot("TASM"));
+
+    expect((await storeError(opened.rename("NOPE", { tag: "NEW" }))).code).toBe("project-not-found");
+  });
+
+  it("refuses a rename once the host is closing", async () => {
+    const opened = host(await projectsRoot("TASM"));
+    await opened.close();
+
+    expect((await storeError(opened.rename("TASM", { tag: "NEW" }))).code).toBe("index-closed");
+  });
+});

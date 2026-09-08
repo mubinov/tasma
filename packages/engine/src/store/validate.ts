@@ -5,6 +5,21 @@ import { type ProjectPaths, taskEntryOf } from "./paths.js";
 import type { StoreDiagnostic } from "./types.js";
 
 /**
+ * The keys of a record a caller states. A key this layer does not know is
+ * refused rather than passed over: it is a value the caller believes it stated.
+ * Symbol keys are checked too, so a key of any kind is answered for.
+ */
+export function checkedKeys(record: object, known: ReadonlySet<string>, reason: string): (string | symbol)[] {
+  const keys = Reflect.ownKeys(record);
+  for (const key of keys) {
+    if (typeof key !== "string" || !known.has(key)) {
+      fail("field-not-writable", `"${String(key)}" ${reason}`);
+    }
+  }
+  return keys;
+}
+
+/**
  * The labels as they are stored. An uppercase letter is converted rather than
  * refused, because `Backend` and `backend` denote one label; a space or a
  * separator would be a guess about intent. Deduplication is unconditional: two

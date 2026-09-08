@@ -48,6 +48,14 @@ export type ProjectInput = { path: string; name?: string; tag?: string };
  */
 export type ProjectChange = { name?: string | null; path?: string };
 
+/**
+ * The whole body of a rename: the tag the project takes. It follows the rule a
+ * create applies, and a tag already taken is refused rather than numbered, so a
+ * caller is never given a tag it did not ask for. The answer is the project
+ * under its new tag, which is how a caller holding the old one learns it.
+ */
+export type ProjectRename = { tag: string };
+
 export type Project = ProjectSummary & {
   config: Config;
   /**

@@ -16,7 +16,8 @@ import { errnoOf, fail } from "./errors.js";
 import { expandHome, type ProjectPaths, projectPaths } from "./paths.js";
 import { checkedProjectsDirectory, discoverProjects } from "./projects.js";
 import { checkProjectDirectory, openProjectDirectory } from "./store.js";
-import { generateTag, isTag, TAG_SHAPE, uniqueTag } from "./tag.js";
+import { checkedTag, generateTag, uniqueTag } from "./tag.js";
+import { checkedKeys } from "./validate.js";
 import type {
   CreateProjectInput,
   ProjectChange,
@@ -102,27 +103,6 @@ async function checkedPath(stated: unknown): Promise<string> {
     fail("path-invalid", "this path names no directory", resolved);
   }
   return resolved;
-}
-
-/**
- * The keys of a record a caller states. A key this layer does not know is
- * refused rather than passed over: it is a value the caller believes it stated.
- * Symbol keys are checked too, so a key of any kind is answered for.
- */
-function checkedKeys(record: object, known: ReadonlySet<string>, reason: string): (string | symbol)[] {
-  const keys = Reflect.ownKeys(record);
-  for (const key of keys) {
-    if (typeof key !== "string" || !known.has(key)) {
-      fail("field-not-writable", `"${String(key)}" ${reason}`);
-    }
-  }
-  return keys;
-}
-
-/** The tag a caller stated, under the rule a project is created under. */
-function checkedTag(tag: unknown): string {
-  if (isTag(tag)) return tag;
-  fail("tag-invalid", `the project tag "${String(tag)}" must be ${TAG_SHAPE}`);
 }
 
 /**

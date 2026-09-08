@@ -12,11 +12,12 @@ import {
   openProject,
   readProjectDeclaration,
   removeProject,
+  renameProject,
   TaskStoreError,
   updateProject,
 } from "@tasma/engine";
 import type { IndexedProject } from "@tasma/engine";
-import type { ProjectChange, ProjectInput, ProjectSummary } from "@tasma/protocol";
+import type { Diagnostic, ProjectChange, ProjectInput, ProjectRename, ProjectSummary } from "@tasma/protocol";
 
 /**
  * How many projects one listing reads the configuration of at a time. A tree
@@ -48,6 +49,18 @@ export type ProjectHost = {
   update(tag: string, change: ProjectChange): Promise<void>;
   /** Deletes one project and closes the index held for it. Answers with what the project stated. */
   remove(tag: string): Promise<ProjectSummary>;
+  /**
+   * Gives one project a new tag and closes the index held for the old one.
+   * Answers with the findings of the rename; the new project is read through the
+   * route, which opens its index on first use.
+   *
+   * Nothing is closed for the new tag. The engine claims that name with an
+   * exclusive create, so nothing of this tree stood under it when the rename
+   * began; an index opened for it afterwards is one on the project this rename
+   * published, and closing that would answer `index-closed` for a project that
+   * is healthy.
+   */
+  rename(tag: string, rename: ProjectRename): Promise<Diagnostic[]>;
   /** Closes every open index. */
   close(): Promise<void>;
 };
@@ -164,6 +177,19 @@ export function createProjectHost(options: {
   async function drop(entry: Held): Promise<void> {
     const index = await entry.index.catch(() => undefined);
     await index?.close();
+  }
+
+  /**
+   * Takes the index held for one tag out of the map and closes it, if one is
+   * held. It runs after the write it follows, never before: an open landing in
+   * between would build a fresh index on a directory in motion, and nothing
+   * would close that one until the next discovery.
+   */
+  async function dropHeld(tag: string): Promise<void> {
+    const entry = held.get(tag);
+    if (entry === undefined) return;
+    held.delete(tag);
+    await drop(entry);
   }
 
   /**
@@ -330,17 +356,22 @@ export function createProjectHost(options: {
       // project whose own file cannot be read.
       const summary = await summarize(tag);
       await removeProject({ project: tag, root });
-      // Dropped after the delete, never before it: an open landing between a
-      // close and the delete would build a fresh index on a directory being
-      // deleted, and nothing would close that one until the next discovery. An
-      // open that lands after this one meets a directory that is gone, and the
-      // catch on `Held.index` takes its entry back out.
-      const entry = held.get(tag);
-      if (entry !== undefined) {
-        held.delete(tag);
-        await drop(entry);
-      }
+      // An open that lands after this one meets a directory that is gone, and
+      // the catch on `Held.index` takes its entry back out.
+      await dropHeld(tag);
       return summary;
+    },
+
+    async rename(tag, rename) {
+      assertServing();
+      const tags = await discover();
+      assertServing();
+      assertListed(tags, tag);
+      const { diagnostics } = await renameProject({ project: tag, root }, rename);
+      // The old watcher may already have reported that its tasks directory is
+      // gone; closing the index is what stops it either way.
+      await dropHeld(tag);
+      return diagnostics;
     },
 
     async close() {

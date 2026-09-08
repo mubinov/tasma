@@ -178,6 +178,13 @@ export type CreateProjectInput = {
  */
 export type ProjectChange = { name?: string | null; path?: string };
 
+/**
+ * What a rename of a project states, which is the new tag and nothing else. The
+ * whole body is checked here rather than by the caller, so every layer above
+ * passes it on as it arrived.
+ */
+export type RenameProjectInput = { tag: string };
+
 /** One project as the registry answers with it, whichever call read or wrote it. */
 export type ProjectInfo = ProjectDeclaration & {
   tag: string;

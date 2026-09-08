@@ -1,15 +1,20 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { constants } from "node:fs";
-import { chmod, mkdir, readdir, stat, symlink } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, stat, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { parseTask } from "@tasma/engine";
 import {
+  carriedMode,
   checkOpenFlags,
+  copyEntry,
   createExclusive,
+  discardDirectory,
   makeDirectory,
+  moveEntry,
   readRegularFile,
+  readWithIdentity,
   removeFile,
   replaceFile,
   syncDirectory,
@@ -212,6 +217,56 @@ describe("a target the filesystem cannot reach", () => {
   });
 });
 
+describe("a file written out from one that stands elsewhere", () => {
+  it("takes the mode of the file it was written from, narrowed to what this layer installs", async () => {
+    const root = await tempRoot();
+    const source = join(root, "source.yml");
+    await plant(source, "name: Tasma\n");
+    await chmod(source, 0o400);
+
+    await createExclusive(join(root, "copy.yml"), "name: Tasma\n", await carriedMode(source));
+
+    expect(await mode(join(root, "copy.yml"))).toBe(0o400);
+  });
+
+  it("installs no wider mode than this layer's own", async () => {
+    const root = await tempRoot();
+    const source = join(root, "source.yml");
+    await plant(source, "name: Tasma\n");
+    await chmod(source, 0o666);
+
+    await createExclusive(join(root, "copy.yml"), "name: Tasma\n", await carriedMode(source));
+
+    expect(await mode(join(root, "copy.yml"))).toBe(0o600);
+  });
+});
+
+describe("discardDirectory", () => {
+  it("takes away a directory that holds nothing", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, "claim"));
+
+    await discardDirectory(join(root, "claim"));
+
+    await expect(lstat(join(root, "claim"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("leaves a directory another writer has put something under standing", async () => {
+    const root = await tempRoot();
+    await plant(join(root, "claim", "theirs.md"), "what another writer put there");
+
+    await expect(discardDirectory(join(root, "claim"))).resolves.toBeUndefined();
+
+    await expect(read(join(root, "claim", "theirs.md"))).resolves.toBe("what another writer put there");
+  });
+
+  it("passes over a name that holds nothing at all", async () => {
+    const root = await tempRoot();
+
+    await expect(discardDirectory(join(root, "never-made"))).resolves.toBeUndefined();
+  });
+});
+
 describe("removeFile", () => {
   it("deletes the file", async () => {
     const root = await tempRoot();
@@ -252,5 +307,92 @@ describe("two writers on one file", () => {
     await writes;
 
     for (const text of reads) expect(() => parseTask(text)).not.toThrow();
+  });
+});
+
+describe("moveEntry", () => {
+  it("installs a whole directory under the new name in one step", async () => {
+    const root = await tempRoot();
+    const from = join(root, "projects", "TASM");
+    const to = join(root, "projects", "NEW");
+    await plant(join(from, "tasks", "TASM-1.md"), taskText("TASM-1"));
+
+    await moveEntry(from, to);
+
+    await expect(readdir(join(to, "tasks"))).resolves.toEqual(["TASM-1.md"]);
+    await expect(readdir(join(root, "projects"))).resolves.toEqual(["NEW"]);
+  });
+
+  it("passes on the errno of a move the filesystem refuses", async () => {
+    const root = await tempRoot();
+    const to = join(root, "projects", "NEW");
+    await mkdir(join(to, "held"), { recursive: true });
+
+    await expect(moveEntry(join(root, "projects", "TASM"), to)).rejects.toMatchObject({
+      code: expect.stringMatching(/^(?:ENOTEMPTY|EEXIST)$/) as string,
+    });
+  });
+});
+
+describe("copyEntry", () => {
+  it("copies a directory and everything under it", async () => {
+    const root = await tempRoot();
+    const from = join(root, "projects", "TASM");
+    await plant(join(from, "tasks", "TASM-1.md"), taskText("TASM-1"));
+
+    await copyEntry(from, join(root, "copy"));
+
+    await expect(read(join(root, "copy", "tasks", "TASM-1.md"))).resolves.toBe(taskText("TASM-1"));
+    await expect(read(join(from, "tasks", "TASM-1.md"))).resolves.toBe(taskText("TASM-1"));
+  });
+
+  it("copies a symbolic link as the link it is, following nothing", async () => {
+    const root = await tempRoot();
+    await plant(join(root, "outside.md"), "outside the copy");
+    const link = join(root, "projects", "TASM", "link.md");
+    await symlink(join(root, "outside.md"), link);
+
+    await copyEntry(link, join(root, "copy.md"));
+
+    expect((await lstat(join(root, "copy.md"))).isSymbolicLink()).toBe(true);
+  });
+
+  it("refuses a target that already exists rather than writing over it", async () => {
+    const root = await tempRoot();
+    await plant(join(root, "one.md"), "one");
+    await plant(join(root, "two.md"), "two");
+
+    await expect(copyEntry(join(root, "one.md"), join(root, "two.md"))).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
+  });
+});
+
+describe("readWithIdentity", () => {
+  it("answers with the text and the identity of the bytes it read", async () => {
+    const root = await tempRoot();
+    const path = taskFile(root, "TASM-1");
+    await plant(path, taskText("TASM-1"));
+    const entry = await stat(path);
+
+    const answer = await readWithIdentity(path);
+
+    expect(answer).toEqual({
+      text: taskText("TASM-1"),
+      identity: { ino: entry.ino, size: entry.size, mtimeMs: entry.mtimeMs },
+    });
+  });
+
+  it.each([
+    ["absent", async (path: string) => path],
+    ["irregular", async (path: string) => {
+      await symlink(path, `${path}.link`);
+      return `${path}.link`;
+    }],
+  ])("answers %s for a name that holds no regular file it may read", async (answer, build) => {
+    const root = await tempRoot();
+    const path = taskFile(root, "TASM-1");
+    await mkdir(tasksDir(root), { recursive: true });
+    if (answer === "irregular") await plant(path, taskText("TASM-1"));
+
+    await expect(readWithIdentity(await build(path))).resolves.toBe(answer);
   });
 });

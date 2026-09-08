@@ -68,6 +68,18 @@ export async function plant(path: string, text: string): Promise<void> {
   await writeFile(path, text, "utf8");
 }
 
+/**
+ * One project of a tree: its directory, its `tasks/` and one file per entry of
+ * `tasks`, keyed by the name each stands under. What the project states about
+ * itself is planted separately, so a test decides whether it states anything.
+ */
+export async function plantProject(root: string, tag: string, tasks: Record<string, string> = {}): Promise<void> {
+  await mkdir(tasksDir(root, tag), { recursive: true });
+  for (const [name, text] of Object.entries(tasks)) {
+    await plant(join(tasksDir(root, tag), name), text);
+  }
+}
+
 export function read(path: string): Promise<string> {
   return readFile(path, "utf8");
 }

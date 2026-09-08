@@ -76,6 +76,13 @@ const invocations: Invocation[] = [
     path: "/projects/TASM",
   },
   {
+    name: "renameProject",
+    send: (client) => client.renameProject("TASM", { tag: "NEW" }),
+    method: "POST",
+    path: "/projects/TASM/rename",
+    body: { tag: "NEW" },
+  },
+  {
     name: "listTasks",
     send: (client) => client.listTasks("TASM", { status: "To Do", label: ["dev"] }),
     method: "GET",

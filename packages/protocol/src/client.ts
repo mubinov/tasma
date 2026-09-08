@@ -1,7 +1,7 @@
 import { ProtocolError, TransportError } from "./errors.js";
 import type { Envelope, Failure, Success } from "./errors.js";
 import type { Health } from "./health.js";
-import type { Project, ProjectChange, ProjectInput, ProjectSummary } from "./project.js";
+import type { Project, ProjectChange, ProjectInput, ProjectRename, ProjectSummary } from "./project.js";
 import type { Method, PathQuery, Route, TaskFilter, TaskReadOptions, TaskTextOptions } from "./routes.js";
 import { buildPath, routes } from "./routes.js";
 import type { CommentHeader, CommentInput, Task, TaskInput, TaskList, TaskText, WriteResult } from "./task.js";
@@ -38,6 +38,8 @@ export type Client = {
   readProject(tag: string): Promise<Success<Project>>;
   updateProject(tag: string, change: ProjectChange): Promise<Success<Project>>;
   deleteProject(tag: string): Promise<Success<ProjectSummary>>;
+  /** The answer is the project under its new tag, so a caller holding the old one reads `data.tag`. */
+  renameProject(tag: string, rename: ProjectRename): Promise<Success<Project>>;
   listTasks(tag: string, filter?: TaskFilter): Promise<Success<TaskList>>;
   createTask(tag: string, input: TaskInput): Promise<Success<WriteResult>>;
   readTask(tag: string, id: string, options?: TaskReadOptions): Promise<Success<Task>>;
@@ -135,6 +137,7 @@ export function createClient(transport: Transport): Client {
     readProject: (tag) => call<Project>(routes.readProject, { project: tag }),
     updateProject: (tag, change) => call<Project>(routes.updateProject, { project: tag }, { body: change }),
     deleteProject: (tag) => call<ProjectSummary>(routes.deleteProject, { project: tag }),
+    renameProject: (tag, rename) => call<Project>(routes.renameProject, { project: tag }, { body: rename }),
     listTasks: (tag, filter) => call<TaskList>(routes.listTasks, { project: tag }, { query: filter }),
     createTask: (tag, input) => call<WriteResult>(routes.createTask, { project: tag }, { body: input }),
     readTask: (tag, id, options) => call<Task>(routes.readTask, { project: tag, id }, { query: options }),

@@ -1,12 +1,32 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { projectPaths, scanTasks, taskPath, tempPath } from "../../src/store/paths.js";
+import { pathsUnder, projectPaths, scanTasks, taskPath, tempPath } from "../../src/store/paths.js";
 import { plant, PROJECT, read, storeFault, tasksDir, taskText, tempRoot } from "./helpers.js";
 
 function paths(root: string) {
   return projectPaths({ project: PROJECT, root });
 }
+
+describe("pathsUnder", () => {
+  it("names the files of a directory that stands under no name of its tag", () => {
+    const built = pathsUnder({ project: PROJECT, root: "/tmp/tree", directory: "/tmp/tree/projects/.NEW.7.tmp" });
+
+    expect(built).toEqual({
+      project: PROJECT,
+      root: "/tmp/tree",
+      userConfig: "/tmp/tree/config.yml",
+      directory: "/tmp/tree/projects/.NEW.7.tmp",
+      projectConfig: "/tmp/tree/projects/.NEW.7.tmp/config.yml",
+      state: "/tmp/tree/projects/.NEW.7.tmp/state.yml",
+      tasks: "/tmp/tree/projects/.NEW.7.tmp/tasks",
+    });
+  });
+
+  it("takes a tag no path rule accepts, because the name rule alone reads it", () => {
+    expect(pathsUnder({ project: "tasm", root: "/tmp/tree", directory: "/tmp/tree/held" }).project).toBe("tasm");
+  });
+});
 
 describe("projectPaths", () => {
   it("puts every file of a project under the root it is given", () => {

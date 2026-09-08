@@ -1,5 +1,5 @@
 import type { Stats } from "node:fs";
-import { constants, type FileHandle, lstat, mkdir, open, rename, rm, unlink } from "node:fs/promises";
+import { constants, cp, type FileHandle, lstat, mkdir, open, rename, rm, rmdir, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { errnoOf } from "./errors.js";
 import { tempPath } from "./paths.js";
@@ -100,6 +100,62 @@ export async function readRegularFile(
 }
 
 /**
+ * What identifies the bytes one read returned, so a later read of the same name
+ * says whether another writer replaced them. `mtimeMs` alone would miss a write
+ * inside one clock tick, and `ino` alone would miss an in-place write.
+ */
+export type FileIdentity = { ino: number; size: number; mtimeMs: number };
+
+/**
+ * The whole text of one file with the identity of the bytes it returned, under
+ * the rules `openRegularFile` opens it by.
+ *
+ * Both come off the one open handle. An `lstat` by name after the read would
+ * name whatever stands there by then: a `replaceFile` landing between the two
+ * installs a new inode, and a caller comparing that identity later would read
+ * the file as unchanged and drop the write.
+ */
+export async function readWithIdentity(
+  path: string,
+): Promise<{ text: string; identity: FileIdentity } | "absent" | "irregular"> {
+  const handle = await openRegularFile(path);
+  if (typeof handle === "string") return handle;
+  try {
+    const entry = await handle.stat();
+    return {
+      text: await handle.readFile("utf8"),
+      identity: { ino: entry.ino, size: entry.size, mtimeMs: entry.mtimeMs },
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Installs one entry under another name in a single step, then flushes the
+ * directory entry the way `replaceFile` finishes. Both names must stand on one
+ * filesystem, which is what makes the move atomic. An errno reaches the caller
+ * unchanged: only the caller knows what a name already taken means for the
+ * operation it is part of.
+ */
+export async function moveEntry(from: string, to: string): Promise<void> {
+  await rename(from, to);
+  await syncDirectory(dirname(to));
+}
+
+/**
+ * Copies one entry, and everything under it where it is a directory. A symbolic
+ * link is copied as the link it is, so nothing outside the source is read, and a
+ * name already taken is refused rather than written over.
+ *
+ * Nothing it writes is flushed: a caller that needs the copy to survive a crash
+ * writes the file itself through `createExclusive` or `replaceFile`.
+ */
+export async function copyEntry(from: string, to: string): Promise<void> {
+  await cp(from, to, { recursive: true, verbatimSymlinks: true, force: false, errorOnExist: true });
+}
+
+/**
  * Creates a directory that may already exist. `recursive` is not set, because it
  * also accepts a symbolic link under the name; an existing name therefore
  * reports `EEXIST`, and the caller checks what holds it.
@@ -130,6 +186,20 @@ export async function removeTree(path: string): Promise<void> {
 }
 
 /**
+ * Gives up a directory the caller created and no longer wants, the way `discard`
+ * gives up a file. It goes only where it is still empty, so a name another
+ * writer has since put something under stays that writer's.
+ */
+export async function discardDirectory(path: string): Promise<void> {
+  try {
+    await rmdir(path);
+  } catch {
+    // The name either never existed, cannot be removed here, or holds what
+    // another writer put there.
+  }
+}
+
+/**
  * Flushes the directory entry a create or a rename installed: a flush of a file
  * makes its content durable but not the entry that names it. The open is
  * confined to a directory and never waits, and a fault is passed over: the
@@ -149,12 +219,13 @@ export async function syncDirectory(path: string): Promise<void> {
 }
 
 /**
- * The mode the replacement of `path` takes. A permission bit is carried over
- * only where it is narrower than `FILE_MODE`, so a mode a user restricted by
- * hand survives while a widened mode, the setuid bit and the setgid bit are
- * never installed by this layer.
+ * The mode this layer installs for a file that stands at `path` already, whether
+ * it is writing that file again or writing it out somewhere else. A permission
+ * bit is carried over only where it is narrower than `FILE_MODE`, so a mode a
+ * user restricted by hand survives while a widened mode, the setuid bit and the
+ * setgid bit are never installed by this layer.
  */
-async function carriedMode(path: string): Promise<number> {
+export async function carriedMode(path: string): Promise<number> {
   const entry = await entryAt(path);
   return entry?.isFile() === true ? entry.mode & FILE_MODE : FILE_MODE;
 }
@@ -165,12 +236,17 @@ async function carriedMode(path: string): Promise<number> {
  * to the caller unchanged. A write that fails once the file exists leaves
  * nothing behind: a partial file there never became a task, and it would feed
  * the id rebuild as an unreadable file forever.
+ *
+ * `mode` is stated by a caller writing out a file that stands elsewhere: only a
+ * chmod sets the mode exactly, because the umask narrows the mode an open
+ * declares.
  */
-export async function createExclusive(path: string, text: string): Promise<void> {
+export async function createExclusive(path: string, text: string, mode?: number): Promise<void> {
   const handle = await open(path, "wx", FILE_MODE);
   let written = false;
   try {
     await handle.writeFile(text, "utf8");
+    if (mode !== undefined) await handle.chmod(mode);
     // The content is durable before the counter that issued the id is written.
     await handle.sync();
     written = true;

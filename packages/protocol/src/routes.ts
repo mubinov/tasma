@@ -17,6 +17,7 @@ export const routes = {
   readProject: { method: "GET", template: "/projects/{project}" },
   updateProject: { method: "PATCH", template: "/projects/{project}" },
   deleteProject: { method: "DELETE", template: "/projects/{project}" },
+  renameProject: { method: "POST", template: "/projects/{project}/rename" },
   listTasks: { method: "GET", template: "/projects/{project}/tasks" },
   createTask: { method: "POST", template: "/projects/{project}/tasks" },
   readTask: { method: "GET", template: "/projects/{project}/tasks/{id}" },

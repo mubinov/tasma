@@ -75,14 +75,20 @@ export function resolveAgainst(base: string, path: string): string {
   return resolve(base, expandHome(path));
 }
 
-/** Every path of one project. The root is expanded here and nowhere below this point. */
-export function projectPaths(options: ProjectOptions): ProjectPaths {
-  const project = options.project;
-  if (!TAG_PATTERN.test(project)) {
-    fail("project-invalid", `the project tag "${project}" must be uppercase ASCII letters or digits`);
-  }
-  const root = expandRoot(options.root);
-  const directory = join(projectsIn(root), project);
+/**
+ * Every path of a project directory stated on its own, from a root already
+ * expanded. The tag decides the names the task files carry and the directory
+ * decides where they stand, so a rename builds the new project under a hidden
+ * name while its files already carry the new tag.
+ *
+ * The three are named rather than positional: all three are text, and a pair
+ * given the wrong way round would build a whole set of paths that reads as
+ * valid. The tag is not checked here — the caller either came through
+ * `projectPaths`, which checks it, or holds a directory whose name is no tag at
+ * all.
+ */
+export function pathsUnder(stated: { project: string; root: string; directory: string }): ProjectPaths {
+  const { project, root, directory } = stated;
   return {
     project,
     root,
@@ -92,6 +98,16 @@ export function projectPaths(options: ProjectOptions): ProjectPaths {
     state: join(directory, "state.yml"),
     tasks: join(directory, "tasks"),
   };
+}
+
+/** Every path of one project. The root is expanded here and nowhere below this point. */
+export function projectPaths(options: ProjectOptions): ProjectPaths {
+  const project = options.project;
+  if (!TAG_PATTERN.test(project)) {
+    fail("project-invalid", `the project tag "${project}" must be uppercase ASCII letters or digits`);
+  }
+  const root = expandRoot(options.root);
+  return pathsUnder({ project, root, directory: join(projectsIn(root), project) });
 }
 
 const DIGITS = /^\d+$/;

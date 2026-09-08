@@ -10,6 +10,7 @@ import type {
   ProjectChange as EngineProjectChange,
   ProjectDeclaration,
   QueryResult,
+  RenameProjectInput,
   ResolvedConfig,
   SNAPSHOT,
   StepOwner as EngineStepOwner,
@@ -39,6 +40,7 @@ import type {
   ParseErrorCode,
   ProjectChange,
   ProjectInput,
+  ProjectRename,
   ProjectSummary,
   SerializeErrorCode,
   StepDefinition,
@@ -93,6 +95,7 @@ describe("the wire contract", () => {
     // key of the engine's input but the root.
     expectTypeOf<ProjectInput>().toEqualTypeOf<Omit<CreateProjectInput, "root">>();
     expectTypeOf<ProjectChange>().toEqualTypeOf<EngineProjectChange>();
+    expectTypeOf<ProjectRename>().toEqualTypeOf<RenameProjectInput>();
     // A summary is the declaration plus the tag, so a field added to either side
     // of a project breaks the typecheck until the wire carries it.
     expectTypeOf<Omit<ProjectSummary, "tag">>().toEqualTypeOf<ProjectDeclaration>();

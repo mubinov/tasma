@@ -60,6 +60,18 @@ export class WriteQueue {
       if (this.#turns.get(key) === turn) this.#turns.delete(key);
     }
   }
+
+  /**
+   * Runs one write in the turn of every key it names, taken nested and in
+   * lexical order, so two writes naming one pair of keys take the two turns in
+   * the same order however each of them stated the pair, and neither ends up
+   * waiting on the other. A key stated twice takes one turn: nested inside
+   * itself it would wait for a turn the call already holds.
+   */
+  runAll<T>(keys: readonly string[], write: () => Promise<T>): Promise<T> {
+    const ordered = [...new Set(keys)].sort();
+    return ordered.reduceRight<() => Promise<T>>((inner, key) => () => this.run(key, inner), write)();
+  }
 }
 
 /**

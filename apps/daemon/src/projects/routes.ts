@@ -1,9 +1,9 @@
 // The routes over the project host: the tree it lists, and the create, the read,
-// the write and the delete of one project of it.
+// the write, the rename and the delete of one project of it.
 
 import { pathMissing } from "@tasma/engine";
 import { routes } from "@tasma/protocol";
-import type { Project, ProjectChange, ProjectInput, ProjectSummary, Success } from "@tasma/protocol";
+import type { Project, ProjectChange, ProjectInput, ProjectRename, ProjectSummary, Success } from "@tasma/protocol";
 import type { RouteEntry } from "../http/router.js";
 import { assertNoQuery } from "../tasks/filter.js";
 import { toChange } from "../tasks/input.js";
@@ -35,10 +35,12 @@ async function readOne(host: ProjectHost, tag: string): Promise<Success<Project>
  * the process passes the result to `createDaemonServer` along with the host it
  * built them over.
  *
- * The queue is built here and keyed by the tag alone, so a patch and a delete of
- * one project take turns: a patch behind a delete answers 404 rather than a raw
- * filesystem fault from a directory that went under its write. A create takes no
- * turn, because the engine's exclusive create of the directory orders creates.
+ * The queue is built here and keyed by the tag alone, so a patch, a rename and a
+ * delete of one project take turns: a patch behind a delete answers 404 rather
+ * than a raw filesystem fault from a directory that went under its write. A
+ * rename takes the turn of both tags it names, so a write of either of them
+ * waits for the whole of it. A create takes no turn, because the engine's
+ * exclusive create of the directory orders creates.
  */
 export function projectRoutes(host: ProjectHost): RouteEntry[] {
   const writes = new WriteQueue();
@@ -93,6 +95,29 @@ export function projectRoutes(host: ProjectHost): RouteEntry[] {
         assertNoQuery(request.query);
         const tag = request.params.project!;
         return { data: await writes.run(tag, () => host.remove(tag)), diagnostics: [] };
+      },
+    },
+    {
+      route: routes.renameProject,
+      handler: async (request): Promise<Success<Project>> => {
+        assertNoQuery(request.query);
+        const tag = request.params.project!;
+        const body = toChange(request.body);
+        // Read before the cast: the wire type states a string and nothing has
+        // checked one yet, which is the engine's own work.
+        const statedTag: unknown = body.tag;
+        const rename = body as ProjectRename;
+        // The turn of both tags, so a patch or a delete of either waits until
+        // the rename is complete, the reconcile included: that is what makes the
+        // reconcile's copy of `config.yml` safe against a patch of the new
+        // project. A tag that is no string names no turn; the engine refuses it.
+        const keys = typeof statedTag === "string" ? [tag, statedTag] : [tag];
+        return writes.runAll(keys, async () => {
+          const findings = await host.rename(tag, rename);
+          // Read inside the turn, for the reason the patch reads inside its own.
+          const answer = await readOne(host, rename.tag);
+          return { data: answer.data, diagnostics: [...answer.diagnostics, ...findings] };
+        });
       },
     },
   ];

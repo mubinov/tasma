@@ -1,4 +1,4 @@
-import { readFile, rm } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { routes } from "@tasma/protocol";
@@ -17,6 +17,7 @@ import {
   startTestServer,
   success,
   target,
+  taskFile,
   tasksDir,
   taskText,
   until,
@@ -422,5 +423,131 @@ describe("DELETE /projects/{project}", () => {
     expect(removed.status).toBe(200);
     expect(patched.status).toBe(404);
     await expect(failure(patched)).resolves.toMatchObject({ kind: "store", code: "project-not-found" });
+  });
+});
+
+describe("POST /projects/{project}/rename", () => {
+  it("answers with the project under its new tag, its configuration and its index state", async () => {
+    const root = await projectsRoot("TASM");
+    const path = await target();
+    await plant(projectConfig(root, "TASM"), `name: Tasma\npath: ${path}\n`);
+    await plant(taskFile(root, "TASM", "TASM-1"), taskText("TASM-1"));
+    const server = await serving(root);
+
+    const response = await send(server, "POST", "/projects/TASM/rename", { tag: "NEW" });
+
+    expect(response.status).toBe(200);
+    await expect(success<Project>(response)).resolves.toEqual({
+      data: { tag: "NEW", name: "Tasma", path, config: BUILT_IN_CONFIG, live: true },
+      diagnostics: [],
+    });
+  });
+
+  it("serves the renamed project and no longer the old tag", async () => {
+    const root = await projectsRoot("TASM");
+    await plant(taskFile(root, "TASM", "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "TASM", "TASM-2"), taskText("TASM-2"));
+    const server = await serving(root);
+
+    expect((await send(server, "POST", "/projects/TASM/rename", { tag: "NEW" })).status).toBe(200);
+
+    expect((await fetch(`${server.url}/projects/TASM`)).status).toBe(404);
+    expect((await fetch(`${server.url}/projects/NEW`)).status).toBe(200);
+    const { index } = await server.host.open("NEW");
+    expect(index.query().entries.map((entry) => entry.id)).toEqual(["NEW-1", "NEW-2"]);
+  });
+
+  it("carries the findings of the rename beside the ones of the read", async () => {
+    const root = await projectsRoot("TASM");
+    await plant(join(tasksDir(root, "TASM"), "notes.md"), "not a task file");
+    const server = await serving(root);
+
+    const response = await send(server, "POST", "/projects/TASM/rename", { tag: "NEW" });
+
+    await expect(success<Project>(response)).resolves.toMatchObject({
+      diagnostics: [{ code: "task-file-unexpected", path: join(tasksDir(root, "NEW"), "notes.md") }],
+    });
+  });
+
+  it.each([
+    ["a key no rename states", { tag: "NEW", name: "Tasma" }, "field-not-writable"],
+    ["a body naming no tag", {}, "field-required"],
+    ["a tag the create rule refuses", { tag: "new" }, "tag-invalid"],
+  ])("answers 400 for %s", async (_name, body, code) => {
+    const server = await serving(await projectsRoot("TASM"));
+
+    const response = await send(server, "POST", "/projects/TASM/rename", body);
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "store", code });
+  });
+
+  it("answers 400 for a query key", async () => {
+    const server = await serving(await projectsRoot("TASM"));
+
+    const response = await send(server, "POST", "/projects/TASM/rename?tag=NEW", { tag: "NEW" });
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+  });
+
+  it("answers 404 for a tag the tree does not list", async () => {
+    const server = await serving(await projectsRoot("TASM"));
+
+    const response = await send(server, "POST", "/projects/NOPE/rename", { tag: "NEW" });
+
+    expect(response.status).toBe(404);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "project-not-found" });
+  });
+
+  it("answers 409 for a tag another project already carries", async () => {
+    const server = await serving(await projectsRoot("TASM", "CLIB"));
+
+    const response = await send(server, "POST", "/projects/TASM/rename", { tag: "CLIB" });
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "project-exists" });
+  });
+
+  it("answers 409 for an entry of the tasks directory named after a task of the new project", async () => {
+    const root = await projectsRoot("TASM");
+    await plant(join(tasksDir(root, "TASM"), "NEW-1.md"), "stray");
+    const server = await serving(root);
+
+    const response = await send(server, "POST", "/projects/TASM/rename", { tag: "NEW" });
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toMatchObject({
+      kind: "store",
+      code: "task-exists",
+      path: join(tasksDir(root, "TASM"), "NEW-1.md"),
+    });
+  });
+
+  it("answers 422 for a task file it cannot read, and the tree still holds the old tag alone", async () => {
+    const root = await projectsRoot("TASM");
+    await plant(taskFile(root, "TASM", "TASM-1"), "---\nid: TASM-1\n");
+    const server = await serving(root);
+
+    const response = await send(server, "POST", "/projects/TASM/rename", { tag: "NEW" });
+
+    expect(response.status).toBe(422);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "parse", filename: taskFile(root, "TASM", "TASM-1") });
+    await expect(readdir(join(root, "projects"))).resolves.toEqual(["TASM"]);
+  });
+
+  it("makes a patch of the new tag wait until the rename is complete", async () => {
+    const root = await projectsRoot("TASM");
+    await plant(projectConfig(root, "TASM"), "name: Tasma\npath: /srv/tasma\n");
+    const server = await serving(root);
+
+    const [renamed, patched] = await Promise.all([
+      send(server, "POST", "/projects/TASM/rename", { tag: "NEW" }),
+      send(server, "PATCH", "/projects/NEW", { name: "Renamed" }),
+    ]);
+
+    expect(renamed.status).toBe(200);
+    expect(patched.status).toBe(200);
+    await expect(success<Project>(patched)).resolves.toMatchObject({ data: { tag: "NEW", name: "Renamed" } });
   });
 });

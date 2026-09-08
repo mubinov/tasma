@@ -22,6 +22,12 @@ export function isTag(value: unknown): value is string {
   return typeof value === "string" && TAG_RULE.test(value);
 }
 
+/** The tag a caller stated, under the rule a project is created under. */
+export function checkedTag(tag: unknown): string {
+  if (isTag(tag)) return tag;
+  fail("tag-invalid", `the project tag "${String(tag)}" must be ${TAG_SHAPE}`);
+}
+
 const OUTSIDE_TAG = /[^A-Z0-9]/g;
 const LEADING_DIGITS = /^\d+/;
 
