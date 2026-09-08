@@ -265,7 +265,6 @@ describe("startDaemon", () => {
         home,
         executable: () => {
           // A throw that is not an Error is the second half of the case.
-          // eslint-disable-next-line @typescript-eslint/only-throw-error
           throw thrown;
         },
         output: outputIn(home),

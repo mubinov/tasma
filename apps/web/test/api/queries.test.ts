@@ -34,7 +34,10 @@ afterEach(() => {
 it("resolves a query through the transport, the client and the envelope read", async () => {
   const paths = stubDaemon();
 
-  const success = await createAppQueryClient().ensureQueryData(healthQuery(createDaemonClient()));
+  const success = await createAppQueryClient().query({
+    ...healthQuery(createDaemonClient()),
+    staleTime: "static",
+  });
 
   expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/health`]);
   expect(success).toEqual({ data: HEALTH, diagnostics: [] });
@@ -45,7 +48,10 @@ it("caches the whole success envelope, diagnostics included", async () => {
   stubDaemon();
 
   const queryClient = createAppQueryClient();
-  await queryClient.ensureQueryData(healthQuery(createDaemonClient()));
+  await queryClient.query({
+    ...healthQuery(createDaemonClient()),
+    staleTime: "static",
+  });
 
   expect(queryClient.getQueryData(daemonKeys.health())).toEqual({ data: HEALTH, diagnostics: [] });
 });
@@ -71,7 +77,10 @@ it("resolves the projects list through the same chain and caches the whole envel
   const paths = stubDaemon(PROJECTS);
   const queryClient = createAppQueryClient();
 
-  const success = await queryClient.ensureQueryData(projectsQuery(createDaemonClient()));
+  const success = await queryClient.query({
+    ...projectsQuery(createDaemonClient()),
+    staleTime: "static",
+  });
 
   expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects`]);
   expect(success).toEqual({ data: PROJECTS, diagnostics: [] });
@@ -81,7 +90,10 @@ it("resolves the projects list through the same chain and caches the whole envel
 it("asks for one project by the tag it is given", async () => {
   const paths = stubDaemon(PROJECT);
 
-  const success = await createAppQueryClient().ensureQueryData(projectQuery(createDaemonClient(), "TASM"));
+  const success = await createAppQueryClient().query({
+    ...projectQuery(createDaemonClient(), "TASM"),
+    staleTime: "static",
+  });
 
   expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects/TASM`]);
   expect(success).toEqual({ data: PROJECT, diagnostics: [] });

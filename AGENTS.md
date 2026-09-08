@@ -1,3 +1,8 @@
+# Rules
+
+- Put the machine back to its state before the work. Delete the configuration and the data that you write outside this repository, for example the tree in `~/.tasma`. /tmp files are not included.
+- Run the CLI, the daemon and the web application with a temporary `HOME` (`~/.tasma` is real working directory).
+
 # apps/web
 
 Rules in this chapter are for the `apps/web` application alone.
@@ -20,7 +25,7 @@ Rules in this chapter are for the `apps/web` application alone.
 - Share state through `src/store/`, never through React Context.
 - Selectors return primitives, or use `useShallow`.
 - Server data belongs in the query cache, never in the store.
-- A route's data: `ensureQueryData` in the loader, `useSuspenseQuery` on the same `queryOptions`. Both clients arrive through router context.
+- A route's data: `query({ ...options, staleTime: "static" })` in the loader, `useSuspenseQuery` on the same `queryOptions`. Both clients arrive through router context.
 - State that outlives a restart goes through the store's storage adapter and is hydrated in `main.tsx`.
 - Lists that can exceed 50 rows use `VirtualList`.
 - Filtering or searching a long list uses `useDeferredValue`.

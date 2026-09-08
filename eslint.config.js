@@ -54,6 +54,15 @@ export default tseslint.config(
       // avoidEscape leaves a single-quoted string alone when it contains a
       // double quote, which the task-format fixtures rely on.
       "@stylistic/quotes": ["error", "double", { avoidEscape: true }],
+      // Neither preset enables this rule.
+      "@typescript-eslint/no-deprecated": "error",
+      // The router signals "not found" by throwing a NotFoundError, a plain
+      // object. @tanstack/react-router only re-exports that type;
+      // @tanstack/router-core declares it, and the specifier has to name the
+      // declaring package.
+      "@typescript-eslint/only-throw-error": ["error", {
+        allow: [{ from: "package", package: "@tanstack/router-core", name: "NotFoundError" }],
+      }],
       // customize() sets no line width at all.
       "@stylistic/max-len": [
         "error",
@@ -76,11 +85,15 @@ export default tseslint.config(
     // vitest asymmetric matcher is typed `any`: an untyped value crossing into
     // typed code is as much a defect in a test as in src. The four matcher
     // sites disable it inline instead.
+    //
+    // only-throw-error is off because a test that throws a value which is not
+    // an Error is testing that case.
     name: "tasma/tests",
     files: ["**/test/**"],
     rules: {
       "@typescript-eslint/require-await": "off",
       "@typescript-eslint/no-empty-function": "off",
+      "@typescript-eslint/only-throw-error": "off",
     },
   },
   {

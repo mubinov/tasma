@@ -132,7 +132,6 @@ it.each([
   vi.spyOn(console, "error").mockImplementation(() => {});
 
   function Broken(): never {
-    // eslint-disable-next-line @typescript-eslint/only-throw-error -- throwing a non-Error is the case under test
     throw thrown;
   }
 

@@ -57,7 +57,10 @@ const projectsRoute = createRoute({
 const projectsIndexRoute = createRoute({
   getParentRoute: () => projectsRoute,
   path: "/",
-  loader: ({ context }) => context.queryClient.ensureQueryData(projectsQuery(context.client)),
+  loader: ({ context }) => context.queryClient.query({
+    ...projectsQuery(context.client),
+    staleTime: "static",
+  }),
   component: ProjectsScreen,
 });
 
@@ -72,11 +75,13 @@ const projectRoute = createRoute({
     try {
       buildPath(daemonRoutes.readProject, params);
     } catch {
-      // eslint-disable-next-line @typescript-eslint/only-throw-error -- the router's signal is a plain object
       throw notFound();
     }
   },
-  loader: ({ context, params }) => context.queryClient.ensureQueryData(projectQuery(context.client, params.project)),
+  loader: ({ context, params }) => context.queryClient.query({
+    ...projectQuery(context.client, params.project),
+    staleTime: "static",
+  }),
   component: ProjectScreen,
 });
 
