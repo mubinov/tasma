@@ -205,9 +205,9 @@ describe("task view", () => {
     const one = await runTask(["view", "TASM-1"], { [TEXT]: ok({ text: "x", hidden: [2] }) });
     const three = await runTask(["view", "TASM-1"], { [TEXT]: ok({ text: "x", hidden: [2, 5, 7] }) });
 
-    expect(one.err).toBe("tasma: 1 comment collapsed (2): task comment TASM-1 <n> prints one, --full prints all\n");
+    expect(one.err).toBe("tasma: 1 comment collapsed (2): comment view TASM-1 <n> prints one, task view TASM-1 --full prints all\n");
     expect(three.err)
-      .toBe("tasma: 3 comments collapsed (2, 5, 7): task comment TASM-1 <n> prints one, --full prints all\n");
+      .toBe("tasma: 3 comments collapsed (2, 5, 7): comment view TASM-1 <n> prints one, task view TASM-1 --full prints all\n");
   });
 
   it("names none where the read left nothing out", async () => {
@@ -237,134 +237,9 @@ describe("task view", () => {
   });
 });
 
-describe("task comments", () => {
-  const MAP = "GET /projects/TASM/tasks/TASM-1/comments";
-
-  it("prints the id, the lines, the size, whether it is collapsed, and who wrote what when", async () => {
-    const { code, out, err } = await runTask(["comments", "TASM-1"], {
-      [MAP]: ok([
-        {
-          id: 1,
-          lines: { start: 40, end: 58 },
-          bytes: 1204,
-          created: "2026-09-06T13:49:00+02:00",
-          author: "almaz",
-          title: "Dev notes #1",
-        },
-        {
-          id: 2,
-          lines: { start: 60, end: 131 },
-          bytes: 9871,
-          collapsed: true,
-          created: "2026-09-06T14:04:00+02:00",
-          title: "Review #1: FAIL",
-        },
-      ]),
-    });
-
-    expect(code).toBe(0);
-    expect(out).toBe(
-      "1  40-58   1204  -          2026-09-06T13:49:00+02:00  almaz  Dev notes #1\n"
-      + "2  60-131  9871  collapsed  2026-09-06T14:04:00+02:00  -      Review #1: FAIL\n",
-    );
-    expect(err).toBe("");
-  });
-
-  // A comment that went through JSON without its parsed source carries no range.
-  it("marks a comment whose header carries no line range", async () => {
-    const { out } = await runTask(["comments", "TASM-1"],
-      { [MAP]: ok([{ id: 1, bytes: 4, created: "x", title: "t" }]) });
-
-    expect(out).toBe("1  -  4  -  x  -  t\n");
-  });
-
-  it("prints nothing at all for a task with no comments", async () => {
-    const { code, out, err } = await runTask(["comments", "TASM-1"], { [MAP]: ok([]) });
-
-    expect(code).toBe(0);
-    expect(out).toBe("");
-    expect(err).toBe("");
-  });
-
-  it("refuses an answer that is not a comment map", async () => {
-    const { code, err } = await runTask(["comments", "TASM-1"], { [MAP]: ok({ id: 1 }) });
-
-    expect(code).toBe(3);
-    expect(err).toContain("answered, but not with a comment map");
-  });
-
-  it("refuses a verb given no id, one given more than it takes, and an unknown flag", async () => {
-    const none = await runTask(["comments"]);
-    const extra = await runTask(["comments", "TASM-1", "TASM-2"]);
-    const unknown = await runTask(["comments", "--nope"]);
-
-    expect(none.code).toBe(2);
-    expect(none.err).toContain("tasma: task comments needs a task id");
-    expect(extra.code).toBe(2);
-    expect(extra.err).toContain("tasma: task comments takes one argument: TASM-2");
-    expect(unknown.code).toBe(2);
-    expect(unknown.err).toContain("tasma: Unknown option '--nope'");
-  });
-});
-
-describe("task comment", () => {
-  it("asks for the one comment, and prints it alone", async () => {
-    const answers = {
-      "GET /projects/TASM/tasks/TASM-1/text?comment=3": ok({ text: "<!-- m -->\n\nbody", hidden: [] }),
-    };
-    const { code, out, err } = await runTask(["comment", "TASM-1", "3"], answers);
-
-    expect(code).toBe(0);
-    expect(out).toBe("<!-- m -->\n\nbody\n");
-    expect(err).toBe("");
-  });
-
-  it("refuses a comment id that is not a whole number the daemon can carry", async () => {
-    for (const id of ["x", "1.5", "9007199254740993"]) {
-      const { code, err, seen } = await runTask(["comment", "TASM-1", id]);
-
-      expect(code).toBe(2);
-      expect(err).toContain(`tasma: not a comment id: ${id}`);
-      expect(seen).toEqual([]);
-    }
-  });
-
-  it("refuses a verb given no comment id, one given more than it takes, and an unknown flag", async () => {
-    const none = await runTask(["comment", "TASM-1"]);
-    const extra = await runTask(["comment", "TASM-1", "3", "4"]);
-    const unknown = await runTask(["comment", "--nope"]);
-
-    expect(none.code).toBe(2);
-    expect(none.err).toContain("tasma: task comment needs a comment id");
-    expect(extra.code).toBe(2);
-    expect(extra.err).toContain("tasma: task comment takes two arguments: 4");
-    expect(unknown.code).toBe(2);
-    expect(unknown.err).toContain("tasma: Unknown option '--nope'");
-  });
-
-  it("refuses a task id that names no tag before the comment id is read", async () => {
-    const { code, err } = await runTask(["comment", "foo", "3"]);
-
-    expect(code).toBe(2);
-    expect(err).toContain("tasma: not a task id: foo");
-  });
-
-  it("refuses an answer that is not a task's text", async () => {
-    const { code, out, err } = await runTask(
-      ["comment", "TASM-1", "3"],
-      { "GET /projects/TASM/tasks/TASM-1/text?comment=3": ok({ text: 1, hidden: [] }) },
-    );
-
-    expect(code).toBe(3);
-    expect(out).toBe("");
-    expect(err).toContain("answered, but not with a task's text");
-  });
-});
-
 describe("the id a read verb is given", () => {
   it("carries the project tag the call is made against", async () => {
     expect(await pathOf(["view", "TASM-1"])).toBe("GET /projects/TASM/tasks/TASM-1/text?collapsed=false");
-    expect(await pathOf(["comments", "TASM-1"])).toBe("GET /projects/TASM/tasks/TASM-1/comments");
   });
 
   // Refused here rather than thrown out of buildPath, which raises a plain Error
@@ -416,18 +291,18 @@ describe("taskIdOf", () => {
 });
 
 describe("the task noun", () => {
-  it("lists its seven verbs for a bare noun", async () => {
+  it("lists its five verbs for a bare noun", async () => {
     const { io, out } = capture();
 
     expect(await task.run([], io, at("http://127.0.0.1:8278"))).toBe(0);
 
-    for (const verb of ["list", "view", "comments", "comment", "create", "edit", "delete"]) {
+    for (const verb of ["list", "view", "create", "edit", "delete"]) {
       expect(out.join("")).toContain(`  ${verb}`);
     }
   });
 
   it("prints a usage block for every verb, reaching no daemon", async () => {
-    for (const verb of ["list", "view", "comments", "comment", "create", "edit", "delete"]) {
+    for (const verb of ["list", "view", "create", "edit", "delete"]) {
       for (const flag of ["--help", "-h"]) {
         const { code, out, err, seen } = await runTask([verb, flag]);
 
@@ -458,7 +333,7 @@ describe("the task noun", () => {
 
     expect(code).toBe(0);
     expect(err).toBe(
-      "tasma: 1 comment collapsed (2): task comment TASM-1 <n> prints one, --full prints all\n"
+      "tasma: 1 comment collapsed (2): comment view TASM-1 <n> prints one, task view TASM-1 --full prints all\n"
       + "tasma: note: workflow-unknown: no workflow dev\n",
     );
   });

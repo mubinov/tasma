@@ -12,6 +12,8 @@ import { fieldsOf } from "../output.js";
 import { reportUsage, wireText } from "../shell.js";
 import type { Command, Io, Options, Target } from "../types.js";
 import { appended, BODY_HELP, BODY_OPTIONS, readBody } from "./body.js";
+import { applyClears, flagsGiven, keyOf, refuseAppend, refuseClears, refuseEmpty, refuseNoChange } from "./change.js";
+import type { Fields } from "./change.js";
 import { readProjectTag, readTaskId } from "./task-id.js";
 import type { TaskId } from "./task-id.js";
 import { HELP_OPTION, readVerb, usageBlock } from "./verb.js";
@@ -30,7 +32,7 @@ const FIELD_FLAGS = [
   "order",
   "label",
   "blocked-by",
-] as const;
+] as const satisfies readonly (keyof FieldValues)[];
 
 /** The key a field flag sets, where the flag and the field are spelled differently. */
 const FIELD_KEYS: Record<string, string> = { "label": "labels", "blocked-by": "blocked_by" };
@@ -119,81 +121,14 @@ type FieldValues = {
   "blocked-by"?: string[];
 };
 
-/** The key a field flag sets. */
-function keyOf(flag: string): string {
-  return FIELD_KEYS[flag] ?? flag;
-}
-
-/**
- * Which flags state each field, so a clear beside one of them is reported in the
- * spelling that was typed. Derived from the field flags, plus the body's two, so
- * a flag and the key it sets are named in one place.
- */
-const SETTERS = new Map<string, string[]>([
-  ...FIELD_FLAGS.map((flag): [string, string[]] => [keyOf(flag), [`--${flag}`]]),
-  ["body", ["--body", "--body-file"]],
-]);
-
-/** The flags this invocation typed, in the spelling their table gives them. */
-function flagsGiven(values: object): Set<string> {
-  return new Set(Object.keys(values).map((name) => `--${name}`));
-}
-
-/**
- * The fault where a flag that states a field was given an empty value, or
- * nothing where every value stands.
- *
- * An empty value is refused rather than read as "not stated", which is the rule
- * a filter on a read applies: on a write an unset shell variable would otherwise
- * store an empty parent, and the caller would never learn of it. Where the field
- * can be removed, the line names the flag that removes it.
- */
-function refuseEmpty(io: Io, values: FieldValues, canClear: boolean): number | undefined {
-  for (const flag of FIELD_FLAGS) {
-    const value = values[flag];
-    const empty = typeof value === "string" ? value === "" : value?.includes("") === true;
-
-    if (empty) {
-      const key = keyOf(flag);
-      const hint = canClear && CLEARABLE.includes(key) ? `; --clear ${key} removes the field` : "";
-
-      return reportUsage(io, `--${flag} needs a value${hint}`);
-    }
-  }
-
-  return undefined;
-}
+/** What this family states about its own fields, which the two shared rules read. */
+const FIELDS: Fields = { flags: FIELD_FLAGS, keys: FIELD_KEYS, clearable: CLEARABLE };
 
 /** The fault where `--order` states something the format cannot hold as a position. */
 function refuseOrder(io: Io, order: string | undefined): number | undefined {
   if (order === undefined || (INTEGER.test(order) && Number.isSafeInteger(Number(order)))) return undefined;
 
   return reportUsage(io, `not an integer: ${order}`);
-}
-
-/**
- * The faults in `--clear`: a field it names that no write can remove, and a
- * field it removes that another flag sets in the same invocation.
- *
- * Three passes rather than one, so the same invocation reports the same line
- * however its flags were ordered on the command line.
- */
-function refuseClears(io: Io, clears: string[], given: Set<string>): number | undefined {
-  if (clears.includes("")) return reportUsage(io, "--clear needs a field");
-
-  const unknown = clears.find((field) => !CLEARABLE.includes(field));
-
-  if (unknown !== undefined) return reportUsage(io, `not a clearable field: ${unknown}`);
-
-  for (const [field, flags] of SETTERS) {
-    if (!clears.includes(field)) continue;
-
-    for (const flag of flags) {
-      if (given.has(flag)) return reportUsage(io, `--clear ${field} and ${flag} exclude each other`);
-    }
-  }
-
-  return undefined;
 }
 
 /**
@@ -207,7 +142,7 @@ function fieldsFrom(values: FieldValues): TaskInput {
   for (const flag of FIELD_FLAGS) {
     const value = values[flag];
 
-    if (value !== undefined) change[keyOf(flag)] = value;
+    if (value !== undefined) change[keyOf(FIELDS, flag)] = value;
   }
 
   // `order` is the one field the format holds as a number, and the flag carried
@@ -236,17 +171,7 @@ function receiptPrinter(io: Io): (data: unknown, url: string) => number {
   };
 }
 
-/**
- * The body the task holds now, or the code the read reported with.
- *
- * Its address is proven like the write's: the text it answers is the text the
- * write sends, so a read a daemon serving another tree answered is that tree's
- * body written into this one.
- *
- * The read and the write that follows it are two calls with nothing between
- * them: no route carries a precondition, so a write that lands in the gap is
- * overwritten without an error.
- */
+/** The body the task holds now, or the code the read reported with. */
 async function readStored(io: Io, target: Target, task: TaskId): Promise<string | number> {
   let stored = "";
 
@@ -281,7 +206,7 @@ async function create(args: string[], io: Io, target: Target): Promise<number> {
   if (typeof tag === "number") return tag;
   if (values.title === undefined || values.title === "") return reportUsage(io, "task create needs --title <title>");
 
-  const refused = refuseEmpty(io, values, false) ?? refuseOrder(io, values.order);
+  const refused = refuseEmpty(io, FIELDS, values, false) ?? refuseOrder(io, values.order);
 
   if (refused !== undefined) return refused;
 
@@ -308,9 +233,9 @@ async function edit(args: string[], io: Io, target: Target): Promise<number> {
 
   const { values } = parsed;
   const clears = values.clear ?? [];
-  const refused = refuseEmpty(io, values, true)
+  const refused = refuseEmpty(io, FIELDS, values, true)
     ?? refuseOrder(io, values.order)
-    ?? refuseClears(io, clears, flagsGiven(values));
+    ?? refuseClears(io, FIELDS, clears, flagsGiven(values));
 
   if (refused !== undefined) return refused;
 
@@ -319,18 +244,17 @@ async function edit(args: string[], io: Io, target: Target): Promise<number> {
   if (typeof body === "number") return body;
 
   const append = values.append === true;
+  const appendFault = refuseAppend(io, append, body, clears);
 
-  if (append && clears.includes("body")) return reportUsage(io, "--append and --clear body exclude each other");
-  if (append && body === undefined) return reportUsage(io, "--append needs --body or --body-file");
+  if (appendFault !== undefined) return appendFault;
 
   const change = fieldsFrom(values);
 
-  // A clear is written through a widened key: `{ body: null }` as a literal
-  // fails the typecheck, and `undefined` in its place typechecks, is dropped by
-  // the serializer and leaves the field as it stands.
-  for (const field of clears) change[field] = null;
+  applyClears(change, clears);
 
-  if (body === undefined && Object.keys(change).length === 0) return reportUsage(io, "task edit needs a change");
+  const changeFault = refuseNoChange(io, "task edit", change, body);
+
+  if (changeFault !== undefined) return changeFault;
 
   if (body !== undefined) {
     if (append) {

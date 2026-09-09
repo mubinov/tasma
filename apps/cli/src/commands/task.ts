@@ -1,5 +1,6 @@
-// The `task` noun: the listing, the two views of a task's text, the map of its
-// comments, and the three write verbs the file beside this one holds.
+// The `task` noun: the listing, the two views of a task's text, and the three
+// write verbs the file beside this one holds. Every comment operation is a verb
+// of the `comment` noun.
 //
 // A task id carries its project tag, so only the listing states a project. The
 // working directory names nothing here.
@@ -7,12 +8,12 @@
 import { parseArgs } from "node:util";
 import type { TaskFilter } from "@tasma/protocol";
 import { attempt, refuseAnswer } from "../failure.js";
-import { cell, fieldsOf, table, withLineBreak } from "../output.js";
+import { cell, fieldsOf, isTaskText, table, withLineBreak } from "../output.js";
 import { noun, reportUsage, wireText } from "../shell.js";
 import type { Io, Options, Target } from "../types.js";
 import { readProjectTag, readTaskId } from "./task-id.js";
 import { WRITE_VERBS } from "./task-write.js";
-import { HELP_OPTION, readVerb, usageBlock } from "./verb.js";
+import { HELP_OPTION, readVerb } from "./verb.js";
 
 const LIST_OPTIONS = {
   project: { type: "string", short: "p" },
@@ -49,26 +50,6 @@ const VIEW_HELP = [
   "  -h, --help  Print this help",
 ];
 
-const COMMENTS_OPTIONS = { ...HELP_OPTION } as const satisfies Options;
-
-const COMMENTS_HELP = usageBlock("task comments <id>");
-
-const COMMENT_OPTIONS = { ...HELP_OPTION } as const satisfies Options;
-
-const COMMENT_HELP = usageBlock("task comment <id> <n>");
-
-/** A comment id as it may be typed: a decimal run, and nothing else. */
-const DECIMAL = /^\d+$/;
-
-/** The comment id one argument states, or nothing where it states none. */
-function commentIdOf(text: string): number | undefined {
-  if (!DECIMAL.test(text)) return undefined;
-
-  const value = Number(text);
-
-  return Number.isSafeInteger(value) ? value : undefined;
-}
-
 /**
  * The value a filter states, or nothing where it states none.
  *
@@ -101,12 +82,6 @@ function isTaskList(answer: unknown): answer is { entries: unknown[]; excluded: 
   return Array.isArray(entries) && Array.isArray(excluded);
 }
 
-function isTaskText(answer: unknown): answer is { text: string; hidden: unknown[] } {
-  const { text, hidden } = fieldsOf(answer);
-
-  return typeof text === "string" && Array.isArray(hidden);
-}
-
 /** One task as a row. Labels, parent and blockers are filters rather than columns. */
 function taskRow(entry: unknown): string[] {
   const { id, status, priority, step, title } = fieldsOf(fieldsOf(entry).frontmatter);
@@ -121,37 +96,13 @@ function excludedLine(file: unknown): string {
   return `tasma: excluded: ${cell(path)}: ${cell(code)}: ${cell(message)}\n`;
 }
 
-/** The 1-based inclusive range a comment header carries, or nothing where it carries none. */
-function lineRange(lines: unknown): string | undefined {
-  if (typeof lines !== "object" || lines === null) return undefined;
-
-  const { start, end } = fieldsOf(lines);
-
-  return `${cell(start)}-${cell(end)}`;
-}
-
-/** One comment as a row, its title last because it is the one column of unbounded width. */
-function commentRow(header: unknown): string[] {
-  const { id, lines, bytes, collapsed, created, author, title } = fieldsOf(header);
-
-  return [
-    cell(id),
-    cell(lineRange(lines)),
-    cell(bytes),
-    cell(collapsed === true ? "collapsed" : undefined),
-    cell(created),
-    cell(author),
-    cell(title),
-  ];
-}
-
 /** What a default view left out, and the two ways to read it. */
 function collapsedLine(id: string, hidden: unknown[]): string {
   const comments = hidden.length === 1 ? "comment" : "comments";
   const ids = hidden.map((value) => wireText(value)).join(", ");
 
   return `tasma: ${hidden.length} ${comments} collapsed (${ids}): `
-    + `task comment ${wireText(id)} <n> prints one, --full prints all\n`;
+    + `comment view ${wireText(id)} <n> prints one, task view ${wireText(id)} --full prints all\n`;
 }
 
 async function list(args: string[], io: Io, target: Target): Promise<number> {
@@ -219,54 +170,6 @@ async function view(args: string[], io: Io, target: Target): Promise<number> {
   });
 }
 
-async function comments(args: string[], io: Io, target: Target): Promise<number> {
-  const parsed = readVerb(io, args, { command: "task comments", help: COMMENTS_HELP, takes: 1 }, () =>
-    parseArgs({ args, strict: true, allowPositionals: true, options: COMMENTS_OPTIONS }));
-
-  if (typeof parsed === "number") return parsed;
-
-  const task = readTaskId(io, "task comments", parsed.positionals[0]);
-
-  if (typeof task === "number") return task;
-
-  return attempt(io, target, (client) => client.listComments(task.tag, task.id), (data, url) => {
-    const answer: unknown = data;
-
-    if (!Array.isArray(answer)) return refuseAnswer(io, url, "a comment map");
-
-    io.stdout.write(table(answer.map(commentRow)));
-    return 0;
-  });
-}
-
-async function comment(args: string[], io: Io, target: Target): Promise<number> {
-  const parsed = readVerb(io, args, { command: "task comment", help: COMMENT_HELP, takes: 2 }, () =>
-    parseArgs({ args, strict: true, allowPositionals: true, options: COMMENT_OPTIONS }));
-
-  if (typeof parsed === "number") return parsed;
-
-  const task = readTaskId(io, "task comment", parsed.positionals[0]);
-
-  if (typeof task === "number") return task;
-
-  const typed = parsed.positionals[1];
-
-  if (typed === undefined) return reportUsage(io, "task comment needs a comment id");
-
-  const id = commentIdOf(typed);
-
-  if (id === undefined) return reportUsage(io, `not a comment id: ${typed}`);
-
-  return attempt(io, target, (client) => client.readTaskText(task.tag, task.id, { comment: id }), (data, url) => {
-    const answer: unknown = data;
-
-    if (!isTaskText(answer)) return refuseAnswer(io, url, "a task's text");
-
-    io.stdout.write(withLineBreak(answer.text));
-    return 0;
-  });
-}
-
 export const task = noun("task", "Work with tasks", [
   {
     name: "list",
@@ -279,18 +182,6 @@ export const task = noun("task", "Work with tasks", [
     summary: "Print the text of one task",
     usage: { help: VIEW_HELP, options: VIEW_OPTIONS },
     run: view,
-  },
-  {
-    name: "comments",
-    summary: "List the comments of one task",
-    usage: { help: COMMENTS_HELP, options: COMMENTS_OPTIONS },
-    run: comments,
-  },
-  {
-    name: "comment",
-    summary: "Print one comment of a task",
-    usage: { help: COMMENT_HELP, options: COMMENT_OPTIONS },
-    run: comment,
   },
   ...WRITE_VERBS,
 ]);

@@ -3,6 +3,10 @@
 //
 // Its own module because every write verb the CLI gains states a body the same
 // way, and a second copy of the rule is what would let two of them differ.
+//
+// An append is two calls with nothing between them: the stored body is read,
+// and the join is written back. No route carries a precondition, so a write
+// landing between the two is overwritten without an error.
 
 import { readFile } from "node:fs/promises";
 import { fieldsOf } from "../output.js";

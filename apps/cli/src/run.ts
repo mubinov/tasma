@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import manifest from "../package.json" with { type: "json" };
+import { comment } from "./commands/comment.js";
 import { daemon } from "./commands/daemon.js";
 import { project } from "./commands/project.js";
 import { task } from "./commands/task.js";
@@ -16,7 +17,7 @@ import type { Command, Io, Target } from "./types.js";
  * usage blocks are checked against it, so a command added here needs no other
  * change.
  */
-export const COMMANDS: Command[] = [daemon, project, task];
+export const COMMANDS: Command[] = [comment, daemon, project, task];
 
 /** argv split at the first token that is neither a global flag nor the value of one. */
 export type Invocation = { globals: string[]; name?: string; args: string[] };

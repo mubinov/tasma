@@ -72,6 +72,9 @@ const TASK_FILE = `${TASK_HEAD}${COLLAPSED_MARKER}${COLLAPSED_BODY}`;
 /** The body the write steps create their task with, and the one an append adds to. */
 const SECOND_BODY = "The body of the second task.\n";
 
+/** The body the comment steps write, and the one their append adds to. */
+const COMMENT_BODY = "The body of the comment the CLI wrote.\n";
+
 let outRoot = "";
 
 /** Where each app's own config puts its output, relative to the package. */
@@ -348,7 +351,7 @@ describe("the built executables", () => {
 
       expect(code).toBe(0);
       expect(stdout).toBe(`${TASK_HEAD}${COLLAPSED_MARKER}`);
-      expect(stderr).toBe("tasma: 1 comment collapsed (2): task comment TASM-1 <n> prints one, --full prints all\n");
+      expect(stderr).toBe("tasma: 1 comment collapsed (2): comment view TASM-1 <n> prints one, task view TASM-1 --full prints all\n");
     });
 
     it("prints the whole file with --full, the collapsed body included", async () => {
@@ -360,7 +363,7 @@ describe("the built executables", () => {
     });
 
     it("maps the comments of the task", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["task", "comments", "TASM-1"], { env: treeEnv(home) });
+      const { code, stdout, stderr } = await node(executable(CLI), ["comment", "list", "TASM-1"], { env: treeEnv(home) });
       const lines = stdout.split("\n").filter((line) => line !== "");
 
       expect(stderr).toBe("");
@@ -373,7 +376,7 @@ describe("the built executables", () => {
     });
 
     it("prints one collapsed comment alone, whole", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["task", "comment", "TASM-1", "2"], { env: treeEnv(home) });
+      const { code, stdout, stderr } = await node(executable(CLI), ["comment", "view", "TASM-1", "2"], { env: treeEnv(home) });
 
       expect(stderr).toBe("");
       expect(code).toBe(0);
@@ -454,6 +457,81 @@ describe("the built executables", () => {
       const listed = await node(executable(CLI), ["task", "list", "-p", "TASM"], { env: treeEnv(home) });
 
       expect(listed.stdout).toBe("TASM-1  To Do  -  -  Read the tree through the CLI\n");
+    });
+
+    // The comment writes, on the task the read steps planted: each acts on what
+    // the step before it left, and the id the add issues carries through them.
+    it("adds a comment from a pipe, and issues its id", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI),
+        ["comment", "add", "TASM-1", "--title", "Smoke", "--body-file", "-"],
+        { env: treeEnv(home), input: COMMENT_BODY });
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe("3\n");
+    });
+
+    it("shows the comment the add wrote, collapsed by nothing", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["comment", "list", "TASM-1"], { env: treeEnv(home) });
+      const lines = stdout.split("\n").filter((line) => line !== "");
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(lines).toHaveLength(3);
+      expect(lines[2]).toContain("Smoke");
+      expect(lines[2]).not.toContain("collapsed");
+    });
+
+    // The two read paths agreeing about one comment is the invariant the whole
+    // pair of them stands on: the default view hides the body, and the comment
+    // read prints it whole.
+    it("collapses it, which the task view then hides and the comment view still prints", async () => {
+      const written = await node(executable(CLI),
+        ["comment", "edit", "TASM-1", "3", "--collapsed"], { env: treeEnv(home) });
+
+      expect(written.stderr).toBe("");
+      expect(written.code).toBe(0);
+      expect(written.stdout).toBe("3\n");
+
+      const viewed = await node(executable(CLI), ["task", "view", "TASM-1"], { env: treeEnv(home) });
+
+      expect(viewed.stderr)
+        .toBe("tasma: 2 comments collapsed (2, 3): comment view TASM-1 <n> prints one, task view TASM-1 --full prints all\n");
+      expect(viewed.stdout).not.toContain(COMMENT_BODY);
+
+      const alone = await node(executable(CLI), ["comment", "view", "TASM-1", "3"], { env: treeEnv(home) });
+
+      expect(alone.code).toBe(0);
+      expect(alone.stdout).toContain(COMMENT_BODY);
+      expect(alone.stderr).toBe("");
+    });
+
+    it("adds text after the stored body of the comment, read from a pipe", async () => {
+      const written = await node(executable(CLI),
+        ["comment", "edit", "TASM-1", "3", "--body-file", "-", "--append"], { env: treeEnv(home), input: "more" });
+
+      expect(written.stderr).toBe("");
+      expect(written.code).toBe(0);
+      expect(written.stdout).toBe("3\n");
+
+      const { stdout } = await node(executable(CLI), ["comment", "view", "TASM-1", "3"], { env: treeEnv(home) });
+
+      expect(stdout).toContain(`${COMMENT_BODY.trimEnd()}\n\nmore\n`);
+    });
+
+    it("deletes the comment, and the row with it", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI),
+        ["comment", "delete", "TASM-1", "3"], { env: treeEnv(home) });
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe("3\n");
+
+      const listed = await node(executable(CLI), ["comment", "list", "TASM-1"], { env: treeEnv(home) });
+      const lines = listed.stdout.split("\n").filter((line) => line !== "");
+
+      expect(lines).toHaveLength(2);
+      expect(listed.stdout).not.toContain("Smoke");
     });
 
     it("stops it and leaves no record behind", async () => {

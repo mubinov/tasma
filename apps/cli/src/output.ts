@@ -1,6 +1,6 @@
 // How every listing and both views reach the terminal: one mark for a value a
-// record does not state, one padding rule, and the byte that keeps the shell
-// prompt off the last line.
+// record does not state, one padding rule, the byte that keeps the shell prompt
+// off the last line, and how an answer whose shape is not known yet is read.
 //
 // Alignment is for a reader's eye and is not a delimiter a parser can trust: the
 // padding counts UTF-16 code units, so a wide character shifts the columns after
@@ -62,4 +62,16 @@ export function withLineBreak(text: string): string {
  */
 export function fieldsOf(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+/**
+ * Whether an answer is the text route's.
+ *
+ * It stands here rather than beside the listing's own guard because two nouns
+ * print that route's answer: `task view` and `comment view`.
+ */
+export function isTaskText(answer: unknown): answer is { text: string; hidden: unknown[] } {
+  const { text, hidden } = fieldsOf(answer);
+
+  return typeof text === "string" && Array.isArray(hidden);
 }

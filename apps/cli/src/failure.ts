@@ -88,6 +88,15 @@ export function reportForeign(io: Io, url: string, name: unknown): number {
   return UNREACHABLE;
 }
 
+/**
+ * A refusal, in the one shape every one of them takes, whether the daemon
+ * answered it or a command read it off an answer the daemon gave.
+ */
+export function reportRefusal(io: Io, kind: string, code: string, message: string): number {
+  io.stderr.write(`tasma: ${printable(`${kind}/${code}: ${message}`)}\n`);
+  return REFUSED;
+}
+
 /** A well-formed answer whose top-level shape is not the route's, named by what the route answers. */
 export function refuseAnswer(io: Io, url: string, what: string): number {
   io.stderr.write(`tasma: ${url} answered, but not with ${what}\n`);
@@ -179,8 +188,8 @@ export async function attempt<T>(
         // The client admits a refusal only where all three of these are strings,
         // so a refusal that reached here carries no value to coerce.
         const { kind, code, message } = error.failure;
-        io.stderr.write(`tasma: ${printable(`${kind}/${code}: ${message}`)}\n`);
-        return REFUSED;
+
+        return reportRefusal(io, kind, code, message);
       }
 
       throw error;
