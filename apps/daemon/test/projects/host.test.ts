@@ -318,6 +318,13 @@ describe("a host that is closing", () => {
     expect((await storeError(opened.remove("TASM"))).code).toBe("index-closed");
   });
 
+  it("refuses a resolution, which reads the tree the same way a listing does", async () => {
+    const opened = host(await projectsRoot("TASM"));
+    await opened.close();
+
+    expect((await storeError(opened.locate(await target()))).code).toBe("index-closed");
+  });
+
   it("closes twice without raising, so a second shutdown is harmless", async () => {
     const opened = host(await projectsRoot("TASM"));
     await opened.open("TASM");

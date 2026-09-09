@@ -18,6 +18,7 @@ export const routes = {
   updateProject: { method: "PATCH", template: "/projects/{project}" },
   deleteProject: { method: "DELETE", template: "/projects/{project}" },
   renameProject: { method: "POST", template: "/projects/{project}/rename" },
+  resolveProject: { method: "GET", template: "/project" },
   listTasks: { method: "GET", template: "/projects/{project}/tasks" },
   createTask: { method: "POST", template: "/projects/{project}/tasks" },
   readTask: { method: "GET", template: "/projects/{project}/tasks/{id}" },
@@ -32,6 +33,9 @@ export const routes = {
   readWorkflow: { method: "GET", template: "/workflows/{workflow}" },
   readWorkflowStep: { method: "GET", template: "/workflows/{workflow}/steps/{step}" },
 } as const satisfies Record<string, Route>;
+
+/** Which directory a resolution asks about, absolute or starting with `~/`. */
+export type ProjectQuery = { path: string };
 
 /**
  * Which tasks a listing returns. The daemon applies the filter, so a caller
@@ -82,9 +86,10 @@ export type TaskTextOptions = { collapsed?: boolean; comment?: never } | { comme
 /**
  * What `buildPath` appends to a path, and what a client method may pass as one.
  *
- * Every type written to be passed as one — `TaskFilter`, `TaskReadOptions`,
- * `TaskTextOptions` — is a type alias rather than an interface, because only an
- * alias carries the implicit index signature a record of this shape requires.
+ * Every type written to be passed as one — `ProjectQuery`, `TaskFilter`,
+ * `TaskReadOptions`, `TaskTextOptions` — is a type alias rather than an
+ * interface, because only an alias carries the implicit index signature a record
+ * of this shape requires.
  */
 export type PathQuery = Record<string, string | string[] | boolean | number | undefined>;
 

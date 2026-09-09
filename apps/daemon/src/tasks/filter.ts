@@ -1,9 +1,10 @@
 // What a route was asked for in its query, and which entries a listing answers
 // with. Every route that reads a query reads it here — the task listing its
 // filter, the read of one task its options, the read of a task's text its
-// selection, and the comment map and every write of a task or a project alike
-// the assertion that they carry no query at all — so one set of rules covers
-// them all.
+// selection, the resolution of a project the directory it asks about, and every
+// route over the store that takes no query the assertion that none was sent — so
+// one set of rules covers them all. The liveness route stands outside them: the
+// server answers it ahead of every table and reads no request to answer it.
 //
 // A route declares the query keys it takes, and a key it does not declare is
 // refused rather than passed over: a mistyped `?stauts=To+Do` that silently
@@ -12,7 +13,7 @@
 // apply to a daemon and a client that ship from one repository at one version.
 
 import type { IndexEntry, TextSelection } from "@tasma/engine";
-import type { TaskFilter, TaskReadOptions, TaskTextOptions } from "@tasma/protocol";
+import type { ProjectQuery, TaskFilter, TaskReadOptions, TaskTextOptions } from "@tasma/protocol";
 import { DaemonError } from "../http/failure.js";
 import { commentIdOf } from "./input.js";
 
@@ -34,6 +35,8 @@ const LISTING_KEYS = Object.keys({
 const READ_KEYS = Object.keys({ comments: true } satisfies Record<keyof TaskReadOptions, true>);
 
 const TEXT_KEYS = Object.keys({ collapsed: true, comment: true } satisfies Record<keyof TaskTextOptions, true>);
+
+const RESOLVE_KEYS = Object.keys({ path: true } satisfies Record<keyof ProjectQuery, true>);
 
 /**
  * Refuses every key the route does not declare. The key is named, because the
@@ -123,6 +126,20 @@ export function readTextSelection(query: URLSearchParams): TextSelection {
     throw new DaemonError("malformed-request", 'the query key "comment" does not combine with "collapsed"');
   }
   return { comment: commentIdOf(comment) };
+}
+
+/**
+ * The directory a resolution asks about, which is the one key that route takes
+ * and a key it cannot answer without. An empty value reads as an absent one, so
+ * `?path=` is refused the same way a missing key is.
+ */
+export function readProjectQuery(query: URLSearchParams): string {
+  assertDeclared(query, RESOLVE_KEYS);
+  const path = text(query, "path");
+  if (path === undefined) {
+    throw new DaemonError("malformed-request", 'this route requires the query key "path"');
+  }
+  return path;
 }
 
 /**

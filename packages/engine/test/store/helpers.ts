@@ -125,3 +125,15 @@ export function storeFault(build: () => unknown): TaskStoreError {
 export function codes(diagnostics: StoreDiagnostic[]): string[] {
   return diagnostics.map((diagnostic) => diagnostic.code);
 }
+
+/**
+ * A real directory under a temp tree, created with everything above it. A
+ * resolution checks both the directory it is given and the folder every project
+ * declares against the filesystem, so no test states a path that stands for
+ * nothing.
+ */
+export async function folderIn(root: string, ...segments: string[]): Promise<string> {
+  const path = join(root, ...segments);
+  await mkdir(path, { recursive: true });
+  return path;
+}

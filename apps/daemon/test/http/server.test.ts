@@ -297,3 +297,28 @@ describe("a success", () => {
     await expect(created.json()).resolves.toEqual(envelope);
   });
 });
+
+describe("the site a request comes from", () => {
+  it.each([
+    ["a page on another site", "cross-site"],
+    ["a page on another origin of this one", "same-site"],
+  ])("refuses a request sent by %s", async (_description, site) => {
+    const server = await startTestServer([]);
+
+    const answer = await raw(server.url, ["GET /health HTTP/1.1", "host: localhost", `sec-fetch-site: ${site}`]);
+
+    expect(answer).toContain("HTTP/1.1 400");
+    expect(answer).toContain('"code":"malformed-request"');
+  });
+
+  it.each([
+    ["a page the daemon served itself", "same-origin"],
+    ["a caller the person drove there", "none"],
+  ])("serves a request sent by %s", async (_description, site) => {
+    const server = await startTestServer([]);
+
+    const answer = await raw(server.url, ["GET /health HTTP/1.1", "host: localhost", `sec-fetch-site: ${site}`]);
+
+    expect(answer).toContain("HTTP/1.1 200");
+  });
+});

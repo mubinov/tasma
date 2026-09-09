@@ -8,6 +8,7 @@ import {
   createProject,
   discoverProjects,
   endsLiveness,
+  locateProject,
   openIndexedProject,
   openProject,
   readProjectDeclaration,
@@ -16,7 +17,7 @@ import {
   TaskStoreError,
   updateProject,
 } from "@tasma/engine";
-import type { IndexedProject } from "@tasma/engine";
+import type { IndexedProject, LocateResult } from "@tasma/engine";
 import type { Diagnostic, ProjectChange, ProjectInput, ProjectRename, ProjectSummary } from "@tasma/protocol";
 
 /**
@@ -41,6 +42,8 @@ const REPAIR_INTERVAL_MS = 5000;
 export type ProjectHost = {
   /** Every project of the tree, with the name and the path each one declares. */
   list(): Promise<ProjectSummary[]>;
+  /** The project of the tree that holds a directory, with the findings of the comparison. */
+  locate(directory: string): Promise<LocateResult>;
   /** The open index for one tag, and whether it is still live. */
   open(tag: string): Promise<{ index: IndexedProject; live: boolean }>;
   /** Registers a project and answers with its tag. */
@@ -197,6 +200,9 @@ export function createProjectHost(options: {
    * no longer holds. Every call naming the tree or one project of it starts
    * here, so one directory read answers three questions: which projects exist,
    * which held index is stale, and whether a tag names a project at all.
+   *
+   * The one exception is `locate`, which reads the tree itself and opens no
+   * index, so it inserts nothing this has to reap.
    */
   async function discover(): Promise<string[]> {
     const tags = await discoverProjects(root);
@@ -278,6 +284,14 @@ export function createProjectHost(options: {
       assertServing();
       // One read of one file per project, so a listing opens no index.
       return summarizeAll(tags);
+    },
+
+    async locate(directory) {
+      assertServing();
+      // No discovery, for the reason `discover` states.
+      const result = await locateProject(directory, root);
+      assertServing();
+      return result;
     },
 
     async open(tag) {

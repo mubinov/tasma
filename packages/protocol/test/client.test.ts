@@ -83,6 +83,14 @@ const invocations: Invocation[] = [
     body: { tag: "NEW" },
   },
   {
+    // The one route that takes a path in its query rather than a tag in its
+    // path, so the separators travel encoded.
+    name: "resolveProject",
+    send: (client) => client.resolveProject("/srv/repo"),
+    method: "GET",
+    path: "/project?path=%2Fsrv%2Frepo",
+  },
+  {
     name: "listTasks",
     send: (client) => client.listTasks("TASM", { status: "To Do", label: ["dev"] }),
     method: "GET",
@@ -186,12 +194,25 @@ const invocations: Invocation[] = [
   },
 ];
 
+/** The client method one invocation calls, which its name states before the case it covers. */
+function methodOf(name: string): string {
+  const space = name.indexOf(" ");
+  return space === -1 ? name : name.slice(0, space);
+}
+
 describe("the client", () => {
   it.each(invocations)("sends the request $name declares", async (invocation) => {
     const { calls, transport } = recorder(ok(null));
     await invocation.send(createClient(transport));
 
     expect(calls).toEqual([{ method: invocation.method, path: invocation.path, body: invocation.body }]);
+  });
+
+  it("declares an invocation for every method the client carries", () => {
+    const tested = new Set(invocations.map((invocation) => methodOf(invocation.name)));
+    const client = createClient(async () => ({ status: 200, body: { ok: true, data: null, diagnostics: [] } }));
+
+    expect(Object.keys(client).filter((name) => !tested.has(name))).toEqual([]);
   });
 
   it("returns the data and the diagnostics of a success", async () => {
@@ -209,6 +230,12 @@ describe("the client", () => {
     const transport: Transport = async () => ({ status: 200, body: { ok: true, data, diagnostics: [] } });
 
     await expect(createClient(transport).listProjects()).resolves.toEqual({ data, diagnostics: [] });
+  });
+
+  it("returns a resolution that no project answered as a plain null", async () => {
+    const transport: Transport = async () => ({ status: 200, body: { ok: true, data: null, diagnostics: [] } });
+
+    await expect(createClient(transport).resolveProject("/srv/repo")).resolves.toEqual({ data: null, diagnostics: [] });
   });
 
   it("returns a comment map as the headers it carries", async () => {

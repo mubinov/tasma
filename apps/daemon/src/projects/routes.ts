@@ -1,11 +1,13 @@
-// The routes over the project host: the tree it lists, and the create, the read,
-// the write, the rename and the delete of one project of it.
+// The routes over the project host: the tree it lists, the create, the read, the
+// write, the rename and the delete of one project of it, and the resolution,
+// which is the one route that reads the tree backwards, from a directory to the
+// project that holds it.
 
 import { pathMissing } from "@tasma/engine";
 import { routes } from "@tasma/protocol";
 import type { Project, ProjectChange, ProjectInput, ProjectRename, ProjectSummary, Success } from "@tasma/protocol";
 import type { RouteEntry } from "../http/router.js";
-import { assertNoQuery } from "../tasks/filter.js";
+import { assertNoQuery, readProjectQuery } from "../tasks/filter.js";
 import { toChange } from "../tasks/input.js";
 import { WriteQueue } from "../tasks/serialize.js";
 import type { ProjectHost } from "./host.js";
@@ -52,7 +54,10 @@ export function projectRoutes(host: ProjectHost): RouteEntry[] {
       // read concern one project each, and each one is carried by that project's
       // own resource, where it names one file rather than arriving in a list of
       // many.
-      handler: async (): Promise<Success<ProjectSummary[]>> => ({ data: await host.list(), diagnostics: [] }),
+      handler: async (request): Promise<Success<ProjectSummary[]>> => {
+        assertNoQuery(request.query);
+        return { data: await host.list(), diagnostics: [] };
+      },
     },
     {
       route: routes.createProject,
@@ -68,6 +73,7 @@ export function projectRoutes(host: ProjectHost): RouteEntry[] {
     {
       route: routes.readProject,
       handler: async (request): Promise<Success<Project>> => {
+        assertNoQuery(request.query);
         // The template is `/projects/{project}`, so the parameter carries the
         // name of the route rather than the name of what it holds. The router
         // fills every placeholder of the template it matched.
@@ -118,6 +124,21 @@ export function projectRoutes(host: ProjectHost): RouteEntry[] {
           const answer = await readOne(host, rename.tag);
           return { data: answer.data, diagnostics: [...answer.diagnostics, ...findings] };
         });
+      },
+    },
+    {
+      route: routes.resolveProject,
+      // The resolution does send its diagnostics, against the rule the listing
+      // above states. A project the comparison could not read can change the
+      // answer this route gives, which is not true of a row a listing leaves
+      // incomplete, so the caller has to be told rather than the project's own
+      // resource.
+      handler: async (request): Promise<Success<ProjectSummary | null>> => {
+        const { project, diagnostics } = await host.locate(readProjectQuery(request.query));
+        // `JSON.stringify` drops a key holding `undefined` and the client admits
+        // a success by testing that `data` is there, so the answer no project
+        // holds has to carry the key.
+        return { data: project ?? null, diagnostics };
       },
     },
   ];

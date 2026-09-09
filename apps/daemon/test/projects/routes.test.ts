@@ -1,4 +1,4 @@
-import { readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { routes } from "@tasma/protocol";
@@ -70,6 +70,15 @@ describe("GET /projects", () => {
       data: [{ tag: "TASM" }],
       diagnostics: [],
     });
+  });
+
+  it("refuses a query key, so a resolution sent to this route does not read as the whole tree", async () => {
+    const server = await serving(await projectsRoot("TASM"));
+
+    const response = await fetch(`${server.url}/projects?path=/x`);
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
   });
 });
 
@@ -170,6 +179,15 @@ describe("GET /projects/{project}", () => {
     await expect(success<Project>(await fetch(`${server.url}/projects/TASM`))).resolves.toMatchObject({
       diagnostics: [],
     });
+  });
+
+  it("refuses a query key, which this route declares none of", async () => {
+    const server = await serving(await projectsRoot("TASM"));
+
+    const response = await fetch(`${server.url}/projects/TASM?x=1`);
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
   });
 
   it.each([
@@ -549,5 +567,76 @@ describe("POST /projects/{project}/rename", () => {
     expect(renamed.status).toBe(200);
     expect(patched.status).toBe(200);
     await expect(success<Project>(patched)).resolves.toMatchObject({ data: { tag: "NEW", name: "Renamed" } });
+  });
+});
+
+describe("GET /project", () => {
+  it("answers with the summary of the project that holds the directory", async () => {
+    const root = await projectsRoot("TASM");
+    const path = await target();
+    await plant(projectConfig(root, "TASM"), `name: Tasma\npath: ${path}\n`);
+    const inside = join(path, "src");
+    await mkdir(inside);
+    const server = await serving(root);
+
+    const response = await fetch(`${server.url}/project?path=${encodeURIComponent(inside)}`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      data: { tag: "TASM", name: "Tasma", path },
+      diagnostics: [],
+    });
+  });
+
+  it("answers with a data key holding null where no project holds the directory", async () => {
+    const server = await serving(await projectsRoot("TASM"));
+
+    const response = await fetch(`${server.url}/project?path=${encodeURIComponent(await target())}`);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(Object.hasOwn(body, "data")).toBe(true);
+    expect(body).toEqual({ ok: true, data: null, diagnostics: [] });
+  });
+
+  it("carries the finding of a project the comparison could not read", async () => {
+    const root = await projectsRoot("TASM", "CLIB");
+    const path = await target();
+    await plant(projectConfig(root, "TASM"), "name: [Tasma\n");
+    await plant(projectConfig(root, "CLIB"), `path: ${path}\n`);
+    const server = await serving(root);
+
+    const response = await fetch(`${server.url}/project?path=${encodeURIComponent(path)}`);
+
+    expect(response.status).toBe(200);
+    const { data, diagnostics } = await success<ProjectSummary>(response);
+    expect(data.tag).toBe("CLIB");
+    expect(diagnostics).toEqual([
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- every asymmetric matcher is typed `any`.
+      { code: "config-unreadable", message: expect.any(String), path: projectConfig(root, "TASM") },
+    ]);
+  });
+
+  it("refuses a relative path, which would stand against the daemon's own directory", async () => {
+    const server = await serving(await projectsRoot("TASM"));
+
+    const response = await fetch(`${server.url}/project?path=repo`);
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "path-invalid" });
+  });
+
+  it.each([
+    ["a key the route does not declare", "dir=%2Fsrv%2Frepo"],
+    ["no path at all", ""],
+    ["an empty path", "path="],
+  ])("refuses a query stating %s", async (_name, search) => {
+    const server = await serving(await projectsRoot("TASM"));
+
+    const response = await fetch(`${server.url}/project?${search}`);
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
   });
 });

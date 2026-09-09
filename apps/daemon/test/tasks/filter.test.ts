@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { Frontmatter, IndexEntry } from "@tasma/engine";
 import type { TaskFilter } from "@tasma/protocol";
-import { assertNoQuery, readTaskFilter, readTaskOptions, readTextSelection, selectEntries } from "../../src/tasks/filter.js";
+import {
+  assertNoQuery,
+  readProjectQuery,
+  readTaskFilter,
+  readTaskOptions,
+  readTextSelection,
+  selectEntries,
+} from "../../src/tasks/filter.js";
 import { refused, TIMESTAMP } from "../helpers.js";
 
 function entry(id: string, frontmatter: Partial<Frontmatter> = {}): IndexEntry {
@@ -171,6 +178,33 @@ describe("readTextSelection", () => {
 
     expect(error.code).toBe("malformed-request");
     expect(error.message).toContain("comment");
+  });
+});
+
+describe("readProjectQuery", () => {
+  it("reads the directory the resolution asks about", () => {
+    expect(readProjectQuery(query("path=%2Fsrv%2Frepo"))).toBe("/srv/repo");
+  });
+
+  it("refuses a key the route does not declare", () => {
+    const error = refused(() => readProjectQuery(query("dir=%2Fsrv%2Frepo")));
+
+    expect(error.code).toBe("malformed-request");
+    expect(error.message).toContain("dir");
+  });
+
+  it("refuses the key stated twice, which names two directories", () => {
+    expect(refused(() => readProjectQuery(query("path=%2Fa&path=%2Fb"))).code).toBe("malformed-request");
+  });
+
+  it.each([
+    ["states no path at all", ""],
+    ["states an empty path, which names nothing", "path="],
+  ])("refuses a query that %s", (_name, search) => {
+    const error = refused(() => readProjectQuery(query(search)));
+
+    expect(error.code).toBe("malformed-request");
+    expect(error.message).toContain("path");
   });
 });
 

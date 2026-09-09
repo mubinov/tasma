@@ -7,6 +7,7 @@ import type {
   Frontmatter as EngineFrontmatter,
   IndexEntry,
   InstructionDocument as EngineInstructionDocument,
+  LocatedProject,
   ProjectChange as EngineProjectChange,
   ProjectDeclaration,
   QueryResult,
@@ -99,6 +100,9 @@ describe("the wire contract", () => {
     // A summary is the declaration plus the tag, so a field added to either side
     // of a project breaks the typecheck until the wire carries it.
     expectTypeOf<Omit<ProjectSummary, "tag">>().toEqualTypeOf<ProjectDeclaration>();
+    // The project a resolution answers with is the same shape on both sides, so
+    // the wire cannot carry less of it than the engine found.
+    expectTypeOf<ProjectSummary>().toEqualTypeOf<Flat<LocatedProject>>();
     expectTypeOf<WorkflowStep>().toEqualTypeOf<EngineWorkflowStep>();
     expectTypeOf<Workflow>().toEqualTypeOf<EngineWorkflow>();
     expectTypeOf<InstructionDocument>().toEqualTypeOf<EngineInstructionDocument>();

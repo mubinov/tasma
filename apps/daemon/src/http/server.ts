@@ -19,6 +19,13 @@ import type { RouteEntry } from "./router.js";
 const SERVED_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
 
 /**
+ * What a request may declare it came from. A browser states this on every
+ * request it sends, the ones that need no preflight included; a caller that is
+ * no browser states nothing, which is every local process the daemon is for.
+ */
+const SERVED_SITES = new Set<unknown>([undefined, "none", "same-origin"]);
+
+/**
  * A daemon serving the entries it is given, and the liveness route in front of
  * them: every daemon answers `GET /health` whatever it was constructed with, so
  * no caller can forget it or replace it.
@@ -55,6 +62,19 @@ function servesHost(host: string | undefined): boolean {
 }
 
 /**
+ * Whether the request came from somewhere the daemon serves.
+ *
+ * The media type the writes require keeps a page off them: it cannot be set on a
+ * cross-origin request without a preflight. A `GET` carrying one query key needs
+ * no preflight, so a page can send it and drive what the route does — the
+ * resolution reads the filesystem at the path it is given — however little of the
+ * reply the browser lets it read back. This is what refuses that.
+ */
+function servesSite(site: string | string[] | undefined): boolean {
+  return SERVED_SITES.has(site);
+}
+
+/**
  * One request, start to finish, inside a single try/catch: nothing that can
  * throw sits outside it, and a rejected promise is covered by the same `await`.
  * Whatever is caught leaves as a reply, so one bad request cannot end the
@@ -64,6 +84,12 @@ async function serve(entries: RouteEntry[], request: IncomingMessage, response: 
   try {
     if (!servesHost(request.headers.host)) {
       const message = "a request must address the loopback address the daemon binds";
+      refuse(request, response, { kind: "daemon", code: "malformed-request", message });
+      return;
+    }
+
+    if (!servesSite(request.headers["sec-fetch-site"])) {
+      const message = "a request must not be sent by a page on another site";
       refuse(request, response, { kind: "daemon", code: "malformed-request", message });
       return;
     }

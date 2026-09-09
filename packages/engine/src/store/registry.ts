@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { basename, isAbsolute, resolve } from "node:path";
+import { basename } from "node:path";
 import { Document, parseDocument } from "yaml";
 import { anchorIsRead, anchorsOf, type UnaddressableKey, unaddressableKey } from "../format/anchors.js";
 import { isPlainMapping } from "../format/values.js";
@@ -13,7 +13,7 @@ import {
 } from "./atomic.js";
 import { resolveProjectDeclaration } from "./config.js";
 import { errnoOf, fail } from "./errors.js";
-import { expandHome, type ProjectPaths, projectPaths } from "./paths.js";
+import { checkedDirectoryPath, type ProjectPaths, projectPaths } from "./paths.js";
 import { checkedProjectsDirectory, discoverProjects } from "./projects.js";
 import { checkProjectDirectory, openProjectDirectory } from "./store.js";
 import { checkedTag, generateTag, uniqueTag } from "./tag.js";
@@ -32,32 +32,11 @@ const PROJECT_WRITABLE = new Set(["name", "path"]);
 /** The keys a create states: the fields it writes, and the tree it writes them in. */
 const CREATE_KEYS = new Set(["root", "path", "name", "tag"]);
 
-/** The faults a stat reports about the name it was given rather than the machine. */
-const NAMES_NOTHING = new Set(["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"]);
-
 /** What a refusal states about a file whose key no write reaches by its name. */
 const UNADDRESSABLE: Record<UnaddressableKey, string> = {
   "merge-key": "the file resolves a YAML merge key, so a key of it cannot be written",
   "key-unaddressable": "the file carries a key written as an alias, so a key of it cannot be written",
 };
-
-/**
- * True when a name a caller stated resolves to a directory. The link is
- * followed: the folder a project stands for is the caller's own, so a link to it
- * is the caller's choice. A fault about the name is an answer here — it names
- * nothing the caller can be told about in any other way — while every other
- * fault reaches the caller, which stated the name and is the only one who can
- * put it right.
- */
-async function namesDirectory(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isDirectory();
-  } catch (error) {
-    const code = errnoOf(error);
-    if (code !== undefined && NAMES_NOTHING.has(code)) return false;
-    throw error;
-  }
-}
 
 /**
  * The finding a read adds when the folder a project stands for is gone, or
@@ -78,31 +57,19 @@ export async function pathMissing(path: string): Promise<StoreDiagnostic | undef
 }
 
 /**
- * The absolute path of the folder a project stands for. The caller states an
- * absolute path or a `~/` path, the two forms that stand for themselves: a
- * relative one would resolve against the working directory of whichever process
- * is calling, which is nowhere the caller meant.
+ * The absolute path of the folder a project stands for, under the rule every
+ * directory a caller states stands.
  *
  * `path` is the one field with a code of its own, so every unusable value of it
- * is refused under that code, the wrong type among them.
+ * is refused under that code, the wrong type among them. The type is the one
+ * check that is this side's alone: it comes out of a file the user wrote, where
+ * the shared rule takes a value the caller holds as text already.
  */
 async function checkedPath(stated: unknown): Promise<string> {
   if (typeof stated !== "string") {
     fail("path-invalid", `a project path must be text, and ${String(stated)} is not`);
   }
-  // No name on a filesystem holds a NUL byte, and `stat` answers one as a fault
-  // of its argument rather than as an answer about the path.
-  if (stated.includes("\0")) {
-    fail("path-invalid", "a project path holds no NUL byte");
-  }
-  if (!isAbsolute(stated) && !stated.startsWith("~/")) {
-    fail("path-invalid", 'a project path must be absolute or start with "~/"', stated);
-  }
-  const resolved = resolve(expandHome(stated));
-  if (!(await namesDirectory(resolved))) {
-    fail("path-invalid", "this path names no directory", resolved);
-  }
-  return resolved;
+  return checkedDirectoryPath(stated, "a project path");
 }
 
 /**

@@ -1,5 +1,7 @@
 export { TaskStoreError } from "./errors.js";
 export type { TaskStoreErrorCode } from "./errors.js";
+export { locateProject } from "./locate.js";
+export type { LocatedProject, LocateResult } from "./locate.js";
 export { expandRoot } from "./paths.js";
 export type { ProjectPaths } from "./paths.js";
 export { discoverProjects, readProjectDeclaration } from "./projects.js";
