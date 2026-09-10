@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
 import { task } from "../../src/commands/task.js";
 import { CLEARABLE } from "../../src/commands/task-write.js";
-import type { Command } from "../../src/types.js";
-import { HEALTH, HINT, ok, runCommand, scratchFile } from "../helpers.js";
+import type { Command, Source } from "../../src/types.js";
+import { CWD, HEALTH, HINT, ok, RESOLVED, runCommand, scratchFile } from "../helpers.js";
 import type { Ran } from "../helpers.js";
 
 /** Runs a write verb of the noun against a server answering the table, and reports what it wrote. */
-function runTask(args: string[], table: Record<string, unknown> = {}, options: { stdin?: string } = {}): Promise<Ran> {
+function runTask(
+  args: string[],
+  table: Record<string, unknown> = {},
+  options: { stdin?: string | Source } = {},
+): Promise<Ran> {
   return runCommand(task, args, table, options);
 }
 
@@ -140,11 +144,13 @@ describe("task create", () => {
   });
 
   it("refuses every fault visible from argv alone, before it reaches a daemon", async () => {
-    await refuses(["create", "--title", "Second"], "task create needs --project <tag>");
     await refuses(["create", "-p", "", "--title", "Second"], "task create needs --project <tag>");
     await refuses(["create", "-p", "a/b", "--title", "Second"], "not a project tag: a/b");
     await refuses(["create", "-p", "TASM"], "task create needs --title <title>");
     await refuses(["create", "-p", "TASM", "--title", ""], "task create needs --title <title>");
+    // The title is checked ahead of the project, so a create missing both names
+    // the title rather than the flag whose value is empty.
+    await refuses(["create", "-p", ""], "task create needs --title <title>");
     await refuses([...CREATE, "--priority", ""], "--priority needs a value");
     await refuses([...CREATE, "--label", "a", "--label", ""], "--label needs a value");
     await refuses([...CREATE, "--order", "x"], "not an integer: x");
@@ -183,6 +189,36 @@ describe("task create", () => {
       expect(out).toBe("");
       expect(err).toContain("answered, but not with a write receipt");
     }
+  });
+
+  it("resolves the project from the working directory, each call proven", async () => {
+    const { code, out, err, seen } = await runTask(["create", "--title", "Second"], {
+      [RESOLVED]: ok({ tag: "TASM" }),
+      [CREATED]: ISSUED,
+    });
+
+    expect(code).toBe(0);
+    expect(out).toBe("TASM-2\n");
+    expect(err).toBe(`tasma: project TASM, from ${CWD}\n`);
+    expect(seen).toEqual([HEALTH, RESOLVED, HEALTH, CREATED]);
+  });
+
+  it("leaves standard input unread where the directory resolves to no project", async () => {
+    const unread: Source = {
+      [Symbol.asyncIterator]: () => {
+        throw new Error("standard input was read");
+      },
+    };
+
+    const { code, err, seen } = await runTask(
+      ["create", "--title", "Second", "--body-file", "-"],
+      { [RESOLVED]: ok(null) },
+      { stdin: unread },
+    );
+
+    expect(code).toBe(2);
+    expect(err).toBe(`tasma: no project holds ${CWD}; state one with --project <tag>\n${HINT}`);
+    expect(seen).toEqual([HEALTH, RESOLVED]);
   });
 });
 

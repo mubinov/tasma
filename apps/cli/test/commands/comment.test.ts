@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
 import { CLEARABLE, comment } from "../../src/commands/comment.js";
 import type { Command } from "../../src/types.js";
-import { at, capture, HEALTH, HINT, ok, runCommand, scratchFile } from "../helpers.js";
+import { at, capture, CWD, HEALTH, HINT, ok, runCommand, scratchFile } from "../helpers.js";
 import type { Ran } from "../helpers.js";
 
 /** Runs a verb of this noun against a server answering the table, and reports what it wrote. */
@@ -514,7 +514,7 @@ describe("the comment noun", () => {
   it("lists its five verbs for a bare noun", async () => {
     const { io, out } = capture();
 
-    expect(await comment.run([], io, at("http://127.0.0.1:8278"))).toBe(0);
+    expect(await comment.run([], io, at("http://127.0.0.1:8278"), CWD)).toBe(0);
 
     for (const verb of VERBS) expect(out.join("")).toContain(`  ${verb}`);
   });

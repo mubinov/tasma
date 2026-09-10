@@ -35,7 +35,9 @@ export type Usage = { help: string[]; options: Options };
  * dispatcher serves both levels.
  *
  * The target is resolved once above and handed down, so no command resolves an
- * address of its own.
+ * address of its own. So is the working directory, which is empty where the
+ * entry point could not read one; a verb that reads it says so itself, and the
+ * rest take it without declaring it.
  *
  * A noun carries the verbs below it and parses no argument of its own; a verb
  * carries its arguments and holds no verb. Both are read off the registry, so
@@ -44,7 +46,7 @@ export type Usage = { help: string[]; options: Options };
 export type Command = {
   name: string;
   summary: string;
-  run(args: string[], io: Io, target: Target): Promise<number>;
+  run(args: string[], io: Io, target: Target, cwd: string): Promise<number>;
   verbs?: Command[];
   usage?: Usage;
 };

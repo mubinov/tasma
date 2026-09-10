@@ -167,19 +167,30 @@ export function ok(data: unknown, diagnostics: unknown[] = []): unknown {
 /** What one command wrote, the code it returned, and the calls the server saw. */
 export type Ran = { code: number; out: string; err: string; seen: string[]; bodies: unknown[] };
 
+/** The directory a command is run from. */
+export const CWD = "/srv/repo";
+
+/** The call a verb builds to learn which project holds the given directory. */
+export function resolvedFor(cwd: string): string {
+  return `GET /project?path=${encodeURIComponent(cwd)}`;
+}
+
+/** The same call for the directory a command is run from. */
+export const RESOLVED = resolvedFor(CWD);
+
 /** Runs a command against a server answering the table, and reports what it wrote. */
 export async function runCommand(
   command: Command,
   args: string[],
   table: Record<string, unknown>,
-  options: { stdin?: string } = {},
+  options: { stdin?: string | Source } = {},
 ): Promise<Ran> {
   const answers = serveAnswers(table);
   const server = await startServer(answers.handle);
   const { io, out, err } = capture(options.stdin);
 
   try {
-    const code = await command.run(args, io, at(server.url));
+    const code = await command.run(args, io, at(server.url), CWD);
 
     return { code, out: out.join(""), err: err.join(""), seen: answers.seen, bodies: answers.bodies };
   } finally {

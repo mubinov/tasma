@@ -11,8 +11,8 @@ import { PROBE_TIMEOUT_MS, recordPath } from "../../src/daemon/record.js";
 import { OUTPUT_FILE, startDaemon } from "../../src/daemon/start.js";
 import { run } from "../../src/run.js";
 import {
-  at, capture, fakeDaemon, seedRecord, serveHealth, startServer, tasmaHealth, TEST_VERSION, treeHome, unusedUrl,
-  UNUSED_PID,
+  at, capture, CWD, fakeDaemon, seedRecord, serveHealth, startServer, tasmaHealth, TEST_VERSION, treeHome,
+  unusedUrl, UNUSED_PID,
 } from "../helpers.js";
 
 /** A wire field that refuses to coerce, as JSON.parse builds it, and how it prints. */
@@ -45,7 +45,7 @@ describe("daemon status", () => {
     const { io, out, err } = capture();
 
     try {
-      expect(await daemon.run(["status"], io, at(server.url))).toBe(0);
+      expect(await daemon.run(["status"], io, at(server.url), CWD)).toBe(0);
     } finally {
       await server.close();
     }
@@ -61,7 +61,7 @@ describe("daemon status", () => {
     const { io, out, err } = capture();
 
     try {
-      expect(await daemon.run(["status"], io, at(server.url))).toBe(3);
+      expect(await daemon.run(["status"], io, at(server.url), CWD)).toBe(3);
     } finally {
       await server.close();
     }
@@ -78,7 +78,7 @@ describe("daemon status", () => {
       const { io, err } = capture();
 
       try {
-        expect(await daemon.run(["status"], io, at(server.url))).toBe(3);
+        expect(await daemon.run(["status"], io, at(server.url), CWD)).toBe(3);
       } finally {
         await server.close();
       }
@@ -95,7 +95,7 @@ describe("daemon status", () => {
       const { io, out, err } = capture();
 
       try {
-        expect(await daemon.run(["status"], io, at(server.url))).toBe(3);
+        expect(await daemon.run(["status"], io, at(server.url), CWD)).toBe(3);
       } finally {
         await server.close();
       }
@@ -113,7 +113,7 @@ describe("daemon status", () => {
     const { io, out } = capture();
 
     try {
-      expect(await daemon.run(["status"], io, at(server.url))).toBe(0);
+      expect(await daemon.run(["status"], io, at(server.url), CWD)).toBe(0);
     } finally {
       await server.close();
     }
@@ -126,7 +126,7 @@ describe("daemon status", () => {
     const { io, out, err } = capture();
 
     try {
-      expect(await daemon.run(["status"], io, at(server.url))).toBe(0);
+      expect(await daemon.run(["status"], io, at(server.url), CWD)).toBe(0);
     } finally {
       await server.close();
     }
@@ -147,7 +147,7 @@ describe("daemon status", () => {
     const { io, out, err } = capture();
 
     try {
-      expect(await daemon.run(["status"], io, at(server.url))).toBe(0);
+      expect(await daemon.run(["status"], io, at(server.url), CWD)).toBe(0);
     } finally {
       await server.close();
     }
@@ -159,7 +159,7 @@ describe("daemon status", () => {
   it("refuses an argument of its own rather than ignoring it", async () => {
     const { io, out, err } = capture();
 
-    expect(await daemon.run(["status", "TASM"], io, at("http://127.0.0.1:8278"))).toBe(2);
+    expect(await daemon.run(["status", "TASM"], io, at("http://127.0.0.1:8278"), CWD)).toBe(2);
     expect(out).toEqual([]);
     expect(err.join("")).toBe("tasma: daemon status takes no arguments: TASM\nRun 'tasma --help' for usage.\n");
   });
@@ -170,7 +170,7 @@ describe("daemon status", () => {
   it("refuses a flag of its own through the parser's own message", async () => {
     const { io, err } = capture();
 
-    expect(await daemon.run(["status", "--daemon", "http://127.0.0.1:9000"], io, at("http://127.0.0.1:8278"))).toBe(2);
+    expect(await daemon.run(["status", "--daemon", "http://127.0.0.1:9000"], io, at("http://127.0.0.1:8278"), CWD)).toBe(2);
     expect(err.join("")).toContain("tasma: Unknown option '--daemon'");
   });
 
@@ -178,7 +178,7 @@ describe("daemon status", () => {
     const url = await unusedUrl();
     const { io, out, err } = capture();
 
-    expect(await daemon.run(["status"], io, at(url))).toBe(3);
+    expect(await daemon.run(["status"], io, at(url), CWD)).toBe(3);
     expect(out).toEqual([]);
     expect(err.join("")).toBe(`tasma: no daemon answered at ${url}\n`);
   });
@@ -190,7 +190,7 @@ describe("daemon status", () => {
     const path = seedRecord(home, { port: Number(new URL(await unusedUrl()).port), pid: UNUSED_PID });
     const { io, out, err } = capture();
 
-    expect(await run(["daemon", "status"], io, { HOME: home })).toBe(3);
+    expect(await run(["daemon", "status"], io, { HOME: home }, CWD)).toBe(3);
     expect(out).toEqual([]);
     expect(err.join("")).toContain(`; the record at ${path} is stale\n`);
   });
@@ -204,7 +204,7 @@ describe("daemon start", () => {
     ] as const) {
       const { io, out, err } = capture();
 
-      expect(await run([...argv], io, env)).toBe(2);
+      expect(await run([...argv], io, env, CWD)).toBe(2);
       expect(out).toEqual([]);
       expect(err.join("")).toBe(`tasma: daemon start acts on the daemon of this tree: ${remove}\n`
         + "Run 'tasma --help' for usage.\n");
@@ -214,14 +214,14 @@ describe("daemon start", () => {
   it("refuses an argument of its own rather than ignoring it", async () => {
     const { io, err } = capture();
 
-    expect(await run(["daemon", "start", "now"], io, { HOME: "/tmp" })).toBe(2);
+    expect(await run(["daemon", "start", "now"], io, { HOME: "/tmp" }, CWD)).toBe(2);
     expect(err.join("")).toBe("tasma: daemon start takes no arguments: now\nRun 'tasma --help' for usage.\n");
   });
 
   it("refuses a flag of its own through the parser's own message", async () => {
     const { io, err } = capture();
 
-    expect(await run(["daemon", "start", "--now"], io, { HOME: "/tmp" })).toBe(2);
+    expect(await run(["daemon", "start", "--now"], io, { HOME: "/tmp" }, CWD)).toBe(2);
     expect(err.join("")).toContain("tasma: Unknown option '--now'");
   });
 
@@ -232,7 +232,7 @@ describe("daemon start", () => {
     const url = await runningIn(home);
     const { io, out, err } = capture();
 
-    expect(await run(["daemon", "start"], io, { HOME: home })).toBe(0);
+    expect(await run(["daemon", "start"], io, { HOME: home }, CWD)).toBe(0);
     expect(out.join("")).toBe(`${DAEMON_NAME} 0.0.0 at ${url}\n`);
     expect(err).toEqual([]);
   });
@@ -244,7 +244,7 @@ describe("daemon stop", () => {
     const url = await runningIn(home);
     const { io, out, err } = capture();
 
-    expect(await run(["daemon", "stop"], io, { HOME: home })).toBe(0);
+    expect(await run(["daemon", "stop"], io, { HOME: home }, CWD)).toBe(0);
     expect(out.join("")).toBe(`${DAEMON_NAME} at ${url} stopped\n`);
     expect(err).toEqual([]);
     expect(existsSync(recordPath(home))).toBe(false);
@@ -256,7 +256,7 @@ describe("daemon stop", () => {
     const home = treeHome();
     const { io, out, err } = capture();
 
-    expect(await run(["daemon", "stop"], io, { HOME: home })).toBe(0);
+    expect(await run(["daemon", "stop"], io, { HOME: home }, CWD)).toBe(0);
     expect(out.join("")).toBe("no daemon is running\n");
     expect(err).toEqual([]);
   });
@@ -267,7 +267,7 @@ describe("daemon stop", () => {
     const path = seedRecord(home, { port: Number(new URL(await unusedUrl()).port), pid: UNUSED_PID });
     const { io, out, err } = capture();
 
-    expect(await run(["daemon", "stop"], io, { HOME: home })).toBe(0);
+    expect(await run(["daemon", "stop"], io, { HOME: home }, CWD)).toBe(0);
     expect(out.join("")).toBe("no daemon is running\n");
     expect(err.join("")).toBe(`tasma: the record at ${path} is stale\n`);
     expect(existsSync(path)).toBe(true);
@@ -284,7 +284,7 @@ describe("daemon stop", () => {
     const { io, out, err } = capture();
 
     try {
-      expect(await run(["daemon", "stop"], io, { HOME: home })).toBe(3);
+      expect(await run(["daemon", "stop"], io, { HOME: home }, CWD)).toBe(3);
     } finally {
       await server.close();
     }
@@ -308,7 +308,7 @@ describe("daemon stop", () => {
     const { io, out, err } = capture();
 
     try {
-      expect(await run(["daemon", "stop"], io, { HOME: home })).toBe(3);
+      expect(await run(["daemon", "stop"], io, { HOME: home }, CWD)).toBe(3);
     } finally {
       await server.close();
     }
@@ -325,7 +325,7 @@ describe("daemon stop", () => {
     const path = recordPath(home);
     const { io, out, err } = capture();
 
-    expect(await run(["daemon", "stop"], io, { HOME: home })).toBe(0);
+    expect(await run(["daemon", "stop"], io, { HOME: home }, CWD)).toBe(0);
     expect(out.join("")).toBe(`${DAEMON_NAME} at ${url} stopped\n`);
     expect(err.join("")).toBe(`tasma: the record at ${path} is stale\n`);
   });
@@ -350,7 +350,7 @@ describe("daemon stop", () => {
     const { io, out, err } = capture();
 
     try {
-      expect(await run(["daemon", "stop"], io, { HOME: home })).toBe(0);
+      expect(await run(["daemon", "stop"], io, { HOME: home }, CWD)).toBe(0);
     } finally {
       await server.close();
     }
@@ -367,7 +367,7 @@ describe("daemon stop", () => {
     ] as const) {
       const { io, out, err } = capture();
 
-      expect(await run([...argv], io, env)).toBe(2);
+      expect(await run([...argv], io, env, CWD)).toBe(2);
       expect(out).toEqual([]);
       expect(err.join("")).toBe(`tasma: daemon stop acts on the daemon of this tree: ${remove}\n`
         + "Run 'tasma --help' for usage.\n");
@@ -377,14 +377,14 @@ describe("daemon stop", () => {
   it("refuses an argument of its own rather than ignoring it", async () => {
     const { io, err } = capture();
 
-    expect(await run(["daemon", "stop", "force"], io, { HOME: "/tmp" })).toBe(2);
+    expect(await run(["daemon", "stop", "force"], io, { HOME: "/tmp" }, CWD)).toBe(2);
     expect(err.join("")).toBe("tasma: daemon stop takes no arguments: force\nRun 'tasma --help' for usage.\n");
   });
 
   it("refuses a flag of its own through the parser's own message", async () => {
     const { io, err } = capture();
 
-    expect(await run(["daemon", "stop", "--force"], io, { HOME: "/tmp" })).toBe(2);
+    expect(await run(["daemon", "stop", "--force"], io, { HOME: "/tmp" }, CWD)).toBe(2);
     expect(err.join("")).toContain("tasma: Unknown option '--force'");
   });
 
@@ -412,7 +412,7 @@ describe("daemon stop", () => {
     const { io, out, err } = capture();
 
     try {
-      expect(await stop([], io, { kind: "tree", home }, SHORT_BUDGET_MS)).toBe(3);
+      expect(await stop([], io, { kind: "tree", home }, CWD, { budgetMs: SHORT_BUDGET_MS })).toBe(3);
     } finally {
       await server.close();
     }
@@ -430,7 +430,7 @@ describe("the daemon noun", () => {
   it("lists its verbs and exits 0 when no verb follows it", async () => {
     const { io, out, err } = capture();
 
-    expect(await daemon.run([], io, at("http://127.0.0.1:8278"))).toBe(0);
+    expect(await daemon.run([], io, at("http://127.0.0.1:8278"), CWD)).toBe(0);
     expect(out.join("")).toContain("start");
     expect(out.join("")).toContain("status");
     expect(out.join("")).toContain("stop");
@@ -443,7 +443,7 @@ describe("the daemon noun", () => {
     for (const flag of ["--help", "-h"]) {
       const { io, out, err } = capture();
 
-      expect(await daemon.run([flag], io, at("http://127.0.0.1:8278"))).toBe(0);
+      expect(await daemon.run([flag], io, at("http://127.0.0.1:8278"), CWD)).toBe(0);
       expect(out.join("")).toContain("status");
       expect(err).toEqual([]);
     }
@@ -452,7 +452,7 @@ describe("the daemon noun", () => {
   it("reports an unknown verb as the whole invocation, not as a top-level command", async () => {
     const { io, out, err } = capture();
 
-    expect(await daemon.run(["frobnicate"], io, at("http://127.0.0.1:8278"))).toBe(2);
+    expect(await daemon.run(["frobnicate"], io, at("http://127.0.0.1:8278"), CWD)).toBe(2);
     expect(out).toEqual([]);
     expect(err.join("")).toBe("tasma: unknown command: daemon frobnicate\nRun 'tasma --help' for usage.\n");
   });
@@ -464,7 +464,7 @@ describe("the daemon noun", () => {
       for (const flag of ["--help", "-h"]) {
         const { io, out, err } = capture();
 
-        expect(await run(["daemon", verb, flag], io, { HOME: "/tmp" }), `${verb} ${flag}`).toBe(0);
+        expect(await run(["daemon", verb, flag], io, { HOME: "/tmp" }, CWD), `${verb} ${flag}`).toBe(0);
         expect(out.join("")).toContain(`tasma daemon ${verb}`);
         expect(err).toEqual([]);
       }

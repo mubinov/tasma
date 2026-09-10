@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
 import { project } from "../../src/commands/project.js";
-import { at, capture, ok, runCommand, serveAnswers, startServer } from "../helpers.js";
+import { at, capture, CWD, ok, runCommand, serveAnswers, startServer } from "../helpers.js";
 import type { Ran } from "../helpers.js";
 
 /** Runs a verb of this noun against a server answering the table, and reports what it wrote. */
@@ -106,7 +106,7 @@ describe("project list", () => {
     const { io, out, err } = capture();
 
     try {
-      expect(await project.run(["list"], io, at(server.url))).toBe(0);
+      expect(await project.run(["list"], io, at(server.url), CWD)).toBe(0);
     } finally {
       await server.close();
     }

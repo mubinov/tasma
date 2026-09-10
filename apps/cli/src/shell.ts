@@ -99,6 +99,7 @@ export async function dispatch(
   args: string[],
   io: Io,
   target: Target,
+  cwd: string,
 ): Promise<number> {
   const command = commands.find((candidate) => candidate.name === name);
 
@@ -106,7 +107,7 @@ export async function dispatch(
     return reportUsage(io, `unknown command: ${parent === "" ? name : `${parent} ${name}`}`);
   }
 
-  return command.run(args, io, target);
+  return command.run(args, io, target, cwd);
 }
 
 /**
@@ -121,7 +122,7 @@ export function noun(name: string, summary: string, verbs: Command[]): Command {
     name,
     summary,
     verbs,
-    run: (args, io, target) => {
+    run: (args, io, target, cwd) => {
       const [verb, ...rest] = args;
 
       if (verb === undefined || verb === "--help" || verb === "-h") {
@@ -129,7 +130,7 @@ export function noun(name: string, summary: string, verbs: Command[]): Command {
         return Promise.resolve(0);
       }
 
-      return dispatch(verbs, name, verb, rest, io, target);
+      return dispatch(verbs, name, verb, rest, io, target, cwd);
     },
   };
 }

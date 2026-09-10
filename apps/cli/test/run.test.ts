@@ -5,7 +5,7 @@ import manifest from "../package.json" with { type: "json" };
 import { run, splitInvocation } from "../src/run.js";
 import { dispatch, errorText, isPathComponent, reportUsage } from "../src/shell.js";
 import type { Command, Target } from "../src/types.js";
-import { capture, ok, serveAnswers, startServer, treeHome } from "./helpers.js";
+import { capture, CWD, ok, serveAnswers, startServer, treeHome } from "./helpers.js";
 
 const TARGET: Target = { kind: "explicit", url: "http://127.0.0.1:8278", stated: "--daemon" };
 
@@ -22,7 +22,7 @@ describe("run", () => {
     for (const flag of ["--version", "-v"]) {
       const { io, out, err } = capture();
 
-      expect(await run([flag], io, REFUSED_ENV)).toBe(0);
+      expect(await run([flag], io, REFUSED_ENV, CWD)).toBe(0);
       expect(out.join("")).toBe(`tasma ${manifest.version}\n`);
       expect(err).toEqual([]);
     }
@@ -35,7 +35,7 @@ describe("run", () => {
     for (const args of [["--help"], ["-h"], []]) {
       const { io, out, err } = capture();
 
-      expect(await run(args, io, REFUSED_ENV)).toBe(0);
+      expect(await run(args, io, REFUSED_ENV, CWD)).toBe(0);
       expect(err).toEqual([]);
       texts.push(out.join(""));
     }
@@ -47,7 +47,7 @@ describe("run", () => {
   it("reports an unknown option on stderr, writing nothing to stdout", async () => {
     const { io, out, err } = capture();
 
-    expect(await run(["--nope"], io, {})).toBe(2);
+    expect(await run(["--nope"], io, {}, CWD)).toBe(2);
     expect(out).toEqual([]);
     expect(err.join("")).toBe("tasma: Unknown option '--nope'\nRun 'tasma --help' for usage.\n");
   });
@@ -57,14 +57,14 @@ describe("run", () => {
   it("reports a bare - as a usage error", async () => {
     const { io, err } = capture();
 
-    expect(await run(["-"], io, {})).toBe(2);
+    expect(await run(["-"], io, {}, CWD)).toBe(2);
     expect(err.join("")).toContain("tasma: ");
   });
 
   it("reports an unknown command", async () => {
     const { io, out, err } = capture();
 
-    expect(await run(["frobnicate"], io, {})).toBe(2);
+    expect(await run(["frobnicate"], io, {}, CWD)).toBe(2);
     expect(out).toEqual([]);
     expect(err.join("")).toBe("tasma: unknown command: frobnicate\nRun 'tasma --help' for usage.\n");
   });
@@ -74,14 +74,14 @@ describe("run", () => {
   it("takes a flag after the command name as the command's own", async () => {
     const { io, err } = capture();
 
-    expect(await run(["frobnicate", "--json"], io, {})).toBe(2);
+    expect(await run(["frobnicate", "--json"], io, {}, CWD)).toBe(2);
     expect(err.join("")).toContain("unknown command: frobnicate");
   });
 
   it("escapes a control character in a command name rather than writing it to the terminal", async () => {
     const { io, err } = capture();
 
-    expect(await run(["\u001b[2Jfrobnicate"], io, {})).toBe(2);
+    expect(await run(["\u001b[2Jfrobnicate"], io, {}, CWD)).toBe(2);
     expect(err.join("")).toBe("tasma: unknown command: \\u001b[2Jfrobnicate\nRun 'tasma --help' for usage.\n");
   });
 
@@ -90,7 +90,7 @@ describe("run", () => {
   it("escapes a control character the parser quotes back", async () => {
     const { io, err } = capture();
 
-    expect(await run(["--no\u001bpe"], io, {})).toBe(2);
+    expect(await run(["--no\u001bpe"], io, {}, CWD)).toBe(2);
     expect(err.join("")).toContain("\\u001b");
     expect(err.join("")).not.toContain("\u001b");
   });
@@ -114,7 +114,7 @@ describe("run", () => {
     ]) {
       const { io, out, err } = capture();
 
-      expect(await run(argv, io, env)).toBe(2);
+      expect(await run(argv, io, env, CWD)).toBe(2);
       expect(out).toEqual([]);
       expect(err.join("")).toBe(`tasma: ${detail}\nRun 'tasma --help' for usage.\n`);
     }
@@ -123,7 +123,7 @@ describe("run", () => {
   it("reads the token after a value-taking global as its value, not as the command", async () => {
     const { io, err } = capture();
 
-    expect(await run(["--daemon", "http://127.0.0.1:9000", "daemon", "frobnicate"], io, {})).toBe(2);
+    expect(await run(["--daemon", "http://127.0.0.1:9000", "daemon", "frobnicate"], io, {}, CWD)).toBe(2);
     expect(err.join("")).toContain("unknown command: daemon frobnicate");
   });
 
@@ -142,7 +142,7 @@ describe("run", () => {
       ]) {
         const { io, out, err } = capture();
 
-        expect(await run(invocation.argv, io, invocation.env)).toBe(0);
+        expect(await run(invocation.argv, io, invocation.env, CWD)).toBe(0);
         expect(out.join("")).toBe(`${DAEMON_NAME} 1.2.3 at ${server.url}\n`);
         expect(err).toEqual([]);
       }
@@ -156,7 +156,7 @@ describe("run", () => {
   it("carries the tree's home to the command, from HOME", async () => {
     const { io, out, err } = capture();
 
-    expect(await run(["daemon", "stop"], io, { HOME: treeHome() })).toBe(0);
+    expect(await run(["daemon", "stop"], io, { HOME: treeHome() }, CWD)).toBe(0);
     expect(out.join("")).toBe("no daemon is running\n");
     expect(err).toEqual([]);
   });
@@ -177,7 +177,7 @@ describe("run", () => {
       ]) {
         const { io, out, err } = capture();
 
-        expect(await run(["--daemon", server.url, ...invocation.argv], io, {})).toBe(0);
+        expect(await run(["--daemon", server.url, ...invocation.argv], io, {}, CWD)).toBe(0);
         expect(out.join("")).toBe(invocation.text);
         expect(err).toEqual([]);
       }
@@ -189,7 +189,7 @@ describe("run", () => {
   it("reports an address it refuses as a usage error, not as a daemon that is down", async () => {
     const { io, out, err } = capture();
 
-    expect(await run(["--daemon", "nonsense", "daemon", "status"], io, {})).toBe(2);
+    expect(await run(["--daemon", "nonsense", "daemon", "status"], io, {}, CWD)).toBe(2);
     expect(out).toEqual([]);
     expect(err.join("")).toBe("tasma: not a daemon address: nonsense\nRun 'tasma --help' for usage.\n");
   });
@@ -199,7 +199,7 @@ describe("run", () => {
   it("breaks a parser message that carries line breaks rather than escaping them", async () => {
     const { io, err } = capture();
 
-    expect(await run(["--daemon", "-h"], io, {})).toBe(2);
+    expect(await run(["--daemon", "-h"], io, {}, CWD)).toBe(2);
     expect(err.join("")).not.toContain("\\u000a");
     expect(err.join("").split("\n").filter((line) => line !== "").length).toBeGreaterThan(2);
   });
@@ -260,28 +260,28 @@ describe("splitInvocation", () => {
 });
 
 describe("dispatch", () => {
-  it("runs the named command with the arguments after it, the io and the target", async () => {
+  it("runs the named command with the arguments after it, the io, the target and the directory", async () => {
     const { io } = capture();
-    const seen: { args: string[]; target: Target }[] = [];
+    const seen: { args: string[]; target: Target; cwd: string }[] = [];
     const commands: Command[] = [
       {
         name: "list",
         summary: "List the tasks",
-        run: (args, _io, target) => {
-          seen.push({ args, target });
+        run: (args, _io, target, cwd) => {
+          seen.push({ args, target, cwd });
           return Promise.resolve(1);
         },
       },
     ];
 
-    expect(await dispatch(commands, "", "list", ["--json"], io, TARGET)).toBe(1);
-    expect(seen).toEqual([{ args: ["--json"], target: TARGET }]);
+    expect(await dispatch(commands, "", "list", ["--json"], io, TARGET, CWD)).toBe(1);
+    expect(seen).toEqual([{ args: ["--json"], target: TARGET, cwd: CWD }]);
   });
 
   it("reports a name the registry does not hold", async () => {
     const { io, err } = capture();
 
-    expect(await dispatch([], "", "list", [], io, TARGET)).toBe(2);
+    expect(await dispatch([], "", "list", [], io, TARGET, CWD)).toBe(2);
     expect(err.join("")).toBe("tasma: unknown command: list\nRun 'tasma --help' for usage.\n");
   });
 
@@ -290,7 +290,7 @@ describe("dispatch", () => {
   it("names the parent noun in front of a verb the table does not hold", async () => {
     const { io, err } = capture();
 
-    expect(await dispatch([], "daemon", "frobnicate", [], io, TARGET)).toBe(2);
+    expect(await dispatch([], "daemon", "frobnicate", [], io, TARGET, CWD)).toBe(2);
     expect(err.join("")).toBe("tasma: unknown command: daemon frobnicate\nRun 'tasma --help' for usage.\n");
   });
 });

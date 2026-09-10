@@ -75,13 +75,18 @@ export function splitInvocation(argv: string[]): Invocation {
 }
 
 /**
- * The whole CLI: arguments in, exit code out, every byte through `io` and every
- * variable through `env`.
+ * The whole CLI: arguments in, exit code out, every byte through `io`, every
+ * variable through `env` and the working directory through `cwd`.
  *
  * Reads no global and touches no file, so the entry point is the only place
  * that knows a process exists.
  */
-export async function run(argv: string[], io: Io, env: Record<string, string | undefined>): Promise<number> {
+export async function run(
+  argv: string[],
+  io: Io,
+  env: Record<string, string | undefined>,
+  cwd: string,
+): Promise<number> {
   const invocation = splitInvocation(argv);
 
   // Positionals are not enabled: the split above has already removed them.
@@ -114,5 +119,5 @@ export async function run(argv: string[], io: Io, env: Record<string, string | u
     return reportUsage(io, errorText(error));
   }
 
-  return dispatch(COMMANDS, "", invocation.name, invocation.args, io, target);
+  return dispatch(COMMANDS, "", invocation.name, invocation.args, io, target, cwd);
 }

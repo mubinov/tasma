@@ -147,10 +147,20 @@ async function waitForStop(path: string, pid: number, budgetMs: number): Promise
  * failure — unlike `status`, which answers a question. The record is never
  * removed here whatever it holds; the daemon replaces it at its next start.
  *
- * Nothing in production passes `budgetMs`; it is there so the wait can be driven
- * in milliseconds.
+ * Nothing in production states `budgetMs`; it is there so the wait can be driven
+ * in milliseconds. It rides an options object because the positional parameters
+ * are the command contract, and a seam standing among them is handed a contract
+ * value the day the two types agree.
  */
-export async function stop(args: string[], io: Io, target: Target, budgetMs = STOP_BUDGET_MS): Promise<number> {
+export async function stop(
+  args: string[],
+  io: Io,
+  target: Target,
+  _cwd: string,
+  options: { budgetMs?: number } = {},
+): Promise<number> {
+  const budgetMs = options.budgetMs ?? STOP_BUDGET_MS;
+
   const refusal = readDaemonVerb(io, "stop", args, STOP_HELP);
 
   if (refusal !== undefined) return refusal;

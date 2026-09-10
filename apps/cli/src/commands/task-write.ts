@@ -14,7 +14,8 @@ import type { Command, Io, Options, Target } from "../types.js";
 import { appended, BODY_HELP, BODY_OPTIONS, readBody } from "./body.js";
 import { applyClears, flagsGiven, keyOf, refuseAppend, refuseClears, refuseEmpty, refuseNoChange } from "./change.js";
 import type { Fields } from "./change.js";
-import { readProjectTag, readTaskId } from "./task-id.js";
+import { actingProject } from "./project-tag.js";
+import { readTaskId } from "./task-id.js";
 import type { TaskId } from "./task-id.js";
 import { HELP_OPTION, readVerb, usageBlock } from "./verb.js";
 
@@ -71,9 +72,9 @@ const EDIT_OPTIONS = {
 const DELETE_OPTIONS = { ...HELP_OPTION } as const satisfies Options;
 
 const CREATE_HELP = [
-  "Usage: tasma task create --project <tag> --title <title> [options]",
+  "Usage: tasma task create --title <title> [options]",
   "",
-  "  -p, --project <tag>     Which project the task joins, required",
+  "  -p, --project <tag>     Which project the task joins; the project holding the working directory otherwise",
   "      --title <title>     The title, required",
   "      --status <s>        The status; the project's default otherwise",
   "      --priority <p>      The priority",
@@ -194,21 +195,27 @@ async function readStored(io: Io, target: Target, task: TaskId): Promise<string 
   return code === 0 ? stored : code;
 }
 
-async function create(args: string[], io: Io, target: Target): Promise<number> {
+async function create(args: string[], io: Io, target: Target, cwd: string): Promise<number> {
   const parsed = readVerb(io, args, { command: "task create", help: CREATE_HELP, takes: 0 }, () =>
     parseArgs({ args, strict: true, allowPositionals: true, options: CREATE_OPTIONS }));
 
   if (typeof parsed === "number") return parsed;
 
   const { values } = parsed;
-  const tag = readProjectTag(io, "task create", values.project);
 
-  if (typeof tag === "number") return tag;
   if (values.title === undefined || values.title === "") return reportUsage(io, "task create needs --title <title>");
 
   const refused = refuseEmpty(io, FIELDS, values, false) ?? refuseOrder(io, values.order);
 
   if (refused !== undefined) return refused;
+
+  // Proven, for the reason the read of an append is: a tag read from one tree
+  // must not become a write into another. Ahead of the body, so `--body-file -`
+  // in a directory no project holds refuses at once rather than holding a
+  // terminal open until Ctrl-D.
+  const tag = await actingProject(io, target, { command: "task create", stated: values.project, cwd, prove: true });
+
+  if (typeof tag === "number") return tag;
 
   const body = await readBody(io, values);
 

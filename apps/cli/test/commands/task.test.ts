@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
 import { task } from "../../src/commands/task.js";
 import { taskIdOf } from "../../src/commands/task-id.js";
-import { at, capture, ok, runCommand } from "../helpers.js";
+import { at, capture, CWD, ok, RESOLVED, runCommand } from "../helpers.js";
 import type { Ran } from "../helpers.js";
 
 /** Runs a verb of this noun against a server answering the table, and reports what it wrote. */
@@ -75,24 +75,30 @@ describe("task list", () => {
   });
 
   it("refuses the two together, which name no set of tasks", async () => {
-    const { code, out, err, seen } = await runTask(["list", "-p", "TASM", "--blocked", "--unblocked"]);
+    for (const args of [["list", "-p", "TASM", "--blocked", "--unblocked"], ["list", "--blocked", "--unblocked"]]) {
+      const { code, out, err, seen } = await runTask(args);
 
-    expect(code).toBe(2);
-    expect(out).toBe("");
-    expect(err).toBe("tasma: --blocked and --unblocked exclude each other\nRun 'tasma --help' for usage.\n");
-    expect(seen).toEqual([]);
+      expect(code, args.join(" ")).toBe(2);
+      expect(out, args.join(" ")).toBe("");
+      expect(err, args.join(" ")).toBe("tasma: --blocked and --unblocked exclude each other\nRun 'tasma --help' for usage.\n");
+      expect(seen, args.join(" ")).toEqual([]);
+    }
   });
 
-  // Nothing is inferred from the working directory, so the project is stated or
-  // the verb does not run.
-  it("refuses to run without a project, an empty one included", async () => {
-    for (const args of [["list"], ["list", "--project", ""]]) {
-      const { code, err, seen } = await runTask(args);
+  it("resolves the project from the working directory where no flag stated one", async () => {
+    const { code, err, seen } = await runTask(["list"], { [RESOLVED]: ok({ tag: "TASM" }), [LISTING]: ENTRIES });
 
-      expect(code).toBe(2);
-      expect(err).toBe("tasma: task list needs --project <tag>\nRun 'tasma --help' for usage.\n");
-      expect(seen).toEqual([]);
-    }
+    expect(code).toBe(0);
+    expect(err).toBe(`tasma: project TASM, from ${CWD}\n`);
+    expect(seen).toEqual([RESOLVED, LISTING]);
+  });
+
+  it("refuses an empty project rather than resolving in its place", async () => {
+    const { code, err, seen } = await runTask(["list", "--project", ""]);
+
+    expect(code).toBe(2);
+    expect(err).toBe("tasma: task list needs --project <tag>\nRun 'tasma --help' for usage.\n");
+    expect(seen).toEqual([]);
   });
 
   it("refuses a project tag that is not one path component", async () => {
@@ -294,7 +300,7 @@ describe("the task noun", () => {
   it("lists its five verbs for a bare noun", async () => {
     const { io, out } = capture();
 
-    expect(await task.run([], io, at("http://127.0.0.1:8278"))).toBe(0);
+    expect(await task.run([], io, at("http://127.0.0.1:8278"), CWD)).toBe(0);
 
     for (const verb of ["list", "view", "create", "edit", "delete"]) {
       expect(out.join("")).toContain(`  ${verb}`);

@@ -2,8 +2,8 @@
 // write verbs the file beside this one holds. Every comment operation is a verb
 // of the `comment` noun.
 //
-// A task id carries its project tag, so only the listing states a project. The
-// working directory names nothing here.
+// A task id carries its project tag, so the listing is the one read that names a
+// project, and the one that resolves it from the working directory.
 
 import { parseArgs } from "node:util";
 import type { TaskFilter } from "@tasma/protocol";
@@ -11,7 +11,8 @@ import { attempt, refuseAnswer } from "../failure.js";
 import { cell, fieldsOf, isTaskText, table, withLineBreak } from "../output.js";
 import { noun, reportUsage, wireText } from "../shell.js";
 import type { Io, Options, Target } from "../types.js";
-import { readProjectTag, readTaskId } from "./task-id.js";
+import { actingProject } from "./project-tag.js";
+import { readTaskId } from "./task-id.js";
 import { WRITE_VERBS } from "./task-write.js";
 import { HELP_OPTION, readVerb } from "./verb.js";
 
@@ -28,9 +29,9 @@ const LIST_OPTIONS = {
 } as const satisfies Options;
 
 const LIST_HELP = [
-  "Usage: tasma task list --project <tag> [options]",
+  "Usage: tasma task list [options]",
   "",
-  "  -p, --project <tag>  Which project to list, required",
+  "  -p, --project <tag>  Which project to list; the project holding the working directory otherwise",
   "      --status <s>     Only the tasks holding this status",
   "      --priority <p>   Only the tasks holding this priority",
   "      --label <l>      Only the tasks carrying this label; repeat it for every label",
@@ -105,19 +106,25 @@ function collapsedLine(id: string, hidden: unknown[]): string {
     + `comment view ${wireText(id)} <n> prints one, task view ${wireText(id)} --full prints all\n`;
 }
 
-async function list(args: string[], io: Io, target: Target): Promise<number> {
+async function list(args: string[], io: Io, target: Target, cwd: string): Promise<number> {
   const parsed = readVerb(io, args, { command: "task list", help: LIST_HELP, takes: 0 }, () =>
     parseArgs({ args, strict: true, allowPositionals: true, options: LIST_OPTIONS }));
 
   if (typeof parsed === "number") return parsed;
 
   const { values } = parsed;
-  const tag = readProjectTag(io, "task list", values.project);
 
-  if (typeof tag === "number") return tag;
+  // Before the project: a fault argv alone shows costs no request, and the two
+  // flags together name no set of tasks whichever project holds them.
   if (values.blocked === true && values.unblocked === true) {
     return reportUsage(io, "--blocked and --unblocked exclude each other");
   }
+
+  // No proof ahead of the call: a listing changes nothing, so its own request is
+  // the probe.
+  const tag = await actingProject(io, target, { command: "task list", stated: values.project, cwd });
+
+  if (typeof tag === "number") return tag;
 
   // Every value a filter states travels as it was typed: the CLI lowercases
   // nothing, trims nothing and matches nothing.
