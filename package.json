@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "pnpm --filter @tasma/web dev",
+    "dev:cli": "pnpm --filter @tasma/cli --filter @tasma/daemon build >&2 && scripts/dev-home.sh node \"$PWD/apps/cli/dist/tasma.js\"",
     "build": "pnpm -r build",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --max-warnings 0 --fix",

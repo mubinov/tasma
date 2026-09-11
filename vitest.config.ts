@@ -6,7 +6,13 @@ export default defineConfig({
     projects: [
       ...packageDirs,
       // Repo-level checks that belong to no single package.
-      { test: { name: "repo", include: ["test/**/*.test.ts"] } },
+      {
+        test: {
+          name: "repo",
+          include: ["test/**/*.test.ts"],
+          setupFiles: ["./test/setup/home.ts"],
+        },
+      },
     ],
     coverage: {
       include: packageGlobs.map((glob) => `${glob}/src/**`),

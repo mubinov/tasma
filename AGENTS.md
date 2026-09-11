@@ -1,7 +1,12 @@
 # Rules
 
-- Put the machine back to its state before the work. Delete the configuration and the data that you write outside this repository, for example the tree in `~/.tasma`. /tmp files are not included.
-- Run the CLI, the daemon and the web application with a temporary `HOME` (`~/.tasma` is real working directory).
+- `~/.tasma` holds real data: live projects, tasks and workflows, with no backup.
+  Never write to it, never delete it, and never delete anything under it. A test
+  suite that looks polluted is never caused by this tree.
+- Run the CLI through `pnpm dev:cli`, which sets `HOME` to a directory under
+  `/tmp`. A temporary `HOME` of your own is equally fine; the real home
+  directory is forbidden. The web application reads no tree — run it with
+  `pnpm dev`.
 
 # apps/web
 

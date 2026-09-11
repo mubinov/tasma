@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { ViteUserConfig } from "vitest/config";
 import {
   binDeclarationFaults,
   packageDirs,
@@ -11,6 +12,22 @@ import {
   unlinkedInternalDependencies,
   workspaceRoot,
 } from "../workspace.js";
+import rootConfig from "../vitest.config.js";
+
+const homeSetupFile = join(workspaceRoot, "test", "setup", "home.ts");
+
+async function loadConfig(dir: string): Promise<ViteUserConfig> {
+  return ((await import(join(workspaceRoot, dir, "vitest.config.ts"))) as { default: ViteUserConfig }).default;
+}
+
+// Each config states the file by a path relative to itself, so the entries are
+// resolved before they are compared.
+function setupFiles(config: ViteUserConfig, dir: string): string[] {
+  const declared = config.test?.setupFiles ?? [];
+  return (typeof declared === "string" ? [declared] : declared).map((entry) =>
+    resolve(join(workspaceRoot, dir), entry),
+  );
+}
 
 describe("workspace packages", () => {
   it("exist", () => {
@@ -66,6 +83,21 @@ describe("workspace packages", () => {
     }
   });
 
+  // The setup file gives every test file a home of its own, so a test that
+  // stubs nothing still cannot reach the real ~/.tasma tree. A config added
+  // later without the entry opts itself out in silence. The config is loaded
+  // rather than read: its text carries a commented-out entry just as well.
+  it("register the home setup file", async () => {
+    for (const dir of packageDirs) {
+      const config = await loadConfig(dir);
+
+      expect(
+        setupFiles(config, dir),
+        `${dir}/vitest.config.ts must register test/setup/home.ts`,
+      ).toContain(homeSetupFile);
+    }
+  });
+
   it("declare a buildable bin, or none", () => {
     for (const dir of packageDirs) {
       expect(binDeclarationFaults(readManifest(dir)), `${dir}/package.json`).toEqual([]);
@@ -76,6 +108,31 @@ describe("workspace packages", () => {
     for (const dir of packageDirs) {
       expect(unlinkedInternalDependencies(readManifest(dir)), `${dir}/package.json`).toEqual([]);
     }
+  });
+});
+
+// Every root project is either a workspace package, whose own config the guard
+// above reads, or an object stated here. A project in any other shape — a path
+// string outside the workspace, a promise — is inspected by neither, so it
+// fails rather than passing unread.
+describe("the root config's projects", () => {
+  it("are a workspace package or an inline project that registers the home setup file", () => {
+    const projects = rootConfig.test?.projects ?? [];
+
+    expect(projects.length).toBeGreaterThan(0);
+    projects.forEach((project, index) => {
+      const named = `project #${index} of the root config`;
+
+      if (typeof project === "string") {
+        expect(packageDirs, `${named} must be a workspace package`).toContain(project);
+        return;
+      }
+
+      expect(project instanceof Promise, `${named} must be inspectable, not a promise`).toBe(false);
+      expect(setupFiles(project as ViteUserConfig, "."), `${named} must register test/setup/home.ts`).toContain(
+        homeSetupFile,
+      );
+    });
   });
 });
 
