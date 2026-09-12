@@ -69,6 +69,26 @@ The body of comment 2, which the default view leaves out.
 
 const TASK_FILE = `${TASK_HEAD}${COLLAPSED_MARKER}${COLLAPSED_BODY}`;
 
+/**
+ * The workflow the read steps below run against, written by this test for the
+ * reason the task file is. Its paths are relative, so what the CLI prints proves
+ * that the engine resolved them against the directory the file stands in.
+ */
+const WORKFLOW_FILE = `title: Engineering task flow
+instructions:
+  - rules.md
+steps:
+  - name: dev:implement
+    file: steps/implement.md
+    owner: agent
+  - name: user:review
+    file: steps/review.md
+    owner: human
+`;
+
+/** The files that workflow points at, under the names it states. */
+const WORKFLOW_DOCUMENTS = ["rules.md", join("steps", "implement.md"), join("steps", "review.md")];
+
 /** The body the write steps create their task with, and the one an append adds to. */
 const SECOND_BODY = "The body of the second task.\n";
 
@@ -146,6 +166,11 @@ function tasksDirIn(home: string): string {
 /** Where one of them stands, which a store note quotes as its location. */
 function taskPathIn(home: string, id: string): string {
   return join(tasksDirIn(home), `${id}.md`);
+}
+
+/** Where the tree of a home holds the workflow of one name, which every path it states resolves against. */
+function workflowDirIn(home: string, name: string): string {
+  return join(home, ".tasma", "workflows", name);
 }
 
 /** What the tree's record states, or nothing where it holds none. */
@@ -291,6 +316,17 @@ describe("the built executables", () => {
 
       mkdirSync(tasks, { recursive: true });
       writeFileSync(join(tasks, "TASM-1.md"), TASK_FILE);
+
+      // A workflow is a directory holding a workflow.yml, so planting one is
+      // writing that file and the documents it names.
+      const dir = workflowDirIn(home, "dev");
+
+      mkdirSync(join(dir, "steps"), { recursive: true });
+      writeFileSync(join(dir, "workflow.yml"), WORKFLOW_FILE);
+
+      for (const document of WORKFLOW_DOCUMENTS) {
+        writeFileSync(join(dir, document), `The rules of ${document}.\n`);
+      }
     });
 
     afterAll(() => {
@@ -381,6 +417,39 @@ describe("the built executables", () => {
       expect(stderr).toBe("");
       expect(code).toBe(0);
       expect(stdout).toBe(`${COLLAPSED_MARKER}${COLLAPSED_BODY}`);
+    });
+
+    it("names the workflows of the tree", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["workflow", "list"], { env: treeEnv(home) });
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe("dev\n");
+    });
+
+    it("prints one workflow, its documents and its steps", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["workflow", "show", "dev"], { env: treeEnv(home) });
+      const dir = workflowDirIn(home, "dev");
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe(
+        "dev  Engineering task flow\n\n"
+        + `instructions  ${join(dir, "rules.md")}\n\n`
+        + `dev:implement  agent  ${join(dir, "steps", "implement.md")}\n`
+        + `user:review    human  ${join(dir, "steps", "review.md")}\n`,
+      );
+    });
+
+    it("refuses a name the tree holds no workflow under", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["workflow", "show", "nope"], { env: treeEnv(home) });
+
+      expect(code).toBe(1);
+      expect(stdout).toBe("");
+      expect(stderr).toBe(
+        `tasma: store/workflow-unknown: ${workflowDirIn(home, "nope")}: `
+        + 'there is no directory for the workflow "nope"\n',
+      );
     });
 
     // The writes, as one sequence: each step acts on what the step before it
