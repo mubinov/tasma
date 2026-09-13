@@ -416,18 +416,20 @@ class ProjectStore implements Project {
     const config = await resolveConfig(this.paths, diagnostics);
     const { body, ...fields } = input;
     const stamp = now();
+    const workflow = fields.workflow ?? config.workflows[0];
     const frontmatter: Record<string, unknown> = {
       ...fields,
       status: fields.status ?? config.default_status,
+      ...(workflow === undefined ? {} : { workflow }),
       created: stamp,
       updated: stamp,
       next_comment_id: 1,
     };
     checkRequired(frontmatter, TASK_REQUIRED, "a new task", this.paths.tasks);
-    // A create writes `status` whether the caller stated it or the default did.
-    const keys = new Set([...Object.keys(fields), "status"]);
-    // Nothing is stored yet, so a `step` with no `workflow` in the same call
-    // finds no effective workflow and is refused. A migration writes both.
+    // A create writes `status`, and `workflow` where the project declares one,
+    // whether the caller stated it or the default did, so the checks validate a
+    // default as a stated value.
+    const keys = new Set([...Object.keys(fields), "status", ...(workflow === undefined ? [] : ["workflow"])]);
     const written = await validateFieldsInto({
       workflows: openConfiguredWorkflows(this.paths.root, config),
       config,

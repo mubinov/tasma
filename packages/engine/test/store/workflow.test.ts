@@ -138,14 +138,6 @@ describe("a write that states a step", () => {
     expect(error.path).toBe(taskFile(root, "TASM-1"));
   });
 
-  it("refuses one on create when the same call states no workflow", async () => {
-    const root = await declaredTree();
-
-    expect((await storeError(project(root).createTask({ title: "First", step: "research" }))).code).toBe(
-      "step-unknown",
-    );
-  });
-
   it("refuses one when the change clears the workflow in the same call", async () => {
     const root = await declaredTree();
     await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
@@ -195,6 +187,101 @@ describe("a write that states a step", () => {
 
     expect(diagnostics).toEqual([]);
     expect((await project(root).readTask("TASM-1")).task.frontmatter.step).toBeUndefined();
+  });
+});
+
+describe("a create that states no workflow", () => {
+  /** A project declaring `dev` then `design`, whose workflows declare `research` and `brief`. */
+  async function twoWorkflows(): Promise<string> {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "workflows: [dev, design]\n");
+    await plantWorkflow(root, "dev", stepsOnly("research"));
+    await plantWorkflow(root, "design", stepsOnly("brief"));
+    return root;
+  }
+
+  it("writes the first workflow the project declares", async () => {
+    const root = await twoWorkflows();
+
+    const { diagnostics } = await project(root).createTask({ title: "First" });
+
+    expect(diagnostics).toEqual([]);
+    expect((await project(root).readTask("TASM-1")).task.frontmatter.workflow).toBe("dev");
+  });
+
+  it("leaves a workflow the create states in place of the first", async () => {
+    const root = await twoWorkflows();
+
+    await project(root).createTask({ title: "First", workflow: "design" });
+
+    expect((await project(root).readTask("TASM-1")).task.frontmatter.workflow).toBe("design");
+  });
+
+  const noWorkflow: [string, string | undefined][] = [
+    ["no workflows key", undefined],
+    ["an empty workflows list", "workflows: []\n"],
+  ];
+
+  it.each(noWorkflow)("writes no workflow in a project with %s", async (_name, config) => {
+    const root = await tempRoot();
+    if (config !== undefined) await plant(projectConfig(root), config);
+
+    await project(root).createTask({ title: "First" });
+
+    expect((await project(root).readTask("TASM-1")).task.frontmatter.workflow).toBeUndefined();
+  });
+
+  it.each(noWorkflow)("refuses a step in a project with %s", async (_name, config) => {
+    const root = await tempRoot();
+    if (config !== undefined) await plant(projectConfig(root), config);
+
+    expect((await storeError(project(root).createTask({ title: "First", step: "research" }))).code).toBe(
+      "step-unknown",
+    );
+    expect((await project(root).listTaskIds()).ids).toEqual([]);
+  });
+
+  it("accepts a step the first workflow declares, and writes both", async () => {
+    const root = await declaredTree();
+
+    await project(root).createTask({ title: "First", step: "research" });
+
+    const { frontmatter } = (await project(root).readTask("TASM-1")).task;
+    expect(frontmatter.workflow).toBe("dev");
+    expect(frontmatter.step).toBe("research");
+  });
+
+  it("refuses a step only a later workflow declares, naming the file of the first", async () => {
+    const root = await twoWorkflows();
+
+    const error = await storeError(project(root).createTask({ title: "First", step: "brief" }));
+
+    expect(error.code).toBe("step-unknown");
+    expect(error.path).toBe(workflowFile(root, "dev"));
+    expect((await project(root).listTaskIds()).ids).toEqual([]);
+  });
+
+  it("is refused when the first workflow has no directory", async () => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "workflows: [dev]\n");
+
+    const error = await storeError(project(root).createTask({ title: "First" }));
+
+    expect(error.code).toBe("workflow-unknown");
+    expect(error.path).toBe(workflowDir(root, "dev"));
+    expect((await project(root).listTaskIds()).ids).toEqual([]);
+  });
+
+  it("is refused when the file of the first workflow does not load", async () => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "workflows: [dev]\n");
+    await plantWorkflow(root, "dev", "steps: []\n");
+
+    const error = await storeError(project(root).createTask({ title: "First" }));
+
+    expect(error.code).toBe("workflow-invalid");
+    expect(error.path).toBe(workflowFile(root, "dev"));
+    expect((await project(root).listTaskIds()).ids).toEqual([]);
   });
 });
 

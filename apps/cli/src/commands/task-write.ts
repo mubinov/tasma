@@ -82,7 +82,7 @@ const CREATE_HELP = [
   "      --parent <id>       The task this one sits under",
   "      --blocked-by <id>   A task that blocks this one; repeat it for every blocker",
   "      --step <s>          The workflow step",
-  "      --workflow <w>      The workflow",
+  "      --workflow <w>      The workflow; the project's first otherwise",
   "      --order <n>         The position inside the status, an integer; negative as --order=-1",
   ...BODY_HELP,
   "  -h, --help              Print this help",

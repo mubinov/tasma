@@ -101,7 +101,8 @@ Create a task. Prints the new task id.
 
 - `-p, --project <tag>`: the project. See **Project** in Shared rules.
 - `--status <s>`: the status. The default is the `default_status` of the project.
-- `--priority <p>`, `--step <s>`, `--workflow <w>`: the value of the field.
+- `--workflow <w>`: the workflow. The default is the first entry of the `workflows` list of the project.
+- `--priority <p>`, `--step <s>`: the value of the field.
 - `--parent <id>`: the task this task is under.
 - `--label <l>`, `--blocked-by <id>`: one label or one blocker. Repeat the flag for each value.
 - `--order <n>`: an integer, the position in the status.

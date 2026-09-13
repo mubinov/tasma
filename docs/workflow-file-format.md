@@ -275,6 +275,9 @@ instructions:
   - house-rules.md
 ```
 
+**The first entry is the workflow of a new task that names none.** A project with
+an empty or absent `workflows` list creates tasks with no workflow.
+
 **An empty list is valid and means what an absent key means.** `workflows: []` is
 a project that runs no workflow, which is what every project looks like before
 one is selected. This is unlike `statuses` and `priorities`, where an empty list
@@ -303,6 +306,8 @@ what does not fit.
 | `workflow` the project declares but whose directory is missing | refused |
 | `workflow` of a form the name rule rejects | refused |
 | `workflow` whose directory is present but whose file does not load | refused |
+| no `workflow`, on a create | the first workflow the project declares is written, and checked as a stated one |
+| no `workflow`, on a create in a project that declares no workflow | no workflow is written |
 | `step` the effective workflow declares | accepted |
 | `step` the effective workflow does not declare | refused |
 | `step` when no workflow is in effect | refused |
@@ -314,8 +319,9 @@ A write usually states `step` alone, so `step` is checked against the stored
 `workflow` as well as against a stated one.
 
 **A task with no workflow may not carry a step.** No workflow means an empty set
-of steps, so every step value is invalid. On a create nothing is stored yet, so a
-`step` with no `workflow` in the same call is refused.
+of steps, so every step value is invalid. On a create that states no `workflow`,
+the effective workflow is the first one the project declares, so a `step` finds no
+workflow only when the project declares none.
 
 **A mismatch that already exists in a file is always reported, never refused.**
 Only the value being written is refused. Removing a step from a workflow leaves
