@@ -116,6 +116,24 @@ it("opens a project's page from its row", async () => {
   expect(paths.at(-1)).toBe("/projects/TASM");
 });
 
+it("shows the daemon's warnings about the projects under the heading", async () => {
+  const { transport } = stubTransport({
+    "/projects": successReply(PROJECTS, [{ code: "path-missing", message: "the repository is not on disk", path: "/repos/clib" }]),
+  });
+  await renderWithRouter("/projects", transport);
+
+  const line = within(screen.getByRole("main")).getByRole("heading", { level: 2 });
+
+  expect(line.textContent).toBe("1 warning about the projects");
+  expect(screen.getByRole("heading", { level: 1 }).nextElementSibling).toBe(line.parentElement!.parentElement);
+});
+
+it("shows no warnings line where the daemon reported nothing", async () => {
+  await renderWithRouter("/projects", listing());
+
+  expect(within(screen.getByRole("main")).queryByRole("heading", { level: 2 })).toBeNull();
+});
+
 // No loader catches anything, so a refused list reaches the router's failure
 // surface with the daemon's own words.
 it("hands a refusal to the failure panel", async () => {

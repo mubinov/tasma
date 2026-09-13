@@ -1,5 +1,6 @@
 import type { Diagnostic } from "@tasma/protocol";
 import { act, cleanup, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { daemonKeys } from "../../src/api/queries";
 import { refusalReply, renderWithRouter, stubTransport, successReply } from "../helpers";
@@ -15,7 +16,7 @@ const CONFIG = {
 
 const PROJECT = { tag: "DOBBY", name: "Dobby", path: "/repos/dobby", live: true, config: CONFIG };
 
-const FINDING: Diagnostic = { code: "path-missing", message: "the repository is not on disk", path: "/repos/dobby" };
+const WARNING: Diagnostic = { code: "path-missing", message: "the repository is not on disk", path: "/repos/dobby" };
 
 /** Mounts the page over one project answer, with the fields a test cares about changed. */
 async function renderProject(overrides: Record<string, unknown>, tag = "DOBBY") {
@@ -172,7 +173,8 @@ it("shows the notice only when the index stopped following the disk", async () =
   expect(screen.queryByRole("note")).toBeNull();
 });
 
-it("shows the daemon's findings about the project", async () => {
+it("shows the daemon's warnings about the project", async () => {
+  const user = userEvent.setup();
   const { transport } = stubTransport({
     "/projects/DOBBY": successReply(PROJECT, [
       { code: "path-missing", message: "the repository is not on disk", path: "/repos/dobby" },
@@ -181,7 +183,24 @@ it("shows the daemon's findings about the project", async () => {
   });
   await renderWithRouter("/projects/DOBBY", transport);
 
-  expect(within(screen.getByRole("list", { name: "Diagnostics" })).getAllByRole("listitem")).toHaveLength(2);
+  const line = within(screen.getByRole("main")).getByRole("heading", { level: 2, name: /warnings/ });
+  expect(line.textContent).toBe("2 warnings about this project");
+
+  await user.click(screen.getByRole("button", { name: "Show 2 warnings about this project" }));
+
+  expect(within(screen.getByRole("list", { name: "2 warnings about this project" })).getAllByRole("listitem")).toHaveLength(2);
+});
+
+it.each([
+  { place: "under the notice", live: false, margin: "mt-3" },
+  { place: "with no notice", live: true, margin: "mt-7" },
+])("spaces the warnings line $place", async ({ live, margin }) => {
+  const { transport } = stubTransport({ "/projects/DOBBY": successReply({ ...PROJECT, live }, [WARNING]) });
+  await renderWithRouter("/projects/DOBBY", transport);
+
+  const line = screen.getByRole("heading", { level: 2, name: /warning/ }).parentElement!;
+
+  expect(line.parentElement!.className).toBe(margin);
 });
 
 /*
@@ -190,27 +209,27 @@ it("shows the daemon's findings about the project", async () => {
  * put, and an announcement is lost as soon as anything interrupts it.
  */
 it.each([
-  { state: "an answer with nothing to report", live: true, findings: [], said: "" },
-  { state: "an index that stopped following the disk", live: false, findings: [], said: "The index is not following the disk." },
-  { state: "one finding", live: true, findings: [FINDING], said: "1 finding about this project." },
+  { state: "an answer with nothing to report", live: true, warnings: [], said: "" },
+  { state: "an index that stopped following the disk", live: false, warnings: [], said: "The index is not following the disk." },
+  { state: "one warning", live: true, warnings: [WARNING], said: "1 warning about this project." },
   {
     state: "both, in one sentence each",
     live: false,
-    findings: [FINDING, FINDING],
-    said: "The index is not following the disk. 2 findings about this project.",
+    warnings: [WARNING, WARNING],
+    said: "The index is not following the disk. 2 warnings about this project.",
   },
-])("announces $state", async ({ live, findings, said }) => {
-  const { transport } = stubTransport({ "/projects/DOBBY": successReply({ ...PROJECT, live }, findings) });
+])("announces $state", async ({ live, warnings, said }) => {
+  const { transport } = stubTransport({ "/projects/DOBBY": successReply({ ...PROJECT, live }, warnings) });
 
   await renderWithRouter("/projects/DOBBY", transport);
 
   expect(screen.getByRole("status").textContent).toBe(said);
 });
 
-it("shows no diagnostics label where the daemon reported nothing", async () => {
+it("shows no warnings line where the daemon reported nothing", async () => {
   await renderProject({});
 
-  expect(screen.queryByRole("list", { name: "Diagnostics" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Show/ })).toBeNull();
 });
 
 /*

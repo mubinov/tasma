@@ -48,7 +48,7 @@ export function ProjectsScreen(): ReactNode {
   return (
     <>
       <ScreenHeading id={headingId}>{title}</ScreenHeading>
-      <Diagnostics items={diagnostics} />
+      <Diagnostics items={diagnostics} subject="the projects" className="mt-4" />
       {projects.length === 0
         ? (
             <p className="mt-2 text-base text-muted">

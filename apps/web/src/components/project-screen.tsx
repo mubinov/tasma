@@ -4,8 +4,10 @@ import type { Config } from "@tasma/protocol";
 import type { ReactNode } from "react";
 import { projectQuery } from "../api/queries";
 import { useDocumentTitle } from "../lib/document-title";
-import { ArrowLeftIcon, WarningIcon } from "../lib/icons";
+import { ArrowLeftIcon } from "../lib/icons";
+import { warningCount } from "../lib/warning-count";
 import { Diagnostics } from "./diagnostics";
+import { LiveNotice } from "./live-notice";
 import { ScreenHeading } from "./screen-heading";
 import { SectionHeading } from "./section-heading";
 import { Tag } from "./tag";
@@ -107,42 +109,21 @@ function InstructionLines({ paths }: { paths: readonly string[] }): ReactNode {
 
 /**
  * What the live region says. It is a summary of the two things a refetch can
- * turn up, not the notice and the findings themselves: an announcement that
+ * turn up, not the notice and the warnings themselves: an announcement that
  * something interrupts is lost, and the rows carry a code, a message and a
  * location each.
  */
-function stateSummary(live: boolean, findings: number): string {
+function stateSummary(live: boolean, warnings: number): string {
   const said: string[] = [];
 
   if (!live) {
     said.push("The index is not following the disk.");
   }
-  if (findings > 0) {
-    said.push(`${String(findings)} ${findings === 1 ? "finding" : "findings"} about this project.`);
+  if (warnings > 0) {
+    said.push(`${warningCount(warnings)} about this project.`);
   }
 
   return said.join(" ");
-}
-
-/**
- * `live` is false only where a repair was attempted on this very request and did
- * not work, so the notice says the index stopped following the disk rather than
- * that anything is broken. A lost disk needs a human, which is what `signal`
- * marks.
- */
-function LiveNotice(): ReactNode {
-  return (
-    <div role="note" className="mt-7 flex gap-3 rounded-card border border-line bg-surface px-4 py-3">
-      <WarningIcon size={20} aria-hidden="true" className="mt-px shrink-0 text-signal" />
-      <div>
-        <p className="font-chrome text-base font-medium text-signal">The index is not following the disk</p>
-        <p className="mt-0.5 text-sm text-muted">
-          The daemon could not repair the index of this project on this request. What it reports about this project
-          can be older than the files on disk. Reload to try again.
-        </p>
-      </div>
-    </div>
-  );
 }
 
 export function ProjectScreen(): ReactNode {
@@ -170,14 +151,14 @@ export function ProjectScreen(): ReactNode {
 
       {/*
        * The region stands whether or not it says anything: a refetch on window
-       * focus can turn the notice or a finding up while the page stays put, and
+       * focus can turn the notice or a warning up while the page stays put, and
        * a live region inserted together with its content announces nothing.
        */}
       <div role="status" className="sr-only">
         {stateSummary(live, diagnostics.length)}
       </div>
-      {!live && <LiveNotice />}
-      <Diagnostics items={diagnostics} />
+      {!live && <LiveNotice className="mt-7" />}
+      <Diagnostics key={tag} items={diagnostics} subject="this project" className={live ? "mt-7" : "mt-3"} />
 
       {/* The list carries no name of its own: a `dl` is exposed as a generic
           element, and ARIA prohibits naming one. The heading says what it is. */}
