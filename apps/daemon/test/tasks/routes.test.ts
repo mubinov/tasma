@@ -1,8 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import type { IndexedProject, TaskChange } from "@tasma/engine";
+import { routes } from "@tasma/protocol";
 import type { TaskList, TaskText, WriteResult } from "@tasma/protocol";
+import type { HandlerRequest } from "../../src/http/router.js";
+import { createProjectHost } from "../../src/projects/host.js";
+import type { ProjectHost } from "../../src/projects/host.js";
 import { taskRoutes } from "../../src/tasks/routes.js";
+import { WriteQueue } from "../../src/tasks/serialize.js";
 import {
   plant,
   plantSteps,
@@ -10,11 +16,13 @@ import {
   projectsRoot,
   send,
   serving,
+  startTestServer,
   success,
   taskFile,
   tasksDir,
   taskText,
   taskWithComments,
+  until,
 } from "../helpers.js";
 import type { TestServer } from "../helpers.js";
 
@@ -369,6 +377,38 @@ describe("the write routes over a task", () => {
     await expect(readFile(taskFile(root, "TASM", "TASM-1"), "utf8")).rejects.toThrow();
   });
 
+  it("takes the deleted id out of a task that named it, which the blocked filter then lists no more", async () => {
+    await plant(taskFile(root, "TASM", "TASM-2"), entryText("TASM-2", "To Do", ["blocked_by: [TASM-1]"]));
+
+    const response = await send(server, "DELETE", "/projects/TASM/tasks/TASM-1");
+
+    expect(response.status).toBe(200);
+    await expect(success<WriteResult>(response)).resolves.toEqual({ data: { id: "TASM-1" }, diagnostics: [] });
+    await expect(readFile(taskFile(root, "TASM", "TASM-2"), "utf8")).resolves.not.toContain("blocked_by");
+    const listed = await send(server, "GET", "/projects/TASM/tasks?blocked=true");
+    await expect(success<TaskList>(listed)).resolves.toMatchObject({ data: { entries: [] } });
+  });
+
+  it.each([
+    ["POST", "/projects/TASM/tasks", { title: "Blocked" }],
+    ["PATCH", "/projects/TASM/tasks/TASM-1", {}],
+  ])("takes the turn of a listed blocker alone, however many unknown ones a %s states", async (method, path, fields) => {
+    await plant(taskFile(root, "TASM", "TASM-2"), entryText("TASM-2", "To Do", []));
+    const turns = vi.spyOn(WriteQueue.prototype, "run");
+    onTestFinished(() => turns.mockRestore());
+    const unknown = Array.from({ length: 10_000 }, (_, n) => `TASM-${n + 100}`);
+
+    const response = await send(server, method, path, { ...fields, blocked_by: [...unknown, "TASM-2"] });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "store", code: "blocked-by-unknown" },
+    });
+    // The write's own key, and the key of TASM-2.
+    expect(turns).toHaveBeenCalledTimes(2);
+  });
+
   it("forwards a store refusal of a task the delete finds no file for", async () => {
     const response = await send(server, "DELETE", "/projects/TASM/tasks/TASM-9");
 
@@ -508,6 +548,102 @@ describe("two writes to one project that arrive at once", () => {
     const text = await readFile(taskFile(root, "TASM", "TASM-1"), "utf8");
     expect(text).toContain("title: Renamed");
     expect(text).toContain("status: Done");
+  });
+
+  /**
+   * A server whose create and update are held until a delete has entered its
+   * handler, so the order in `reached` is the queue's decision rather than the
+   * order the socket delivered.
+   */
+  async function heldServer(): Promise<{ held: TestServer; reached: string[] }> {
+    const inner = createProjectHost({ root });
+    onTestFinished(() => inner.close());
+
+    const reached: string[] = [];
+    let queued!: () => void;
+    const behind = new Promise<void>((resolve) => {
+      queued = resolve;
+    });
+    async function heldWrite(name: string, write: () => Promise<WriteResult>): Promise<WriteResult> {
+      reached.push(name);
+      await behind;
+      const result = await write();
+      reached.push(`${name} done`);
+      return result;
+    }
+    const host: ProjectHost = {
+      ...inner,
+      async open(tag) {
+        const opened = await inner.open(tag);
+        // The routes under test call these five alone.
+        const index = {
+          query: () => opened.index.query(),
+          referencesTo: (id: string) => opened.index.referencesTo(id),
+          createTask: (change: TaskChange) => heldWrite("create", () => opened.index.createTask(change)),
+          updateTask: (id: string, change: TaskChange) =>
+            heldWrite("patch", () => opened.index.updateTask(id, change)),
+          async deleteTask(id: string) {
+            reached.push("delete");
+            return opened.index.deleteTask(id);
+          },
+        } as Partial<IndexedProject> as IndexedProject;
+        return { ...opened, index };
+      },
+    };
+    const entries = taskRoutes(host).map((entry) => {
+      if (entry.route !== routes.deleteTask) return entry;
+      return {
+        ...entry,
+        handler: (request: HandlerRequest) => {
+          queued();
+          return entry.handler(request);
+        },
+      };
+    });
+    return { held: await startTestServer(entries), reached };
+  }
+
+  it("runs a delete after the patch of a task it takes a reference out of, and keeps both changes", async () => {
+    await plant(taskFile(root, "TASM", "TASM-2"), entryText("TASM-2", "To Do", ["blocked_by: [TASM-1]"]));
+    const { held, reached } = await heldServer();
+
+    const patching = send(held, "PATCH", "/projects/TASM/tasks/TASM-2", { title: "Renamed" });
+    await until(() => reached.includes("patch"), "the patch took its turn");
+    const deleted = await send(held, "DELETE", "/projects/TASM/tasks/TASM-1");
+
+    expect((await patching).status).toBe(200);
+    expect(deleted.status).toBe(200);
+    expect(reached).toEqual(["patch", "patch done", "delete"]);
+    const text = await readFile(taskFile(root, "TASM", "TASM-2"), "utf8");
+    expect(text).toContain("title: Renamed");
+    expect(text).not.toContain("blocked_by");
+  });
+
+  it("runs a delete after a patch that states the deleted task as a blocker, and takes the blocker out", async () => {
+    await plant(taskFile(root, "TASM", "TASM-2"), entryText("TASM-2", "To Do", []));
+    const { held, reached } = await heldServer();
+
+    const patching = send(held, "PATCH", "/projects/TASM/tasks/TASM-2", { blocked_by: ["TASM-1"] });
+    await until(() => reached.includes("patch"), "the patch took its turn");
+    const deleted = await send(held, "DELETE", "/projects/TASM/tasks/TASM-1");
+
+    expect((await patching).status).toBe(200);
+    expect(deleted.status).toBe(200);
+    expect(reached).toEqual(["patch", "patch done", "delete"]);
+    await expect(readFile(taskFile(root, "TASM", "TASM-2"), "utf8")).resolves.not.toContain("blocked_by");
+  });
+
+  it("runs a delete after a create that states the deleted task as a blocker, and takes the blocker out", async () => {
+    const { held, reached } = await heldServer();
+
+    const creating = send(held, "POST", "/projects/TASM/tasks", { title: "Blocked", blocked_by: ["TASM-1"] });
+    await until(() => reached.includes("create"), "the create took its turn");
+    const deleted = await send(held, "DELETE", "/projects/TASM/tasks/TASM-1");
+
+    const created = await success<WriteResult>(await creating);
+    expect(deleted.status).toBe(200);
+    expect(reached).toEqual(["create", "create done", "delete"]);
+    await expect(readFile(taskFile(root, "TASM", created.data.id), "utf8")).resolves.not.toContain("blocked_by");
   });
 
   it("gives each of eight creates its own id and its own file", async () => {

@@ -240,8 +240,8 @@ export type FieldSpec = {
   writeCheck?: WriteCheck;
   /**
    * That the field holds task ids, and whether it holds one or a list of them.
-   * A rename of a project relabels every such field, so a field added here
-   * without the mark is one a rename would leave naming the old project.
+   * Every rule that reads or rewrites the task ids of a file finds the fields by
+   * this mark, so none of those rules processes a field added without it.
    */
   ids?: "one" | "list";
 };
@@ -281,3 +281,8 @@ export const COMMENT: Record<keyof CommentFields, FieldSpec> = {
   collapsed: { check: BOOLEAN, required: false },
   custom: { check: MAPPING, required: false },
 };
+
+/** The frontmatter fields with the `ids` mark, and whether each holds a list. */
+export const ID_FIELDS: readonly { key: string; many: boolean }[] = Object.entries(FRONTMATTER)
+  .filter(([, spec]) => spec.ids !== undefined)
+  .map(([key, spec]) => ({ key, many: spec.ids === "list" }));

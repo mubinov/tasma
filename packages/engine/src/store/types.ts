@@ -38,6 +38,7 @@ export type StoreDiagnosticCode
     // What the index raises and no store call does.
     | "blocked-by-unresolved"
     | "task-file-misnamed"
+    | "reference-not-removed"
     | IndexLivenessLost;
 
 /**

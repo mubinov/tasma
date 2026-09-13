@@ -15,7 +15,7 @@ import type { ProjectHost } from "../projects/host.js";
 import { commentRoutes } from "./comments.js";
 import { assertNoQuery, readTaskFilter, readTaskOptions, readTextSelection, selectEntries } from "./filter.js";
 import { toChange } from "./input.js";
-import { createKey, taskKey, WriteQueue } from "./serialize.js";
+import { blockerKeys, createKey, taskKey, WriteQueue } from "./serialize.js";
 
 /**
  * The task routes, against the entries the contract declares. Whoever owns the
@@ -64,7 +64,8 @@ export function taskRoutes(host: ProjectHost): RouteEntry[] {
         const change = toChange(request.body);
         const { index } = await host.open(project);
         const write = () => index.createTask(change);
-        const { diagnostics, ...data } = await writes.run(createKey(project), write);
+        const keys = [createKey(project), ...blockerKeys(project, change, () => index.query().entries)];
+        const { diagnostics, ...data } = await writes.runAll(keys, write);
         return { data, diagnostics };
       },
     },
@@ -104,7 +105,8 @@ export function taskRoutes(host: ProjectHost): RouteEntry[] {
         const id = request.params.id!;
         const change = toChange(request.body);
         const { index } = await host.open(project);
-        const { diagnostics, ...data } = await writes.run(taskKey(project, id), () => index.updateTask(id, change));
+        const keys = [taskKey(project, id), ...blockerKeys(project, change, () => index.query().entries)];
+        const { diagnostics, ...data } = await writes.runAll(keys, () => index.updateTask(id, change));
         return { data, diagnostics };
       },
     },
@@ -115,7 +117,10 @@ export function taskRoutes(host: ProjectHost): RouteEntry[] {
         const project = request.params.project!;
         const id = request.params.id!;
         const { index } = await host.open(project);
-        const { diagnostics, ...data } = await writes.run(taskKey(project, id), () => index.deleteTask(id));
+        // The delete rewrites every task that names the deleted one, so it takes
+        // the turn of each of them too.
+        const keys = [id, ...index.referencesTo(id)].map((ref) => taskKey(project, ref));
+        const { diagnostics, ...data } = await writes.runAll(keys, () => index.deleteTask(id));
         return { data, diagnostics };
       },
     },

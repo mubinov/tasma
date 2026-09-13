@@ -20,6 +20,7 @@ import { resolveConfig, resolveWorkflowsPath } from "./config.js";
 import { errnoOf, fail } from "./errors.js";
 import { issueCommentId, issueTaskId, rebuildNextTaskId, writeState } from "./ids.js";
 import { type ProjectPaths, projectPaths, scanTasks, taskPath } from "./paths.js";
+import { withoutTask } from "./references.js";
 import type {
   CommentChange,
   ConfigResult,
@@ -283,6 +284,12 @@ export type Project = {
   createTask(input: TaskChange): Promise<WriteResult>;
   updateTask(id: string, change: TaskChange): Promise<WriteResult>;
   deleteTask(id: string): Promise<WriteResult>;
+  /**
+   * Removes every mention of task `removed` from the fields of task `id` that
+   * hold task ids, and writes nothing when none names it. The ids left in place
+   * are not checked, so a blocker that names no task stays.
+   */
+  removeReference(id: string, removed: string): Promise<WriteResult>;
   addComment(id: string, input: CommentChange): Promise<WriteResult>;
   updateComment(id: string, commentId: number, change: CommentChange): Promise<WriteResult>;
   deleteComment(id: string, commentId: number): Promise<WriteResult>;
@@ -500,6 +507,17 @@ class ProjectStore implements Project {
       throw error;
     }
     return { id, diagnostics: [] };
+  }
+
+  async removeReference(id: string, removed: string): Promise<WriteResult> {
+    await openProjectDirectory(this.paths);
+    const { path, task, diagnostics } = await this.#open(id);
+    const frontmatter = withoutTask(task.frontmatter, removed);
+    if (frontmatter === undefined) return { id, diagnostics };
+
+    frontmatter.updated = now();
+    await this.#rewrite(path, { ...task, frontmatter: frontmatter as Frontmatter });
+    return { id, diagnostics };
   }
 
   async addComment(id: string, input: CommentChange): Promise<WriteResult> {

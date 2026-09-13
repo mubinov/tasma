@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createKey, taskKey, WriteQueue } from "../../src/tasks/serialize.js";
+import { blockerKeys, createKey, taskKey, WriteQueue } from "../../src/tasks/serialize.js";
 
 /** A promise a test resolves itself, so no assertion waits on a timer. */
 function held(): { promise: Promise<void>; release: () => void } {
@@ -135,5 +135,27 @@ describe("the keys the queue is driven by", () => {
     expect(taskKey("TASM", "TASM-1")).not.toBe(taskKey("OTHER", "TASM-1"));
     expect(createKey("TASM")).not.toBe(taskKey("TASM", "TASM-1"));
     expect(createKey("TASM")).not.toBe(createKey("OTHER"));
+  });
+
+  const listed = () => [{ id: "TASM-1" }, { id: "TASM-2" }, { id: "TASM-3" }];
+
+  it("keys each listed task a write states as a blocker, once", () => {
+    expect(blockerKeys("TASM", { blocked_by: ["TASM-2", "TASM-1", "TASM-2"] }, listed)).toEqual([
+      taskKey("TASM", "TASM-1"),
+      taskKey("TASM", "TASM-2"),
+    ]);
+  });
+
+  it("keys no blocker the index does not list, however many a write states", () => {
+    const unknown = Array.from({ length: 10_000 }, (_, n) => `TASM-${n + 100}`);
+    expect(blockerKeys("TASM", { blocked_by: [...unknown, "TASM-3"] }, listed)).toEqual([taskKey("TASM", "TASM-3")]);
+  });
+
+  it("keys no task for a value that is not a list of strings, and reads no listing for it", () => {
+    const unread = () => expect.unreachable("the listing is read");
+    expect(blockerKeys("TASM", { blocked_by: ["TASM-1", 7] }, unread)).toEqual([]);
+    expect(blockerKeys("TASM", { blocked_by: "TASM-1" }, unread)).toEqual([]);
+    expect(blockerKeys("TASM", { blocked_by: null }, unread)).toEqual([]);
+    expect(blockerKeys("TASM", {}, unread)).toEqual([]);
   });
 });

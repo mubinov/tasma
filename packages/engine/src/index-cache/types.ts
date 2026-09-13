@@ -76,9 +76,19 @@ export type QueryResult = {
  * made through it updates the index before the call returns and the next query
  * sees it; a caller that keeps the bare `Project` takes the path the watcher
  * covers instead.
+ *
+ * A `deleteTask` made through it also removes the deleted id from every task
+ * `referencesTo` lists, and reports a task it could not rewrite as a
+ * `reference-not-removed` diagnostic rather than failing the delete.
  */
 export type IndexedProject = Project & {
   query(): QueryResult;
+  /**
+   * The ids of the tasks that name `id` in a field that holds task ids, in the
+   * order `query()` answers with, and never `id` itself. It reads memory alone,
+   * so a hand edit the watcher has not reported yet is not in it.
+   */
+  referencesTo(id: string): string[];
   /**
    * Whether the index still follows the disk, as the last read of it left the
    * project: false while a loss the index reported stands.

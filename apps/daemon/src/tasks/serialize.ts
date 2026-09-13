@@ -85,6 +85,28 @@ export function taskKey(project: string, id: string): string {
 }
 
 /**
+ * The keys of the tasks a write states as blockers. A write takes their turns
+ * too, so a delete of a blocker cannot run between the check that the blocker
+ * exists and the write that names it.
+ *
+ * Only a task `listed` answers with takes a turn, once, so a body cannot take
+ * more turns than the project has tasks. A value that is not a list of strings
+ * takes none: the engine refuses the whole value.
+ */
+export function blockerKeys(
+  project: string,
+  change: Record<string, unknown>,
+  listed: () => readonly { id: string }[],
+): string[] {
+  const blockers: unknown = change.blocked_by;
+  if (!Array.isArray(blockers) || !blockers.every((blocker) => typeof blocker === "string")) return [];
+  const stated = new Set<string>(blockers);
+  return listed()
+    .filter((entry) => stated.has(entry.id))
+    .map((entry) => taskKey(project, entry.id));
+}
+
+/**
  * The key every create of one project shares. A create writes a file no id yet
  * names and takes its number from the project's one counter: the exclusive
  * create that consumes the counter recovers from a single collision and refuses

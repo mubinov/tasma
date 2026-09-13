@@ -139,6 +139,115 @@ describe("a write made through the index", () => {
   });
 });
 
+describe("the references to one task", () => {
+  /**
+   * `TASM-1` names itself, `TASM-2` names it as its parent, `TASM-10` as a
+   * blocker, and `TASM-3` names another task alone.
+   */
+  async function referenced(root: string): Promise<IndexedProject> {
+    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "blocked_by: [TASM-1]\n"));
+    await plant(taskFile(root, "TASM-2"), taskText("TASM-2", "parent: TASM-1\n"));
+    await plant(taskFile(root, "TASM-3"), taskText("TASM-3", "parent: TASM-2\nblocked_by: [TASM-10]\n"));
+    await plant(taskFile(root, "TASM-10"), taskText("TASM-10", "blocked_by: [TASM-3, TASM-1]\n"));
+    return unwatched(project(root));
+  }
+
+  it("lists the tasks that name the id in blocked_by or parent, in task-number order and never the task itself", async () => {
+    const root = await tempRoot();
+    const indexed = await referenced(root);
+
+    expect(indexed.referencesTo("TASM-1")).toEqual(["TASM-2", "TASM-10"]);
+  });
+
+  it("removes a reference through the store and holds the rewritten task by the time the call returns", async () => {
+    const root = await tempRoot();
+    const indexed = await referenced(root);
+
+    await indexed.removeReference("TASM-10", "TASM-1");
+
+    expect(indexed.query().entries.find((entry) => entry.id === "TASM-10")?.frontmatter.blocked_by).toEqual(["TASM-3"]);
+  });
+
+  it("removes the deleted id from every task that named it", async () => {
+    const root = await tempRoot();
+    const indexed = await referenced(root);
+
+    const result = await indexed.deleteTask("TASM-1");
+
+    expect(result).toEqual({ id: "TASM-1", diagnostics: [] });
+    const entries = indexed.query().entries;
+    expect(entries.map((entry) => entry.id)).toEqual(["TASM-2", "TASM-3", "TASM-10"]);
+    expect(Object.hasOwn(entries[0]!.frontmatter, "parent")).toBe(false);
+    expect(entries[1]?.frontmatter).toMatchObject({ parent: "TASM-2", blocked_by: ["TASM-10"] });
+    expect(entries[2]?.frontmatter.blocked_by).toEqual(["TASM-3"]);
+    expect((await project(root).readTask("TASM-10")).task.frontmatter.blocked_by).toEqual(["TASM-3"]);
+  });
+
+  it("reports a task it could not rewrite, and still rewrites the others", async () => {
+    const root = await tempRoot();
+    const indexed = await referenced(root);
+    await plant(taskFile(root, "TASM-2"), "no frontmatter here\n");
+
+    const result = await indexed.deleteTask("TASM-1");
+
+    expect(result.diagnostics).toEqual([
+      {
+        code: "reference-not-removed",
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- an asymmetric matcher is typed `any`
+        message: expect.stringMatching(/^task TASM-2 still names TASM-1: .+/),
+        path: taskFile(root, "TASM-2"),
+      },
+    ]);
+    expect(ids(indexed)).toEqual(["TASM-3", "TASM-10"]);
+    expect(indexed.query().entries[1]?.frontmatter.blocked_by).toEqual(["TASM-3"]);
+  });
+
+  it("reports nothing for a task whose file a hand edit removed, which names nothing any more", async () => {
+    const root = await tempRoot();
+    const indexed = await referenced(root);
+    await rm(taskFile(root, "TASM-2"));
+
+    const result = await indexed.deleteTask("TASM-1");
+
+    expect(result.diagnostics).toEqual([]);
+    expect(ids(indexed)).toEqual(["TASM-3", "TASM-10"]);
+    expect(indexed.query().entries[1]?.frontmatter.blocked_by).toEqual(["TASM-3"]);
+  });
+
+  it("writes nothing to a task a hand edit already took the reference out of", async () => {
+    const root = await tempRoot();
+    const indexed = await referenced(root);
+    await plant(taskFile(root, "TASM-2"), taskText("TASM-2"));
+
+    const result = await indexed.deleteTask("TASM-1");
+
+    expect(result.diagnostics).toEqual([]);
+    expect(await read(taskFile(root, "TASM-2"))).toBe(taskText("TASM-2"));
+  });
+
+  it("carries the reader notes of a rewritten task in the result of the delete", async () => {
+    const root = await tempRoot();
+    const indexed = await referenced(root);
+    await plant(taskFile(root, "TASM-2"), `${taskText("TASM-2", "parent: TASM-1\n")}\n\`\`\`sh\nnever closed\n`);
+
+    const result = await indexed.deleteTask("TASM-1");
+
+    expect(result.diagnostics.map((diagnostic) => [diagnostic.code, diagnostic.path])).toEqual([
+      ["unterminated-fence", taskFile(root, "TASM-2")],
+    ]);
+  });
+
+  it("rewrites no task when the delete itself is refused", async () => {
+    const root = await tempRoot();
+    const indexed = await referenced(root);
+    await rm(taskFile(root, "TASM-1"));
+
+    expect((await storeError(indexed.deleteTask("TASM-1"))).code).toBe("task-not-found");
+    expect(await read(taskFile(root, "TASM-2"))).toBe(taskText("TASM-2", "parent: TASM-1\n"));
+    expect(await read(taskFile(root, "TASM-10"))).toBe(taskText("TASM-10", "blocked_by: [TASM-3, TASM-1]\n"));
+  });
+});
+
 describe("rescanning behind the index", () => {
   it("takes up a file that appeared", async () => {
     const root = await tempRoot();
@@ -398,6 +507,7 @@ describe("a closed index", () => {
 
     expect(() => indexed.query()).toThrow(TaskStoreError);
     expect(() => indexed.followsDisk()).toThrow(TaskStoreError);
+    expect(() => indexed.referencesTo("TASM-1")).toThrow(TaskStoreError);
     for (const call of [
       indexed.rescan(),
       indexed.readTask("TASM-1"),
@@ -406,6 +516,7 @@ describe("a closed index", () => {
       indexed.createTask({ title: "First" }),
       indexed.updateTask("TASM-1", { title: "x" }),
       indexed.deleteTask("TASM-1"),
+      indexed.removeReference("TASM-1", "TASM-2"),
       indexed.addComment("TASM-1", { title: "One" }),
       indexed.updateComment("TASM-1", 1, { title: "One" }),
       indexed.deleteComment("TASM-1", 1),

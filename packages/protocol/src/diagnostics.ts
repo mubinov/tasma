@@ -30,6 +30,7 @@ export type DiagnosticCode
     | "temp-file-left"
     | "blocked-by-unresolved"
     | "task-file-misnamed"
+    | "reference-not-removed"
     | "tasks-directory-lost"
     | "index-watch-failed";
 

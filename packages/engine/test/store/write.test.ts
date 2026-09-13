@@ -1,6 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { parseTask, type Project } from "@tasma/engine";
+import { type Frontmatter, parseTask, type Project, TaskParseError } from "@tasma/engine";
 import { fixture } from "../format/fixtures.js";
 import { afterFrontmatter } from "../format/tasks.js";
 import { plantWorkflow, stepsOnly } from "../workflow/helpers.js";
@@ -10,6 +10,7 @@ import {
   project,
   projectConfig,
   read,
+  storeError,
   tasksDir,
   taskFile,
   taskText,
@@ -301,6 +302,151 @@ describe("deleteTask", () => {
     await project(root).deleteTask("TASM-1");
 
     await expect(readdir(tasksDir(root))).resolves.toEqual([]);
+  });
+});
+
+describe("removeReference", () => {
+  /** Plants `TASM-1` with further frontmatter lines, removes `TASM-2` from it, and reads its frontmatter back. */
+  async function removed(extra: string): Promise<Frontmatter> {
+    const root = await tempRoot();
+    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", extra));
+    await project(root).removeReference("TASM-1", "TASM-2");
+    return (await project(root).readTask("TASM-1")).task.frontmatter;
+  }
+
+  it("removes the id from blocked_by and keeps the other blockers in their order", async () => {
+    const frontmatter = await removed("blocked_by: [TASM-3, TASM-2, TASM-4]\n");
+
+    expect(frontmatter.blocked_by).toEqual(["TASM-3", "TASM-4"]);
+  });
+
+  it("removes every entry of the id that a hand edit repeated", async () => {
+    const frontmatter = await removed("blocked_by: [TASM-2, TASM-3, TASM-2]\n");
+
+    expect(frontmatter.blocked_by).toEqual(["TASM-3"]);
+  });
+
+  it("removes the blocked_by key when no blocker is left", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "blocked_by: [TASM-2]\n"));
+
+    await project(root).removeReference("TASM-1", "TASM-2");
+
+    expect(await read(taskFile(root, "TASM-1"))).not.toContain("blocked_by");
+  });
+
+  it("clears a parent equal to the id, and keeps blockers that name other tasks", async () => {
+    const frontmatter = await removed("parent: TASM-2\nblocked_by: [TASM-3]\n");
+
+    expect(Object.hasOwn(frontmatter, "parent")).toBe(false);
+    expect(frontmatter.blocked_by).toEqual(["TASM-3"]);
+  });
+
+  it("keeps a parent that names another task", async () => {
+    const frontmatter = await removed("parent: TASM-3\nblocked_by: [TASM-2]\n");
+
+    expect(frontmatter.parent).toBe("TASM-3");
+  });
+
+  it("removes the id from both fields in one call", async () => {
+    const frontmatter = await removed("parent: TASM-2\nblocked_by: [TASM-2, TASM-3]\n");
+
+    expect(Object.hasOwn(frontmatter, "parent")).toBe(false);
+    expect(frontmatter.blocked_by).toEqual(["TASM-3"]);
+  });
+
+  it("moves updated and keeps every other line of the file byte for byte", async () => {
+    const root = await tempRoot();
+    // Block style and one space before a comment: the writer renders a flow
+    // collection and the gap before a comment of a rewritten frontmatter in its
+    // own form, whichever key the write changed.
+    const frontmatter = `---
+id: TASM-42
+title: "Import the address book" # kept with its quotes
+status: In Progress
+labels:
+  - import
+parent: TASM-41
+blocked_by:
+  - TASM-40
+  - TASM-41
+created: "${TIMESTAMP}"
+updated: "${TIMESTAMP}"
+next_comment_id: 3
+custom:
+  workflow:
+    attempts: 2
+---
+`;
+    const source = `${frontmatter}${afterFrontmatter(richTask())}`;
+    await plant(taskFile(root, "TASM-42"), source);
+
+    await project(root).removeReference("TASM-42", "TASM-41");
+
+    const written = await read(taskFile(root, "TASM-42"));
+    const expected = source.replace("parent: TASM-41\n", "").replace("  - TASM-41\n", "");
+    const stamped = /^updated: .*$/m;
+    expect(written.replace(stamped, "")).toBe(expected.replace(stamped, ""));
+    expect(parseTask(written).task.frontmatter.updated).not.toBe(TIMESTAMP);
+  });
+
+  it("writes nothing when the task does not name the id", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "parent: TASM-3\nblocked_by: [TASM-4]\n"));
+    const before = await read(taskFile(root, "TASM-1"));
+
+    const result = await project(root).removeReference("TASM-1", "TASM-2");
+
+    expect(result).toEqual({ id: "TASM-1", diagnostics: [] });
+    expect(await read(taskFile(root, "TASM-1"))).toBe(before);
+  });
+
+  it("forwards a diagnostic of the reader with the path it points at", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "TASM-1"), `${taskText("TASM-1", "blocked_by: [TASM-2]\n")}\n\`\`\`sh\nnever closed\n`);
+
+    const result = await project(root).removeReference("TASM-1", "TASM-2");
+
+    expect(codes(result.diagnostics)).toEqual(["unterminated-fence"]);
+    expect(result.diagnostics[0]?.path).toBe(taskFile(root, "TASM-1"));
+  });
+
+  it.each([
+    ["task-not-found", "TASM-2", taskText("TASM-2")],
+    ["id-mismatch", "TASM-1", taskText("TASM-30", "blocked_by: [TASM-2]\n")],
+  ])("refuses with %s", async (code, planted, text) => {
+    const root = await tempRoot();
+    await plant(taskFile(root, planted), text);
+
+    const error = await storeError(project(root).removeReference("TASM-1", "TASM-2"));
+
+    expect(error.code).toBe(code);
+    expect(error.path).toBe(taskFile(root, "TASM-1"));
+  });
+
+  it("refuses with the parse error of a file it cannot read", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "TASM-1"), "no frontmatter here\n");
+
+    await expect(project(root).removeReference("TASM-1", "TASM-2")).rejects.toBeInstanceOf(TaskParseError);
+  });
+
+  it("checks no other blocker, so one that names no task stays in the file", async () => {
+    const frontmatter = await removed("blocked_by: [TASM-2, TASM-77]\n");
+
+    expect(frontmatter.blocked_by).toEqual(["TASM-77"]);
+  });
+
+  it("rewrites a task whose status the configuration no longer holds", async () => {
+    const root = await tempRoot();
+    const text = taskText("TASM-1", "blocked_by: [TASM-2]\n").replace("status: To Do", "status: Frozen");
+    await plant(taskFile(root, "TASM-1"), text);
+
+    await project(root).removeReference("TASM-1", "TASM-2");
+
+    const written = await read(taskFile(root, "TASM-1"));
+    expect(written).toContain("status: Frozen");
+    expect(written).not.toContain("blocked_by");
   });
 });
 

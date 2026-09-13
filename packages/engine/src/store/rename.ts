@@ -3,7 +3,7 @@ import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parseTask, serializeTask, TaskFormatError } from "../format/index.js";
 import type { Frontmatter, Task } from "../format/index.js";
-import { FRONTMATTER } from "../format/schema.js";
+import { ID_FIELDS } from "../format/schema.js";
 import {
   carriedMode,
   copyEntry,
@@ -34,15 +34,6 @@ const RENAME_KEYS = new Set(["tag"]);
 
 /** What the publish reports when an entry took the target name while the copy ran. */
 const TAKEN = new Set(["EEXIST", "ENOTEMPTY", "ENOTDIR"]);
-
-/**
- * The frontmatter fields that hold task ids, read off the one statement of the
- * schema rather than listed here: a field added to the format carrying an id is
- * then relabelled by the mark it declares instead of being left behind.
- */
-const ID_FIELDS = Object.entries(FRONTMATTER)
-  .filter(([, spec]) => spec.ids !== undefined)
-  .map(([key, spec]) => ({ key, many: spec.ids === "list" }));
 
 /**
  * A task id of one project, whole: the tag, a dash, digits, and nothing else. A

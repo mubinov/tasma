@@ -1,4 +1,4 @@
-import { causeOf, fail } from "../store/errors.js";
+import { causeOf, fail, TaskStoreError } from "../store/errors.js";
 import type {
   CommentChange,
   ConfigResult,
@@ -12,11 +12,12 @@ import type {
   WriteResult,
 } from "../store/index.js";
 import { taskEntryOf } from "../store/paths.js";
+import { namesTask } from "../store/references.js";
 import { openProjectDirectory } from "../store/store.js";
 import type { InstructionsResult } from "../workflow/index.js";
 import { TaskIndex } from "./cache.js";
 import { REASON_LIMIT, short } from "./message.js";
-import type { IndexedProject, IndexOptions, QueryResult } from "./types.js";
+import type { IndexedProject, IndexEntry, IndexOptions, QueryResult } from "./types.js";
 import { Watches, type Watching, type WatchHandlers } from "./watch.js";
 
 /**
@@ -125,8 +126,38 @@ class IndexedProjectStore implements IndexedProject {
     return this.#write(id, () => this.#project.updateTask(id, change));
   }
 
-  deleteTask(id: string): Promise<WriteResult> {
-    return this.#write(id, () => this.#project.deleteTask(id));
+  referencesTo(id: string): string[] {
+    return this.#referencing(id).map((entry) => entry.id);
+  }
+
+  removeReference(id: string, removed: string): Promise<WriteResult> {
+    return this.#write(id, () => this.#project.removeReference(id, removed));
+  }
+
+  /**
+   * Once the file is removed, an error from a rewrite becomes a diagnostic and
+   * never a refusal: a refusal would tell the caller the delete failed.
+   */
+  async deleteTask(id: string): Promise<WriteResult> {
+    this.#live();
+    const references = this.#referencing(id);
+    const result = await this.#write(id, () => this.#project.deleteTask(id));
+    const diagnostics = [...result.diagnostics];
+    for (const reference of references) {
+      try {
+        const rewritten = await this.removeReference(reference.id, id);
+        diagnostics.push(...rewritten.diagnostics);
+      } catch (error) {
+        // A file that is gone names nothing.
+        if (error instanceof TaskStoreError && error.code === "task-not-found") continue;
+        diagnostics.push({
+          code: "reference-not-removed",
+          message: `task ${reference.id} still names ${id}: ${short(causeOf(error), REASON_LIMIT)}`,
+          path: reference.path,
+        });
+      }
+    }
+    return { ...result, diagnostics };
   }
 
   addComment(id: string, input: CommentChange): Promise<WriteResult> {
@@ -158,6 +189,10 @@ class IndexedProjectStore implements IndexedProject {
     } finally {
       await this.#applied(id);
     }
+  }
+
+  #referencing(id: string): IndexEntry[] {
+    return this.query().entries.filter((entry) => entry.id !== id && namesTask(entry.frontmatter, id));
   }
 
   /** Reads back the file of one task, for an id that names one. */
