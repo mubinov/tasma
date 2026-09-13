@@ -148,7 +148,7 @@ async function current(args: string[], io: Io, target: Target, cwd: string): Pro
 export const project = noun("project", "Work with projects", [
   {
     name: "list",
-    summary: "List the projects of this tree",
+    summary: "List the projects in the data directory",
     usage: { help: LIST_HELP, options: LIST_OPTIONS },
     run: list,
   },

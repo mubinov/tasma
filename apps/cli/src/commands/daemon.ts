@@ -222,7 +222,7 @@ export async function stop(
 export const daemon = noun("daemon", "Work with the daemon", [
   {
     name: "start",
-    summary: "Start the daemon of this tree",
+    summary: "Start the daemon of the data directory",
     usage: { help: START_HELP, options: VERB_OPTIONS },
     run: start,
   },
@@ -234,7 +234,7 @@ export const daemon = noun("daemon", "Work with the daemon", [
   },
   {
     name: "stop",
-    summary: "Stop the daemon of this tree",
+    summary: "Stop the daemon of the data directory",
     usage: { help: STOP_HELP, options: VERB_OPTIONS },
     run: stop,
   },

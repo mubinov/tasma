@@ -113,7 +113,7 @@ async function show(args: string[], io: Io, target: Target): Promise<number> {
 export const workflow = noun("workflow", "Work with workflows", [
   {
     name: "list",
-    summary: "List the workflows of this tree",
+    summary: "List the workflows in the data directory",
     usage: { help: LIST_HELP, options: LIST_OPTIONS },
     run: list,
   },

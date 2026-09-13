@@ -17,8 +17,11 @@ import type { Command, Io, Target } from "./types.js";
  * Read by all three consumers: help renders it, dispatch looks up in it and the
  * usage blocks are checked against it, so a command added here needs no other
  * change.
+ *
+ * `tasma --help` lists the groups in this order, which is their order of
+ * importance.
  */
-export const COMMANDS: Command[] = [comment, daemon, project, task, workflow];
+export const COMMANDS: Command[] = [project, task, comment, workflow, daemon];
 
 /** argv split at the first token that is neither a global flag nor the value of one. */
 export type Invocation = { globals: string[]; name?: string; args: string[] };

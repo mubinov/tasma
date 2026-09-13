@@ -44,6 +44,19 @@ describe("run", () => {
     expect(new Set(texts).size).toBe(1);
   });
 
+  it("lists the command groups in their order of importance", async () => {
+    const { io, out } = capture();
+
+    expect(await run(["--help"], io, REFUSED_ENV, CWD)).toBe(0);
+
+    const lines = out.join("").split("\n");
+    const start = lines.indexOf("Commands:") + 1;
+    const end = lines.indexOf("", start);
+    const groups = lines.slice(start, end).map((row) => row.slice(2).split(" ")[0]);
+
+    expect(groups).toEqual(["project", "task", "comment", "workflow", "daemon"]);
+  });
+
   it("reports an unknown option on stderr, writing nothing to stdout", async () => {
     const { io, out, err } = capture();
 
