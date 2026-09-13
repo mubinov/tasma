@@ -11,9 +11,9 @@ quietOnBrokenPipe(stderr);
 /**
  * The directory the shell stands in, empty where it could not be read.
  *
- * A removed directory makes `cwd()` throw. Only the two verbs that resolve a
- * project read the value, and each refuses the empty one with a line of its own,
- * rather than every verb dying on a stack trace.
+ * A removed directory makes `cwd()` throw. Only the verbs that resolve a project
+ * or make a relative path absolute read the value, and each refuses the empty
+ * one with a line of its own, rather than every verb dying on a stack trace.
  */
 function here(): string {
   try {

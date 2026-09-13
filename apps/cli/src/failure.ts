@@ -11,8 +11,8 @@ import type { Io, Target } from "./types.js";
 /** A call that produced no answer this CLI can act on. */
 export const UNREACHABLE = 3;
 
-/** The daemon answered, and refused. */
-const REFUSED = 1;
+/** The daemon answered, and refused, or answered that nothing matches what the command needs. */
+export const REFUSED = 1;
 
 /**
  * Everything `attempt` needs from the tree that a test drives itself: where the

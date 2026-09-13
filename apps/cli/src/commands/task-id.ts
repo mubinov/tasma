@@ -1,6 +1,6 @@
 // How a task and a project are named on the command line. Its own module
-// because the reads and the writes of the `task` noun sit in two files and both
-// name the same things the same way.
+// because the reads and the writes of the `task` noun and of the `project` noun
+// sit in separate files and all name the same things the same way.
 
 import { isPathComponent, reportUsage } from "../shell.js";
 import type { Io } from "../types.js";
@@ -34,14 +34,24 @@ export function readTaskId(io: Io, command: string, text: string | undefined): T
 }
 
 /**
- * The project a verb acts on, or the code the fault in its tag reported with.
+ * The tag a value states, or the code the fault in it reported with.
  *
  * An empty value is no value: an unset shell variable states no project rather
  * than one named "". The tag stands as one path component of the tree, which is
  * what keeps `buildPath` from ever being handed a value a URL would resolve away.
  */
-export function readProjectTag(io: Io, command: string, text: string | undefined): string | number {
-  if (text === undefined || text === "") return reportUsage(io, `${command} needs --project <tag>`);
+function readTag(io: Io, text: string | undefined, missing: string): string | number {
+  if (text === undefined || text === "") return reportUsage(io, missing);
 
   return isPathComponent(text) ? text : reportUsage(io, `not a project tag: ${text}`);
+}
+
+/** The project a verb acts on, from `--project`, or the code the fault in its tag reported with. */
+export function readProjectTag(io: Io, command: string, text: string | undefined): string | number {
+  return readTag(io, text, `${command} needs --project <tag>`);
+}
+
+/** The project a verb acts on, from a positional argument, or the code the fault in its tag reported with. */
+export function readProjectTagArgument(io: Io, command: string, text: string | undefined): string | number {
+  return readTag(io, text, `${command} needs a project tag`);
 }

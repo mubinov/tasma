@@ -1,7 +1,7 @@
 // How a verb learns which project it acts on: the tag the caller stated, or the
 // project the daemon says holds the working directory. Its own module because
-// the two verbs that resolve a project sit in two files and must name it the
-// same way.
+// the three verbs that resolve a project — `task list`, `task create` and
+// `project current` — sit in three files and must read the answer the same way.
 //
 // No path is compared here. A directory is sent and a tag is read: the CLI
 // expands no `~`, resolves no link and lists no project to compare itself.
@@ -14,6 +14,27 @@ import { readProjectTag } from "./task-id.js";
 
 /** What a verb states about the project it acts on, and how it acts on it. */
 type Asked = { command: string; stated: string | undefined; cwd: string; prove?: boolean };
+
+/**
+ * The tag a resolve answered, `null` where no project holds the directory, or
+ * the code the refusal of the answer reported with.
+ *
+ * No project holding the directory is an answer rather than a fault, so a
+ * printer returns 0 for it: a non-zero code suppresses the diagnostics, and a
+ * project the comparison could not read is exactly what explains the empty
+ * answer.
+ *
+ * The tag is gated as a stated tag is: where it becomes the path parameter of a
+ * later call, `buildPath` throws on a value no path component can hold, and
+ * `attempt` does not catch it.
+ */
+export function resolvedTag(io: Io, url: string, answer: unknown): string | null | number {
+  if (answer === null) return null;
+
+  const { tag } = fieldsOf(answer);
+
+  return typeof tag === "string" && isPathComponent(tag) ? tag : refuseAnswer(io, url, "a project");
+}
 
 /**
  * The project the verb acts on, or the code the fault in naming it reported
@@ -39,23 +60,15 @@ export async function actingProject(io: Io, target: Target, asked: Asked): Promi
   let found: string | undefined;
 
   const code = await attempt(io, target, (client) => client.resolveProject(asked.cwd), (data, url) => {
-    const answer: unknown = data;
+    const tag = resolvedTag(io, url, data);
 
-    // No project holding the directory is an answer rather than a fault, and a
-    // non-zero code here suppresses the diagnostics that came with it. A project
-    // the comparison could not read is exactly what explains the empty answer,
-    // so the findings are written first and the refusal follows below.
-    if (answer === null) return 0;
+    if (typeof tag === "number") return tag;
 
-    const { tag } = fieldsOf(answer);
+    if (tag !== null) {
+      found = tag;
+      io.stderr.write(`tasma: project ${wireText(tag)}, from ${wireText(asked.cwd)}\n`);
+    }
 
-    // Gated as a stated tag is: it becomes the path parameter of the call that
-    // follows, and `buildPath` throws on a value no path component can hold,
-    // where `attempt` does not catch it.
-    if (typeof tag !== "string" || !isPathComponent(tag)) return refuseAnswer(io, url, "a project");
-
-    found = tag;
-    io.stderr.write(`tasma: project ${wireText(tag)}, from ${wireText(asked.cwd)}\n`);
     return 0;
   }, { prove: asked.prove });
 

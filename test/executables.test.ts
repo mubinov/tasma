@@ -1,6 +1,16 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
@@ -103,13 +113,13 @@ const outDirs = new Map<string, string>();
 function node(
   file: string,
   args: string[],
-  options: { env?: Record<string, string>; input?: string } = {},
+  options: { env?: Record<string, string>; input?: string; cwd?: string } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const { env, input = "" } = options;
+  const { env, input = "", cwd } = options;
 
   return new Promise((resolve) => {
     const child = execFile(execPath, [file, ...args],
-      { env: env === undefined ? process.env : { ...process.env, ...env } },
+      { env: env === undefined ? process.env : { ...process.env, ...env }, cwd },
       (error, stdout, stderr) => {
         resolve({ code: typeof error?.code === "number" ? error.code : 0, stdout, stderr });
       });
@@ -291,6 +301,8 @@ describe("the built executables", () => {
   describe("driving the daemon of a tree", () => {
     let home = "";
     let url = "";
+    /** The folders the project steps register, outside the tree they are registered in. */
+    let folders = "";
 
     /**
      * The tree the whole sequence runs in, holding a record that names a port
@@ -327,6 +339,14 @@ describe("the built executables", () => {
       for (const document of WORKFLOW_DOCUMENTS) {
         writeFileSync(join(dir, document), `The rules of ${document}.\n`);
       }
+
+      // Real, because a child process reports its working directory with every
+      // link resolved, and the daemon compares that against the path it stored
+      // as it was sent. Fixed names, so the tag generated from each is known;
+      // none starts with the planted tag, which would number it instead.
+      folders = realpathSync(mkdtempSync(join(tmpdir(), "tasma-folders-")));
+      mkdirSync(join(folders, "demo"));
+      mkdirSync(join(folders, "other"));
     });
 
     afterAll(() => {
@@ -343,6 +363,7 @@ describe("the built executables", () => {
       }
 
       rmSync(home, { recursive: true, force: true });
+      rmSync(folders, { recursive: true, force: true });
     });
 
     it("starts one on demand, and records where it listens", async () => {
@@ -601,6 +622,81 @@ describe("the built executables", () => {
 
       expect(lines).toHaveLength(2);
       expect(listed.stdout).not.toContain("Smoke");
+    });
+
+    // The project verbs, as one sequence on the two folders: the tag the second
+    // create states carries through the edit, the rename and the delete.
+    it("creates a project for a folder, under the tag the folder name gives", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI),
+        ["project", "create", "--path", join(folders, "demo")], { env: treeEnv(home) });
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe("DEMO\n");
+    });
+
+    it("creates a project under the tag the create states", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI),
+        ["project", "create", "--path", join(folders, "other"), "--tag", "OTHER"], { env: treeEnv(home) });
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe("OTHER\n");
+    });
+
+    it("prints the configuration of the project, the folder on its path row", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["project", "view", "OTHER"], { env: treeEnv(home) });
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toContain("tag             OTHER\n");
+      expect(stdout).toContain(`path            ${join(folders, "other")}\n`);
+    });
+
+    it("prints the tag of the project that holds the working directory", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI),
+        ["project", "current"], { env: treeEnv(home), cwd: join(folders, "other") });
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe("OTHER\n");
+    });
+
+    it("changes the name of the project", async () => {
+      const written = await node(executable(CLI),
+        ["project", "edit", "OTHER", "--name", "Other app"], { env: treeEnv(home) });
+
+      expect(written.stderr).toBe("");
+      expect(written.code).toBe(0);
+      expect(written.stdout).toBe("OTHER\n");
+
+      const { stdout } = await node(executable(CLI), ["project", "view", "OTHER"], { env: treeEnv(home) });
+
+      expect(stdout).toContain("name            Other app\n");
+    });
+
+    it("renames the project, and prints the new tag", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI),
+        ["project", "rename", "OTHER", "MOVED"], { env: treeEnv(home) });
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe("MOVED\n");
+    });
+
+    it("deletes the project, which the listing then leaves out", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["project", "delete", "MOVED"], { env: treeEnv(home) });
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe("MOVED\n");
+
+      const listed = await node(executable(CLI), ["project", "list"], { env: treeEnv(home) });
+
+      expect(listed.code).toBe(0);
+      expect(listed.stdout).toContain("DEMO ");
+      expect(listed.stdout).not.toContain("MOVED");
+      expect(listed.stdout).not.toContain("OTHER");
     });
 
     it("stops it and leaves no record behind", async () => {

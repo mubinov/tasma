@@ -183,14 +183,14 @@ export async function runCommand(
   command: Command,
   args: string[],
   table: Record<string, unknown>,
-  options: { stdin?: string | Source } = {},
+  options: { stdin?: string | Source; cwd?: string } = {},
 ): Promise<Ran> {
   const answers = serveAnswers(table);
   const server = await startServer(answers.handle);
   const { io, out, err } = capture(options.stdin);
 
   try {
-    const code = await command.run(args, io, at(server.url), CWD);
+    const code = await command.run(args, io, at(server.url), options.cwd ?? CWD);
 
     return { code, out: out.join(""), err: err.join(""), seen: answers.seen, bodies: answers.bodies };
   } finally {
