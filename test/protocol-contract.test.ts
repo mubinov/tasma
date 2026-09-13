@@ -5,8 +5,8 @@ import type {
   ExcludedFile as EngineExcludedFile,
   ExclusionCode as EngineExclusionCode,
   Frontmatter as EngineFrontmatter,
-  IndexEntry,
   InstructionDocument as EngineInstructionDocument,
+  ListedEntry,
   LocatedProject,
   ProjectChange as EngineProjectChange,
   ProjectDeclaration,
@@ -88,9 +88,9 @@ describe("the wire contract", () => {
     expectTypeOf<Diagnostic>().toEqualTypeOf<StoreDiagnostic>();
     expectTypeOf<Frontmatter>().toEqualTypeOf<EngineFrontmatter>();
     expectTypeOf<CommentFields>().toEqualTypeOf<EngineCommentFields>();
-    expectTypeOf<TaskEntry>().toEqualTypeOf<IndexEntry>();
+    expectTypeOf<TaskEntry>().toEqualTypeOf<Flat<ListedEntry>>();
     expectTypeOf<ExcludedFile>().toEqualTypeOf<EngineExcludedFile>();
-    expectTypeOf<TaskList>().toEqualTypeOf<QueryResult>();
+    expectTypeOf<TaskList>().toEqualTypeOf<Flat<Omit<QueryResult, "entries"> & { entries: Flat<ListedEntry>[] }>>();
     expectTypeOf<Config>().toEqualTypeOf<Omit<ResolvedConfig, "name" | "path">>();
     // The tree a daemon serves is no field of the wire, so a create states every
     // key of the engine's input but the root.

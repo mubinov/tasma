@@ -69,11 +69,20 @@ export type TaskText = {
   hidden: number[];
 };
 
-/** One task of a listing: the frontmatter alone, never the body. */
+/**
+ * One task of a listing: the frontmatter alone, never the body, and whether the
+ * task is blocked.
+ *
+ * A task is blocked while any id of its `blocked_by` names a task whose status
+ * is not one of the project's `final_statuses`, or is one the project's listing
+ * holds no task for, which covers an id naming nothing and a file the index
+ * could not read alike.
+ */
 export type TaskEntry = {
   id: string;
   path: string;
   frontmatter: Frontmatter;
+  blocked: boolean;
 };
 
 /** Why a file named as a task file of a project holds no entry. */
@@ -92,6 +101,12 @@ export type ExcludedFile = {
  * Every task a listing holds, and the files that failed to become one. An
  * excluded file is a caveat on the completeness of the listing, never a missing
  * result, so it arrives with the answer it qualifies.
+ *
+ * The `diagnostics` of the response always carry the findings of the
+ * configuration files and one `blocked-by-unresolved` per unresolved blocker id
+ * per task. They cover the complete project under every filter, the tasks the
+ * filter drops included. An invalid configuration refuses the listing with
+ * `config-invalid`.
  */
 export type TaskList = {
   entries: TaskEntry[];

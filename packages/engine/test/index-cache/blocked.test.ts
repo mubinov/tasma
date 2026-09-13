@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type IndexEntry, resolveBlocked } from "@tasma/engine";
+import { type BlockedResult, type IndexEntry, resolveBlocked } from "@tasma/engine";
 
 const FINAL = ["Done"];
 
@@ -20,9 +20,13 @@ function entry(id: string, status: string, blocked_by?: string[]): IndexEntry {
   };
 }
 
-/** The blocked ids, sorted, which is what an assertion compares. */
+/** The ids of the flagged entries, sorted, which is what an assertion compares. */
+function flaggedIds(result: BlockedResult): string[] {
+  return result.entries.filter((listed) => listed.blocked).map((listed) => listed.id).sort();
+}
+
 function blockedIds(entries: IndexEntry[], finalStatuses: readonly string[] = FINAL): string[] {
-  return [...resolveBlocked(entries, finalStatuses).blocked].sort();
+  return flaggedIds(resolveBlocked(entries, finalStatuses));
 }
 
 describe("resolveBlocked", () => {
@@ -72,7 +76,7 @@ describe("resolveBlocked", () => {
 
     const result = resolveBlocked(entries, FINAL);
 
-    expect([...result.blocked]).toEqual(["TASM-1"]);
+    expect(flaggedIds(result)).toEqual(["TASM-1"]);
     expect(result.unresolved).toEqual([
       {
         code: "blocked-by-unresolved",
@@ -111,7 +115,7 @@ describe("resolveBlocked", () => {
 
     const result = resolveBlocked(entries, FINAL);
 
-    expect([...result.blocked]).toEqual(["TASM-1"]);
+    expect(flaggedIds(result)).toEqual(["TASM-1"]);
     expect(result.unresolved).toHaveLength(1);
   });
 
@@ -131,7 +135,7 @@ describe("resolveBlocked", () => {
 
     const result = resolveBlocked(entries, FINAL);
 
-    expect([...result.blocked]).toEqual(["TASM-1"]);
+    expect(flaggedIds(result)).toEqual(["TASM-1"]);
     expect(result.unresolved).toHaveLength(1);
   });
 
@@ -140,7 +144,7 @@ describe("resolveBlocked", () => {
 
     const result = resolveBlocked(entries, FINAL);
 
-    expect([...result.blocked].sort()).toEqual(["TASM-1", "TASM-2"]);
+    expect(flaggedIds(result)).toEqual(["TASM-1", "TASM-2"]);
     expect(result.unresolved).toEqual([]);
   });
 
@@ -155,7 +159,32 @@ describe("resolveBlocked", () => {
   it("answers for no task over an empty listing", () => {
     const result = resolveBlocked([], FINAL);
 
-    expect([...result.blocked]).toEqual([]);
+    expect(flaggedIds(result)).toEqual([]);
     expect(result.unresolved).toEqual([]);
+  });
+
+  it("returns every entry in the input order, each unblocked entry with blocked false", () => {
+    const entries = [entry("TASM-3", "To Do", ["TASM-1"]), entry("TASM-1", "In Progress"), entry("TASM-2", "Done")];
+
+    const listed = resolveBlocked(entries, FINAL).entries;
+
+    expect(listed.map(({ id, blocked }) => ({ id, blocked }))).toEqual([
+      { id: "TASM-3", blocked: true },
+      { id: "TASM-1", blocked: false },
+      { id: "TASM-2", blocked: false },
+    ]);
+  });
+
+  it("keeps the id, the path and the frontmatter object of each entry", () => {
+    const entries = [entry("TASM-1", "To Do", ["TASM-2"]), entry("TASM-2", "Done")];
+
+    const listed = resolveBlocked(entries, FINAL).entries;
+
+    expect(listed).toHaveLength(entries.length);
+    listed.forEach((flagged, n) => {
+      expect(flagged.id).toBe(entries[n]!.id);
+      expect(flagged.path).toBe(entries[n]!.path);
+      expect(flagged.frontmatter).toBe(entries[n]!.frontmatter);
+    });
   });
 });

@@ -12,7 +12,7 @@
 // argument for ignoring one — an older daemon meeting a newer client — does not
 // apply to a daemon and a client that ship from one repository at one version.
 
-import type { IndexEntry, TextSelection } from "@tasma/engine";
+import type { ListedEntry, TextSelection } from "@tasma/engine";
 import type { ProjectQuery, TaskFilter, TaskReadOptions, TaskTextOptions } from "@tasma/protocol";
 import { DaemonError } from "../http/failure.js";
 import { commentIdOf } from "./input.js";
@@ -152,13 +152,13 @@ function sameText(stored: string | undefined, wanted: string): boolean {
   return stored?.toLowerCase() === wanted.toLowerCase();
 }
 
-function matches(entry: IndexEntry, filter: TaskFilter, blocked: ReadonlySet<string>): boolean {
+function matches(entry: ListedEntry, filter: TaskFilter): boolean {
   const { status, priority, parent, step, labels } = entry.frontmatter;
   if (filter.status !== undefined && !sameText(status, filter.status)) return false;
   if (filter.priority !== undefined && !sameText(priority, filter.priority)) return false;
   if (filter.parent !== undefined && parent !== filter.parent) return false;
   if (filter.step !== undefined && step !== filter.step) return false;
-  if (filter.blocked !== undefined && blocked.has(entry.id) !== filter.blocked) return false;
+  if (filter.blocked !== undefined && entry.blocked !== filter.blocked) return false;
   if (filter.label !== undefined) {
     const carried = new Set(labels ?? []);
     // Conjunctive: an entry matches only if it carries every label listed, each
@@ -171,15 +171,11 @@ function matches(entry: IndexEntry, filter: TaskFilter, blocked: ReadonlySet<str
 /**
  * The entries a filter keeps, in the order the listing gave them.
  *
- * `blocked` is the set `resolveBlocked` returned over the **complete** listing,
- * and it is read only where the filter states `blocked`. Resolving over a
- * filtered listing would make each out-of-subset blocker read as unresolvable,
- * which is why the filter is applied here rather than before that call.
+ * `entries` are what `resolveBlocked` returned over the **complete** listing.
+ * Resolving over a filtered listing would make each out-of-subset blocker read
+ * as unresolvable, and an `IndexEntry` carries no flag, so this function cannot
+ * run before that call.
  */
-export function selectEntries(
-  entries: readonly IndexEntry[],
-  filter: TaskFilter,
-  blocked: ReadonlySet<string>,
-): IndexEntry[] {
-  return entries.filter((entry) => matches(entry, filter, blocked));
+export function selectEntries(entries: readonly ListedEntry[], filter: TaskFilter): ListedEntry[] {
+  return entries.filter((entry) => matches(entry, filter));
 }

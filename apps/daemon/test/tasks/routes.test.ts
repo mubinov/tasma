@@ -69,12 +69,38 @@ describe("GET /projects/{project}/tasks", () => {
 
     expect(response.status).toBe(200);
     const { data, diagnostics } = await success<TaskList>(response);
-    expect(data.entries.map((entry) => entry.id)).toEqual(["TASM-1", "TASM-2", "TASM-3"]);
+    expect(data.entries.map(({ id, blocked }) => ({ id, blocked }))).toEqual([
+      { id: "TASM-1", blocked: false },
+      { id: "TASM-2", blocked: false },
+      { id: "TASM-3", blocked: true },
+    ]);
     expect(data.excluded).toEqual([
       { path: taskFile(root, "TASM", "TASM-4"), code: "task-file-misnamed", message: expect.any(String) as string },
     ]);
-    // Nothing read the configuration, so nothing it could report is here.
-    expect(diagnostics).toEqual([]);
+    expect(diagnostics).toEqual([
+      {
+        code: "blocked-by-unresolved",
+        message: expect.stringContaining("TASM-77") as string,
+        path: taskFile(root, "TASM", "TASM-3"),
+      },
+    ]);
+  });
+
+  it("flags a blocked entry that another filter kept, and reports its unresolved blocker", async () => {
+    const root = await tree();
+    const server = await serving(root, taskRoutes);
+
+    const response = await send(server, "GET", "/projects/TASM/tasks?status=In+Progress");
+
+    const { data, diagnostics } = await success<TaskList>(response);
+    expect(data.entries.map(({ id, blocked }) => ({ id, blocked }))).toEqual([{ id: "TASM-3", blocked: true }]);
+    expect(diagnostics).toEqual([
+      {
+        code: "blocked-by-unresolved",
+        message: expect.stringContaining("TASM-77") as string,
+        path: taskFile(root, "TASM", "TASM-3"),
+      },
+    ]);
   });
 
   it.each([
@@ -124,26 +150,30 @@ describe("GET /projects/{project}/tasks", () => {
     ]);
   });
 
-  it("carries the findings of the configuration file the blocked filter reads", async () => {
+  it("carries the findings of the configuration file for a listing that states no filter", async () => {
     const root = await projectsRoot("TASM");
-    await plant(join(root, "projects", "TASM", "config.yml"), "statues: [New]\n");
-    await plant(taskFile(root, "TASM", "TASM-1"), taskText("TASM-1"));
-    const server = await serving(root, taskRoutes);
-
-    const { diagnostics } = await success<TaskList>(await send(server, "GET", "/projects/TASM/tasks?blocked=false"));
-
-    expect(diagnostics.map((finding) => finding.code)).toContain("config-key-unknown");
-  });
-
-  it("reads no configuration file for a listing that states no blocked filter", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(join(root, "projects", "TASM", "config.yml"), "statues: [New]\n");
+    await plant(projectConfig(root, "TASM"), "statues: [New]\n");
     await plant(taskFile(root, "TASM", "TASM-1"), taskText("TASM-1"));
     const server = await serving(root, taskRoutes);
 
     const { diagnostics } = await success<TaskList>(await send(server, "GET", "/projects/TASM/tasks"));
 
-    expect(diagnostics).toEqual([]);
+    expect(diagnostics.map((finding) => finding.code)).toContain("config-key-unknown");
+  });
+
+  it("refuses a listing that states no filter over an invalid configuration", async () => {
+    const root = await projectsRoot("TASM");
+    await plant(projectConfig(root, "TASM"), "statuses: [To Do, Done]\nfinal_statuses: [Closed]\n");
+    await plant(taskFile(root, "TASM", "TASM-1"), taskText("TASM-1"));
+    const server = await serving(root, taskRoutes);
+
+    const response = await send(server, "GET", "/projects/TASM/tasks");
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "store", code: "config-invalid" },
+    });
   });
 
   it.each([
@@ -387,6 +417,8 @@ describe("the write routes over a task", () => {
     await expect(readFile(taskFile(root, "TASM", "TASM-2"), "utf8")).resolves.not.toContain("blocked_by");
     const listed = await send(server, "GET", "/projects/TASM/tasks?blocked=true");
     await expect(success<TaskList>(listed)).resolves.toMatchObject({ data: { entries: [] } });
+    const all = await success<TaskList>(await send(server, "GET", "/projects/TASM/tasks"));
+    expect(all.data.entries.map(({ id, blocked }) => ({ id, blocked }))).toEqual([{ id: "TASM-2", blocked: false }]);
   });
 
   it.each([

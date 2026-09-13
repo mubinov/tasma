@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Frontmatter, IndexEntry } from "@tasma/engine";
+import type { Frontmatter, ListedEntry } from "@tasma/engine";
 import type { TaskFilter } from "@tasma/protocol";
 import {
   assertNoQuery,
@@ -11,7 +11,7 @@ import {
 } from "../../src/tasks/filter.js";
 import { refused, TIMESTAMP } from "../helpers.js";
 
-function entry(id: string, frontmatter: Partial<Frontmatter> = {}): IndexEntry {
+function entry(id: string, frontmatter: Partial<Frontmatter> = {}, blocked = false): ListedEntry {
   return {
     id,
     path: `/tmp/${id}.md`,
@@ -24,6 +24,7 @@ function entry(id: string, frontmatter: Partial<Frontmatter> = {}): IndexEntry {
       next_comment_id: 1,
       ...frontmatter,
     },
+    blocked,
   };
 }
 
@@ -31,8 +32,8 @@ function query(search: string): URLSearchParams {
   return new URLSearchParams(search);
 }
 
-function ids(entries: IndexEntry[], filter: TaskFilter, blocked: ReadonlySet<string> = new Set()): string[] {
-  return selectEntries(entries, filter, blocked).map((found) => found.id);
+function ids(entries: ListedEntry[], filter: TaskFilter): string[] {
+  return selectEntries(entries, filter).map((found) => found.id);
 }
 
 describe("readTaskFilter", () => {
@@ -224,7 +225,7 @@ describe("assertNoQuery", () => {
 describe("selectEntries", () => {
   const entries = [
     entry("T-1", { status: "To Do", priority: "high", labels: ["dev", "ui"], parent: "T-9", step: "dev:review" }),
-    entry("T-2", { status: "Done", labels: ["dev"] }),
+    entry("T-2", { status: "Done", labels: ["dev"] }, true),
     entry("T-3", { status: "In Progress", priority: "low" }),
   ];
 
@@ -268,11 +269,11 @@ describe("selectEntries", () => {
   });
 
   it("keeps the blocked entries alone under blocked=true", () => {
-    expect(ids(entries, { blocked: true }, new Set(["T-2"]))).toEqual(["T-2"]);
+    expect(ids(entries, { blocked: true })).toEqual(["T-2"]);
   });
 
   it("keeps the unblocked entries alone under blocked=false", () => {
-    expect(ids(entries, { blocked: false }, new Set(["T-2"]))).toEqual(["T-1", "T-3"]);
+    expect(ids(entries, { blocked: false })).toEqual(["T-1", "T-3"]);
   });
 
   it("applies two filters together", () => {

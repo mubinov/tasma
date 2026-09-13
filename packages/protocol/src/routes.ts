@@ -49,12 +49,9 @@ export type ProjectQuery = { path: string };
  * exactly. An absent key is not a filter, and an empty `label` array is the same
  * as an absent one.
  *
- * `blocked` is written as exactly `true` or `false`, and any other spelling is
- * refused with `malformed-request`. `true` returns the blocked entries alone and
- * `false` the unblocked alone; a task is blocked while any id of its
- * `blocked_by` names a task whose status is not one of the project's
- * `final_statuses`, or is one the project's listing holds no task for, which
- * covers an id naming nothing and a file the index could not read alike.
+ * `blocked` keeps the entries whose `blocked` equals the value. It is written as
+ * exactly `true` or `false`, and any other spelling is refused with
+ * `malformed-request`.
  */
 export type TaskFilter = {
   status?: string;

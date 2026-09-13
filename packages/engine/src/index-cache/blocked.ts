@@ -2,30 +2,37 @@
  * A free function rather than a method on the index because it takes the entries
  * a caller already holds, so a route calls it once against the query result it
  * just took, with no second pass over the index and no configuration read inside
- * it. It is also why blockedness is not stored on an entry: the index keeps an
- * entry current by re-reading that one file, and a stored flag would have to be
- * invalidated on a different task's file whenever a status moved.
+ * it. The flag is set on the entries a listing returns and never stored in the
+ * index: the index keeps an entry current by re-reading that one file, and a
+ * stored flag would have to be invalidated on a different task's file whenever a
+ * status moved.
  */
 
 import type { StoreDiagnostic } from "../store/index.js";
 import { short } from "./message.js";
 import type { IndexEntry } from "./types.js";
 
+/** An entry of a listing, with whether a blocker still blocks its task. */
+export type ListedEntry = IndexEntry & { blocked: boolean };
+
 export type BlockedResult = {
-  /** The ids of the tasks a blocker still blocks. */
-  blocked: Set<string>;
+  /** One per entry of the listing, in its order. */
+  entries: ListedEntry[];
   /** One per blocker id that named no entry of the listing. */
   unresolved: StoreDiagnostic[];
 };
 
 /**
- * Which tasks of a listing a blocker still blocks.
+ * The entries of a listing, each flagged with whether a blocker still blocks it.
  *
  * A task is blocked while at least one id of its `blocked_by` either names an
  * entry whose status is not one of `finalStatuses`, or names no entry at all. An
  * id that names no entry also produces one `blocked-by-unresolved` diagnostic
  * carrying the blocked task's own path, so a caller can open the file that holds
  * the bad id. A task with no `blocked_by`, or an empty one, is never blocked.
+ *
+ * Each returned entry is a new object that shares the frozen `frontmatter` of
+ * its input entry.
  *
  * **`entries` must be the project's complete listing.** An id that names no
  * entry is read as a blocker that still blocks, so a caller that filtered first
@@ -46,16 +53,15 @@ export type BlockedResult = {
 export function resolveBlocked(entries: readonly IndexEntry[], finalStatuses: readonly string[]): BlockedResult {
   const final = new Set(finalStatuses.map((status) => status.toLowerCase()));
   const statusOf = new Map(entries.map((entry) => [entry.id, entry.frontmatter.status]));
-  const blocked = new Set<string>();
+  const listed: ListedEntry[] = [];
   const unresolved: StoreDiagnostic[] = [];
   for (const entry of entries) {
-    const blockers = entry.frontmatter.blocked_by;
-    if (blockers === undefined) continue;
+    let blocked = false;
     // A reader accepts any list of strings, so one file may state an id more
     // than once; the report is per id, as one diagnostic of a repeat says all a
     // second would.
     const reported = new Set<string>();
-    for (const blocker of blockers) {
+    for (const blocker of entry.frontmatter.blocked_by ?? []) {
       const status = statusOf.get(blocker);
       if (status === undefined) {
         if (!reported.has(blocker)) {
@@ -69,8 +75,9 @@ export function resolveBlocked(entries: readonly IndexEntry[], finalStatuses: re
           });
         }
       } else if (final.has(status.toLowerCase())) continue;
-      blocked.add(entry.id);
+      blocked = true;
     }
+    listed.push({ ...entry, blocked });
   }
-  return { blocked, unresolved };
+  return { entries: listed, unresolved };
 }
