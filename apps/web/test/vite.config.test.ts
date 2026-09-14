@@ -4,11 +4,12 @@ import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_DAEMON_URL } from "@tasma/protocol";
-import { build } from "vite";
+import { build, createLogger, type LogOptions, type Plugin, type ResolvedConfig } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DAEMON_PATH_PREFIX } from "../src/api/paths";
 import config, {
   CONTENT_SECURITY_POLICY,
+  isExpectedCompilerSkip,
   isLoopbackAddress,
   proxiesHost,
   resolveDaemonUrl,
@@ -22,10 +23,15 @@ let indexHtml = "";
 let assets: string[] = [];
 let css = "";
 let js = "";
+const warnings: string[] = [];
 
 beforeAll(async () => {
   outDir = mkdtempSync(join(tmpdir(), "tasma-web-build-"));
-  await build({ root, logLevel: "silent", build: { outDir, emptyOutDir: true } });
+  const logger = createLogger("silent");
+  logger.warn = (message) => {
+    warnings.push(message);
+  };
+  await build({ root, logLevel: "silent", customLogger: logger, build: { outDir, emptyOutDir: true } });
   indexHtml = readFileSync(join(outDir, "index.html"), "utf8");
   assets = readdirSync(join(outDir, "assets"));
   css = assets
@@ -89,6 +95,10 @@ describe("the built bundle", () => {
   it("runs the app through the React Compiler", () => {
     expect(js).toMatch(/]\s*===\s*Symbol\.for\((["'`])react\.memo_cache_sentinel\1\)/);
   });
+
+  it("prints no warning for the component the compiler skips on purpose", () => {
+    expect(warnings.filter((message) => message.includes("IncompatibleLibrary"))).toEqual([]);
+  });
 });
 
 // Asserting the built document contains the constant only proves the constant
@@ -126,6 +136,41 @@ describe("the content security policy", () => {
 
   it("keeps every directive free of a wildcard", () => {
     expect([...directives.values()].flat().filter((value) => value === "*" || value.includes("*"))).toEqual([]);
+  });
+});
+
+describe("isExpectedCompilerSkip", () => {
+  const component = join(root, "src", "components", "virtual-list.tsx");
+  const skip = (diagnostic: string, file: string) =>
+    `[plugin vite:react-compiler] Use of incompatible library\n\n  ! react-compiler(${diagnostic}): Use of incompatible library\n    ,-[${file}:45:23]`;
+
+  it("drops the skip the compiler reports for VirtualList", () => {
+    expect(isExpectedCompilerSkip(skip("IncompatibleLibrary", component))).toBe(true);
+  });
+
+  it("keeps the same skip reported for another file", () => {
+    expect(isExpectedCompilerSkip(skip("IncompatibleLibrary", join(root, "src", "components", "board.tsx")))).toBe(false);
+  });
+
+  it("keeps another compiler diagnostic for VirtualList", () => {
+    expect(isExpectedCompilerSkip(skip("Todo", component))).toBe(false);
+  });
+
+  it("is applied to the logger Vite resolved, which still takes every other warning", () => {
+    const plugin = (config.plugins ?? []).flat().find((entry): entry is Plugin =>
+      typeof entry === "object" && entry !== null && "name" in entry && entry.name === "tasma:expected-compiler-skips");
+    const logger = createLogger("silent");
+    const logged: [string, LogOptions | undefined][] = [];
+    logger.warn = (message, options) => {
+      logged.push([message, options]);
+    };
+    const configResolved = plugin?.configResolved as ((resolved: ResolvedConfig) => void) | undefined;
+
+    configResolved?.({ logger } as ResolvedConfig);
+    logger.warn(skip("IncompatibleLibrary", component));
+    logger.warn("chunk too large", { timestamp: true });
+
+    expect(logged).toEqual([["chunk too large", { timestamp: true }]]);
   });
 });
 

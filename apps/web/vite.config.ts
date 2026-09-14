@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { join } from "node:path";
 // The address module rather than the package index: this config is loaded by
 // Node, which resolves an import path literally, and the index re-exports its
 // modules by the `.js` names TypeScript writes.
@@ -78,6 +79,30 @@ function dropLegacyFontFormats(): Plugin {
           output.source = stripLegacyFontSources(output.source);
         }
       }
+    },
+  };
+}
+
+// Not `new URL(…, import.meta.url)`: a test that imports this config gets that
+// pattern rewritten into a dev server URL.
+const VIRTUAL_LIST = join(import.meta.dirname, "src", "components", "virtual-list.tsx");
+
+export function isExpectedCompilerSkip(message: string): boolean {
+  return message.includes("react-compiler(IncompatibleLibrary)") && message.includes(`${VIRTUAL_LIST}:`);
+}
+
+// The compiler skips VirtualList on purpose and reports the skip as a warning,
+// also for a function that carries "use no memo".
+function expectedCompilerSkips(): Plugin {
+  return {
+    name: "tasma:expected-compiler-skips",
+    configResolved(config) {
+      const warn = config.logger.warn.bind(config.logger);
+      config.logger.warn = (message, options) => {
+        if (!isExpectedCompilerSkip(message)) {
+          warn(message, options);
+        }
+      };
     },
   };
 }
@@ -191,7 +216,13 @@ export default defineConfig({
   // coupling is stated and enforced in test/router.test.tsx.
   base: "./",
   // compiler: true runs React Compiler through oxc, so nothing memoizes by hand.
-  plugins: [react({ compiler: true }), tailwindcss(), contentSecurityPolicy(), dropLegacyFontFormats()],
+  plugins: [
+    react({ compiler: true }),
+    expectedCompilerSkips(),
+    tailwindcss(),
+    contentSecurityPolicy(),
+    dropLegacyFontFormats(),
+  ],
   build: {
     // The app runs only in a current Chromium or a current browser.
     target: "esnext",
