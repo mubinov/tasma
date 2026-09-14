@@ -1,6 +1,6 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { VirtualList } from "../../src/components/virtual-list";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PageVirtualList, VirtualList } from "../../src/components/virtual-list";
 
 const ROW_HEIGHT = 32;
 const rows = Array.from({ length: 500 }, (_, index) => `row ${index}`);
@@ -17,11 +17,13 @@ beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
     return this.tagName === "LI" ? ROW_HEIGHT : Number.parseFloat(this.style.height);
   });
+  vi.stubGlobal("scrollTo", () => {});
 });
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function renderRows(height: number, getKey: (row: string) => string = (row) => row) {
@@ -79,4 +81,157 @@ it("keys every row by its item rather than its position", () => {
 
   expect(getKey).toHaveBeenCalledWith("row 0", 0);
   expect(screen.getByText("row 0")).toBeTruthy();
+});
+
+describe("PageVirtualList", () => {
+  const LIST_TOP = 200;
+
+  /*
+   * The window virtualizer reads the viewport from the window and the list's top
+   * from its box. jsdom has no layout, so the box is stubbed as a list 200px down
+   * the page that moves up as the page scrolls.
+   */
+  beforeEach(() => {
+    vi.stubGlobal("innerHeight", 320);
+    vi.stubGlobal("scrollY", 0);
+    placeListAt(LIST_TOP);
+  });
+
+  /** Puts the list's top `top` pixels down the page. */
+  function placeListAt(top: number) {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => ({ top: top - window.scrollY }) as DOMRect,
+    );
+  }
+
+  function scrollPageTo(y: number) {
+    act(() => {
+      vi.stubGlobal("scrollY", y);
+      window.dispatchEvent(new Event("scroll"));
+    });
+  }
+
+  function renderPageRows(estimateSize: (row: string, index: number) => number = () => ROW_HEIGHT) {
+    return render(
+      <>
+        <h2 id="rows-heading">Rows</h2>
+        <PageVirtualList
+          items={rows}
+          estimateSize={estimateSize}
+          getKey={(row) => row}
+          renderItem={(row) => row}
+          labelledBy="rows-heading"
+          gap={8}
+        />
+      </>,
+    );
+  }
+
+  function positions(): number[] {
+    return screen.getAllByRole("listitem").map((row) => Number(row.getAttribute("aria-posinset")));
+  }
+
+  it("renders a window of rows, named by the heading, each with its size and position", () => {
+    renderPageRows();
+
+    const rendered = within(screen.getByRole("list", { name: "Rows" })).getAllByRole("listitem");
+    expect(rendered.length).toBeGreaterThan(0);
+    expect(rendered.length).toBeLessThan(rows.length);
+    expect(rendered[0]?.getAttribute("aria-setsize")).toBe("500");
+    expect(positions()[0]).toBe(1);
+    expect(screen.getByText("row 0")).toBeTruthy();
+  });
+
+  it("places each row below the list's top, one gap apart", () => {
+    renderPageRows();
+
+    const [first, second] = screen.getAllByRole("listitem");
+    expect(first?.style.transform).toBe("translateY(0px)");
+    expect(second?.style.transform).toBe(`translateY(${String(ROW_HEIGHT + 8)}px)`);
+  });
+
+  // Memoized by the compiler, the component keeps the first window after a scroll.
+  it("follows the page scroll", () => {
+    renderPageRows();
+
+    scrollPageTo(8000);
+
+    expect(Math.min(...positions())).toBeGreaterThan(100);
+    expect(screen.queryByText("row 0")).toBeNull();
+  });
+
+  it("sizes a row it has not measured by the estimate for its item", () => {
+    const estimateSize = vi.fn((row: string) => (row === "row 499" ? 100 : ROW_HEIGHT));
+
+    renderPageRows(estimateSize);
+
+    expect(estimateSize).toHaveBeenCalledWith("row 499", 499);
+    expect(screen.getByRole("list").style.height).toBe(`${String(499 * ROW_HEIGHT + 100 + 499 * 8)}px`);
+  });
+
+  it("makes each row a focus target that is not a tab stop", () => {
+    renderPageRows();
+
+    expect(screen.getAllByRole("listitem").every((row) => row.tabIndex === -1)).toBe(true);
+  });
+
+  it("measures the list's top again when the window is resized", () => {
+    renderPageRows();
+
+    // The list moves 8000px further down the page with no render of the list.
+    placeListAt(LIST_TOP + 8000);
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+    scrollPageTo(8000);
+
+    expect(positions()[0]).toBe(1);
+  });
+
+  it("measures the list's top again when the body changes size, and stops when unmounted", () => {
+    // The virtualizer observes its rows too; only the observer of the body is kept.
+    let report = () => {};
+    const disconnect = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        callback: () => void;
+        body = false;
+
+        constructor(callback: () => void) {
+          this.callback = callback;
+        }
+
+        observe(target: Element) {
+          if (target === document.body) {
+            this.body = true;
+            report = this.callback;
+          }
+        }
+
+        unobserve() {}
+
+        disconnect() {
+          if (this.body) {
+            disconnect();
+          }
+        }
+      },
+    );
+    const { unmount } = renderPageRows();
+
+    placeListAt(LIST_TOP + 8000);
+    act(() => {
+      report();
+    });
+    scrollPageTo(8000);
+
+    expect(positions()[0]).toBe(1);
+
+    unmount();
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(() => {
+      report();
+    }).not.toThrow();
+  });
 });

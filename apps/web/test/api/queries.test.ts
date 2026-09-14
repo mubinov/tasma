@@ -1,8 +1,17 @@
-import { ProtocolError, TransportError } from "@tasma/protocol";
-import { afterEach, expect, it, vi } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
+import { createClient, ProtocolError, TransportError, type Transport } from "@tasma/protocol";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAppQueryClient, createDaemonClient, shouldRetry } from "../../src/api/client";
 import { DAEMON_PATH_PREFIX } from "../../src/api/paths";
-import { daemonKeys, healthQuery, projectQuery, projectsQuery } from "../../src/api/queries";
+import {
+  daemonKeys,
+  healthQuery,
+  projectQuery,
+  projectsQuery,
+  tasksQuery,
+  workflowQuery,
+} from "../../src/api/queries";
+import { refusalReply, stubTransport, successReply } from "../helpers";
 
 const HEALTH = { name: "tasma-daemon", version: "0.0.0" };
 
@@ -105,6 +114,69 @@ it("nests one project's key inside the list's", () => {
   const projects = daemonKeys.projects();
 
   expect(daemonKeys.project("TASM").slice(0, projects.length)).toEqual([...projects]);
+});
+
+it("nests a project's tasks inside the project, and one workflow inside the workflows", () => {
+  const project = daemonKeys.project("TASM");
+  const workflows = daemonKeys.workflows();
+
+  expect(daemonKeys.tasks("TASM").slice(0, project.length)).toEqual([...project]);
+  expect(daemonKeys.workflow("dev").slice(0, workflows.length)).toEqual([...workflows]);
+});
+
+it("asks for the tasks of one project, with no filter", async () => {
+  const listing = { entries: [], excluded: [] };
+  const paths = stubDaemon(listing);
+
+  const success = await createAppQueryClient().query({
+    ...tasksQuery(createDaemonClient(), "TASM"),
+    staleTime: "static",
+  });
+
+  expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects/TASM/tasks`]);
+  expect(success).toEqual({ data: listing, diagnostics: [] });
+});
+
+describe("workflowQuery", () => {
+  const WORKFLOW = { name: "dev", steps: [], instructions: [] };
+
+  function readWorkflow(transport: Transport, name: string) {
+    return createAppQueryClient().query({ ...workflowQuery(createClient(transport), name), staleTime: "static" });
+  }
+
+  it("answers the workflow's envelope", async () => {
+    const { transport, paths } = stubTransport({ "/workflows/dev": successReply(WORKFLOW) });
+
+    await expect(readWorkflow(transport, "dev")).resolves.toEqual({ data: WORKFLOW, diagnostics: [] });
+    expect(paths).toEqual(["/workflows/dev"]);
+  });
+
+  it("answers null for a refusal", async () => {
+    const { transport } = stubTransport({
+      "/workflows/gone": refusalReply(404, { kind: "store", code: "workflow-unknown", message: "no workflow is named gone" }),
+    });
+
+    await expect(readWorkflow(transport, "gone")).resolves.toBeNull();
+  });
+
+  it.each([{ name: "" }, { name: ".." }, { name: "a/b" }])(
+    "answers null with no request for the name \"$name\"",
+    async ({ name }) => {
+      const { transport, paths } = stubTransport();
+
+      await expect(readWorkflow(transport, name)).resolves.toBeNull();
+      expect(paths).toEqual([]);
+    },
+  );
+
+  it("throws a transport fault", async () => {
+    const fault = new Error("connection refused");
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    await expect(
+      queryClient.query({ ...workflowQuery(createClient(() => Promise.reject(fault)), "dev"), staleTime: "static" }),
+    ).rejects.toBeInstanceOf(TransportError);
+  });
 });
 
 // A transport fault and nothing else, once and no more.

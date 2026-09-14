@@ -1,5 +1,5 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useRef, type ReactNode } from "react";
+import { useVirtualizer, useWindowVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 type VirtualListProps<T> = {
   items: readonly T[];
@@ -84,5 +84,105 @@ export function VirtualList<T>({
         ))}
       </ul>
     </div>
+  );
+}
+
+type PageVirtualListProps<T> = {
+  items: readonly T[];
+  /**
+   * An item's row height in pixels before measurement; measured rows override
+   * it. The height a row already has on the page keeps the rows in view in
+   * place when this list replaces a list of the same rows.
+   */
+  estimateSize: (item: T, index: number) => number;
+  /** Row identity across reorders. Keying by index reuses DOM and state silently. */
+  getKey: (item: T, index: number) => string | number;
+  renderItem: (item: T, index: number) => ReactNode;
+  /** The id of the visible heading that names the list. */
+  labelledBy: string;
+  /** Pixels between two rows. */
+  gap?: number;
+};
+
+/**
+ * Renders only the rows in view of a list that scrolls with the page rather than
+ * inside a region of its own.
+ *
+ * It is a component apart from `VirtualList` because TanStack types a window
+ * virtualizer apart from an element virtualizer, so one component cannot hold
+ * both calls. The compiler does not know `useWindowVirtualizer` as a library it
+ * must skip, so `"use no memo"` opts the component out: memoized, the rows stop
+ * following the page scroll.
+ */
+export function PageVirtualList<T>({
+  items,
+  estimateSize,
+  getKey,
+  renderItem,
+  labelledBy,
+  gap,
+}: PageVirtualListProps<T>): ReactNode {
+  "use no memo";
+  const listRef = useRef<HTMLUListElement>(null);
+  // The list's top in page coordinates. Content above the list can change height
+  // with no render of the list, so a resize of the body measures it again.
+  const [scrollMargin, setScrollMargin] = useState(0);
+  const virtualizer = useWindowVirtualizer({
+    count: items.length,
+    // The virtualizer counts items.length, so every index it hands back is in range.
+    estimateSize: (index) => estimateSize(items[index] as T, index),
+    getItemKey: (index) => getKey(items[index] as T, index),
+    overscan: 8,
+    gap,
+    scrollMargin,
+  });
+
+  function measure(): void {
+    const list = listRef.current;
+
+    if (list !== null) {
+      const top = list.getBoundingClientRect().top + window.scrollY;
+      setScrollMargin((current) => (current === top ? current : top));
+    }
+  }
+
+  useLayoutEffect(measure);
+
+  useEffect(() => {
+    window.addEventListener("resize", measure);
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
+    observer?.observe(document.body);
+
+    return () => {
+      window.removeEventListener("resize", measure);
+      observer?.disconnect();
+    };
+  }, []);
+
+  return (
+    <ul
+      ref={listRef}
+      role="list"
+      aria-labelledby={labelledBy}
+      className="relative m-0 list-none p-0"
+      style={{ height: `${virtualizer.getTotalSize()}px` }}
+    >
+      {virtualizer.getVirtualItems().map((row) => (
+        <li
+          key={row.key}
+          role="listitem"
+          aria-setsize={items.length}
+          aria-posinset={row.index + 1}
+          data-index={row.index}
+          // A focus target for a script, never a tab stop.
+          tabIndex={-1}
+          ref={virtualizer.measureElement}
+          className="absolute top-0 left-0 w-full"
+          style={{ transform: `translateY(${row.start - scrollMargin}px)` }}
+        >
+          {renderItem(items[row.index] as T, row.index)}
+        </li>
+      ))}
+    </ul>
   );
 }

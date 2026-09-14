@@ -57,11 +57,15 @@ export default tseslint.config(
       // Neither preset enables this rule.
       "@typescript-eslint/no-deprecated": "error",
       // The router signals "not found" by throwing a NotFoundError, a plain
-      // object. @tanstack/react-router only re-exports that type;
-      // @tanstack/router-core declares it, and the specifier has to name the
+      // object, and a redirect by throwing a Redirect, a Response.
+      // @tanstack/react-router only re-exports those types;
+      // @tanstack/router-core declares them, and the specifier has to name the
       // declaring package.
       "@typescript-eslint/only-throw-error": ["error", {
-        allow: [{ from: "package", package: "@tanstack/router-core", name: "NotFoundError" }],
+        allow: [
+          { from: "package", package: "@tanstack/router-core", name: "NotFoundError" },
+          { from: "package", package: "@tanstack/router-core", name: "Redirect" },
+        ],
       }],
       // customize() sets no line width at all.
       "@stylistic/max-len": [

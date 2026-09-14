@@ -1,0 +1,197 @@
+import { useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import { getRouteApi, Link, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
+import type { Workflow } from "@tasma/protocol";
+import { useDeferredValue, useEffect, type ReactNode } from "react";
+import { projectQuery, projectsQuery, tasksQuery, workflowQuery } from "../api/queries";
+import { boardWarnings, buildColumns, distinctLabels, splitList, workflowNames } from "../lib/board";
+import { useDocumentTitle } from "../lib/document-title";
+import { warningCount } from "../lib/warning-count";
+import { NAVIGATION_BY_PATH } from "../navigation";
+import { useUiStore } from "../store/ui";
+import { BoardColumn } from "./board-column";
+import { Diagnostics } from "./diagnostics";
+import { RouteFailure } from "./error-boundary";
+import { LabelFilter } from "./label-filter";
+import { LiveNotice } from "./live-notice";
+import { ProjectSelect } from "./project-select";
+import { ScreenHeading } from "./screen-heading";
+
+// The route is reached by id rather than imported: the tree in routes.tsx names
+// this component, so importing the route back would close a cycle.
+const route = getRouteApi("/tasks");
+
+const POLL_INTERVAL = 5_000;
+
+const { label: TITLE } = NAVIGATION_BY_PATH["/tasks"];
+
+const EMPTY_CLASS = "mt-2 max-w-2xl text-base text-muted";
+
+const HEADING_LINE_CLASS = "flex min-h-8 flex-wrap items-center gap-x-4 gap-y-3";
+
+/** What the live region says: a summary of what a poll can change while the page stays put. */
+function boardSummary(live: boolean, warnings: number, filter: { matching: number; total: number } | null): string {
+  const said: string[] = [];
+
+  if (!live) {
+    said.push("The index is not following the disk.");
+  }
+  if (warnings > 0) {
+    said.push(`${warningCount(warnings)} about this project.`);
+  }
+  if (filter !== null) {
+    said.push(`${String(filter.matching)} of ${String(filter.total)} tasks carry a selected label.`);
+  }
+
+  return said.join(" ");
+}
+
+function Board({ tag, labels }: { tag: string; labels: string | undefined }): ReactNode {
+  const { client } = route.useRouteContext();
+  const { data: { data: projects } } = useSuspenseQuery(projectsQuery(client));
+  const { data: { data: project, diagnostics: projectWarnings } } = useSuspenseQuery({
+    ...projectQuery(client, tag),
+    refetchInterval: POLL_INTERVAL,
+  });
+  const { data: { data: listing, diagnostics: listingWarnings } } = useSuspenseQuery({
+    ...tasksQuery(client, tag),
+    refetchInterval: POLL_INTERVAL,
+  });
+  const setLastTasksProject = useUiStore((state) => state.setLastTasksProject);
+  const names = workflowNames(listing.entries);
+  // Not under Suspense: a poll can bring a name the loader did not read, and a
+  // new key would suspend the whole board until its read lands.
+  const workflowReads = useQueries({ queries: names.map((name) => workflowQuery(client, name)) });
+  const selected = distinctLabels(splitList(labels));
+  const deferredSelected = distinctLabels(splitList(useDeferredValue(labels)));
+
+  useEffect(() => {
+    setLastTasksProject(tag);
+  }, [tag, setLastTasksProject]);
+
+  const { name, live, config } = project;
+  const title = name ?? tag;
+  const workflows = new Map<string, Workflow | null | undefined>(
+    names.map((workflowName, index) => {
+      const read = workflowReads[index]?.data;
+      return [workflowName, read === null ? null : read?.data];
+    }),
+  );
+  const columns = buildColumns(config, listing.entries, deferredSelected);
+  const filtered = deferredSelected.length > 0;
+  const warnings = boardWarnings(projectWarnings, listingWarnings);
+  const matching = columns.reduce((sum, column) => sum + column.matching.length, 0);
+  const total = columns.reduce((sum, column) => sum + column.total, 0);
+
+  return (
+    <>
+      <div className={HEADING_LINE_CLASS}>
+        <ScreenHeading>{TITLE}</ScreenHeading>
+        <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-x-5 gap-y-3">
+          <ProjectSelect projects={projects} tag={tag} />
+          <LabelFilter entries={listing.entries} selected={selected} />
+        </div>
+      </div>
+
+      {/* Rendered whether or not it says anything: a live region inserted
+          together with its content announces nothing. */}
+      <div role="status" className="sr-only">
+        {boardSummary(live, warnings.length + listing.excluded.length, filtered ? { matching, total } : null)}
+      </div>
+      {!live && <LiveNotice className="mt-6 max-w-2xl" />}
+      {/* The board stays mounted when the project changes, so the key starts
+          the line folded for the next project. */}
+      <Diagnostics
+        key={tag}
+        items={warnings}
+        excluded={listing.excluded}
+        subject="this project"
+        className={live ? "mt-4" : "mt-3"}
+      />
+      {listing.entries.length === 0 && <p className={EMPTY_CLASS}>{`No tasks in ${title} yet.`}</p>}
+      {listing.entries.length > 0 && filtered && matching === 0 && (
+        <p className={EMPTY_CLASS}>{`No task in ${title} carries any of the selected labels.`}</p>
+      )}
+
+      {/* The right padding of main is not part of the page's sideways overflow, so
+          the row extends into it and the last column carries the same padding. */}
+      <div className="mt-6 -mr-6 flex items-start gap-6 *:last:box-content *:last:pr-6 sm:-mr-10 sm:*:last:pr-10">
+        {columns.map((column, index) => (
+          // Keyed by position: a hand-edited configuration can hold the same
+          // status twice. The tag resets a column's state for the next project.
+          <BoardColumn
+            key={`${tag}:${String(index)}`}
+            column={column}
+            filtered={filtered}
+            priorities={config.priorities}
+            workflows={workflows}
+          />
+        ))}
+      </div>
+    </>
+  );
+}
+
+function EmptyTree(): ReactNode {
+  const { client } = route.useRouteContext();
+  const router = useRouter();
+  const { data: { data: projects } } = useSuspenseQuery({ ...projectsQuery(client), refetchInterval: POLL_INTERVAL });
+  const found = projects.length > 0;
+
+  // The route redirects to a project only before it loads, so a project that
+  // appears later loads the route again.
+  useEffect(() => {
+    if (found) {
+      void router.invalidate();
+    }
+  }, [found, router]);
+
+  return (
+    <>
+      <div className={HEADING_LINE_CLASS}>
+        <ScreenHeading>{TITLE}</ScreenHeading>
+      </div>
+      <p className={EMPTY_CLASS}>
+        No projects yet. The daemon&apos;s tree holds no project directory. Add one, and its tasks are shown here.
+        {" "}
+        <Link to="/projects" className="underline underline-offset-2">
+          Projects
+        </Link>
+      </p>
+    </>
+  );
+}
+
+export function TasksScreen(): ReactNode {
+  const { projects, labels } = route.useSearch();
+  const [tag] = splitList(projects);
+
+  useDocumentTitle(TITLE);
+
+  if (tag === undefined) {
+    return <EmptyTree />;
+  }
+
+  return <Board tag={tag} labels={labels} />;
+}
+
+/**
+ * The failure panel, then the project selector when the listing of projects was
+ * read. Without the selector, no other board can be opened: `/tasks` redirects to
+ * the refused project again.
+ */
+export function TasksFailure(props: ErrorComponentProps): ReactNode {
+  const { client } = route.useRouteContext();
+  const [tag] = splitList(route.useSearch().projects);
+  const { data: read } = useQuery({ ...projectsQuery(client), enabled: false });
+
+  return (
+    <>
+      <RouteFailure {...props} />
+      {tag !== undefined && read !== undefined && (
+        <div className="mt-6">
+          <ProjectSelect projects={read.data} tag={tag} />
+        </div>
+      )}
+    </>
+  );
+}

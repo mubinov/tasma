@@ -118,6 +118,53 @@ it("carries the rail width always and the full width only above the breakpoint",
   expect(sidebar.classList.contains("sm:w-60")).toBe(false);
 });
 
+/*
+ * A sticky sidebar cannot stay in view at the left of a board wider than the
+ * shell, so the header only holds the width and one fixed child carries the
+ * surface. The layout itself is checked in a real browser.
+ */
+it("holds the width on the header and the surface on one fixed child", async () => {
+  await renderWithRouter();
+
+  const header = screen.getByRole("banner");
+  const content = header.firstElementChild!;
+
+  expect(header.children).toHaveLength(1);
+  for (const name of ["flex", "border-r", "bg-surface-2"]) {
+    expect(header.classList.contains(name), name).toBe(false);
+  }
+  for (const name of [
+    "fixed",
+    "inset-y-0",
+    "left-0",
+    "z-(--layer-sidebar)",
+    "w-[inherit]",
+    "border-r",
+    "border-line",
+    "bg-surface-2",
+    "pb-2",
+    "sm:pb-0",
+  ]) {
+    expect(content.classList.contains(name), name).toBe(true);
+  }
+});
+
+// The fixed content covers the left of the page, so the page's scroll padding
+// has to follow the width, or a focus scroll can leave its target under it.
+it("sets the page's scroll padding to the sidebar width", async () => {
+  const user = userEvent.setup();
+  await renderWithRouter();
+
+  const header = screen.getByRole("banner");
+  expect(header.classList.contains("[html:has(&)]:scroll-pl-16")).toBe(true);
+  expect(header.classList.contains("sm:[html:has(&)]:scroll-pl-60")).toBe(true);
+
+  await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+
+  expect(header.classList.contains("[html:has(&)]:scroll-pl-16")).toBe(true);
+  expect(header.classList.contains("sm:[html:has(&)]:scroll-pl-60")).toBe(false);
+});
+
 // A disclosure, not a toggle: it expands and collapses a region. The button
 // carries no visible label in either state, so its name has to change with it,
 // and aria-controls is what says which region it means.

@@ -38,14 +38,16 @@
   --default-font-family: var(--font-prose);
 
   /*
-   * Five sizes, all rem so the browser's own text scaling still applies. The
-   * three prose sizes carry a line height of at least 1.5 times the size,
+   * Six sizes, all rem so the browser's own text scaling still applies. The
+   * four prose sizes carry a line height of at least 1.5 times the size,
    * which is what a paragraph needs; lg and xl are heading sizes and set
    * tighter.
    */
   --text-*: initial;
   --text-xs: 0.6875rem;
   --text-xs--line-height: 1.0625rem;
+  --text-xs-plus: 0.75rem;
+  --text-xs-plus--line-height: 1.125rem;
   --text-sm: 0.8125rem;
   --text-sm--line-height: 1.25rem;
   --text-base: 0.875rem;
@@ -63,6 +65,14 @@
   /* Borders separate. The one shadow is for surfaces that genuinely float. */
   --shadow-*: initial;
   --shadow-float: 0 12px 32px -8px rgb(0 0 0 / 0.45);
+
+  /*
+   * Stacking, bottom to top: a sticky column header over the cards, the fixed
+   * sidebar over the board, a popup over both. Used as `z-(--layer-*)`.
+   */
+  --layer-column-header: 2;
+  --layer-sidebar: 3;
+  --layer-popup: 4;
 
   --duration-fast: 120ms;
   --duration-base: 180ms;

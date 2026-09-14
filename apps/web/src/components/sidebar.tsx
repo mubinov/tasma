@@ -72,53 +72,62 @@ export function Sidebar(): ReactNode {
   const setCollapsed = useUiStore((state) => state.setSidebarCollapsed);
 
   return (
+    // The header holds the width in the row; its content is fixed, since a
+    // sticky box cannot leave the shell, which a wide board overflows. The
+    // content inherits the width, so it follows the collapse transition. The
+    // page's scroll padding matches the width, so a focus scroll keeps its
+    // target clear of the fixed content.
     <header
       id={SIDEBAR_ID}
-      className={`flex shrink-0 flex-col border-r border-line bg-surface-2 transition-[width] ${TIMING_CLASS} ${
-        collapsed ? "w-16" : "w-16 sm:w-60"
+      className={`shrink-0 transition-[width] ${TIMING_CLASS} ${
+        collapsed ? "w-16 [html:has(&)]:scroll-pl-16" : "w-16 [html:has(&)]:scroll-pl-16 sm:w-60 sm:[html:has(&)]:scroll-pl-60"
       }`}
     >
-      <div className="px-3 py-4">
-        <div className={ROW_CLASS}>
-          <span className={ICON_BOX_CLASS}>
-            <span className="size-6 rounded-control bg-graphic" />
-          </span>
-          <CollapsingLabel collapsed={collapsed} className="font-chrome text-lg font-semibold tracking-tight">
-            tasma
-          </CollapsingLabel>
+      {/* The bottom padding below `sm` keeps the last link's focus ring inside
+          the scroll box, which clips it; above `sm` the collapse block does. */}
+      <div className="fixed inset-y-0 left-0 z-(--layer-sidebar) flex w-[inherit] flex-col overflow-y-auto border-r border-line bg-surface-2 pb-2 sm:pb-0">
+        <div className="px-3 py-4">
+          <div className={ROW_CLASS}>
+            <span className={ICON_BOX_CLASS}>
+              <span className="size-6 rounded-control bg-graphic" />
+            </span>
+            <CollapsingLabel collapsed={collapsed} className="font-chrome text-lg font-semibold tracking-tight">
+              tasma
+            </CollapsingLabel>
+          </div>
         </div>
-      </div>
 
-      {/* The side padding sits on the lists, so the foot's border spans the
-          sidebar's full width. */}
-      <nav className="flex flex-1 flex-col">
-        <ul className={LIST_CLASS}>
-          {PRIMARY_NAVIGATION.map((entry) => (
-            <SidebarLink key={entry.path} entry={entry} collapsed={collapsed} />
-          ))}
-        </ul>
-        <ul className={`${LIST_CLASS} mt-auto border-t border-line`}>
-          {FOOTER_NAVIGATION.map((entry) => (
-            <SidebarLink key={entry.path} entry={entry} collapsed={collapsed} />
-          ))}
-        </ul>
-      </nav>
+        {/* The side padding sits on the lists, so the foot's border spans the
+            sidebar's full width. */}
+        <nav className="flex flex-1 flex-col">
+          <ul className={LIST_CLASS}>
+            {PRIMARY_NAVIGATION.map((entry) => (
+              <SidebarLink key={entry.path} entry={entry} collapsed={collapsed} />
+            ))}
+          </ul>
+          <ul className={`${LIST_CLASS} mt-auto border-t border-line`}>
+            {FOOTER_NAVIGATION.map((entry) => (
+              <SidebarLink key={entry.path} entry={entry} collapsed={collapsed} />
+            ))}
+          </ul>
+        </nav>
 
-      <div className="hidden px-3 py-2 sm:block">
-        {/* A disclosure, so a plain button with aria-expanded. Base UI's Toggle
-            is an aria-pressed control and would say the wrong thing. */}
-        <button
-          type="button"
-          aria-expanded={!collapsed}
-          aria-controls={SIDEBAR_ID}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          onClick={() => setCollapsed(!collapsed)}
-          className={`${ROW_CLASS} ${IDLE_TEXT_CLASS}`}
-        >
-          <span className={ICON_BOX_CLASS}>
-            <SidebarSimpleIcon size={20} aria-hidden="true" />
-          </span>
-        </button>
+        <div className="hidden px-3 py-2 sm:block">
+          {/* A disclosure, so a plain button with aria-expanded. Base UI's Toggle
+              is an aria-pressed control and would say the wrong thing. */}
+          <button
+            type="button"
+            aria-expanded={!collapsed}
+            aria-controls={SIDEBAR_ID}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={() => setCollapsed(!collapsed)}
+            className={`${ROW_CLASS} ${IDLE_TEXT_CLASS}`}
+          >
+            <span className={ICON_BOX_CLASS}>
+              <SidebarSimpleIcon size={20} aria-hidden="true" />
+            </span>
+          </button>
+        </div>
       </div>
     </header>
   );

@@ -12,6 +12,9 @@ export const THEME_PREFERENCE_LABELS: Record<ThemePreference, string> = {
 
 const THEME_STORAGE_KEY = "tasma.theme";
 const SIDEBAR_STORAGE_KEY = "tasma.sidebar";
+const TASKS_PROJECT_STORAGE_KEY = "tasma.tasks.project";
+
+const PROJECT_TAG = /^[A-Z0-9]+$/;
 
 const SIDEBAR_COLLAPSED = "collapsed";
 const SIDEBAR_EXPANDED = "expanded";
@@ -64,6 +67,8 @@ type UiState = {
   setThemePreference: (preference: ThemePreference) => void;
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (collapsed: boolean) => void;
+  lastTasksProject: string | null;
+  setLastTasksProject: (tag: string) => void;
 };
 
 // Starts on the defaults and reads nothing: importing a module must not touch
@@ -79,18 +84,26 @@ export const useUiStore = create<UiState>((set) => ({
     storage.write(SIDEBAR_STORAGE_KEY, collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED);
     set({ sidebarCollapsed: collapsed });
   },
+  lastTasksProject: null,
+  setLastTasksProject: (tag) => {
+    storage.write(TASKS_PROJECT_STORAGE_KEY, tag);
+    set({ lastTasksProject: tag });
+  },
 }));
 
 export type HydratedUi = {
   themePreference: ThemePreference;
   sidebarCollapsed: boolean;
+  lastTasksProject: string | null;
 };
 
 export function hydrateUiStore(): HydratedUi {
   const stored = storage.read(THEME_STORAGE_KEY);
   const themePreference = isThemePreference(stored) ? stored : "system";
   const sidebarCollapsed = readSidebarState(storage.read(SIDEBAR_STORAGE_KEY)) ?? false;
+  const storedProject = storage.read(TASKS_PROJECT_STORAGE_KEY);
+  const lastTasksProject = storedProject !== null && PROJECT_TAG.test(storedProject) ? storedProject : null;
 
-  useUiStore.setState({ themePreference, sidebarCollapsed });
-  return { themePreference, sidebarCollapsed };
+  useUiStore.setState({ themePreference, sidebarCollapsed, lastTasksProject });
+  return { themePreference, sidebarCollapsed, lastTasksProject };
 }

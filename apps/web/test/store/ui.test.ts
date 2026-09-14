@@ -10,11 +10,12 @@ import {
 
 const THEME_KEY = "tasma.theme";
 const SIDEBAR_KEY = "tasma.sidebar";
+const TASKS_PROJECT_KEY = "tasma.tasks.project";
 
 beforeEach(() => {
   window.localStorage.clear();
   setPreferenceStorage(browserPreferenceStorage);
-  useUiStore.setState({ themePreference: "system", sidebarCollapsed: false });
+  useUiStore.setState({ themePreference: "system", sidebarCollapsed: false, lastTasksProject: null });
 });
 
 afterEach(() => {
@@ -50,7 +51,7 @@ describe("the ui store", () => {
       throw new Error("storage is not available on this origin");
     });
 
-    expect(hydrateUiStore()).toEqual({ themePreference: "system", sidebarCollapsed: false });
+    expect(hydrateUiStore()).toEqual({ themePreference: "system", sidebarCollapsed: false, lastTasksProject: null });
   });
 
   it("persists a new preference", () => {
@@ -75,7 +76,7 @@ describe("the ui store", () => {
       write: (key, value) => void written.push([key, value]),
     });
 
-    expect(hydrateUiStore()).toEqual({ themePreference: "dark", sidebarCollapsed: true });
+    expect(hydrateUiStore()).toEqual({ themePreference: "dark", sidebarCollapsed: true, lastTasksProject: null });
     useUiStore.getState().setThemePreference("light");
     useUiStore.getState().setSidebarCollapsed(false);
 
@@ -136,6 +137,32 @@ describe("the sidebar collapse state", () => {
     useUiStore.getState().setSidebarCollapsed(true);
     expect(useUiStore.getState().sidebarCollapsed).toBe(true);
   });
+});
+
+describe("the last opened tasks project", () => {
+  it("starts on null", () => {
+    expect(hydrateUiStore().lastTasksProject).toBeNull();
+    expect(useUiStore.getState().lastTasksProject).toBeNull();
+  });
+
+  it("persists the tag under its own key and hydrates it back", () => {
+    useUiStore.getState().setLastTasksProject("TASM");
+    expect(useUiStore.getState().lastTasksProject).toBe("TASM");
+    expect(window.localStorage.getItem(TASKS_PROJECT_KEY)).toBe("TASM");
+
+    useUiStore.setState({ lastTasksProject: null });
+    expect(hydrateUiStore().lastTasksProject).toBe("TASM");
+    expect(useUiStore.getState().lastTasksProject).toBe("TASM");
+  });
+
+  it.each([{ stored: "tasm" }, { stored: "" }, { stored: "TASM-1" }, { stored: "../TASM" }])(
+    "hydrates the stored value \"$stored\", which is not a tag, as null",
+    ({ stored }) => {
+      window.localStorage.setItem(TASKS_PROJECT_KEY, stored);
+
+      expect(hydrateUiStore().lastTasksProject).toBeNull();
+    },
+  );
 });
 
 describe("the preference list", () => {

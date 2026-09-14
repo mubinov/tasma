@@ -123,6 +123,30 @@ it("keeps a throw from a child screen inside the shell's one main landmark", asy
   expect(screen.getByRole("navigation")).toBeTruthy();
 });
 
+it("writes a comma of a list parameter into the address as a comma", async () => {
+  vi.stubGlobal("scrollTo", () => {});
+  const appRouter = createAppRouter(createMemoryHistory({ initialEntries: ["/"] }), testContext());
+
+  await act(async () => {
+    await appRouter.navigate({ to: "/tasks", search: { labels: "web,infra" } });
+  });
+
+  expect(appRouter.state.location.searchStr).toBe("?labels=web,infra");
+  expect(appRouter.history.location.search).toBe("?labels=web,infra");
+});
+
+it("writes every search value into the address as it is, and reads it back as text", async () => {
+  vi.stubGlobal("scrollTo", () => {});
+  const appRouter = createAppRouter(createMemoryHistory({ initialEntries: ["/"] }), testContext());
+
+  await act(async () => {
+    await appRouter.navigate({ to: "/tasks", search: { labels: "2026,\"quoted\"" } });
+  });
+
+  expect(appRouter.history.location.search).toBe("?labels=2026,%22quoted%22");
+  expect(appRouter.parseLocation(appRouter.history.location).search).toEqual({ labels: "2026,\"quoted\"" });
+});
+
 /*
  * Retry is the one recovery the panel offers, and the router is the only place
  * it can be wired — so this is the only place it can be proved. A panel test
