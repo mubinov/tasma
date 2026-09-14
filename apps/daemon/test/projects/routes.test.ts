@@ -245,6 +245,47 @@ describe("POST /projects", () => {
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "project-exists" });
   });
 
+  it("refuses the path of a registered project, and the tree holds that project alone", async () => {
+    const root = await projectsRoot();
+    const path = await target();
+    const server = await serving(root);
+    expect((await send(server, "POST", "/projects", { path, tag: "ONE" })).status).toBe(200);
+
+    const response = await send(server, "POST", "/projects", { path, tag: "TWO" });
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "path-taken", path });
+    await expect(readdir(join(root, "projects"))).resolves.toEqual(["ONE"]);
+  });
+
+  it("registers one of two creates of one path sent together, and refuses the other", async () => {
+    const root = await projectsRoot();
+    const path = await target();
+    const server = await serving(root);
+
+    const responses = await Promise.all([
+      send(server, "POST", "/projects", { path, tag: "ONE" }),
+      send(server, "POST", "/projects", { path, tag: "TWO" }),
+    ]);
+
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    await expect(readdir(join(root, "projects"))).resolves.toHaveLength(1);
+  });
+
+  it("lets one of a create and a patch of another project to one path sent together through, and refuses the other", async () => {
+    const root = await projectsRoot("TASM");
+    await plant(projectConfig(root, "TASM"), `path: ${await target()}\n`);
+    const path = await target();
+    const server = await serving(root);
+
+    const [created, patched] = await Promise.all([
+      send(server, "POST", "/projects", { path, tag: "ONE" }),
+      send(server, "PATCH", "/projects/TASM", { path }),
+    ]);
+
+    expect([created.status, patched.status].sort()).toEqual([200, 409]);
+  });
+
   it("refuses a body that is no object, before anything is written", async () => {
     const server = await serving(await projectsRoot());
 
@@ -327,6 +368,21 @@ describe("PATCH /projects/{project}", () => {
     await expect(success<Project>(response)).resolves.toMatchObject({
       diagnostics: [{ code: "path-missing", path }],
     });
+  });
+
+  it("refuses the path of another project, and the file keeps its own", async () => {
+    const root = await projectsRoot("TASM", "CLIB");
+    const own = await target();
+    const taken = await target();
+    await plant(projectConfig(root, "TASM"), `path: ${own}\n`);
+    await plant(projectConfig(root, "CLIB"), `path: ${taken}\n`);
+    const server = await serving(root);
+
+    const response = await send(server, "PATCH", "/projects/TASM", { path: taken });
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "path-taken", path: taken });
+    await expect(readFile(projectConfig(root, "TASM"), "utf8")).resolves.toBe(`path: ${own}\n`);
   });
 
   it("refuses the tag, which no write of a project sets", async () => {
@@ -441,6 +497,39 @@ describe("DELETE /projects/{project}", () => {
     expect(removed.status).toBe(200);
     expect(patched.status).toBe(404);
     await expect(failure(patched)).resolves.toMatchObject({ kind: "store", code: "project-not-found" });
+  });
+
+  it("runs for a project named path while a create holds the path turn", async () => {
+    const inner = createProjectHost({ root: await projectsRoot() });
+    onTestFinished(() => inner.close());
+
+    const reached: string[] = [];
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const host: ProjectHost = {
+      ...inner,
+      async create(input) {
+        reached.push("create");
+        await held;
+        return inner.create(input);
+      },
+      async remove(tag) {
+        reached.push("remove");
+        return inner.remove(tag);
+      },
+    };
+    const server = await startTestServer(projectRoutes(host));
+
+    const creating = send(server, "POST", "/projects", { path: await target(), tag: "ONE" });
+    await until(() => reached.includes("create"), "the create took the path turn");
+    const removing = send(server, "DELETE", "/projects/path");
+    await until(() => reached.includes("remove"), "the delete ran while the create held the path turn");
+    release();
+
+    expect((await removing).status).toBe(404);
+    expect((await creating).status).toBe(200);
   });
 });
 
@@ -567,6 +656,61 @@ describe("POST /projects/{project}/rename", () => {
     expect(renamed.status).toBe(200);
     expect(patched.status).toBe(200);
     await expect(success<Project>(patched)).resolves.toMatchObject({ data: { tag: "NEW", name: "Renamed" } });
+  });
+
+  it("makes a create of the path of the project it renames wait until the rename is complete", async () => {
+    const root = await projectsRoot("TASM");
+    const path = await target();
+    await plant(projectConfig(root, "TASM"), `path: ${path}\n`);
+    const inner = createProjectHost({ root });
+    onTestFinished(() => inner.close());
+
+    const reached: string[] = [];
+    let queued!: () => void;
+    const behind = new Promise<void>((resolve) => {
+      queued = resolve;
+    });
+    const host: ProjectHost = {
+      ...inner,
+      async rename(tag, rename) {
+        reached.push("rename");
+        await behind;
+        const findings = await inner.rename(tag, rename);
+        reached.push("renamed");
+        return findings;
+      },
+      async create(input) {
+        reached.push("create");
+        return inner.create(input);
+      },
+    };
+    // The rename is held until the create has entered its handler, which takes
+    // the path turn behind the rename, so the order below is the queue's
+    // decision.
+    const entries = projectRoutes(host).map((entry) => {
+      if (entry.route !== routes.createProject) return entry;
+      return {
+        ...entry,
+        handler: (request: HandlerRequest) => {
+          queued();
+          return entry.handler(request);
+        },
+      };
+    });
+    const server = await startTestServer(entries);
+
+    const renaming = send(server, "POST", "/projects/TASM/rename", { tag: "NEW" });
+    await until(() => reached.includes("rename"), "the rename took its turn");
+    const created = await send(server, "POST", "/projects", { path, tag: "ONE" });
+
+    expect((await renaming).status).toBe(200);
+    expect(created.status).toBe(409);
+    await expect(failure(created)).resolves.toMatchObject({
+      kind: "store",
+      code: "path-taken",
+      message: `${path}: project NEW holds this directory`,
+    });
+    expect(reached).toEqual(["rename", "renamed", "create"]);
   });
 });
 

@@ -143,3 +143,23 @@ export async function locateProject(directory: string, root?: string): Promise<L
   }
   return { project: innermost?.project, diagnostics: findings.filter((finding) => finding !== undefined) };
 }
+
+/**
+ * The tag of the first project of the tree, other than `except`, that stands at
+ * exactly `directory`, compared by canonical path. A project nested inside the
+ * directory, or around it, does not stand at it.
+ *
+ * `directory` is not checked: the caller passes a path the store already
+ * checked as a directory. A project whose declaration cannot be read is passed
+ * over, with no finding.
+ */
+export async function pathHolder(
+  directory: string,
+  root: string | undefined,
+  except?: string,
+): Promise<string | undefined> {
+  const canonicalDirectory = await canonical(directory);
+  const tags = (await discoverProjects(root)).filter((tag) => tag !== except);
+  const { candidates } = await readAll(tags, root);
+  return candidates.find((candidate) => candidate?.canonicalPath === canonicalDirectory)?.project.tag;
+}

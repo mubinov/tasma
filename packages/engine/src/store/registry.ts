@@ -13,6 +13,7 @@ import {
 } from "./atomic.js";
 import { resolveProjectDeclaration } from "./config.js";
 import { errnoOf, fail } from "./errors.js";
+import { pathHolder } from "./locate.js";
 import { checkedDirectoryPath, type ProjectPaths, projectPaths } from "./paths.js";
 import { checkedProjectsDirectory, discoverProjects } from "./projects.js";
 import { checkProjectDirectory, openProjectDirectory } from "./store.js";
@@ -72,6 +73,12 @@ async function checkedPath(stated: unknown): Promise<string> {
   return checkedDirectoryPath(stated, "a project path");
 }
 
+/** Refuses a checked path that another project of the tree stands at. */
+async function checkPathFree(path: string, root: string | undefined, except?: string): Promise<void> {
+  const holder = await pathHolder(path, root, except);
+  if (holder !== undefined) fail("path-taken", `project ${holder} holds this directory`, path);
+}
+
 /**
  * The name a caller stated, which is text and never the empty string. It is
  * checked before any write: the file is read back on every later call, and a
@@ -102,6 +109,10 @@ function declarationText(name: string | undefined, path: string): string {
  * the path resolves to gives, numbered until it is free. The exclusive create of
  * the directory is the collision guard rather than the discovery that preceded
  * it, so two creates racing on one tag settle on two directories.
+ *
+ * A path another project stands at is refused before anything is written. That
+ * check has no such guard: two creates racing on one path both pass it unless
+ * the caller orders them.
  */
 export async function createProject(input: CreateProjectInput): Promise<ProjectInfo> {
   checkedKeys(input, CREATE_KEYS, "is not a key a create of a project states");
@@ -115,6 +126,7 @@ export async function createProject(input: CreateProjectInput): Promise<ProjectI
   const folder = basename(path);
   const name = statedName ?? (folder === "" ? undefined : folder);
   const projects = await checkedProjectsDirectory(input.root);
+  await checkPathFree(path, input.root);
   // The tag the create starts from. Only a generated one is counted up from it:
   // a stated tag is the one the caller asked for or nothing.
   const start = explicit ?? generateTag(path);
@@ -237,7 +249,7 @@ function cleared(value: unknown): boolean {
 }
 
 /** Sets the keys of one change, leaving every other key and every comment of the file alone. */
-async function writeDeclaration(paths: ProjectPaths, change: ProjectChange): Promise<void> {
+async function writeDeclaration(options: ProjectOptions, paths: ProjectPaths, change: ProjectChange): Promise<void> {
   const statesName = Object.hasOwn(change, "name");
   const statesPath = Object.hasOwn(change, "path");
   const clearsName = statesName && cleared(change.name);
@@ -246,6 +258,9 @@ async function writeDeclaration(paths: ProjectPaths, change: ProjectChange): Pro
   }
   const name = statesName && !clearsName ? checkedName(change.name) : undefined;
   const path = statesPath ? await checkedPath(change.path) : undefined;
+  // Also for the path the project already states: a hand edit can have put
+  // another project there.
+  if (path !== undefined) await checkPathFree(path, options.root, options.project);
 
   const doc = await openDeclaration(paths);
   let written = false;
@@ -282,7 +297,7 @@ export async function updateProject(options: ProjectOptions, change: ProjectChan
     const paths = projectPaths(options);
     await checkedProjectsDirectory(options.root);
     await openProjectDirectory(paths);
-    await writeDeclaration(paths, change);
+    await writeDeclaration(options, paths, change);
   }
   return readProject(options);
 }

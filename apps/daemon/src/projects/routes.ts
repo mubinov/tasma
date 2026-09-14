@@ -9,7 +9,7 @@ import type { Project, ProjectChange, ProjectInput, ProjectRename, ProjectSummar
 import type { RouteEntry } from "../http/router.js";
 import { assertNoQuery, readProjectQuery } from "../tasks/filter.js";
 import { toChange } from "../tasks/input.js";
-import { WriteQueue } from "../tasks/serialize.js";
+import { PATH_KEY, WriteQueue } from "../tasks/serialize.js";
 import type { ProjectHost } from "./host.js";
 
 /**
@@ -37,12 +37,17 @@ async function readOne(host: ProjectHost, tag: string): Promise<Success<Project>
  * the process passes the result to `createDaemonServer` along with the host it
  * built them over.
  *
- * The queue is built here and keyed by the tag alone, so a patch, a rename and a
+ * The queue is built here and keyed by the tag, so a patch, a rename and a
  * delete of one project take turns: a patch behind a delete answers 404 rather
  * than a raw filesystem fault from a directory that went under its write. A
- * rename takes the turn of both tags it names, so a write of either of them
- * waits for the whole of it. A create takes no turn, because the engine's
- * exclusive create of the directory orders creates.
+ * rename takes the turn of both tags it names and the path turn, so a write of
+ * either tag waits for the whole of it.
+ *
+ * A create, a patch that states a path and a rename share the path turn, so no
+ * write can pass the engine's path check while another write changes where a
+ * path is held, and no two creates overlap. The engine's exclusive create of the
+ * directory guards a tag only against the writes that turn does not order: a
+ * delete, and a writer outside the daemon.
  */
 export function projectRoutes(host: ProjectHost): RouteEntry[] {
   const writes = new WriteQueue();
@@ -67,7 +72,8 @@ export function projectRoutes(host: ProjectHost): RouteEntry[] {
         // time, so the wire type is a promise it enforces rather than one the
         // daemon has to.
         const input = toChange(request.body) as ProjectInput;
-        return readOne(host, await host.create(input));
+        const tag = await writes.run(PATH_KEY, () => host.create(input));
+        return readOne(host, tag);
       },
     },
     {
@@ -89,7 +95,8 @@ export function projectRoutes(host: ProjectHost): RouteEntry[] {
         // The read is inside the turn, not after it: a delete waiting behind
         // this patch starts the moment the turn ends, and a read left outside
         // would answer 404 for a project this very request wrote.
-        return writes.run(tag, async () => {
+        const keys = Object.hasOwn(change, "path") ? [tag, PATH_KEY] : [tag];
+        return writes.runAll(keys, async () => {
           await host.update(tag, change);
           return readOne(host, tag);
         });
@@ -117,7 +124,10 @@ export function projectRoutes(host: ProjectHost): RouteEntry[] {
         // the rename is complete, the reconcile included: that is what makes the
         // reconcile's copy of `config.yml` safe against a patch of the new
         // project. A tag that is no string names no turn; the engine refuses it.
-        const keys = typeof statedTag === "string" ? [tag, statedTag] : [tag];
+        // The path turn too: the path check lists the tags before it reads
+        // them, so a rename between the two steps hides the project that holds
+        // the path.
+        const keys = typeof statedTag === "string" ? [tag, statedTag, PATH_KEY] : [tag, PATH_KEY];
         return writes.runAll(keys, async () => {
           const findings = await host.rename(tag, rename);
           // Read inside the turn, for the reason the patch reads inside its own.

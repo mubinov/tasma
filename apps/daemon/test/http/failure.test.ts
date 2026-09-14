@@ -88,7 +88,7 @@ describe("the status of a refusal", () => {
     (code) => expect(statusOfStore(code)).toBe(404),
   );
 
-  it.each<StoreErrorCode>(["task-exists", "comment-exists", "snapshot-lost", "project-exists"])(
+  it.each<StoreErrorCode>(["task-exists", "comment-exists", "snapshot-lost", "project-exists", "path-taken"])(
     "answers 409 for the store code %s",
     (code) => expect(statusOfStore(code)).toBe(409),
   );

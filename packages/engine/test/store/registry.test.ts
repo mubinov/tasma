@@ -155,6 +155,55 @@ describe("registering a project", () => {
     expect((await storeError(createProject({ root, path: await target(), tag: "TASM" }))).code).toBe("project-exists");
   });
 
+  it("refuses the path of another project, naming that project, and writes nothing", async () => {
+    const root = await bareRoot();
+    const folder = await target();
+    await createProject({ root, path: folder, tag: "CLIB" });
+
+    const error = await storeError(createProject({ root, path: folder }));
+
+    expect(error.code).toBe("path-taken");
+    expect(error.path).toBe(folder);
+    expect(error.message).toBe(`${folder}: project CLIB holds this directory`);
+    await expect(entries(join(root, "projects"))).resolves.toEqual(["CLIB"]);
+  });
+
+  it.each([
+    ["with a trailing separator", async (folder: string) => `${folder}/`],
+    ["through a parent segment", async (folder: string) => `${folder}/sub/..`],
+    ["through a symbolic link", async (folder: string) => {
+      const link = join(dirname(folder), "link");
+      await symlink(folder, link);
+      return link;
+    }],
+  ])("refuses the path of another project stated %s", async (_form, build) => {
+    const root = await bareRoot();
+    const folder = await target();
+    await createProject({ root, path: folder, tag: "CLIB" });
+
+    expect((await storeError(createProject({ root, path: await build(folder) }))).code).toBe("path-taken");
+    await expect(entries(join(root, "projects"))).resolves.toEqual(["CLIB"]);
+  });
+
+  it("registers a folder inside the folder of another project, and a folder around it", async () => {
+    const root = await bareRoot();
+    const folder = await target();
+    await createProject({ root, path: folder, tag: "CLIB" });
+    const inner = join(folder, "inner");
+    await mkdir(inner);
+
+    await expect(createProject({ root, path: inner, tag: "INNER" })).resolves.toMatchObject({ tag: "INNER" });
+    await expect(createProject({ root, path: dirname(folder), tag: "OUTER" })).resolves.toMatchObject({ tag: "OUTER" });
+  });
+
+  it("registers the path of a project whose configuration it cannot parse", async () => {
+    const root = await projectsRoot("CLIB");
+    const folder = await target();
+    await plant(projectConfig(root, "CLIB"), `path: ${folder}\nname: [Clib\n`);
+
+    await expect(createProject({ root, path: folder, tag: "TASM" })).resolves.toMatchObject({ tag: "TASM" });
+  });
+
   it("numbers a generated tag another project already stands under", async () => {
     const root = await projectsRoot("TASM");
 
@@ -387,6 +436,41 @@ describe("writing what a project states", () => {
 
     await expect(updateProject({ project: PROJECT, root }, { path: folder })).resolves.toMatchObject({ path: folder });
     expect(await read(projectConfig(root))).toBe(`path: ${folder}\n`);
+  });
+
+  it("refuses the path of another project, leaving the file as it stands", async () => {
+    const root = await projectsRoot(PROJECT, "CLIB");
+    const folder = await target();
+    await plant(projectConfig(root), "name: Tasma\n");
+    await plant(projectConfig(root, "CLIB"), `path: ${folder}\n`);
+
+    const error = await storeError(updateProject({ project: PROJECT, root }, { path: folder }));
+
+    expect(error.code).toBe("path-taken");
+    expect(error.message).toBe(`${folder}: project CLIB holds this directory`);
+    expect(await read(projectConfig(root))).toBe("name: Tasma\n");
+  });
+
+  it("sets the path the project already stands at", async () => {
+    const root = await projectsRoot(PROJECT, "CLIB");
+    const folder = await target();
+    await plant(projectConfig(root), `path: ${folder}\n`);
+    await plant(projectConfig(root, "CLIB"), `path: ${await target("clib")}\n`);
+
+    await expect(updateProject({ project: PROJECT, root }, { path: folder })).resolves.toMatchObject({ path: folder });
+  });
+
+  it("writes the name of a project a hand edit put at the path of another, and refuses that path", async () => {
+    const root = await projectsRoot(PROJECT, "CLIB");
+    const folder = await target();
+    await plant(projectConfig(root), `path: ${folder}\n`);
+    await plant(projectConfig(root, "CLIB"), `path: ${folder}\n`);
+
+    await expect(updateProject({ project: PROJECT, root }, { name: "Tasma" })).resolves.toMatchObject({
+      name: "Tasma",
+    });
+    expect((await storeError(updateProject({ project: PROJECT, root }, { path: folder }))).code).toBe("path-taken");
+    expect(await read(projectConfig(root))).toBe(`path: ${folder}\nname: Tasma\n`);
   });
 
   it("refuses a name that is empty", async () => {

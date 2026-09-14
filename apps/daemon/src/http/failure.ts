@@ -82,9 +82,10 @@ const STORE_STATUS = {
   "task-exists": 409,
   "comment-exists": 409,
   "snapshot-lost": 409,
-  // The tag a create asked for is taken, which the caller answers by choosing
-  // another rather than by sending the same call again.
+  // The tag or the path a write asked for is taken, which the caller answers by
+  // choosing another rather than by sending the same call again.
   "project-exists": 409,
+  "path-taken": 409,
   // Each of these is a file on disk that cannot be used, not a bad call.
   "project-invalid": 422,
   "config-invalid": 422,

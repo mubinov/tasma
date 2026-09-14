@@ -345,9 +345,9 @@ export function createProjectHost(options: {
       if (Object.hasOwn(input, "root")) {
         throw new TaskStoreError("field-not-writable", '"root" is no field of a create the daemon serves');
       }
-      // The engine's exclusive create of the directory is the collision guard,
-      // so two creates racing on one tag settle on two projects with no turn
-      // taken here.
+      // The route runs every create in the path turn, which orders the path
+      // check and keeps two creates apart. The engine's exclusive create of the
+      // directory guards the tag only against the writes that turn does not order.
       return (await createProject({ ...input, root })).tag;
     },
 

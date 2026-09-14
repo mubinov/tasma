@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blockerKeys, createKey, taskKey, WriteQueue } from "../../src/tasks/serialize.js";
+import { blockerKeys, createKey, PATH_KEY, taskKey, WriteQueue } from "../../src/tasks/serialize.js";
 
 /** A promise a test resolves itself, so no assertion waits on a timer. */
 function held(): { promise: Promise<void>; release: () => void } {
@@ -135,6 +135,11 @@ describe("the keys the queue is driven by", () => {
     expect(taskKey("TASM", "TASM-1")).not.toBe(taskKey("OTHER", "TASM-1"));
     expect(createKey("TASM")).not.toBe(taskKey("TASM", "TASM-1"));
     expect(createKey("TASM")).not.toBe(createKey("OTHER"));
+  });
+
+  it("keys the path turn apart from every tag and URL segment spelled without percent-encoding", () => {
+    expect(PATH_KEY).not.toBe("path");
+    expect(PATH_KEY).toContain("\u0000");
   });
 
   const listed = () => [{ id: "TASM-1" }, { id: "TASM-2" }, { id: "TASM-3" }];

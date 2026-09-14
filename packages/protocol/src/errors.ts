@@ -19,6 +19,7 @@ export type StoreErrorCode
     | "tag-invalid"
     | "tag-not-generated"
     | "path-invalid"
+    | "path-taken"
     | "config-invalid"
     | "status-unknown"
     | "priority-unknown"

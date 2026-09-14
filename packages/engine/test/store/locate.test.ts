@@ -2,6 +2,7 @@ import { chmod, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { locateProject } from "@tasma/engine";
+import { pathHolder } from "../../src/store/locate.js";
 import {
   bareRoot,
   codes,
@@ -185,6 +186,68 @@ describe("the project that holds a directory", () => {
     expect(result.diagnostics.map((finding) => finding.path)).toEqual(
       unreadable.map((tag) => projectConfig(root, tag)),
     );
+  });
+});
+
+describe("the project that stands at exactly a directory", () => {
+  it("answers with the project whose path is the directory", async () => {
+    const root = await projectsRoot("TASM");
+    const repo = await folderIn(root, "repo");
+    await declare(root, "TASM", repo);
+
+    await expect(pathHolder(repo, root)).resolves.toBe("TASM");
+  });
+
+  it("answers with no project for a directory inside a project or around one", async () => {
+    const root = await projectsRoot("TASM");
+    const repo = await folderIn(root, "outer", "repo");
+    await declare(root, "TASM", repo);
+
+    await expect(pathHolder(await folderIn(repo, "inner"), root)).resolves.toBeUndefined();
+    await expect(pathHolder(join(root, "outer"), root)).resolves.toBeUndefined();
+  });
+
+  it("answers with no project over a tree that holds none", async () => {
+    const root = await bareRoot();
+
+    await expect(pathHolder(await folderIn(root, "repo"), root)).resolves.toBeUndefined();
+  });
+
+  it("answers with the lowest tag where two projects stand at the directory", async () => {
+    const root = await projectsRoot("TASM", "CLIB");
+    const repo = await folderIn(root, "repo");
+    await declare(root, "TASM", repo);
+    await declare(root, "CLIB", repo);
+
+    await expect(pathHolder(repo, root)).resolves.toBe("CLIB");
+  });
+
+  it("passes over the project it is told to leave out", async () => {
+    const root = await projectsRoot("TASM", "CLIB");
+    const repo = await folderIn(root, "repo");
+    await declare(root, "TASM", repo);
+    await declare(root, "CLIB", repo);
+
+    await expect(pathHolder(repo, root, "CLIB")).resolves.toBe("TASM");
+    await expect(pathHolder(repo, root, "TASM")).resolves.toBe("CLIB");
+  });
+
+  it("compares the canonical paths, so a project declared through a symbolic link stands at the folder", async () => {
+    const root = await projectsRoot("TASM");
+    const physical = await folderIn(root, "physical", "repo");
+    await symlink(join(root, "physical"), join(root, "link"));
+    await declare(root, "TASM", join(root, "link", "repo"));
+
+    await expect(pathHolder(physical, root)).resolves.toBe("TASM");
+  });
+
+  it("passes over a project that declares no path and one whose configuration is no YAML", async () => {
+    const root = await projectsRoot("TASM", "CLIB");
+    const repo = await folderIn(root, "repo");
+    await plant(projectConfig(root, "CLIB"), "name: Clib\n");
+    await plant(projectConfig(root, "TASM"), `path: ${repo}\nname: [Tasma\n`);
+
+    await expect(pathHolder(repo, root)).resolves.toBeUndefined();
   });
 });
 

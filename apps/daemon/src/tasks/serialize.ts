@@ -107,6 +107,14 @@ export function blockerKeys(
 }
 
 /**
+ * The key every write that sets or moves a project path shares, so the engine's
+ * path check and the write it guards are one step. A project write is keyed by
+ * the tag segment of its URL before the engine checks that tag, so the key holds
+ * the separator no segment spells without percent-encoding.
+ */
+export const PATH_KEY = "path\u0000";
+
+/**
  * The key every create of one project shares. A create writes a file no id yet
  * names and takes its number from the project's one counter: the exclusive
  * create that consumes the counter recovers from a single collision and refuses

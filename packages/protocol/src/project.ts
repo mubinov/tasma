@@ -36,7 +36,8 @@ export type ProjectSummary = {
  * What a create states. `path` is the repository the project stands for,
  * absolute or starting with `~/`; `name` defaults to the last folder name of the
  * path it resolves to. `tag` is used as given when present, and generated from
- * the same folder name otherwise.
+ * the same folder name otherwise. The path must not be the folder of another
+ * project, compared by real path, and the daemon refuses it as `path-taken`.
  */
 export type ProjectInput = { path: string; name?: string; tag?: string };
 
@@ -44,7 +45,9 @@ export type ProjectInput = { path: string; name?: string; tag?: string };
  * One change of a project. A key present with `null` clears the field and an
  * absent key leaves it alone, so `{ name: null }` deletes the name and the
  * reader falls back to the tag. `path` cannot be cleared: every project states
- * one. `tag` is no field here.
+ * one. `tag` is no field here. A stated `path` must not be the folder of
+ * another project, compared by real path, and the daemon refuses it as
+ * `path-taken`.
  */
 export type ProjectChange = { name?: string | null; path?: string };
 
