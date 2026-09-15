@@ -67,6 +67,25 @@ it("moves focus to the content region on a route change, not on the first paint"
   expect(document.activeElement).toBe(screen.getByRole("main"));
 });
 
+// The stack follows <main>, so a notice is on every screen and after the content
+// in reading order.
+it("mounts the notice stack after the main content", async () => {
+  await renderWithRouter();
+
+  const stack = screen.getByRole("main").nextElementSibling;
+  expect(stack?.getAttribute("aria-live")).toBe("polite");
+});
+
+// jsdom has no layout, so the classes that add the stack's height to the bottom
+// padding are what can be checked.
+it("keeps room below the main content for the notice stack", async () => {
+  await renderWithRouter();
+
+  const main = screen.getByRole("main");
+  expect(main.classList.contains("pb-[calc(--spacing(6)+var(--notice-stack-height,0px))]")).toBe(true);
+  expect(main.classList.contains("sm:pb-[calc(--spacing(10)+var(--notice-stack-height,0px))]")).toBe(true);
+});
+
 // The title is announced on arrival and is what a bookmark and the window list
 // show, so it has to follow the screen rather than name the app alone.
 it("names the document after the screen it shows", async () => {

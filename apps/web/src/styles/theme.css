@@ -68,17 +68,29 @@
 
   /*
    * Stacking, bottom to top: a sticky column header over the cards, the fixed
-   * sidebar over the board, a popup over both. Used as `z-(--layer-*)`.
+   * sidebar over the board, a notice over both, a popup over all of them, so a
+   * menu opened near the corner covers a notice. Used as `z-(--layer-*)`.
    */
   --layer-column-header: 2;
   --layer-sidebar: 3;
-  --layer-popup: 4;
+  --layer-notice: 4;
+  --layer-popup: 5;
 
   --duration-fast: 120ms;
   --duration-base: 180ms;
   --duration-slow: 240ms;
   --ease-*: initial;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  --animate-*: initial;
+  --animate-enter: enter var(--duration-base) var(--ease-standard);
+
+  @keyframes enter {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
 }
 
 /*

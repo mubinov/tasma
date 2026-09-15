@@ -14,6 +14,7 @@ import { ProhibitIcon } from "@phosphor-icons/react/Prohibit";
 import { SidebarSimpleIcon } from "@phosphor-icons/react/SidebarSimple";
 import { SunIcon } from "@phosphor-icons/react/Sun";
 import { WarningIcon } from "@phosphor-icons/react/Warning";
+import { XIcon } from "@phosphor-icons/react/X";
 
 export {
   ArrowLeftIcon,
@@ -32,6 +33,7 @@ export {
   SidebarSimpleIcon,
   SunIcon,
   WarningIcon,
+  XIcon,
 };
 
 export type IconComponent = typeof HouseIcon;

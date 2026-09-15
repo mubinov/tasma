@@ -1,5 +1,6 @@
 import { Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, type ReactNode } from "react";
+import { NoticeStack } from "./notice-stack";
 import { Sidebar } from "./sidebar";
 
 export function AppShell(): ReactNode {
@@ -24,9 +25,14 @@ export function AppShell(): ReactNode {
   return (
     <div className="flex min-h-screen bg-bg text-text">
       <Sidebar />
-      <main ref={mainRef} tabIndex={-1} className="min-w-0 flex-1 p-6 sm:p-10">
+      <main
+        ref={mainRef}
+        tabIndex={-1}
+        className="min-w-0 flex-1 p-6 pb-[calc(--spacing(6)+var(--notice-stack-height,0px))] sm:p-10 sm:pb-[calc(--spacing(10)+var(--notice-stack-height,0px))]"
+      >
         <Outlet />
       </main>
+      <NoticeStack />
     </div>
   );
 }
