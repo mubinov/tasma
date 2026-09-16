@@ -217,7 +217,7 @@ describe("the daemon proxy", () => {
 
   it.each([
     { asked: `${DAEMON_PATH_PREFIX}/health`, reaches: "/health" },
-    { asked: `${DAEMON_PATH_PREFIX}/projects/tasma/tasks?status=To%20Do`, reaches: "/projects/tasma/tasks?status=To%20Do" },
+    { asked: `${DAEMON_PATH_PREFIX}/projects/saga/tasks?status=To%20Do`, reaches: "/projects/saga/tasks?status=To%20Do" },
     { asked: DAEMON_PATH_PREFIX, reaches: "/" },
   ])("strips the prefix, so $asked reaches the daemon as $reaches", ({ asked, reaches }) => {
     expect(rewrite?.(asked)).toBe(reaches);
@@ -264,7 +264,7 @@ describe("proxiesHost", () => {
     { host: "127.0.0.1:8276", carried: true },
     { host: "[::1]:8276", carried: true },
     { host: "192.168.1.24:8276", carried: false },
-    { host: "tasma.local:8276", carried: false },
+    { host: "saga.local:8276", carried: false },
     { host: undefined, carried: false },
     { host: "a host with spaces", carried: false },
   ])("carries $host: $carried", ({ host, carried }) => {

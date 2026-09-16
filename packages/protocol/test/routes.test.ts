@@ -33,8 +33,8 @@ describe("the route table", () => {
 
 describe("buildPath", () => {
   it("fills every placeholder of a template", () => {
-    expect(buildPath(routes.updateComment, { project: "TASM", id: "TASM-3", commentId: 7 })).toBe(
-      "/projects/TASM/tasks/TASM-3/comments/7",
+    expect(buildPath(routes.updateComment, { project: "SAGA", id: "SAGA-3", commentId: 7 })).toBe(
+      "/projects/SAGA/tasks/SAGA-3/comments/7",
     );
   });
 
@@ -47,7 +47,7 @@ describe("buildPath", () => {
   });
 
   it("refuses a placeholder no parameter fills", () => {
-    expect(() => buildPath(routes.readTask, { project: "TASM" })).toThrow(/id/);
+    expect(() => buildPath(routes.readTask, { project: "SAGA" })).toThrow(/id/);
   });
 
   it("refuses a placeholder filled only by the prototype chain", () => {
@@ -63,75 +63,75 @@ describe("buildPath", () => {
     ["a value carrying a backslash", "x\\y"],
     ["a value carrying a terminator", "x\0y"],
   ])("refuses %s", (_description, id) => {
-    expect(() => buildPath(routes.readTask, { project: "TASM", id })).toThrow(/id/);
+    expect(() => buildPath(routes.readTask, { project: "SAGA", id })).toThrow(/id/);
   });
 
   it("percent-encodes every query key and value", () => {
-    expect(buildPath(routes.listTasks, { project: "TASM" }, { "a b": "In Progress" })).toBe(
-      "/projects/TASM/tasks?a%20b=In%20Progress",
+    expect(buildPath(routes.listTasks, { project: "SAGA" }, { "a b": "In Progress" })).toBe(
+      "/projects/SAGA/tasks?a%20b=In%20Progress",
     );
   });
 
   it("joins several query keys", () => {
     const filter: TaskFilter = { status: "To Do", priority: "high" };
-    expect(buildPath(routes.listTasks, { project: "TASM" }, filter)).toBe(
-      "/projects/TASM/tasks?status=To%20Do&priority=high",
+    expect(buildPath(routes.listTasks, { project: "SAGA" }, filter)).toBe(
+      "/projects/SAGA/tasks?status=To%20Do&priority=high",
     );
   });
 
   it("repeats a repeatable key once per entry", () => {
     const filter: TaskFilter = { label: ["dev", "ui"] };
-    expect(buildPath(routes.listTasks, { project: "TASM" }, filter)).toBe("/projects/TASM/tasks?label=dev&label=ui");
+    expect(buildPath(routes.listTasks, { project: "SAGA" }, filter)).toBe("/projects/SAGA/tasks?label=dev&label=ui");
   });
 
   it.each([true, false])("writes the boolean filter value %s out in full", (blocked) => {
     const filter: TaskFilter = { blocked };
-    expect(buildPath(routes.listTasks, { project: "TASM" }, filter)).toBe(`/projects/TASM/tasks?blocked=${blocked}`);
+    expect(buildPath(routes.listTasks, { project: "SAGA" }, filter)).toBe(`/projects/SAGA/tasks?blocked=${blocked}`);
   });
 
   it("omits the boolean filter the caller left absent", () => {
     const filter: TaskFilter = { blocked: undefined, status: "To Do" };
-    expect(buildPath(routes.listTasks, { project: "TASM" }, filter)).toBe("/projects/TASM/tasks?status=To%20Do");
+    expect(buildPath(routes.listTasks, { project: "SAGA" }, filter)).toBe("/projects/SAGA/tasks?status=To%20Do");
   });
 
   it("writes a read option out as a query key", () => {
     const options: TaskReadOptions = { comments: false };
-    expect(buildPath(routes.readTask, { project: "TASM", id: "TASM-3" }, options)).toBe(
-      "/projects/TASM/tasks/TASM-3?comments=false",
+    expect(buildPath(routes.readTask, { project: "SAGA", id: "SAGA-3" }, options)).toBe(
+      "/projects/SAGA/tasks/SAGA-3?comments=false",
     );
   });
 
   it("writes a boolean text option out as a query key", () => {
     const options: TaskTextOptions = { collapsed: false };
-    expect(buildPath(routes.readTaskText, { project: "TASM", id: "TASM-3" }, options)).toBe(
-      "/projects/TASM/tasks/TASM-3/text?collapsed=false",
+    expect(buildPath(routes.readTaskText, { project: "SAGA", id: "SAGA-3" }, options)).toBe(
+      "/projects/SAGA/tasks/SAGA-3/text?collapsed=false",
     );
   });
 
   it("writes a number query value out in full", () => {
     const options: TaskTextOptions = { comment: 3 };
-    expect(buildPath(routes.readTaskText, { project: "TASM", id: "TASM-3" }, options)).toBe(
-      "/projects/TASM/tasks/TASM-3/text?comment=3",
+    expect(buildPath(routes.readTaskText, { project: "SAGA", id: "SAGA-3" }, options)).toBe(
+      "/projects/SAGA/tasks/SAGA-3/text?comment=3",
     );
   });
 
   it("omits a read option the caller left absent", () => {
     const options: TaskReadOptions = {};
-    expect(buildPath(routes.readTask, { project: "TASM", id: "TASM-3" }, options)).toBe("/projects/TASM/tasks/TASM-3");
+    expect(buildPath(routes.readTask, { project: "SAGA", id: "SAGA-3" }, options)).toBe("/projects/SAGA/tasks/SAGA-3");
   });
 
   it("omits an absent key", () => {
-    const filter: TaskFilter = { status: undefined, parent: "TASM-1" };
-    expect(buildPath(routes.listTasks, { project: "TASM" }, filter)).toBe("/projects/TASM/tasks?parent=TASM-1");
+    const filter: TaskFilter = { status: undefined, parent: "SAGA-1" };
+    expect(buildPath(routes.listTasks, { project: "SAGA" }, filter)).toBe("/projects/SAGA/tasks?parent=SAGA-1");
   });
 
   it("omits an empty repeatable key", () => {
     const filter: TaskFilter = { label: [] };
-    expect(buildPath(routes.listTasks, { project: "TASM" }, filter)).toBe("/projects/TASM/tasks");
+    expect(buildPath(routes.listTasks, { project: "SAGA" }, filter)).toBe("/projects/SAGA/tasks");
   });
 
   it("omits the query altogether when no key survives", () => {
-    expect(buildPath(routes.listTasks, { project: "TASM" }, {})).toBe("/projects/TASM/tasks");
-    expect(buildPath(routes.listTasks, { project: "TASM" })).toBe("/projects/TASM/tasks");
+    expect(buildPath(routes.listTasks, { project: "SAGA" }, {})).toBe("/projects/SAGA/tasks");
+    expect(buildPath(routes.listTasks, { project: "SAGA" })).toBe("/projects/SAGA/tasks");
   });
 });

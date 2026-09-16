@@ -80,7 +80,7 @@ Remove a project and all its tasks. The folder at the path of the project does n
 
 ## task
 
-A task id is `<tag>-<number>`, for example `TASM-12`. The part before the `-` is the project tag.
+A task id is `<tag>-<number>`, for example `SAGA-12`. The part before the `-` is the project tag.
 
 ### `tasma task list [options]`
 

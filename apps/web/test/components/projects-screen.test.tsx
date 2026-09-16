@@ -4,8 +4,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { refusalReply, renderWithRouter, stubTransport, successReply } from "../helpers";
 
 const PROJECTS = [
-  { tag: "CLIB", name: "clib", path: "/repos/clib" },
-  { tag: "TASM", name: "tasma", path: "/repos/tasma" },
+  { tag: "ACME", name: "acme", path: "/repos/acme" },
+  { tag: "SAGA", name: "saga", path: "/repos/saga" },
   // The daemon lists a project whose configuration it could not read by tag
   // alone; the list route cannot tell that from a project declaring neither.
   { tag: "ZED" },
@@ -15,8 +15,8 @@ const PROJECTS = [
 // the least a project can carry and still open; the page's own tests cover what
 // it makes of it.
 const OPENED = {
-  tag: "TASM",
-  name: "tasma",
+  tag: "SAGA",
+  name: "saga",
   live: true,
   config: {
     statuses: ["Backlog"],
@@ -58,8 +58,8 @@ it("lists every project the daemon answers, in the order it answered", async () 
   await renderWithRouter("/projects", listing());
 
   expect(rows().map((row) => row.getAttribute("href"))).toEqual([
-    "/projects/CLIB",
-    "/projects/TASM",
+    "/projects/ACME",
+    "/projects/SAGA",
     "/projects/ZED",
   ]);
 });
@@ -67,11 +67,11 @@ it("lists every project the daemon answers, in the order it answered", async () 
 it("shows the name, the tag and the path of a row", async () => {
   await renderWithRouter("/projects", listing());
 
-  const row = within(rowFor("TASM"));
+  const row = within(rowFor("SAGA"));
 
-  expect(row.getByText("tasma")).toBeTruthy();
-  expect(row.getByText("TASM")).toBeTruthy();
-  expect(row.getByText("/repos/tasma")).toBeTruthy();
+  expect(row.getByText("saga")).toBeTruthy();
+  expect(row.getByText("SAGA")).toBeTruthy();
+  expect(row.getByText("/repos/saga")).toBeTruthy();
 });
 
 // The whole card is the link, so what it reads out is everything the row shows —
@@ -106,19 +106,19 @@ it("opens a project's page from its row", async () => {
   const user = userEvent.setup();
   const { transport, paths } = stubTransport({
     "/projects": successReply(PROJECTS),
-    "/projects/TASM": successReply(OPENED),
+    "/projects/SAGA": successReply(OPENED),
   });
   await renderWithRouter("/projects", transport);
 
-  await user.click(rowFor("TASM"));
+  await user.click(rowFor("SAGA"));
 
-  expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("tasma");
-  expect(paths.at(-1)).toBe("/projects/TASM");
+  expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("saga");
+  expect(paths.at(-1)).toBe("/projects/SAGA");
 });
 
 it("shows the daemon's warnings about the projects under the heading", async () => {
   const { transport } = stubTransport({
-    "/projects": successReply(PROJECTS, [{ code: "path-missing", message: "the repository is not on disk", path: "/repos/clib" }]),
+    "/projects": successReply(PROJECTS, [{ code: "path-missing", message: "the repository is not on disk", path: "/repos/acme" }]),
   });
   await renderWithRouter("/projects", transport);
 

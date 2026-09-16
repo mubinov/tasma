@@ -6,9 +6,9 @@ import { bareRoot, plant, projectConfig, projectDir, projectsRoot, storeError, u
 
 describe("the projects of a tree", () => {
   it("answers with every project directory, by tag ascending", async () => {
-    const root = await projectsRoot("TASM", "CLIB", "P2");
+    const root = await projectsRoot("SAGA", "ACME", "P2");
 
-    await expect(discoverProjects(root)).resolves.toEqual(["CLIB", "P2", "TASM"]);
+    await expect(discoverProjects(root)).resolves.toEqual(["ACME", "P2", "SAGA"]);
   });
 
   it("reads a tree with no projects directory as holding none", async () => {
@@ -18,31 +18,31 @@ describe("the projects of a tree", () => {
   });
 
   it.each([
-    ["a lowercase name", "tasma"],
-    ["a name holding a dash", "TAS-MA"],
+    ["a lowercase name", "sagas"],
+    ["a name holding a dash", "SA-GA"],
   ])("leaves out %s, which no project stands under", async (_name, entry) => {
-    const root = await projectsRoot("TASM");
+    const root = await projectsRoot("SAGA");
     await mkdir(join(root, "projects", entry), { recursive: true });
 
-    await expect(discoverProjects(root)).resolves.toEqual(["TASM"]);
+    await expect(discoverProjects(root)).resolves.toEqual(["SAGA"]);
   });
 
   it("leaves out a file, whatever it is named", async () => {
-    const root = await projectsRoot("TASM");
+    const root = await projectsRoot("SAGA");
     await writeFile(join(root, "projects", "NOTES"), "text", "utf8");
 
-    await expect(discoverProjects(root)).resolves.toEqual(["TASM"]);
+    await expect(discoverProjects(root)).resolves.toEqual(["SAGA"]);
   });
 
   it("leaves out a symbolic link, whichever project directory it points at", async () => {
-    const root = await projectsRoot("TASM");
-    await symlink(projectDir(root, "TASM"), join(root, "projects", "LINKED"));
+    const root = await projectsRoot("SAGA");
+    await symlink(projectDir(root, "SAGA"), join(root, "projects", "LINKED"));
 
-    await expect(discoverProjects(root)).resolves.toEqual(["TASM"]);
+    await expect(discoverProjects(root)).resolves.toEqual(["SAGA"]);
   });
 
   it("refuses a projects name that is a symbolic link, whichever tree it points at", async () => {
-    const elsewhere = await projectsRoot("TASM");
+    const elsewhere = await projectsRoot("SAGA");
     const root = await bareRoot();
     await symlink(join(elsewhere, "projects"), join(root, "projects"));
 
@@ -61,52 +61,52 @@ describe("the projects of a tree", () => {
 
 describe("what a project states about itself", () => {
   it("answers with the name and the path its own file states", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(projectConfig(root, "TASM"), "name: Tasma\npath: /srv/tasma\n");
+    const root = await projectsRoot("SAGA");
+    await plant(projectConfig(root, "SAGA"), "name: Saga\npath: /srv/saga\n");
 
-    await expect(readProjectDeclaration({ project: "TASM", root })).resolves.toEqual({
-      name: "Tasma",
-      path: "/srv/tasma",
+    await expect(readProjectDeclaration({ project: "SAGA", root })).resolves.toEqual({
+      name: "Saga",
+      path: "/srv/saga",
     });
   });
 
   it("answers with neither for a project whose file states neither", async () => {
-    const root = await projectsRoot("TASM");
+    const root = await projectsRoot("SAGA");
 
-    await expect(readProjectDeclaration({ project: "TASM", root })).resolves.toEqual({
+    await expect(readProjectDeclaration({ project: "SAGA", root })).resolves.toEqual({
       name: undefined,
       path: undefined,
     });
   });
 
   it("leaves the shared user file unread, which can state neither key", async () => {
-    const root = await projectsRoot("TASM");
+    const root = await projectsRoot("SAGA");
     await plant(userConfig(root), "name: Shared\npath: /srv/shared\n");
 
-    await expect(readProjectDeclaration({ project: "TASM", root })).resolves.toEqual({
+    await expect(readProjectDeclaration({ project: "SAGA", root })).resolves.toEqual({
       name: undefined,
       path: undefined,
     });
   });
 
   it("answers over a shared user file this engine cannot read, which decides nothing here", async () => {
-    const root = await projectsRoot("TASM");
+    const root = await projectsRoot("SAGA");
     await plant(userConfig(root), "statuses: [\n");
-    await plant(projectConfig(root, "TASM"), "name: Tasma\n");
+    await plant(projectConfig(root, "SAGA"), "name: Saga\n");
 
-    await expect(readProjectDeclaration({ project: "TASM", root })).resolves.toMatchObject({ name: "Tasma" });
+    await expect(readProjectDeclaration({ project: "SAGA", root })).resolves.toMatchObject({ name: "Saga" });
   });
 
   it("refuses a tag no directory of the tree stands under", async () => {
     const root = await projectsRoot();
 
-    expect((await storeError(readProjectDeclaration({ project: "TASM", root }))).code).toBe("project-not-found");
+    expect((await storeError(readProjectDeclaration({ project: "SAGA", root }))).code).toBe("project-not-found");
   });
 
   it("refuses a project file this engine cannot read", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(projectConfig(root, "TASM"), "name: [Tasma\n");
+    const root = await projectsRoot("SAGA");
+    await plant(projectConfig(root, "SAGA"), "name: [Saga\n");
 
-    expect((await storeError(readProjectDeclaration({ project: "TASM", root }))).code).toBe("config-invalid");
+    expect((await storeError(readProjectDeclaration({ project: "SAGA", root }))).code).toBe("config-invalid");
   });
 });

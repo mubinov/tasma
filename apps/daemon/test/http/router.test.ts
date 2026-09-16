@@ -9,7 +9,7 @@ const handler = () => Promise.resolve({ data: null, diagnostics: [] });
 const entries: RouteEntry[] = Object.values(routes).map((route) => ({ route, handler }));
 
 /** A value for every placeholder any template names, so one call builds every path. */
-const SAMPLE = { project: "TASM", id: "TASM-3", commentId: 7, workflow: "dev", step: "dev:research" };
+const SAMPLE = { project: "SAGA", id: "SAGA-3", commentId: 7, workflow: "dev", step: "dev:research" };
 
 function refusal(found: Match): { code: string; allow?: string[] } {
   if (found.ok) throw new Error("the router matched a route where the test expected a refusal");
@@ -29,9 +29,9 @@ describe("the router", () => {
   });
 
   it("captures every param of the path it matched", () => {
-    const found = match("PATCH", "/projects/TASM/tasks/TASM-3/comments/7", entries);
+    const found = match("PATCH", "/projects/SAGA/tasks/SAGA-3/comments/7", entries);
 
-    expect(found.ok && found.params).toEqual({ project: "TASM", id: "TASM-3", commentId: "7" });
+    expect(found.ok && found.params).toEqual({ project: "SAGA", id: "SAGA-3", commentId: "7" });
   });
 
   it("takes a route without params as one carrying none", () => {
@@ -41,7 +41,7 @@ describe("the router", () => {
   });
 
   it("splits the query off before matching, and hands it to the handler", () => {
-    const found = match("GET", "/projects/TASM/tasks?status=To%20Do&label=dev&label=ops", entries);
+    const found = match("GET", "/projects/SAGA/tasks?status=To%20Do&label=dev&label=ops", entries);
 
     expect(found.ok && found.entry.route).toBe(routes.listTasks);
     expect(found.ok && found.query.get("status")).toBe("To Do");
@@ -49,27 +49,27 @@ describe("the router", () => {
   });
 
   it("leaves the query empty where the path carries none", () => {
-    const found = match("GET", "/projects/TASM", entries);
+    const found = match("GET", "/projects/SAGA", entries);
 
     expect(found.ok && [...found.query]).toEqual([]);
   });
 
   it("decodes a param exactly once", () => {
-    const found = match("GET", "/projects/TASM/tasks/TASM%252D3", entries);
+    const found = match("GET", "/projects/SAGA/tasks/SAGA%252D3", entries);
 
-    expect(found.ok && found.params.id).toBe("TASM%2D3");
+    expect(found.ok && found.params.id).toBe("SAGA%2D3");
   });
 
   it("refuses a segment holding an encoded separator rather than splitting the path on it", () => {
-    expect(refusal(match("GET", "/projects/TASM%2Ftasks", entries)).code).toBe("malformed-request");
+    expect(refusal(match("GET", "/projects/SAGA%2Ftasks", entries)).code).toBe("malformed-request");
   });
 
   it("refuses a segment holding an encoded backslash", () => {
-    expect(refusal(match("GET", "/projects/TASM%5Ctasks", entries)).code).toBe("malformed-request");
+    expect(refusal(match("GET", "/projects/SAGA%5Ctasks", entries)).code).toBe("malformed-request");
   });
 
   it("refuses a segment holding a NUL", () => {
-    expect(refusal(match("GET", "/projects/TASM%00", entries)).code).toBe("malformed-request");
+    expect(refusal(match("GET", "/projects/SAGA%00", entries)).code).toBe("malformed-request");
   });
 
   it("refuses a segment that decodes to a path climbing out of the project", () => {
@@ -77,8 +77,8 @@ describe("the router", () => {
   });
 
   it("lands an encoded dot segment on the path a URL resolves it to", () => {
-    // `..` is resolved away before matching, so the target reads as `/projects/TASM/`.
-    expect(refusal(match("GET", "/projects/TASM/tasks/%2E%2E", entries)).code).toBe("route-not-found");
+    // `..` is resolved away before matching, so the target reads as `/projects/SAGA/`.
+    expect(refusal(match("GET", "/projects/SAGA/tasks/%2E%2E", entries)).code).toBe("route-not-found");
   });
 
   it("refuses a malformed escape", () => {
@@ -98,12 +98,12 @@ describe("the router", () => {
   });
 
   it("names the decoded path in each refusal matching itself produced", () => {
-    expect(messageOf(match("GET", "/projects/TASM/notes", entries))).toContain("/projects/TASM/notes");
-    expect(messageOf(match("DELETE", "/projects/TASM/tasks", entries))).toContain("/projects/TASM/tasks");
+    expect(messageOf(match("GET", "/projects/SAGA/notes", entries))).toContain("/projects/SAGA/notes");
+    expect(messageOf(match("DELETE", "/projects/SAGA/tasks", entries))).toContain("/projects/SAGA/tasks");
   });
 
   it("refuses a path no template matches", () => {
-    expect(refusal(match("GET", "/projects/TASM/notes", entries)).code).toBe("route-not-found");
+    expect(refusal(match("GET", "/projects/SAGA/notes", entries)).code).toBe("route-not-found");
   });
 
   it("refuses a trailing slash rather than reading it as the path without one", () => {
@@ -115,7 +115,7 @@ describe("the router", () => {
   });
 
   it("names the methods a template does serve when the one asked for is not among them", () => {
-    expect(refusal(match("DELETE", "/projects/TASM/tasks", entries))).toEqual({
+    expect(refusal(match("DELETE", "/projects/SAGA/tasks", entries))).toEqual({
       code: "method-not-allowed",
       allow: ["GET", "POST"],
     });

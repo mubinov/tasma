@@ -25,7 +25,7 @@ and it may hold the step documents beside it.
     design/
       workflow.yml
   projects/
-    TASM/
+    SAGA/
       config.yml
       state.yml
       tasks/
@@ -269,7 +269,7 @@ keys. The user-level `config.yml` recognizes neither.
 | `instructions` | no | list of strings | The documents that apply to every task of this project. |
 
 ```yaml
-name: Tasma
+name: Saga
 workflows: [dev, design]
 instructions:
   - house-rules.md

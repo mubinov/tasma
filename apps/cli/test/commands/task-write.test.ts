@@ -15,17 +15,17 @@ function runTask(
   return runCommand(task, args, table, options);
 }
 
-const CREATED = "POST /projects/TASM/tasks";
-const UPDATED = "PATCH /projects/TASM/tasks/TASM-1";
-const DELETED = "DELETE /projects/TASM/tasks/TASM-1";
-const READ = "GET /projects/TASM/tasks/TASM-1?comments=false";
+const CREATED = "POST /projects/SAGA/tasks";
+const UPDATED = "PATCH /projects/SAGA/tasks/SAGA-1";
+const DELETED = "DELETE /projects/SAGA/tasks/SAGA-1";
+const READ = "GET /projects/SAGA/tasks/SAGA-1?comments=false";
 
 /** What a create answers, and what an edit or a delete of the planted task answers. */
-const ISSUED = ok({ id: "TASM-2" });
-const CHANGED = ok({ id: "TASM-1" });
+const ISSUED = ok({ id: "SAGA-2" });
+const CHANGED = ok({ id: "SAGA-1" });
 
 /** The whole invocation a create needs before any flag under test. */
-const CREATE = ["create", "-p", "TASM", "--title", "Second"];
+const CREATE = ["create", "-p", "SAGA", "--title", "Second"];
 
 /**
  * The object one write sent, for a case asserting the request rather than the
@@ -60,7 +60,7 @@ describe("task create", () => {
   it("sends each field flag as its own key, with the value as it was typed", async () => {
     const body = await sent([
       ...CREATE,
-      "--status", "In Progress", "--priority", "High", "--parent", "TASM-15",
+      "--status", "In Progress", "--priority", "High", "--parent", "SAGA-15",
       "--step", "dev:implement", "--workflow", "engineering", "--order", "3",
     ], { [CREATED]: ISSUED });
 
@@ -68,7 +68,7 @@ describe("task create", () => {
       title: "Second",
       status: "In Progress",
       priority: "High",
-      parent: "TASM-15",
+      parent: "SAGA-15",
       step: "dev:implement",
       workflow: "engineering",
       order: 3,
@@ -77,10 +77,10 @@ describe("task create", () => {
 
   it("sends the two repeated flags as lists, in the order they were given", async () => {
     const body = await sent([
-      ...CREATE, "--label", "Infra", "--label", "cli", "--blocked-by", "TASM-1", "--blocked-by", "TASM-3",
+      ...CREATE, "--label", "Infra", "--label", "cli", "--blocked-by", "SAGA-1", "--blocked-by", "SAGA-3",
     ], { [CREATED]: ISSUED });
 
-    expect(body).toEqual({ title: "Second", labels: ["Infra", "cli"], blocked_by: ["TASM-1", "TASM-3"] });
+    expect(body).toEqual({ title: "Second", labels: ["Infra", "cli"], blocked_by: ["SAGA-1", "SAGA-3"] });
   });
 
   it("sends --order as a number", async () => {
@@ -122,13 +122,13 @@ describe("task create", () => {
     const { code, out, err } = await runTask(CREATE, { [CREATED]: ISSUED });
 
     expect(code).toBe(0);
-    expect(out).toBe("TASM-2\n");
+    expect(out).toBe("SAGA-2\n");
     expect(err).toBe("");
   });
 
   // Every other case states the short form the constant carries.
   it("takes the long --project as readily as the short -p", async () => {
-    const { seen } = await runTask(["create", "--project", "TASM", "--title", "Second"], { [CREATED]: ISSUED });
+    const { seen } = await runTask(["create", "--project", "SAGA", "--title", "Second"], { [CREATED]: ISSUED });
 
     expect(seen).toEqual([HEALTH, CREATED]);
   });
@@ -136,18 +136,18 @@ describe("task create", () => {
   // The notes come after the answer, so the id is what survives a truncated pipe.
   it("writes the notes of the write after the id", async () => {
     const { out, err } = await runTask(CREATE, {
-      [CREATED]: ok({ id: "TASM-2" }, [{ code: "next-task-id-rebuilt", message: "the counter was rebuilt", path: "/t" }]),
+      [CREATED]: ok({ id: "SAGA-2" }, [{ code: "next-task-id-rebuilt", message: "the counter was rebuilt", path: "/t" }]),
     });
 
-    expect(out).toBe("TASM-2\n");
+    expect(out).toBe("SAGA-2\n");
     expect(err).toBe("tasma: note: next-task-id-rebuilt: the counter was rebuilt (/t)\n");
   });
 
   it("refuses every fault visible from argv alone, before it reaches a daemon", async () => {
     await refuses(["create", "-p", "", "--title", "Second"], "task create needs --project <tag>");
     await refuses(["create", "-p", "a/b", "--title", "Second"], "not a project tag: a/b");
-    await refuses(["create", "-p", "TASM"], "task create needs --title <title>");
-    await refuses(["create", "-p", "TASM", "--title", ""], "task create needs --title <title>");
+    await refuses(["create", "-p", "SAGA"], "task create needs --title <title>");
+    await refuses(["create", "-p", "SAGA", "--title", ""], "task create needs --title <title>");
     // The title is checked ahead of the project, so a create missing both names
     // the title rather than the flag whose value is empty.
     await refuses(["create", "-p", ""], "task create needs --title <title>");
@@ -182,7 +182,7 @@ describe("task create", () => {
   });
 
   it("refuses an answer that is not a write receipt", async () => {
-    for (const data of [{ id: 7 }, {}, "TASM-2", null]) {
+    for (const data of [{ id: 7 }, {}, "SAGA-2", null]) {
       const { code, out, err } = await runTask(CREATE, { [CREATED]: ok(data) });
 
       expect(code).toBe(3);
@@ -193,13 +193,13 @@ describe("task create", () => {
 
   it("resolves the project from the working directory, each call proven", async () => {
     const { code, out, err, seen } = await runTask(["create", "--title", "Second"], {
-      [RESOLVED]: ok({ tag: "TASM" }),
+      [RESOLVED]: ok({ tag: "SAGA" }),
       [CREATED]: ISSUED,
     });
 
     expect(code).toBe(0);
-    expect(out).toBe("TASM-2\n");
-    expect(err).toBe(`tasma: project TASM, from ${CWD}\n`);
+    expect(out).toBe("SAGA-2\n");
+    expect(err).toBe(`tasma: project SAGA, from ${CWD}\n`);
     expect(seen).toEqual([HEALTH, RESOLVED, HEALTH, CREATED]);
   });
 
@@ -224,20 +224,20 @@ describe("task create", () => {
 
 describe("task edit", () => {
   it("sends only the keys that were typed", async () => {
-    expect(await sent(["edit", "TASM-1", "--title", "New"], { [UPDATED]: CHANGED })).toEqual({ title: "New" });
+    expect(await sent(["edit", "SAGA-1", "--title", "New"], { [UPDATED]: CHANGED })).toEqual({ title: "New" });
   });
 
   it("prints the id the receipt carries", async () => {
-    const { code, out, err } = await runTask(["edit", "TASM-1", "--status", "Done"], { [UPDATED]: CHANGED });
+    const { code, out, err } = await runTask(["edit", "SAGA-1", "--status", "Done"], { [UPDATED]: CHANGED });
 
     expect(code).toBe(0);
-    expect(out).toBe("TASM-1\n");
+    expect(out).toBe("SAGA-1\n");
     expect(err).toBe("");
   });
 
   // Without --append the text stands alone, so the stored body is never read.
   it("replaces the stored body where no append was asked for", async () => {
-    const { seen, bodies } = await runTask(["edit", "TASM-1", "--body", "new"], { [UPDATED]: CHANGED });
+    const { seen, bodies } = await runTask(["edit", "SAGA-1", "--body", "new"], { [UPDATED]: CHANGED });
 
     expect(seen).toEqual([HEALTH, UPDATED]);
     expect(bodies.at(-1)).toEqual({ body: "new" });
@@ -245,7 +245,7 @@ describe("task edit", () => {
 
   it("sends every clearable field as null", async () => {
     const fields = ["priority", "labels", "parent", "blocked_by", "step", "workflow", "order", "body"];
-    const args = ["edit", "TASM-1", ...fields.flatMap((field) => ["--clear", field])];
+    const args = ["edit", "SAGA-1", ...fields.flatMap((field) => ["--clear", field])];
 
     expect(await sent(args, { [UPDATED]: CHANGED })).toEqual({
       priority: null,
@@ -260,81 +260,81 @@ describe("task edit", () => {
   });
 
   it("sends one clear where a field was named twice", async () => {
-    expect(await sent(["edit", "TASM-1", "--clear", "priority", "--clear", "priority"], { [UPDATED]: CHANGED }))
+    expect(await sent(["edit", "SAGA-1", "--clear", "priority", "--clear", "priority"], { [UPDATED]: CHANGED }))
       .toEqual({ priority: null });
   });
 
   it("refuses a field no write can remove", async () => {
-    await refuses(["edit", "TASM-1", "--clear", "title"], "not a clearable field: title");
-    await refuses(["edit", "TASM-1", "--clear", "status"], "not a clearable field: status");
-    await refuses(["edit", "TASM-1", "--clear", "x"], "not a clearable field: x");
-    await refuses(["edit", "TASM-1", "--clear", ""], "--clear needs a field");
+    await refuses(["edit", "SAGA-1", "--clear", "title"], "not a clearable field: title");
+    await refuses(["edit", "SAGA-1", "--clear", "status"], "not a clearable field: status");
+    await refuses(["edit", "SAGA-1", "--clear", "x"], "not a clearable field: x");
+    await refuses(["edit", "SAGA-1", "--clear", ""], "--clear needs a field");
   });
 
   // Two values for one field: which one wins is not something the caller stated.
   it("refuses a clear beside the flag that sets the same field", async () => {
     await refuses(
-      ["edit", "TASM-1", "--clear", "priority", "--priority", "high"],
+      ["edit", "SAGA-1", "--clear", "priority", "--priority", "high"],
       "--clear priority and --priority exclude each other",
     );
     await refuses(
-      ["edit", "TASM-1", "--clear", "labels", "--label", "infra"],
+      ["edit", "SAGA-1", "--clear", "labels", "--label", "infra"],
       "--clear labels and --label exclude each other",
     );
     await refuses(
-      ["edit", "TASM-1", "--clear", "blocked_by", "--blocked-by", "TASM-3"],
+      ["edit", "SAGA-1", "--clear", "blocked_by", "--blocked-by", "SAGA-3"],
       "--clear blocked_by and --blocked-by exclude each other",
     );
     await refuses(
-      ["edit", "TASM-1", "--clear", "body", "--body", "text"],
+      ["edit", "SAGA-1", "--clear", "body", "--body", "text"],
       "--clear body and --body exclude each other",
     );
     await refuses(
-      ["edit", "TASM-1", "--clear", "body", "--body-file", "-"],
+      ["edit", "SAGA-1", "--clear", "body", "--body-file", "-"],
       "--clear body and --body-file exclude each other",
     );
   });
 
   it("refuses a change that states nothing to change", async () => {
-    await refuses(["edit", "TASM-1"], "task edit needs a change");
+    await refuses(["edit", "SAGA-1"], "task edit needs a change");
   });
 
   it("refuses an empty value, naming the clear where the field has one", async () => {
-    await refuses(["edit", "TASM-1", "--priority", ""], "--priority needs a value; --clear priority removes the field");
-    await refuses(["edit", "TASM-1", "--label", ""], "--label needs a value; --clear labels removes the field");
+    await refuses(["edit", "SAGA-1", "--priority", ""], "--priority needs a value; --clear priority removes the field");
+    await refuses(["edit", "SAGA-1", "--label", ""], "--label needs a value; --clear labels removes the field");
     await refuses(
-      ["edit", "TASM-1", "--blocked-by", ""],
+      ["edit", "SAGA-1", "--blocked-by", ""],
       "--blocked-by needs a value; --clear blocked_by removes the field",
     );
-    await refuses(["edit", "TASM-1", "--title", ""], "--title needs a value");
-    await refuses(["edit", "TASM-1", "--status", ""], "--status needs a value");
+    await refuses(["edit", "SAGA-1", "--title", ""], "--title needs a value");
+    await refuses(["edit", "SAGA-1", "--status", ""], "--status needs a value");
   });
 
   it("refuses the faults it shares with an id and a position", async () => {
     await refuses(["edit"], "task edit needs a task id");
     await refuses(["edit", "a/b", "--title", "New"], "not a task id: a/b");
-    await refuses(["edit", "TASM-1", "--order", "x"], "not an integer: x");
+    await refuses(["edit", "SAGA-1", "--order", "x"], "not an integer: x");
     await refuses(
-      ["edit", "TASM-1", "--body", "x", "--body-file", "y"],
+      ["edit", "SAGA-1", "--body", "x", "--body-file", "y"],
       "--body and --body-file exclude each other",
     );
   });
 
   it("reads the task, then writes the stored body with the text after it", async () => {
-    const { code, out, err, bodies } = await runTask(["edit", "TASM-1", "--append", "--body", "more"], {
-      [READ]: ok({ frontmatter: { id: "TASM-1" }, body: "stored\n" }),
+    const { code, out, err, bodies } = await runTask(["edit", "SAGA-1", "--append", "--body", "more"], {
+      [READ]: ok({ frontmatter: { id: "SAGA-1" }, body: "stored\n" }),
       [UPDATED]: CHANGED,
     });
 
     expect(code).toBe(0);
     expect(bodies.at(-1)).toEqual({ body: "stored\n\nmore" });
-    expect(out).toBe("TASM-1\n");
+    expect(out).toBe("SAGA-1\n");
     expect(err).toBe("");
   });
 
   it("appends the text alone to a task whose body is empty", async () => {
-    const { bodies } = await runTask(["edit", "TASM-1", "--append", "--body-file", "-"], {
-      [READ]: ok({ frontmatter: { id: "TASM-1" }, body: "" }),
+    const { bodies } = await runTask(["edit", "SAGA-1", "--append", "--body-file", "-"], {
+      [READ]: ok({ frontmatter: { id: "SAGA-1" }, body: "" }),
       [UPDATED]: CHANGED,
     }, { stdin: "more" });
 
@@ -344,8 +344,8 @@ describe("task edit", () => {
   // An empty pipe is a body the caller meant to be empty, and appending it adds
   // nothing: what the write sends is the body the read answered, unchanged.
   it("sends the stored body untouched where the appended text is empty", async () => {
-    const { bodies } = await runTask(["edit", "TASM-1", "--append", "--body-file", "-"], {
-      [READ]: ok({ frontmatter: { id: "TASM-1" }, body: "stored\n" }),
+    const { bodies } = await runTask(["edit", "SAGA-1", "--append", "--body-file", "-"], {
+      [READ]: ok({ frontmatter: { id: "SAGA-1" }, body: "stored\n" }),
       [UPDATED]: CHANGED,
     }, { stdin: "" });
 
@@ -353,25 +353,25 @@ describe("task edit", () => {
   });
 
   it("refuses an append that states no text, and one that also removes the body", async () => {
-    await refuses(["edit", "TASM-1", "--append"], "--append needs --body or --body-file");
-    await refuses(["edit", "TASM-1", "--append", "--clear", "body"], "--append and --clear body exclude each other");
+    await refuses(["edit", "SAGA-1", "--append"], "--append needs --body or --body-file");
+    await refuses(["edit", "SAGA-1", "--append", "--clear", "body"], "--append and --clear body exclude each other");
   });
 
   it("writes nothing where the read before an append was refused", async () => {
-    const { code, out, err, seen } = await runTask(["edit", "TASM-1", "--append", "--body", "more"], {
-      [READ]: { ok: false, error: { kind: "store", code: "task-not-found", message: "no task TASM-1" } },
+    const { code, out, err, seen } = await runTask(["edit", "SAGA-1", "--append", "--body", "more"], {
+      [READ]: { ok: false, error: { kind: "store", code: "task-not-found", message: "no task SAGA-1" } },
       [UPDATED]: CHANGED,
     });
 
     expect(code).toBe(1);
     expect(out).toBe("");
-    expect(err).toBe("tasma: store/task-not-found: no task TASM-1\n");
+    expect(err).toBe("tasma: store/task-not-found: no task SAGA-1\n");
     expect(seen).toEqual([HEALTH, READ]);
   });
 
   it("writes nothing where the read before an append answered no task", async () => {
     for (const data of [{ frontmatter: {} }, { body: 7 }, "a task"]) {
-      const { code, out, err, seen } = await runTask(["edit", "TASM-1", "--append", "--body", "more"], {
+      const { code, out, err, seen } = await runTask(["edit", "SAGA-1", "--append", "--body", "more"], {
         [READ]: ok(data),
         [UPDATED]: CHANGED,
       });
@@ -386,29 +386,29 @@ describe("task edit", () => {
 
 describe("task delete", () => {
   it("calls the route with no body at all", async () => {
-    const { code, out, err, seen, bodies } = await runTask(["delete", "TASM-1"], { [DELETED]: CHANGED });
+    const { code, out, err, seen, bodies } = await runTask(["delete", "SAGA-1"], { [DELETED]: CHANGED });
 
     expect(code).toBe(0);
     expect(seen).toEqual([HEALTH, DELETED]);
     expect(bodies).toEqual([undefined, undefined]);
-    expect(out).toBe("TASM-1\n");
+    expect(out).toBe("SAGA-1\n");
     expect(err).toBe("");
   });
 
   it("refuses a missing id and one that is no task id", async () => {
     await refuses(["delete"], "task delete needs a task id");
     await refuses(["delete", "a/b"], "not a task id: a/b");
-    await refuses(["delete", "TASM-1", "extra"], "task delete takes one argument: extra");
+    await refuses(["delete", "SAGA-1", "extra"], "task delete takes one argument: extra");
   });
 
   it("reports a refusal the daemon answered with, at exit 1", async () => {
-    const { code, out, err } = await runTask(["delete", "TASM-1"], {
-      [DELETED]: { ok: false, error: { kind: "store", code: "task-not-found", message: "no task TASM-1" } },
+    const { code, out, err } = await runTask(["delete", "SAGA-1"], {
+      [DELETED]: { ok: false, error: { kind: "store", code: "task-not-found", message: "no task SAGA-1" } },
     });
 
     expect(code).toBe(1);
     expect(out).toBe("");
-    expect(err).toBe("tasma: store/task-not-found: no task TASM-1\n");
+    expect(err).toBe("tasma: store/task-not-found: no task SAGA-1\n");
   });
 });
 
@@ -422,13 +422,13 @@ describe("every write", () => {
   // sends, so a read answered by a daemon serving another tree is that tree's
   // body written into this one.
   it("proves every address it sends a call to, the read an append makes included", async () => {
-    const stored = ok({ frontmatter: { id: "TASM-1" }, body: "stored" });
+    const stored = ok({ frontmatter: { id: "SAGA-1" }, body: "stored" });
     const invocations: [string[], Record<string, unknown>, string[]][] = [
       [CREATE, { [CREATED]: ISSUED }, [HEALTH, CREATED]],
-      [["edit", "TASM-1", "--status", "Done"], { [UPDATED]: CHANGED }, [HEALTH, UPDATED]],
-      [["delete", "TASM-1"], { [DELETED]: CHANGED }, [HEALTH, DELETED]],
+      [["edit", "SAGA-1", "--status", "Done"], { [UPDATED]: CHANGED }, [HEALTH, UPDATED]],
+      [["delete", "SAGA-1"], { [DELETED]: CHANGED }, [HEALTH, DELETED]],
       [
-        ["edit", "TASM-1", "--append", "--body", "more"],
+        ["edit", "SAGA-1", "--append", "--body", "more"],
         { [READ]: stored, [UPDATED]: CHANGED },
         [HEALTH, READ, HEALTH, UPDATED],
       ],
@@ -461,7 +461,7 @@ describe("every option a write accepts", () => {
   // list comes from the parser's own table, so a flag added there and left out
   // of the check fails here rather than shipping silent.
   it("is refused with an empty value, before any call is made", async () => {
-    for (const [verb, args] of [["create", CREATE], ["edit", ["edit", "TASM-1"]]] as const) {
+    for (const [verb, args] of [["create", CREATE], ["edit", ["edit", "SAGA-1"]]] as const) {
       for (const flag of stringOptions(verb)) {
         const { code, out, err, seen } = await runTask([...args, `--${flag}`, ""]);
 

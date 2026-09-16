@@ -46,33 +46,33 @@ async function sent(
   return bodies.at(-1);
 }
 
-const MAP = "GET /projects/TASM/tasks/TASM-1/comments";
-const TEXT = "GET /projects/TASM/tasks/TASM-1/text?comment=3";
-const ADDED = "POST /projects/TASM/tasks/TASM-1/comments";
+const MAP = "GET /projects/SAGA/tasks/SAGA-1/comments";
+const TEXT = "GET /projects/SAGA/tasks/SAGA-1/text?comment=3";
+const ADDED = "POST /projects/SAGA/tasks/SAGA-1/comments";
 
-const UPDATED = "PATCH /projects/TASM/tasks/TASM-1/comments/3";
-const DELETED = "DELETE /projects/TASM/tasks/TASM-1/comments/3";
-const READ = "GET /projects/TASM/tasks/TASM-1";
+const UPDATED = "PATCH /projects/SAGA/tasks/SAGA-1/comments/3";
+const DELETED = "DELETE /projects/SAGA/tasks/SAGA-1/comments/3";
+const READ = "GET /projects/SAGA/tasks/SAGA-1";
 
 /** The whole invocation an add needs before any flag under test. */
-const ADD = ["add", "TASM-1", "--title", "Smoke"];
+const ADD = ["add", "SAGA-1", "--title", "Smoke"];
 
 /** What a write of the planted comment answers: the task it belongs to, and its own id. */
-const ISSUED = ok({ id: "TASM-1", commentId: 3 });
+const ISSUED = ok({ id: "SAGA-1", commentId: 3 });
 
 /** The task an append reads, holding the comment the write then changes. */
-const STORED = ok({ frontmatter: { id: "TASM-1" }, comments: [{ id: 1, body: "other" }, { id: 3, body: "stored\n" }] });
+const STORED = ok({ frontmatter: { id: "SAGA-1" }, comments: [{ id: 1, body: "other" }, { id: 3, body: "stored\n" }] });
 
 describe("comment list", () => {
   it("prints the id, the lines, the size, whether it is collapsed, and who wrote what when", async () => {
-    const { code, out, err } = await runComment(["list", "TASM-1"], {
+    const { code, out, err } = await runComment(["list", "SAGA-1"], {
       [MAP]: ok([
         {
           id: 1,
           lines: { start: 40, end: 58 },
           bytes: 1204,
           created: "2026-09-06T13:49:00+02:00",
-          author: "almaz",
+          author: "alice",
           title: "Dev notes #1",
         },
         {
@@ -88,25 +88,25 @@ describe("comment list", () => {
 
     expect(code).toBe(0);
     expect(out).toBe(
-      "1  40-58   1204  -          2026-09-06T13:49:00+02:00  almaz  Dev notes #1\n"
+      "1  40-58   1204  -          2026-09-06T13:49:00+02:00  alice  Dev notes #1\n"
       + "2  60-131  9871  collapsed  2026-09-06T14:04:00+02:00  -      Review #1: FAIL\n",
     );
     expect(err).toBe("");
   });
 
   it("asks the comment route of the task the id names", async () => {
-    expect(await pathOf(["list", "TASM-1"])).toBe(MAP);
+    expect(await pathOf(["list", "SAGA-1"])).toBe(MAP);
   });
 
   // A comment that went through JSON without its parsed source carries no range.
   it("marks a comment whose header carries no line range", async () => {
-    const { out } = await runComment(["list", "TASM-1"], { [MAP]: ok([{ id: 1, bytes: 4, created: "x", title: "t" }]) });
+    const { out } = await runComment(["list", "SAGA-1"], { [MAP]: ok([{ id: 1, bytes: 4, created: "x", title: "t" }]) });
 
     expect(out).toBe("1  -  4  -  x  -  t\n");
   });
 
   it("prints nothing at all for a task with no comments", async () => {
-    const { code, out, err } = await runComment(["list", "TASM-1"], { [MAP]: ok([]) });
+    const { code, out, err } = await runComment(["list", "SAGA-1"], { [MAP]: ok([]) });
 
     expect(code).toBe(0);
     expect(out).toBe("");
@@ -114,7 +114,7 @@ describe("comment list", () => {
   });
 
   it("refuses an answer that is not a comment map", async () => {
-    const { code, err } = await runComment(["list", "TASM-1"], { [MAP]: ok({ id: 1 }) });
+    const { code, err } = await runComment(["list", "SAGA-1"], { [MAP]: ok({ id: 1 }) });
 
     expect(code).toBe(3);
     expect(err).toContain("answered, but not with a comment map");
@@ -123,7 +123,7 @@ describe("comment list", () => {
   it("refuses a verb given no task id, one given more than it takes, and an unknown flag", async () => {
     await refuses(["list"], "comment list needs a task id");
     await refuses(["list", "a/b"], "not a task id: a/b");
-    await refuses(["list", "TASM-1", "TASM-2"], "comment list takes one argument: TASM-2");
+    await refuses(["list", "SAGA-1", "SAGA-2"], "comment list takes one argument: SAGA-2");
 
     const { code, err } = await runComment(["list", "--nope"]);
 
@@ -134,7 +134,7 @@ describe("comment list", () => {
 
 describe("comment view", () => {
   it("asks for the one comment, and prints it alone", async () => {
-    const { code, out, err, seen } = await runComment(["view", "TASM-1", "3"],
+    const { code, out, err, seen } = await runComment(["view", "SAGA-1", "3"],
       { [TEXT]: ok({ text: "<!-- m -->\n\nbody", hidden: [] }) });
 
     expect(code).toBe(0);
@@ -144,7 +144,7 @@ describe("comment view", () => {
   });
 
   it("adds no second break to a comment whose text ends with one", async () => {
-    const { out } = await runComment(["view", "TASM-1", "3"], { [TEXT]: ok({ text: "body\n", hidden: [] }) });
+    const { out } = await runComment(["view", "SAGA-1", "3"], { [TEXT]: ok({ text: "body\n", hidden: [] }) });
 
     expect(out).toBe("body\n");
   });
@@ -152,8 +152,8 @@ describe("comment view", () => {
   // The format holds an id as an integer, so a file can carry comment 0 even
   // though no add ever issues it, and 0 is the code a printed read exits with.
   it("reads comment 0 as an id, not as the code of a verb that already answered", async () => {
-    const zero = "GET /projects/TASM/tasks/TASM-1/text?comment=0";
-    const { code, out, err, seen } = await runComment(["view", "TASM-1", "0"],
+    const zero = "GET /projects/SAGA/tasks/SAGA-1/text?comment=0";
+    const { code, out, err, seen } = await runComment(["view", "SAGA-1", "0"],
       { [zero]: ok({ text: "body", hidden: [] }) });
 
     expect(code).toBe(0);
@@ -165,7 +165,7 @@ describe("comment view", () => {
   // The hint belongs to the default task view, which is the read that left a body
   // out. A comment read alone left nothing out, whatever the route reports.
   it("writes no collapsed hint for a comment the route reports as hidden", async () => {
-    const { code, out, err } = await runComment(["view", "TASM-1", "3"], { [TEXT]: ok({ text: "body", hidden: [3] }) });
+    const { code, out, err } = await runComment(["view", "SAGA-1", "3"], { [TEXT]: ok({ text: "body", hidden: [3] }) });
 
     expect(code).toBe(0);
     expect(out).toBe("body\n");
@@ -174,19 +174,19 @@ describe("comment view", () => {
 
   it("refuses a comment id that is not a whole number the daemon can carry", async () => {
     for (const id of ["x", "1.5", "9007199254740993"]) {
-      await refuses(["view", "TASM-1", id], `not a comment id: ${id}`);
+      await refuses(["view", "SAGA-1", id], `not a comment id: ${id}`);
     }
   });
 
   it("refuses a verb given no comment id, one given more than it takes, and a task id naming no tag", async () => {
-    await refuses(["view", "TASM-1"], "comment view needs a comment id");
-    await refuses(["view", "TASM-1", "3", "4"], "comment view takes two arguments: 4");
+    await refuses(["view", "SAGA-1"], "comment view needs a comment id");
+    await refuses(["view", "SAGA-1", "3", "4"], "comment view takes two arguments: 4");
     await refuses(["view", "foo", "3"], "not a task id: foo");
   });
 
   it("refuses an answer that is not a task's text", async () => {
     for (const data of [{ text: 1, hidden: [] }, { text: "x", hidden: 2 }, "x"]) {
-      const { code, out, err } = await runComment(["view", "TASM-1", "3"], { [TEXT]: ok(data) });
+      const { code, out, err } = await runComment(["view", "SAGA-1", "3"], { [TEXT]: ok(data) });
 
       expect(code).toBe(3);
       expect(out).toBe("");
@@ -201,9 +201,9 @@ describe("comment add", () => {
   });
 
   it("sends each field flag as its own key, with the value as it was typed", async () => {
-    expect(await sent([...ADD, "--author", "Almaz M"], { [ADDED]: ISSUED })).toEqual({
+    expect(await sent([...ADD, "--author", "Alice M"], { [ADDED]: ISSUED })).toEqual({
       title: "Smoke",
-      author: "Almaz M",
+      author: "Alice M",
     });
   });
 
@@ -236,7 +236,7 @@ describe("comment add", () => {
   // The notes come after the answer, so the id is what survives a truncated pipe.
   it("writes the notes of the write after the id", async () => {
     const { out, err } = await runComment(ADD, {
-      [ADDED]: ok({ id: "TASM-1", commentId: 3 }, [{ code: "next-comment-id-rebuilt", message: "the counter was rebuilt", path: "/t" }]),
+      [ADDED]: ok({ id: "SAGA-1", commentId: 3 }, [{ code: "next-comment-id-rebuilt", message: "the counter was rebuilt", path: "/t" }]),
     });
 
     expect(out).toBe("3\n");
@@ -246,8 +246,8 @@ describe("comment add", () => {
   it("refuses every fault visible from argv alone, before it reaches a daemon", async () => {
     await refuses(["add"], "comment add needs a task id");
     await refuses(["add", "a/b", "--title", "Smoke"], "not a task id: a/b");
-    await refuses(["add", "TASM-1"], "comment add needs --title <title>");
-    await refuses(["add", "TASM-1", "--title", ""], "comment add needs --title <title>");
+    await refuses(["add", "SAGA-1"], "comment add needs --title <title>");
+    await refuses(["add", "SAGA-1", "--title", ""], "comment add needs --title <title>");
     await refuses([...ADD, "--author", ""], "--author needs a value");
     await refuses([...ADD, "--body", "x", "--body-file", "y"], "--body and --body-file exclude each other");
     await refuses([...ADD, "extra"], "comment add takes one argument: extra");
@@ -276,7 +276,7 @@ describe("comment add", () => {
   });
 
   it("refuses an answer that is not a comment write receipt", async () => {
-    for (const data of [{ id: "TASM-1" }, { commentId: "3" }, {}, null]) {
+    for (const data of [{ id: "SAGA-1" }, { commentId: "3" }, {}, null]) {
       const { code, out, err } = await runComment(ADD, { [ADDED]: ok(data) });
 
       expect(code).toBe(3);
@@ -288,7 +288,7 @@ describe("comment add", () => {
 
 describe("comment edit", () => {
   it("sends only the keys that were typed, to the route of that one comment", async () => {
-    const { code, out, err, seen, bodies } = await runComment(["edit", "TASM-1", "3", "--title", "New"],
+    const { code, out, err, seen, bodies } = await runComment(["edit", "SAGA-1", "3", "--title", "New"],
       { [UPDATED]: ISSUED });
 
     expect(code).toBe(0);
@@ -299,60 +299,60 @@ describe("comment edit", () => {
   });
 
   it("sends every clearable field as null", async () => {
-    const args = ["edit", "TASM-1", "3", ...CLEARABLE.flatMap((field) => ["--clear", field])];
+    const args = ["edit", "SAGA-1", "3", ...CLEARABLE.flatMap((field) => ["--clear", field])];
 
     expect(await sent(args, { [UPDATED]: ISSUED })).toEqual({ author: null, collapsed: null, body: null });
   });
 
   it("sends one clear where a field was named twice", async () => {
-    expect(await sent(["edit", "TASM-1", "3", "--clear", "author", "--clear", "author"], { [UPDATED]: ISSUED }))
+    expect(await sent(["edit", "SAGA-1", "3", "--clear", "author", "--clear", "author"], { [UPDATED]: ISSUED }))
       .toEqual({ author: null });
   });
 
   it("refuses a field no write can remove", async () => {
-    await refuses(["edit", "TASM-1", "3", "--clear", "title"], "not a clearable field: title");
-    await refuses(["edit", "TASM-1", "3", "--clear", "x"], "not a clearable field: x");
-    await refuses(["edit", "TASM-1", "3", "--clear", ""], "--clear needs a field");
+    await refuses(["edit", "SAGA-1", "3", "--clear", "title"], "not a clearable field: title");
+    await refuses(["edit", "SAGA-1", "3", "--clear", "x"], "not a clearable field: x");
+    await refuses(["edit", "SAGA-1", "3", "--clear", ""], "--clear needs a field");
   });
 
   // Two values for one field: which one wins is not something the caller stated.
   it("refuses a clear beside the flag that sets the same field", async () => {
     await refuses(
-      ["edit", "TASM-1", "3", "--clear", "author", "--author", "almaz"],
+      ["edit", "SAGA-1", "3", "--clear", "author", "--author", "alice"],
       "--clear author and --author exclude each other",
     );
     await refuses(
-      ["edit", "TASM-1", "3", "--clear", "collapsed", "--collapsed"],
+      ["edit", "SAGA-1", "3", "--clear", "collapsed", "--collapsed"],
       "--clear collapsed and --collapsed exclude each other",
     );
     await refuses(
-      ["edit", "TASM-1", "3", "--clear", "body", "--body", "text"],
+      ["edit", "SAGA-1", "3", "--clear", "body", "--body", "text"],
       "--clear body and --body exclude each other",
     );
     await refuses(
-      ["edit", "TASM-1", "3", "--clear", "body", "--body-file", "-"],
+      ["edit", "SAGA-1", "3", "--clear", "body", "--body-file", "-"],
       "--clear body and --body-file exclude each other",
     );
   });
 
   it("refuses a change that states nothing to change", async () => {
-    await refuses(["edit", "TASM-1", "3"], "comment edit needs a change");
+    await refuses(["edit", "SAGA-1", "3"], "comment edit needs a change");
   });
 
   it("refuses an empty value, naming the clear where the field has one", async () => {
-    await refuses(["edit", "TASM-1", "3", "--author", ""], "--author needs a value; --clear author removes the field");
-    await refuses(["edit", "TASM-1", "3", "--title", ""], "--title needs a value");
+    await refuses(["edit", "SAGA-1", "3", "--author", ""], "--author needs a value; --clear author removes the field");
+    await refuses(["edit", "SAGA-1", "3", "--title", ""], "--title needs a value");
   });
 
   it("refuses the faults it shares with a task id and a comment id", async () => {
     await refuses(["edit"], "comment edit needs a task id");
-    await refuses(["edit", "TASM-1"], "comment edit needs a comment id");
-    await refuses(["edit", "TASM-1", "x", "--title", "New"], "not a comment id: x");
-    await refuses(["edit", "TASM-1", "3", "4"], "comment edit takes two arguments: 4");
+    await refuses(["edit", "SAGA-1"], "comment edit needs a comment id");
+    await refuses(["edit", "SAGA-1", "x", "--title", "New"], "not a comment id: x");
+    await refuses(["edit", "SAGA-1", "3", "4"], "comment edit takes two arguments: 4");
   });
 
   it("reads the task, then writes the stored body with the text after it", async () => {
-    const { code, out, err, seen, bodies } = await runComment(["edit", "TASM-1", "3", "--append", "--body", "more"], {
+    const { code, out, err, seen, bodies } = await runComment(["edit", "SAGA-1", "3", "--append", "--body", "more"], {
       [READ]: STORED,
       [UPDATED]: ISSUED,
     });
@@ -366,16 +366,16 @@ describe("comment edit", () => {
 
   // Without --append the text stands alone, so the stored body is never read.
   it("replaces the stored body where no append was asked for", async () => {
-    const { seen, bodies } = await runComment(["edit", "TASM-1", "3", "--body", "new"], { [UPDATED]: ISSUED });
+    const { seen, bodies } = await runComment(["edit", "SAGA-1", "3", "--body", "new"], { [UPDATED]: ISSUED });
 
     expect(seen).toEqual([HEALTH, UPDATED]);
     expect(bodies.at(-1)).toEqual({ body: "new" });
   });
 
   it("refuses an append that states no text, and one that also removes the body", async () => {
-    await refuses(["edit", "TASM-1", "3", "--append"], "--append needs --body or --body-file");
+    await refuses(["edit", "SAGA-1", "3", "--append"], "--append needs --body or --body-file");
     await refuses(
-      ["edit", "TASM-1", "3", "--append", "--clear", "body"],
+      ["edit", "SAGA-1", "3", "--append", "--clear", "body"],
       "--append and --clear body exclude each other",
     );
   });
@@ -383,8 +383,8 @@ describe("comment edit", () => {
   // The daemon answers the same mistake without --append as comment-not-found at
   // exit 1, and an agent branches on the code.
   it("writes nothing where the task carries no such comment", async () => {
-    const { code, out, err, seen } = await runComment(["edit", "TASM-1", "3", "--append", "--body", "more"], {
-      [READ]: ok({ frontmatter: { id: "TASM-1" }, comments: [{ id: 1, body: "other" }] }),
+    const { code, out, err, seen } = await runComment(["edit", "SAGA-1", "3", "--append", "--body", "more"], {
+      [READ]: ok({ frontmatter: { id: "SAGA-1" }, comments: [{ id: 1, body: "other" }] }),
       [UPDATED]: ISSUED,
     });
 
@@ -395,20 +395,20 @@ describe("comment edit", () => {
   });
 
   it("writes nothing where the read before an append was refused", async () => {
-    const { code, out, err, seen } = await runComment(["edit", "TASM-1", "3", "--append", "--body", "more"], {
-      [READ]: { ok: false, error: { kind: "store", code: "task-not-found", message: "no task TASM-1" } },
+    const { code, out, err, seen } = await runComment(["edit", "SAGA-1", "3", "--append", "--body", "more"], {
+      [READ]: { ok: false, error: { kind: "store", code: "task-not-found", message: "no task SAGA-1" } },
       [UPDATED]: ISSUED,
     });
 
     expect(code).toBe(1);
     expect(out).toBe("");
-    expect(err).toBe("tasma: store/task-not-found: no task TASM-1\n");
+    expect(err).toBe("tasma: store/task-not-found: no task SAGA-1\n");
     expect(seen).toEqual([HEALTH, READ]);
   });
 
   it("writes nothing where the read before an append answered no task", async () => {
     for (const data of [{ frontmatter: {} }, { comments: [{ id: 3, body: 7 }] }, "a task"]) {
-      const { code, out, err, seen } = await runComment(["edit", "TASM-1", "3", "--append", "--body", "more"], {
+      const { code, out, err, seen } = await runComment(["edit", "SAGA-1", "3", "--append", "--body", "more"], {
         [READ]: ok(data),
         [UPDATED]: ISSUED,
       });
@@ -423,7 +423,7 @@ describe("comment edit", () => {
 
 describe("comment delete", () => {
   it("calls the route with no body at all", async () => {
-    const { code, out, err, seen, bodies } = await runComment(["delete", "TASM-1", "3"], { [DELETED]: ISSUED });
+    const { code, out, err, seen, bodies } = await runComment(["delete", "SAGA-1", "3"], { [DELETED]: ISSUED });
 
     expect(code).toBe(0);
     expect(seen).toEqual([HEALTH, DELETED]);
@@ -433,14 +433,14 @@ describe("comment delete", () => {
   });
 
   it("refuses a missing comment id and one that is no comment id", async () => {
-    await refuses(["delete", "TASM-1"], "comment delete needs a comment id");
-    await refuses(["delete", "TASM-1", "x"], "not a comment id: x");
+    await refuses(["delete", "SAGA-1"], "comment delete needs a comment id");
+    await refuses(["delete", "SAGA-1", "x"], "not a comment id: x");
     await refuses(["delete", "a/b", "3"], "not a task id: a/b");
-    await refuses(["delete", "TASM-1", "3", "extra"], "comment delete takes two arguments: extra");
+    await refuses(["delete", "SAGA-1", "3", "extra"], "comment delete takes two arguments: extra");
   });
 
   it("reports a refusal the daemon answered with, at exit 1", async () => {
-    const { code, out, err } = await runComment(["delete", "TASM-1", "3"], {
+    const { code, out, err } = await runComment(["delete", "SAGA-1", "3"], {
       [DELETED]: { ok: false, error: { kind: "store", code: "comment-not-found", message: "no comment 3" } },
     });
 
@@ -458,10 +458,10 @@ describe("every comment write", () => {
   it("proves every address it sends a call to, the read an append makes included", async () => {
     const invocations: [string[], Record<string, unknown>, string[]][] = [
       [ADD, { [ADDED]: ISSUED }, [HEALTH, ADDED]],
-      [["edit", "TASM-1", "3", "--collapsed"], { [UPDATED]: ISSUED }, [HEALTH, UPDATED]],
-      [["delete", "TASM-1", "3"], { [DELETED]: ISSUED }, [HEALTH, DELETED]],
+      [["edit", "SAGA-1", "3", "--collapsed"], { [UPDATED]: ISSUED }, [HEALTH, UPDATED]],
+      [["delete", "SAGA-1", "3"], { [DELETED]: ISSUED }, [HEALTH, DELETED]],
       [
-        ["edit", "TASM-1", "3", "--append", "--body", "more"],
+        ["edit", "SAGA-1", "3", "--append", "--body", "more"],
         { [READ]: STORED, [UPDATED]: ISSUED },
         [HEALTH, READ, HEALTH, UPDATED],
       ],
@@ -483,7 +483,7 @@ describe("every comment write", () => {
   // The list comes from the parser's own table, so a flag added there and left
   // out of the check fails here rather than shipping silent.
   it("is refused with an empty value, before any call is made", async () => {
-    for (const [verb, args] of [["add", ADD], ["edit", ["edit", "TASM-1", "3"]]] as const) {
+    for (const [verb, args] of [["add", ADD], ["edit", ["edit", "SAGA-1", "3"]]] as const) {
       const flags = Object.entries(verbOf(verb)?.usage?.options ?? {})
         .filter(([, option]) => option.type === "string")
         .map(([flag]) => flag);

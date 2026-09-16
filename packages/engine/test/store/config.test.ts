@@ -87,14 +87,14 @@ describe("unknown keys", () => {
 
   it("accepts the registry keys of the project file in silence", async () => {
     const root = await tempRoot();
-    await plant(projectConfig(root), "name: Tasma\npath: /Users/someone/Projects/tasma\n");
+    await plant(projectConfig(root), "name: Saga\npath: /Users/someone/Projects/saga\n");
 
     expect((await project(root).config()).diagnostics).toEqual([]);
   });
 
   it("reports a registry key in the user file, where it belongs to no component", async () => {
     const root = await tempRoot();
-    await plant(userConfig(root), "name: Tasma\n");
+    await plant(userConfig(root), "name: Saga\n");
 
     expect(codes((await project(root).config()).diagnostics)).toEqual(["config-key-unknown"]);
   });
@@ -239,7 +239,7 @@ describe("a configuration name that holds no regular file", () => {
 describe("a configuration file a symbolic link points at", () => {
   it("is read and its keys resolved, because the user places both configuration files", async () => {
     const elsewhere = await bareRoot();
-    const outside = join(elsewhere, "tasma.yml");
+    const outside = join(elsewhere, "saga.yml");
     await plant(outside, "statuses: [New, Doing]\ndefault_status: Doing\n");
     const root = await tempRoot();
     await symlink(outside, projectConfig(root));
@@ -413,12 +413,12 @@ describe("workflows_path", () => {
 describe("name and path", () => {
   it("reads both from the project file", async () => {
     const root = await tempRoot();
-    await plant(projectConfig(root), "name: Tasma\npath: /srv/tasma\n");
+    await plant(projectConfig(root), "name: Saga\npath: /srv/saga\n");
 
     const { config, diagnostics } = await project(root).config();
 
-    expect(config.name).toBe("Tasma");
-    expect(config.path).toBe("/srv/tasma");
+    expect(config.name).toBe("Saga");
+    expect(config.path).toBe("/srv/saga");
     expect(diagnostics).toEqual([]);
   });
 
@@ -440,13 +440,13 @@ describe("name and path", () => {
 
   it("expands a path that starts with a tilde", async () => {
     const root = await tempRoot();
-    await plant(projectConfig(root), "path: ~/Projects/tasma\n");
+    await plant(projectConfig(root), "path: ~/Projects/saga\n");
 
-    expect((await project(root).config()).config.path).toBe(join(homedir(), "Projects", "tasma"));
+    expect((await project(root).config()).config.path).toBe(join(homedir(), "Projects", "saga"));
   });
 
   it.each([
-    ["a name that is not a string", "name: [Tasma]\n", "must be a string"],
+    ["a name that is not a string", "name: [Saga]\n", "must be a string"],
     ["a path that is not a string", "path: 3\n", "must be a string"],
     ["the empty path, which would resolve to the project directory", 'path: ""\n', "must not be empty"],
     ["the empty name, which would reach a reader as a blank label", 'name: ""\n', "must not be empty"],
@@ -463,7 +463,7 @@ describe("name and path", () => {
 
   it("reads neither key from the user file, where they describe no one project", async () => {
     const root = await tempRoot();
-    await plant(userConfig(root), "name: Tasma\npath: /srv/tasma\n");
+    await plant(userConfig(root), "name: Saga\npath: /srv/saga\n");
 
     const { config, diagnostics } = await project(root).config();
 

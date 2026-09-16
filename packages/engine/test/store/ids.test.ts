@@ -42,31 +42,31 @@ Second.
 describe("comment ids", () => {
   it("issues the counter when it stands past every id in the file", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), withComments("TASM-1", 7));
+    await plant(taskFile(root, "SAGA-1"), withComments("SAGA-1", 7));
 
-    const result = await project(root).addComment("TASM-1", { title: "Note" });
+    const result = await project(root).addComment("SAGA-1", { title: "Note" });
 
     expect(result.commentId).toBe(7);
     expect(result.diagnostics).toEqual([]);
-    expect(await read(taskFile(root, "TASM-1"))).toContain("next_comment_id: 8");
+    expect(await read(taskFile(root, "SAGA-1"))).toContain("next_comment_id: 8");
   });
 
   it("repairs a counter the file has already run past, and reports the repair", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), withComments("TASM-1", 2));
+    await plant(taskFile(root, "SAGA-1"), withComments("SAGA-1", 2));
 
-    const result = await project(root).addComment("TASM-1", { title: "Note" });
+    const result = await project(root).addComment("SAGA-1", { title: "Note" });
 
     expect(result.commentId).toBe(3);
     expect(codes(result.diagnostics)).toEqual(["stale-next-comment-id", "next-comment-id-repaired"]);
-    expect(await read(taskFile(root, "TASM-1"))).toContain("next_comment_id: 4");
+    expect(await read(taskFile(root, "SAGA-1"))).toContain("next_comment_id: 4");
   });
 
   it("issues 1 when the counter stands below it", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1").replace("next_comment_id: 1", "next_comment_id: 0"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1").replace("next_comment_id: 1", "next_comment_id: 0"));
 
-    const result = await project(root).addComment("TASM-1", { title: "Note" });
+    const result = await project(root).addComment("SAGA-1", { title: "Note" });
 
     expect(result.commentId).toBe(1);
     expect(codes(result.diagnostics)).toEqual(["next-comment-id-repaired"]);
@@ -74,12 +74,12 @@ describe("comment ids", () => {
 
   it("leaves a stale counter alone on a write that issues no id", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), withComments("TASM-1", 2));
+    await plant(taskFile(root, "SAGA-1"), withComments("SAGA-1", 2));
 
-    const result = await project(root).updateTask("TASM-1", { title: "Renamed" });
+    const result = await project(root).updateTask("SAGA-1", { title: "Renamed" });
 
     expect(codes(result.diagnostics)).toEqual(["stale-next-comment-id"]);
-    expect(await read(taskFile(root, "TASM-1"))).toContain("next_comment_id: 2");
+    expect(await read(taskFile(root, "SAGA-1"))).toContain("next_comment_id: 2");
   });
 
   it.each([
@@ -88,22 +88,22 @@ describe("comment ids", () => {
     ["negative", "-5"],
   ])("passes over a counter that is %s and takes the ids in the file instead", async (_name, counter) => {
     const root = await tempRoot();
-    const planted = withComments("TASM-1", 2).replace("next_comment_id: 2", `next_comment_id: ${counter}`);
-    await plant(taskFile(root, "TASM-1"), planted);
+    const planted = withComments("SAGA-1", 2).replace("next_comment_id: 2", `next_comment_id: ${counter}`);
+    await plant(taskFile(root, "SAGA-1"), planted);
 
-    const result = await project(root).addComment("TASM-1", { title: "Note" });
+    const result = await project(root).addComment("SAGA-1", { title: "Note" });
 
     expect(result.commentId).toBe(3);
     expect(codes(result.diagnostics)).toContain("next-comment-id-repaired");
-    expect(await read(taskFile(root, "TASM-1"))).toContain("next_comment_id: 4");
+    expect(await read(taskFile(root, "SAGA-1"))).toContain("next_comment_id: 4");
   });
 
   it("passes over a comment id past the safe integer range, which no later id can follow", async () => {
     const root = await tempRoot();
-    const planted = withComments("TASM-1", 3).replace("{id: 2,", "{id: 1e21,");
-    await plant(taskFile(root, "TASM-1"), planted);
+    const planted = withComments("SAGA-1", 3).replace("{id: 2,", "{id: 1e21,");
+    await plant(taskFile(root, "SAGA-1"), planted);
 
-    const result = await project(root).addComment("TASM-1", { title: "Note" });
+    const result = await project(root).addComment("SAGA-1", { title: "Note" });
 
     expect(result.commentId).toBe(3);
   });
@@ -111,13 +111,13 @@ describe("comment ids", () => {
   it("reports that no free comment id is left once the last one is taken", async () => {
     const root = await tempRoot();
     const last = String(Number.MAX_SAFE_INTEGER);
-    const planted = withComments("TASM-1", 3).replace("{id: 2,", `{id: ${last},`);
-    await plant(taskFile(root, "TASM-1"), planted);
+    const planted = withComments("SAGA-1", 3).replace("{id: 2,", `{id: ${last},`);
+    await plant(taskFile(root, "SAGA-1"), planted);
 
-    const error = await storeError(project(root).addComment("TASM-1", { title: "Note" }));
+    const error = await storeError(project(root).addComment("SAGA-1", { title: "Note" }));
 
     expect(error.code).toBe("comment-exists");
-    expect(error.path).toBe(taskFile(root, "TASM-1"));
+    expect(error.path).toBe(taskFile(root, "SAGA-1"));
   });
 });
 
@@ -128,7 +128,7 @@ describe("the task counter", () => {
 
     const result = await project(root).createTask({ title: "First" });
 
-    expect(result.id).toBe("TASM-7");
+    expect(result.id).toBe("SAGA-7");
     expect(result.diagnostics).toEqual([]);
     expect(await read(statePath(root))).toContain("next_task_id: 8");
   });
@@ -138,7 +138,7 @@ describe("the task counter", () => {
 
     const result = await project(root).createTask({ title: "First" });
 
-    expect(result.id).toBe("TASM-1");
+    expect(result.id).toBe("SAGA-1");
     expect(result.diagnostics).toEqual([]);
   });
 
@@ -153,49 +153,49 @@ describe("the task counter", () => {
   ])("rebuilds from the files on disk on %s", async (_name, text) => {
     const root = await tempRoot();
     await plant(statePath(root), text);
-    await plant(taskFile(root, "TASM-4"), taskText("TASM-4"));
+    await plant(taskFile(root, "SAGA-4"), taskText("SAGA-4"));
 
     const result = await project(root).createTask({ title: "Second" });
 
-    expect(result.id).toBe("TASM-5");
+    expect(result.id).toBe("SAGA-5");
     expect(codes(result.diagnostics)).toContain("next-task-id-rebuilt");
   });
 
   it("takes the highest id in the frontmatter, not the highest file name", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-5"), taskText("TASM-30"));
+    await plant(taskFile(root, "SAGA-5"), taskText("SAGA-30"));
 
-    expect((await project(root).createTask({ title: "Second" })).id).toBe("TASM-31");
+    expect((await project(root).createTask({ title: "Second" })).id).toBe("SAGA-31");
   });
 
   it("takes the highest file name, so a file it cannot parse still counts", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-30"), "this file has no frontmatter\n");
+    await plant(taskFile(root, "SAGA-30"), "this file has no frontmatter\n");
 
     const result = await project(root).createTask({ title: "Second" });
 
-    expect(result.id).toBe("TASM-31");
+    expect(result.id).toBe("SAGA-31");
     expect(codes(result.diagnostics)).toContain("task-file-unreadable");
   });
 
   it("excludes a file of another project from the id floor but not from the name floor", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-30"), taskText("OTHER-99"));
+    await plant(taskFile(root, "SAGA-30"), taskText("OTHER-99"));
 
     const result = await project(root).createTask({ title: "Second" });
 
-    expect(result.id).toBe("TASM-31");
+    expect(result.id).toBe("SAGA-31");
     expect(codes(result.diagnostics)).toContain("task-file-foreign");
   });
 
   it("rebuilds and retries once when the counter is behind the directory", async () => {
     const root = await tempRoot();
     await plant(statePath(root), "next_task_id: 1\n");
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
     const result = await project(root).createTask({ title: "Second" });
 
-    expect(result.id).toBe("TASM-2");
+    expect(result.id).toBe("SAGA-2");
     expect(codes(result.diagnostics)).toEqual(["next-task-id-rebuilt", "next-task-id-advanced"]);
     expect(await read(statePath(root))).toContain("next_task_id: 3");
   });
@@ -222,7 +222,7 @@ describe("the task counter", () => {
 
     await expect(project(root).createTask({ title: "First" })).rejects.toThrow();
 
-    await expect(read(taskFile(root, "TASM-1"))).resolves.toContain("id: TASM-1");
+    await expect(read(taskFile(root, "SAGA-1"))).resolves.toContain("id: SAGA-1");
   });
 });
 
@@ -233,7 +233,7 @@ describe("a state file that stands there and cannot be used", () => {
 
     const result = await project(root).createTask({ title: "First" });
 
-    expect(result.id).toBe("TASM-1");
+    expect(result.id).toBe("SAGA-1");
     expect(codes(result.diagnostics)).toEqual(["next-task-id-rebuilt"]);
   });
 
@@ -253,7 +253,7 @@ describe("a state file that stands there and cannot be used", () => {
 
     const result = await project(root).createTask({ title: "First" });
 
-    expect(result.id).toBe("TASM-1");
+    expect(result.id).toBe("SAGA-1");
     expect(codes(result.diagnostics)).toEqual(["next-task-id-rebuilt"]);
     expect(await read(statePath(root))).toContain("next_task_id: 2");
   });
@@ -266,7 +266,7 @@ describe("a state file that stands there and cannot be used", () => {
 
     const result = await project(root).createTask({ title: "First" });
 
-    expect(result.id).toBe("TASM-1");
+    expect(result.id).toBe("SAGA-1");
     expect(codes(result.diagnostics)).toEqual(["next-task-id-rebuilt"]);
     // Nothing of the file the name pointed at was read into the store or lost.
     expect(await read(statePath(root))).not.toContain("api_token");
@@ -286,11 +286,11 @@ describe("a state file that stands there and cannot be used", () => {
 describe("a task number no name can carry", () => {
   it("passes over a file name whose digits do not survive a number", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, `TASM-${"9".repeat(240)}`), "not a task file\n");
+    await plant(taskFile(root, `SAGA-${"9".repeat(240)}`), "not a task file\n");
 
     const result = await project(root).createTask({ title: "First" });
 
-    expect(result.id).toBe("TASM-1");
+    expect(result.id).toBe("SAGA-1");
     // The name is not a task name, so it is reported and the counter starts
     // where a new project starts.
     expect(codes(result.diagnostics)).toEqual(["task-file-unexpected"]);
@@ -299,7 +299,7 @@ describe("a task number no name can carry", () => {
   it("reports that no free number is left once the last one is taken", async () => {
     const root = await tempRoot();
     const last = String(Number.MAX_SAFE_INTEGER);
-    await plant(taskFile(root, `TASM-${last}`), taskText(`TASM-${last}`));
+    await plant(taskFile(root, `SAGA-${last}`), taskText(`SAGA-${last}`));
 
     const error = await storeError(project(root).createTask({ title: "First" }));
 
@@ -323,6 +323,6 @@ d: [*c, *c, *c, *c, *c, *c, *c, *c, *c, *c]
 `,
     );
 
-    expect((await project(root).createTask({ title: "First" })).id).toBe("TASM-1");
+    expect((await project(root).createTask({ title: "First" })).id).toBe("SAGA-1");
   });
 });

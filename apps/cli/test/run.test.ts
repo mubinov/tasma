@@ -178,15 +178,15 @@ describe("run", () => {
   // registry holds it, so the whole invocation reaches it.
   it("reaches the project and the task noun through the registry", async () => {
     const answers = serveAnswers({
-      "GET /projects": ok([{ tag: "TASM" }]),
-      "GET /projects/TASM/tasks/TASM-1/text?collapsed=false": ok({ text: "x", hidden: [] }),
+      "GET /projects": ok([{ tag: "SAGA" }]),
+      "GET /projects/SAGA/tasks/SAGA-1/text?collapsed=false": ok({ text: "x", hidden: [] }),
     });
     const server = await startServer(answers.handle);
 
     try {
       for (const invocation of [
-        { argv: ["project", "list"], text: "TASM  -  -\n" },
-        { argv: ["task", "view", "TASM-1"], text: "x\n" },
+        { argv: ["project", "list"], text: "SAGA  -  -\n" },
+        { argv: ["task", "view", "SAGA-1"], text: "x\n" },
       ]) {
         const { io, out, err } = capture();
 
@@ -310,7 +310,7 @@ describe("dispatch", () => {
 
 describe("isPathComponent", () => {
   it("admits a value a URL carries as one segment", () => {
-    expect(isPathComponent("TASM")).toBe(true);
+    expect(isPathComponent("SAGA")).toBe(true);
     expect(isPathComponent("a b")).toBe(true);
   });
 

@@ -6,7 +6,7 @@ import { BoardColumn } from "../../src/components/board-column";
 import type { ColumnData } from "../../src/lib/board";
 
 function entry(number: number, fields: Partial<Frontmatter> = {}): TaskEntry {
-  const id = `TASM-${String(number)}`;
+  const id = `SAGA-${String(number)}`;
 
   return {
     id,

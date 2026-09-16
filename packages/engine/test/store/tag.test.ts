@@ -4,7 +4,7 @@ import { uniqueTag } from "../../src/store/tag.js";
 import { storeFault } from "./helpers.js";
 
 describe("the rule a project is created under", () => {
-  it.each(["TASM", "A1", "WEB3", "ABCDEFGH"])("accepts %s", (tag) => {
+  it.each(["SAGA", "A1", "WEB3", "ABCDEFGH"])("accepts %s", (tag) => {
     expect(isTag(tag)).toBe(true);
     expect(TAG_RULE.test(tag)).toBe(true);
   });
@@ -12,15 +12,15 @@ describe("the rule a project is created under", () => {
   it.each([
     ["one character", "T"],
     ["a leading digit", "1A"],
-    ["lowercase letters", "tasm"],
-    ["a dash", "TA-SM"],
+    ["lowercase letters", "saga"],
+    ["a dash", "SA-GA"],
     ["nine characters", "ABCDEFGHI"],
   ])("rejects %s", (_reason, tag) => {
     expect(isTag(tag)).toBe(false);
   });
 
   it.each<[string, unknown]>([
-    ["an array whose text matches", ["TASM"]],
+    ["an array whose text matches", ["SAGA"]],
     ["a number", 4],
   ])("rejects %s, which is no string", (_reason, value) => {
     expect(isTag(value)).toBe(false);
@@ -29,12 +29,12 @@ describe("the rule a project is created under", () => {
 
 describe("the tag a path gives", () => {
   it.each([
-    ["/Users/almaz/Projects/tasma", "TASM"],
+    ["/Users/someone/Projects/saga", "SAGA"],
     ["../ui-loader", "UILO"],
     ["~/web3/", "WEB3"],
     ["/srv/3d-viewer", "DVIE"],
     ["/tmp/x", "XX"],
-    ["/tmp/.tasma", "TASM"],
+    ["/tmp/.saga", "SAGA"],
   ])("makes %s into %s", (path, tag) => {
     expect(generateTag(path)).toBe(tag);
   });
@@ -51,24 +51,24 @@ describe("the tag a path gives", () => {
 
 describe("the tag a create settles on", () => {
   it("answers with the tag itself when nothing holds it", () => {
-    expect(uniqueTag("TASM", new Set())).toBe("TASM");
+    expect(uniqueTag("SAGA", new Set())).toBe("SAGA");
   });
 
   it("counts from two for a tag that is taken", () => {
-    expect(uniqueTag("TASM", new Set(["TASM"]))).toBe("TASM2");
+    expect(uniqueTag("SAGA", new Set(["SAGA"]))).toBe("SAGA2");
   });
 
   it("passes nine to ten rather than stopping at one digit", () => {
-    const taken = new Set(["TASM", "TASM2", "TASM3", "TASM4", "TASM5", "TASM6", "TASM7", "TASM8", "TASM9"]);
+    const taken = new Set(["SAGA", "SAGA2", "SAGA3", "SAGA4", "SAGA5", "SAGA6", "SAGA7", "SAGA8", "SAGA9"]);
 
-    expect(uniqueTag("TASM", taken)).toBe("TASM10");
+    expect(uniqueTag("SAGA", taken)).toBe("SAGA10");
   });
 
   it("refuses once no number fits within the rule", () => {
-    const taken = new Set(["TASM"]);
-    for (let number = 2; number < 10_000; number += 1) taken.add(`TASM${number}`);
+    const taken = new Set(["SAGA"]);
+    for (let number = 2; number < 10_000; number += 1) taken.add(`SAGA${number}`);
 
-    expect(storeFault(() => uniqueTag("TASM", taken)).code).toBe("project-exists");
+    expect(storeFault(() => uniqueTag("SAGA", taken)).code).toBe("project-exists");
   });
 
   it("refuses a taken tag no number fits behind at all", () => {

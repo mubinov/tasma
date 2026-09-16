@@ -130,11 +130,11 @@ describe("a write over more than one key", () => {
 
 describe("the keys the queue is driven by", () => {
   it("keys one task apart from another, from another project, and from the creates of its own", () => {
-    expect(taskKey("TASM", "TASM-1")).toBe(taskKey("TASM", "TASM-1"));
-    expect(taskKey("TASM", "TASM-1")).not.toBe(taskKey("TASM", "TASM-2"));
-    expect(taskKey("TASM", "TASM-1")).not.toBe(taskKey("OTHER", "TASM-1"));
-    expect(createKey("TASM")).not.toBe(taskKey("TASM", "TASM-1"));
-    expect(createKey("TASM")).not.toBe(createKey("OTHER"));
+    expect(taskKey("SAGA", "SAGA-1")).toBe(taskKey("SAGA", "SAGA-1"));
+    expect(taskKey("SAGA", "SAGA-1")).not.toBe(taskKey("SAGA", "SAGA-2"));
+    expect(taskKey("SAGA", "SAGA-1")).not.toBe(taskKey("OTHER", "SAGA-1"));
+    expect(createKey("SAGA")).not.toBe(taskKey("SAGA", "SAGA-1"));
+    expect(createKey("SAGA")).not.toBe(createKey("OTHER"));
   });
 
   it("keys the path turn apart from every tag and URL segment spelled without percent-encoding", () => {
@@ -142,25 +142,25 @@ describe("the keys the queue is driven by", () => {
     expect(PATH_KEY).toContain("\u0000");
   });
 
-  const listed = () => [{ id: "TASM-1" }, { id: "TASM-2" }, { id: "TASM-3" }];
+  const listed = () => [{ id: "SAGA-1" }, { id: "SAGA-2" }, { id: "SAGA-3" }];
 
   it("keys each listed task a write states as a blocker, once", () => {
-    expect(blockerKeys("TASM", { blocked_by: ["TASM-2", "TASM-1", "TASM-2"] }, listed)).toEqual([
-      taskKey("TASM", "TASM-1"),
-      taskKey("TASM", "TASM-2"),
+    expect(blockerKeys("SAGA", { blocked_by: ["SAGA-2", "SAGA-1", "SAGA-2"] }, listed)).toEqual([
+      taskKey("SAGA", "SAGA-1"),
+      taskKey("SAGA", "SAGA-2"),
     ]);
   });
 
   it("keys no blocker the index does not list, however many a write states", () => {
-    const unknown = Array.from({ length: 10_000 }, (_, n) => `TASM-${n + 100}`);
-    expect(blockerKeys("TASM", { blocked_by: [...unknown, "TASM-3"] }, listed)).toEqual([taskKey("TASM", "TASM-3")]);
+    const unknown = Array.from({ length: 10_000 }, (_, n) => `SAGA-${n + 100}`);
+    expect(blockerKeys("SAGA", { blocked_by: [...unknown, "SAGA-3"] }, listed)).toEqual([taskKey("SAGA", "SAGA-3")]);
   });
 
   it("keys no task for a value that is not a list of strings, and reads no listing for it", () => {
     const unread = () => expect.unreachable("the listing is read");
-    expect(blockerKeys("TASM", { blocked_by: ["TASM-1", 7] }, unread)).toEqual([]);
-    expect(blockerKeys("TASM", { blocked_by: "TASM-1" }, unread)).toEqual([]);
-    expect(blockerKeys("TASM", { blocked_by: null }, unread)).toEqual([]);
-    expect(blockerKeys("TASM", {}, unread)).toEqual([]);
+    expect(blockerKeys("SAGA", { blocked_by: ["SAGA-1", 7] }, unread)).toEqual([]);
+    expect(blockerKeys("SAGA", { blocked_by: "SAGA-1" }, unread)).toEqual([]);
+    expect(blockerKeys("SAGA", { blocked_by: null }, unread)).toEqual([]);
+    expect(blockerKeys("SAGA", {}, unread)).toEqual([]);
   });
 });

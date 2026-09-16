@@ -15,7 +15,7 @@ const CONFIG = {
 };
 
 function entry(number: number, labels?: string[]): TaskEntry {
-  const id = `TASM-${String(number)}`;
+  const id = `SAGA-${String(number)}`;
   const frontmatter: Frontmatter = {
     id,
     title: `Task ${String(number)}`,
@@ -33,12 +33,12 @@ const ENTRIES = [entry(1, ["web", "infra"]), entry(2, ["web"]), entry(3, ["api"]
 
 function renderBoard(search: string, entries: TaskEntry[] = ENTRIES) {
   const { transport } = stubTransport({
-    "/projects": successReply([{ tag: "TASM", name: "Tasma" }]),
-    "/projects/TASM": successReply({ tag: "TASM", name: "Tasma", live: true, config: CONFIG }),
-    "/projects/TASM/tasks": successReply({ entries, excluded: [] }),
+    "/projects": successReply([{ tag: "SAGA", name: "Saga" }]),
+    "/projects/SAGA": successReply({ tag: "SAGA", name: "Saga", live: true, config: CONFIG }),
+    "/projects/SAGA/tasks": successReply({ entries, excluded: [] }),
   });
 
-  return renderWithRouter(`/tasks?projects=TASM${search}`, transport);
+  return renderWithRouter(`/tasks?projects=SAGA${search}`, transport);
 }
 
 function trigger(): HTMLElement {
@@ -179,7 +179,7 @@ it("writes a checked label to the address as the label itself", async () => {
     await user.click(within(listbox).getByRole("option", { name: /infra/ }));
   });
 
-  expect(router.state.location.search).toEqual({ projects: "TASM", labels: "web,infra" });
+  expect(router.state.location.search).toEqual({ projects: "SAGA", labels: "web,infra" });
   expect(router.state.location.href).toContain("labels=web,infra");
 });
 
@@ -192,7 +192,7 @@ it("removes the key when the last label is unchecked", async () => {
     await user.click(within(listbox).getByRole("option", { name: /web/ }));
   });
 
-  expect(router.state.location.search).toEqual({ projects: "TASM" });
+  expect(router.state.location.search).toEqual({ projects: "SAGA" });
 });
 
 it("checks a label selected in another case, with no second item", async () => {

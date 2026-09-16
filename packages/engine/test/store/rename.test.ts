@@ -29,8 +29,8 @@ const NEW = "NEW";
 
 /** A project whose three tasks name one another, carrying what a rewrite must not touch. */
 const TASKS: Record<string, string> = {
-  "TASM-1.md": `---
-id: TASM-1
+  "SAGA-1.md": `---
+id: SAGA-1
 title: First
 status: To Do
 created: "${TIMESTAMP}"
@@ -42,37 +42,37 @@ release: soon
 
 The first body.
 `,
-  "TASM-2.md": `---
-id: TASM-2
+  "SAGA-2.md": `---
+id: SAGA-2
 title: Second
 status: To Do
 created: "${TIMESTAMP}"
 updated: "${TIMESTAMP}"
 next_comment_id: 1
-parent: TASM-1
+parent: SAGA-1
 ---
 
 The second body.
 `,
-  "TASM-3.md": `---
-id: TASM-3
+  "SAGA-3.md": `---
+id: SAGA-3
 title: Third
 status: To Do
 created: "${TIMESTAMP}"
 updated: "${TIMESTAMP}"
 next_comment_id: 2
-blocked_by: [TASM-1, TASM-2]
+blocked_by: [SAGA-1, SAGA-2]
 ---
 
-Held by TASM-1 until it is done.
+Held by SAGA-1 until it is done.
 
-<!-- task:comment {id: 1, title: "On TASM-1", created: "${TIMESTAMP}", collapsed: true} -->
+<!-- task:comment {id: 1, title: "On SAGA-1", created: "${TIMESTAMP}", collapsed: true} -->
 
-Still waiting on TASM-1.
+Still waiting on SAGA-1.
 `,
 };
 
-const CONFIG = "name: Tasma\n# What it stands for.\npath: /srv/tasma\n";
+const CONFIG = "name: Saga\n# What it stands for.\npath: /srv/saga\n";
 const STATE = "next_task_id: 4\n";
 
 /**
@@ -87,7 +87,7 @@ function tasksOf(tag: string, count: number): Record<string, string> {
   const tasks: Record<string, string> = {};
   for (let number = 1; number <= count; number += 1) {
     const id = `${tag}-${number}`;
-    tasks[`${id}.md`] = TASKS["TASM-1.md"]!.replace("id: TASM-1", `id: ${id}`);
+    tasks[`${id}.md`] = TASKS["SAGA-1.md"]!.replace("id: SAGA-1", `id: ${id}`);
   }
   return tasks;
 }
@@ -145,10 +145,10 @@ describe("renaming a project", () => {
     await expect(projectEntries(root)).resolves.toEqual([NEW]);
     await expect(entriesOf(tasksDir(root, NEW))).resolves.toEqual(["NEW-1.md", "NEW-2.md", "NEW-3.md"]);
     await expect(read(join(tasksDir(root, NEW), "NEW-1.md"))).resolves.toBe(
-      TASKS["TASM-1.md"]!.replace("id: TASM-1", "id: NEW-1"),
+      TASKS["SAGA-1.md"]!.replace("id: SAGA-1", "id: NEW-1"),
     );
     await expect(read(join(tasksDir(root, NEW), "NEW-2.md"))).resolves.toBe(
-      TASKS["TASM-2.md"]!.replace("id: TASM-2", "id: NEW-2").replace("parent: TASM-1", "parent: NEW-1"),
+      TASKS["SAGA-2.md"]!.replace("id: SAGA-2", "id: NEW-2").replace("parent: SAGA-1", "parent: NEW-1"),
     );
   });
 
@@ -162,9 +162,9 @@ describe("renaming a project", () => {
     expect(text).toContain("id: NEW-3");
     expect(text).toContain("- NEW-1");
     expect(text).toContain("- NEW-2");
-    expect(text).toContain("Held by TASM-1 until it is done.");
-    expect(text).toContain("Still waiting on TASM-1.");
-    expect(text).toContain(`<!-- task:comment {id: 1, title: "On TASM-1", created: "${TIMESTAMP}", collapsed: true} -->`);
+    expect(text).toContain("Held by SAGA-1 until it is done.");
+    expect(text).toContain("Still waiting on SAGA-1.");
+    expect(text).toContain(`<!-- task:comment {id: 1, title: "On SAGA-1", created: "${TIMESTAMP}", collapsed: true} -->`);
     expect(text).toContain(`updated: "${TIMESTAMP}"`);
   });
 
@@ -184,8 +184,8 @@ describe("renaming a project", () => {
 
     await expect(renameProject({ project: PROJECT, root }, { tag: NEW })).resolves.toEqual({
       tag: NEW,
-      name: "Tasma",
-      path: "/srv/tasma",
+      name: "Saga",
+      path: "/srv/saga",
       diagnostics: [],
     });
   });
@@ -193,8 +193,8 @@ describe("renaming a project", () => {
   it("rewrites an id that names the project under another number, and keeps the digits verbatim", async () => {
     const root = await bareRoot();
     await plantProject(root, PROJECT, {
-      "TASM-3.md": TASKS["TASM-3.md"]!.replace("id: TASM-3", "id: TASM-7").replace("blocked_by: [TASM-1, TASM-2]", ""),
-      "TASM-007.md": TASKS["TASM-1.md"]!.replace("id: TASM-1", "id: TASM-007"),
+      "SAGA-3.md": TASKS["SAGA-3.md"]!.replace("id: SAGA-3", "id: SAGA-7").replace("blocked_by: [SAGA-1, SAGA-2]", ""),
+      "SAGA-007.md": TASKS["SAGA-1.md"]!.replace("id: SAGA-1", "id: SAGA-007"),
     });
 
     await renameProject({ project: PROJECT, root }, { tag: NEW });
@@ -219,10 +219,10 @@ describe("what a rename carries without rewriting", () => {
   it("copies every entry that is no task file of the project, and reports the ones a scan names", async () => {
     const root = await bareRoot();
     await plantProject(root, PROJECT, {
-      "TASM-1.md": TASKS["TASM-1.md"]!,
-      ".TASM-2.md.7.tmp": "a write that did not finish",
+      "SAGA-1.md": TASKS["SAGA-1.md"]!,
+      ".SAGA-2.md.7.tmp": "a write that did not finish",
       "notes.md": "not a task file",
-      "TASM-4.md": TASKS["TASM-1.md"]!.replace("id: TASM-1", "id: OTHER-4"),
+      "SAGA-4.md": TASKS["SAGA-1.md"]!.replace("id: SAGA-1", "id: OTHER-4"),
       "plan.txt": "no task file either",
     });
     await mkdir(join(tasksDir(root, PROJECT), "drafts"));
@@ -232,18 +232,18 @@ describe("what a rename carries without rewriting", () => {
 
     const tasks = tasksDir(root, NEW);
     await expect(entriesOf(tasks)).resolves.toEqual(
-      [".TASM-2.md.7.tmp", "NEW-1.md", "NEW-4.md", "drafts", "link", "notes.md", "plan.txt"],
+      [".SAGA-2.md.7.tmp", "NEW-1.md", "NEW-4.md", "drafts", "link", "notes.md", "plan.txt"],
     );
     expect(codes(answer.diagnostics).sort()).toEqual(["task-file-foreign", "task-file-unexpected", "temp-file-left"]);
     expect(answer.diagnostics.map((finding) => finding.path).sort()).toEqual(
-      [join(tasks, ".TASM-2.md.7.tmp"), join(tasks, "NEW-4.md"), join(tasks, "notes.md")].sort(),
+      [join(tasks, ".SAGA-2.md.7.tmp"), join(tasks, "NEW-4.md"), join(tasks, "notes.md")].sort(),
     );
   });
 
   it("keeps the id a foreign task file carries", async () => {
     const root = await bareRoot();
     await plantProject(root, PROJECT, {
-      "TASM-4.md": TASKS["TASM-1.md"]!.replace("id: TASM-1", "id: OTHER-4"),
+      "SAGA-4.md": TASKS["SAGA-1.md"]!.replace("id: SAGA-1", "id: OTHER-4"),
     });
 
     await renameProject({ project: PROJECT, root }, { tag: NEW });
@@ -280,7 +280,7 @@ describe("what a rename carries without rewriting", () => {
     await plant(outside, CONFIG);
     await symlink(outside, projectConfig(root, PROJECT));
 
-    await expect(renameProject({ project: PROJECT, root }, { tag: NEW })).resolves.toMatchObject({ name: "Tasma" });
+    await expect(renameProject({ project: PROJECT, root }, { tag: NEW })).resolves.toMatchObject({ name: "Saga" });
 
     await expect(readlink(projectConfig(root, NEW))).resolves.toBe(outside);
   });
@@ -288,7 +288,7 @@ describe("what a rename carries without rewriting", () => {
   it("leaves a parent that names another project alone", async () => {
     const root = await bareRoot();
     await plantProject(root, PROJECT, {
-      "TASM-2.md": TASKS["TASM-2.md"]!.replace("parent: TASM-1", "parent: OTHER-9"),
+      "SAGA-2.md": TASKS["SAGA-2.md"]!.replace("parent: SAGA-1", "parent: OTHER-9"),
     });
 
     await renameProject({ project: PROJECT, root }, { tag: NEW });
@@ -299,12 +299,12 @@ describe("what a rename carries without rewriting", () => {
 
 describe("a rename this engine refuses", () => {
   it.each([
-    ["a tag the create rule does not accept", { tag: "tasm" }, "tag-invalid"],
+    ["a tag the create rule does not accept", { tag: "saga" }, "tag-invalid"],
     ["a tag of one letter", { tag: "T" }, "tag-invalid"],
     ["a tag of nine characters", { tag: "ABCDEFGHI" }, "tag-invalid"],
     ["a tag that is no string", { tag: 5 }, "tag-invalid"],
     ["the tag the project already carries", { tag: PROJECT }, "project-exists"],
-    ["a key no rename states", { tag: NEW, name: "Tasma" }, "field-not-writable"],
+    ["a key no rename states", { tag: NEW, name: "Saga" }, "field-not-writable"],
     ["a body naming no tag", {}, "field-required"],
     ["a tag cleared to nothing", { tag: undefined }, "field-required"],
   ])("refuses %s", async (_name, input, code) => {
@@ -346,7 +346,7 @@ describe("a rename this engine refuses", () => {
     const root = await bareRoot();
     await planted(root);
 
-    expect((await storeError(renameProject({ project: "tasm", root }, { tag: NEW }))).code).toBe("project-invalid");
+    expect((await storeError(renameProject({ project: "saga", root }, { tag: NEW }))).code).toBe("project-invalid");
   });
 
   it.each([
@@ -388,13 +388,13 @@ describe("a rename this engine refuses", () => {
   it("stops on a task file the format layer cannot read, and renames nothing", async () => {
     const root = await bareRoot();
     await planted(root);
-    await plant(join(tasksDir(root, PROJECT), "TASM-2.md"), fixture("invalid/frontmatter-unterminated.md"));
+    await plant(join(tasksDir(root, PROJECT), "SAGA-2.md"), fixture("invalid/frontmatter-unterminated.md"));
     const before = await treeOf(projectDir(root, PROJECT));
 
     await expect(renameProject({ project: PROJECT, root }, { tag: NEW })).rejects.toMatchObject({
       name: "TaskParseError",
       code: "frontmatter-unterminated",
-      filename: join(tasksDir(root, PROJECT), "TASM-2.md"),
+      filename: join(tasksDir(root, PROJECT), "SAGA-2.md"),
       line: expect.any(Number) as number,
     });
 
@@ -406,8 +406,8 @@ describe("a rename this engine refuses", () => {
     const root = await bareRoot();
     await planted(root);
     await plant(
-      join(tasksDir(root, PROJECT), "TASM-2.md"),
-      TASKS["TASM-2.md"]!.replace("id: TASM-2", "id: &tag TASM-2").replace("parent: TASM-1", "custom: {of: *tag}"),
+      join(tasksDir(root, PROJECT), "SAGA-2.md"),
+      TASKS["SAGA-2.md"]!.replace("id: SAGA-2", "id: &tag SAGA-2").replace("parent: SAGA-1", "custom: {of: *tag}"),
     );
     const before = await treeOf(projectDir(root, PROJECT));
 
@@ -473,8 +473,8 @@ async function staged(root: string, tasks: Record<string, string>): Promise<Stag
 describe("the reconcile that follows a publish", () => {
   it("rewrites a file that changed during the copy", async () => {
     const root = await bareRoot();
-    const { frozen, renamed, identities } = await staged(root, { "TASM-2.md": TASKS["TASM-2.md"]! });
-    await plant(join(frozen.tasks, "TASM-2.md"), TASKS["TASM-2.md"]!.replace("Second", "Rewritten"));
+    const { frozen, renamed, identities } = await staged(root, { "SAGA-2.md": TASKS["SAGA-2.md"]! });
+    await plant(join(frozen.tasks, "SAGA-2.md"), TASKS["SAGA-2.md"]!.replace("Second", "Rewritten"));
 
     await reconcile(frozen, renamed, identities, new Map());
 
@@ -486,7 +486,7 @@ describe("the reconcile that follows a publish", () => {
   it("adds a file the copy never saw", async () => {
     const root = await bareRoot();
     const { frozen, renamed, identities } = await staged(root, {});
-    await plant(join(frozen.tasks, "TASM-2.md"), TASKS["TASM-2.md"]!);
+    await plant(join(frozen.tasks, "SAGA-2.md"), TASKS["SAGA-2.md"]!);
 
     await reconcile(frozen, renamed, identities, new Map());
 
@@ -495,9 +495,9 @@ describe("the reconcile that follows a publish", () => {
 
   it("takes away a file the copy carried and the project no longer holds", async () => {
     const root = await bareRoot();
-    const { frozen, renamed, identities } = await staged(root, { "TASM-2.md": TASKS["TASM-2.md"]! });
+    const { frozen, renamed, identities } = await staged(root, { "SAGA-2.md": TASKS["SAGA-2.md"]! });
 
-    await rm(join(frozen.tasks, "TASM-2.md"));
+    await rm(join(frozen.tasks, "SAGA-2.md"));
 
     await reconcile(frozen, renamed, identities, new Map());
 
@@ -506,9 +506,9 @@ describe("the reconcile that follows a publish", () => {
 
   it("carries a file that broke after the copy as it stands, and reports it", async () => {
     const root = await bareRoot();
-    const { frozen, renamed, identities } = await staged(root, { "TASM-2.md": TASKS["TASM-2.md"]! });
+    const { frozen, renamed, identities } = await staged(root, { "SAGA-2.md": TASKS["SAGA-2.md"]! });
     const broken = fixture("invalid/frontmatter-unterminated.md");
-    await plant(join(frozen.tasks, "TASM-2.md"), broken);
+    await plant(join(frozen.tasks, "SAGA-2.md"), broken);
     const findings = new Map<string, StoreDiagnostic>();
 
     await reconcile(frozen, renamed, identities, findings);
@@ -528,12 +528,12 @@ describe("the reconcile that follows a publish", () => {
     const root = await bareRoot();
     const { frozen, renamed, identities } = await staged(root, {});
     await plant(frozen.state, "next_task_id: 12\n");
-    await plant(frozen.projectConfig, "name: Renamed\npath: /srv/tasma\n");
+    await plant(frozen.projectConfig, "name: Renamed\npath: /srv/saga\n");
 
     await reconcile(frozen, renamed, identities, new Map());
 
     await expect(read(renamed.state)).resolves.toBe("next_task_id: 12\n");
-    await expect(read(renamed.projectConfig)).resolves.toBe("name: Renamed\npath: /srv/tasma\n");
+    await expect(read(renamed.projectConfig)).resolves.toBe("name: Renamed\npath: /srv/saga\n");
   });
 
   it("leaves an absent counter absent", async () => {
@@ -549,9 +549,9 @@ describe("the reconcile that follows a publish", () => {
 describe("what the reconcile does with a file the copy already carried", () => {
   it("reports a foreign id the write of the copy window left behind", async () => {
     const root = await bareRoot();
-    const foreign = TASKS["TASM-2.md"]!.replace("id: TASM-2", "id: OTHER-2");
-    const { frozen, renamed, identities } = await staged(root, { "TASM-2.md": TASKS["TASM-2.md"]! });
-    await plant(join(frozen.tasks, "TASM-2.md"), foreign);
+    const foreign = TASKS["SAGA-2.md"]!.replace("id: SAGA-2", "id: OTHER-2");
+    const { frozen, renamed, identities } = await staged(root, { "SAGA-2.md": TASKS["SAGA-2.md"]! });
+    await plant(join(frozen.tasks, "SAGA-2.md"), foreign);
     const findings = new Map<string, StoreDiagnostic>();
 
     await reconcile(frozen, renamed, identities, findings);
@@ -564,9 +564,9 @@ describe("what the reconcile does with a file the copy already carried", () => {
 
   it("takes no finding of the copy forward for a file it rewrote", async () => {
     const root = await bareRoot();
-    const foreign = TASKS["TASM-2.md"]!.replace("id: TASM-2", "id: OTHER-2");
-    const { frozen, renamed, identities } = await staged(root, { "TASM-2.md": foreign });
-    await plant(join(frozen.tasks, "TASM-2.md"), TASKS["TASM-2.md"]!);
+    const foreign = TASKS["SAGA-2.md"]!.replace("id: SAGA-2", "id: OTHER-2");
+    const { frozen, renamed, identities } = await staged(root, { "SAGA-2.md": foreign });
+    await plant(join(frozen.tasks, "SAGA-2.md"), TASKS["SAGA-2.md"]!);
     const findings = new Map([["NEW-2.md", { code: "task-file-foreign" as const, message: "from the copy", path: "old" }]]);
 
     await reconcile(frozen, renamed, identities, findings);
@@ -577,7 +577,7 @@ describe("what the reconcile does with a file the copy already carried", () => {
   it("tolerates a file the copy recorded whose name the new project never took", async () => {
     const root = await bareRoot();
     const { frozen, renamed, identities } = await staged(root, {});
-    identities.set("TASM-9.md", { ino: 1, size: 1, mtimeMs: 1 });
+    identities.set("SAGA-9.md", { ino: 1, size: 1, mtimeMs: 1 });
     const findings = new Map([["NEW-9.md", { code: "task-file-foreign" as const, message: "from the copy", path: "old" }]]);
 
     await expect(reconcile(frozen, renamed, identities, findings)).resolves.toBeUndefined();
@@ -587,8 +587,8 @@ describe("what the reconcile does with a file the copy already carried", () => {
 
   it("passes on a fault of the removal that is not a file already gone", async () => {
     const root = await bareRoot();
-    const { frozen, renamed, identities } = await staged(root, { "TASM-2.md": TASKS["TASM-2.md"]! });
-    await rm(join(frozen.tasks, "TASM-2.md"));
+    const { frozen, renamed, identities } = await staged(root, { "SAGA-2.md": TASKS["SAGA-2.md"]! });
+    await rm(join(frozen.tasks, "SAGA-2.md"));
     await chmod(renamed.tasks, 0o500);
     onTestFinished(() => chmod(renamed.tasks, 0o700));
 
@@ -597,8 +597,8 @@ describe("what the reconcile does with a file the copy already carried", () => {
 
   it("passes on a fault of the rewrite that is no fault of the file", async () => {
     const root = await bareRoot();
-    const { frozen, renamed, identities } = await staged(root, { "TASM-2.md": TASKS["TASM-2.md"]! });
-    await plant(join(frozen.tasks, "TASM-2.md"), TASKS["TASM-2.md"]!.replace("Second", "Rewritten"));
+    const { frozen, renamed, identities } = await staged(root, { "SAGA-2.md": TASKS["SAGA-2.md"]! });
+    await plant(join(frozen.tasks, "SAGA-2.md"), TASKS["SAGA-2.md"]!.replace("Second", "Rewritten"));
     await chmod(renamed.tasks, 0o500);
     onTestFinished(() => chmod(renamed.tasks, 0o700));
 

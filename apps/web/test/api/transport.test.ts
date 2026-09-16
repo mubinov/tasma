@@ -34,16 +34,16 @@ it("carries the daemon's absolute address the Vite config injected", () => {
 it("prepends the base path the proxy is mounted on", async () => {
   const calls = stubFetch(Response.json({ ok: true, data: null, diagnostics: [] }));
 
-  await createFetchTransport(DAEMON_PATH_PREFIX)({ method: "GET", path: "/projects/tasma/tasks?status=To%20Do" });
+  await createFetchTransport(DAEMON_PATH_PREFIX)({ method: "GET", path: "/projects/saga/tasks?status=To%20Do" });
 
-  expect(calls[0]?.[0]).toBe(`${DAEMON_PATH_PREFIX}/projects/tasma/tasks?status=To%20Do`);
+  expect(calls[0]?.[0]).toBe(`${DAEMON_PATH_PREFIX}/projects/saga/tasks?status=To%20Do`);
   expect(calls[0]?.[1].method).toBe("GET");
 });
 
 it("stringifies a body and declares its media type", async () => {
   const calls = stubFetch(Response.json({ ok: true, data: null, diagnostics: [] }));
 
-  await createFetchTransport(DAEMON_PATH_PREFIX)({ method: "POST", path: "/projects/tasma/tasks", body: { title: "Ship it" } });
+  await createFetchTransport(DAEMON_PATH_PREFIX)({ method: "POST", path: "/projects/saga/tasks", body: { title: "Ship it" } });
 
   expect(calls[0]?.[1].body).toBe('{"title":"Ship it"}');
   expect(headerOf(calls[0]![1], "content-type")).toBe("application/json");
@@ -63,7 +63,7 @@ it.each([200, 422, 500])("returns the parsed envelope and the status of a %i ans
   const envelope = { ok: false, error: { kind: "store", code: "config-invalid", message: "config.yml is not YAML" } };
   stubFetch(Response.json(envelope, { status }));
 
-  const reply = await createFetchTransport(DAEMON_PATH_PREFIX)({ method: "GET", path: "/projects/tasma" });
+  const reply = await createFetchTransport(DAEMON_PATH_PREFIX)({ method: "GET", path: "/projects/saga" });
 
   expect(reply).toEqual({ status, body: envelope });
 });

@@ -17,65 +17,65 @@ async function pathOf(args: string[]): Promise<string> {
   return seen[0] ?? "";
 }
 
-const LISTING = "GET /projects/TASM/tasks";
-const TEXT = "GET /projects/TASM/tasks/TASM-1/text?collapsed=false";
-const FULL = "GET /projects/TASM/tasks/TASM-1/text";
+const LISTING = "GET /projects/SAGA/tasks";
+const TEXT = "GET /projects/SAGA/tasks/SAGA-1/text?collapsed=false";
+const FULL = "GET /projects/SAGA/tasks/SAGA-1/text";
 
 const ENTRIES = ok({
   entries: [
-    { frontmatter: { id: "TASM-1", status: "To Do", priority: "high", step: "dev:setup", title: "First" } },
-    { frontmatter: { id: "TASM-12", status: "Done", title: "Second" } },
+    { frontmatter: { id: "SAGA-1", status: "To Do", priority: "high", step: "dev:setup", title: "First" } },
+    { frontmatter: { id: "SAGA-12", status: "Done", title: "Second" } },
   ],
   excluded: [],
 });
 
 describe("task list", () => {
   it("sends the project alone where no filter was stated", async () => {
-    expect(await pathOf(["list", "--project", "TASM"])).toBe("GET /projects/TASM/tasks");
+    expect(await pathOf(["list", "--project", "SAGA"])).toBe("GET /projects/SAGA/tasks");
   });
 
   it("takes -p as --project", async () => {
-    expect(await pathOf(["list", "-p", "TASM"])).toBe("GET /projects/TASM/tasks");
+    expect(await pathOf(["list", "-p", "SAGA"])).toBe("GET /projects/SAGA/tasks");
   });
 
   // Every value goes to the daemon as typed: the CLI lowercases nothing, trims
   // nothing and matches nothing.
   it("sends each filter as its own key, with the value as it was typed", async () => {
     const path = await pathOf([
-      "list", "--project", "TASM", "--status", "To Do", "--priority", "Medium",
-      "--parent", "TASM-15", "--step", "dev:implement",
+      "list", "--project", "SAGA", "--status", "To Do", "--priority", "Medium",
+      "--parent", "SAGA-15", "--step", "dev:implement",
     ]);
 
-    expect(path).toBe("GET /projects/TASM/tasks?status=To%20Do&priority=Medium&parent=TASM-15&step=dev%3Aimplement");
+    expect(path).toBe("GET /projects/SAGA/tasks?status=To%20Do&priority=Medium&parent=SAGA-15&step=dev%3Aimplement");
   });
 
   it("repeats --label, which the daemon reads as a conjunction", async () => {
-    expect(await pathOf(["list", "-p", "TASM", "--label", "a", "--label", "b"]))
-      .toBe("GET /projects/TASM/tasks?label=a&label=b");
+    expect(await pathOf(["list", "-p", "SAGA", "--label", "a", "--label", "b"]))
+      .toBe("GET /projects/SAGA/tasks?label=a&label=b");
   });
 
   // An unset shell variable expands to an empty value, and sent as one it would
   // widen the listing to every task at exit 0 as though the filter had matched.
   it("sends no key for a filter whose value is empty", async () => {
     const path = await pathOf([
-      "list", "-p", "TASM", "--status", "", "--priority", "", "--parent", "", "--step", "", "--label", "",
+      "list", "-p", "SAGA", "--status", "", "--priority", "", "--parent", "", "--step", "", "--label", "",
     ]);
 
-    expect(path).toBe("GET /projects/TASM/tasks");
+    expect(path).toBe("GET /projects/SAGA/tasks");
   });
 
   it("drops an empty label and keeps the ones stated beside it", async () => {
-    expect(await pathOf(["list", "-p", "TASM", "--label", "", "--label", "a"]))
-      .toBe("GET /projects/TASM/tasks?label=a");
+    expect(await pathOf(["list", "-p", "SAGA", "--label", "", "--label", "a"]))
+      .toBe("GET /projects/SAGA/tasks?label=a");
   });
 
   it("sends --blocked and --unblocked as the two spellings of one key", async () => {
-    expect(await pathOf(["list", "-p", "TASM", "--blocked"])).toBe("GET /projects/TASM/tasks?blocked=true");
-    expect(await pathOf(["list", "-p", "TASM", "--unblocked"])).toBe("GET /projects/TASM/tasks?blocked=false");
+    expect(await pathOf(["list", "-p", "SAGA", "--blocked"])).toBe("GET /projects/SAGA/tasks?blocked=true");
+    expect(await pathOf(["list", "-p", "SAGA", "--unblocked"])).toBe("GET /projects/SAGA/tasks?blocked=false");
   });
 
   it("refuses the two together, which name no set of tasks", async () => {
-    for (const args of [["list", "-p", "TASM", "--blocked", "--unblocked"], ["list", "--blocked", "--unblocked"]]) {
+    for (const args of [["list", "-p", "SAGA", "--blocked", "--unblocked"], ["list", "--blocked", "--unblocked"]]) {
       const { code, out, err, seen } = await runTask(args);
 
       expect(code, args.join(" ")).toBe(2);
@@ -86,10 +86,10 @@ describe("task list", () => {
   });
 
   it("resolves the project from the working directory where no flag stated one", async () => {
-    const { code, err, seen } = await runTask(["list"], { [RESOLVED]: ok({ tag: "TASM" }), [LISTING]: ENTRIES });
+    const { code, err, seen } = await runTask(["list"], { [RESOLVED]: ok({ tag: "SAGA" }), [LISTING]: ENTRIES });
 
     expect(code).toBe(0);
-    expect(err).toBe(`tasma: project TASM, from ${CWD}\n`);
+    expect(err).toBe(`tasma: project SAGA, from ${CWD}\n`);
     expect(seen).toEqual([RESOLVED, LISTING]);
   });
 
@@ -112,26 +112,26 @@ describe("task list", () => {
   });
 
   it("refuses an argument of its own", async () => {
-    const { code, err } = await runTask(["list", "-p", "TASM", "TASM-1"]);
+    const { code, err } = await runTask(["list", "-p", "SAGA", "SAGA-1"]);
 
     expect(code).toBe(2);
-    expect(err).toContain("tasma: task list takes no arguments: TASM-1");
+    expect(err).toContain("tasma: task list takes no arguments: SAGA-1");
   });
 
   it("reports an unknown flag through the parser's own message", async () => {
-    const { code, err } = await runTask(["list", "-p", "TASM", "--nope"]);
+    const { code, err } = await runTask(["list", "-p", "SAGA", "--nope"]);
 
     expect(code).toBe(2);
     expect(err).toContain("tasma: Unknown option '--nope'");
   });
 
   it("prints the id, the status, the priority, the step and the title, aligned", async () => {
-    const { code, out, err } = await runTask(["list", "-p", "TASM"], { [LISTING]: ENTRIES });
+    const { code, out, err } = await runTask(["list", "-p", "SAGA"], { [LISTING]: ENTRIES });
 
     expect(code).toBe(0);
     expect(out).toBe(
-      "TASM-1   To Do  high  dev:setup  First\n"
-      + "TASM-12  Done   -     -          Second\n",
+      "SAGA-1   To Do  high  dev:setup  First\n"
+      + "SAGA-12  Done   -     -          Second\n",
     );
     expect(err).toBe("");
   });
@@ -139,26 +139,26 @@ describe("task list", () => {
   // A caveat on the completeness of the listing rather than a result, so it goes
   // to the other stream, after the answer it qualifies.
   it("names every excluded file on stderr, after the table", async () => {
-    const { code, out, err } = await runTask(["list", "-p", "TASM"], {
+    const { code, out, err } = await runTask(["list", "-p", "SAGA"], {
       [LISTING]: ok({
-        entries: [{ frontmatter: { id: "TASM-1", status: "To Do", title: "First" } }],
+        entries: [{ frontmatter: { id: "SAGA-1", status: "To Do", title: "First" } }],
         excluded: [
-          { path: "/x/TASM-3.md", code: "task-file-foreign", message: 'this file carries the id "OTHER-3"' },
-          { path: "/x/TASM-4.md", code: "task-file-unreadable", message: "this file could not be read" },
+          { path: "/x/SAGA-3.md", code: "task-file-foreign", message: 'this file carries the id "OTHER-3"' },
+          { path: "/x/SAGA-4.md", code: "task-file-unreadable", message: "this file could not be read" },
         ],
       }),
     });
 
     expect(code).toBe(0);
-    expect(out).toBe("TASM-1  To Do  -  -  First\n");
+    expect(out).toBe("SAGA-1  To Do  -  -  First\n");
     expect(err).toBe(
-      'tasma: excluded: /x/TASM-3.md: task-file-foreign: this file carries the id "OTHER-3"\n'
-      + "tasma: excluded: /x/TASM-4.md: task-file-unreadable: this file could not be read\n",
+      'tasma: excluded: /x/SAGA-3.md: task-file-foreign: this file carries the id "OTHER-3"\n'
+      + "tasma: excluded: /x/SAGA-4.md: task-file-unreadable: this file could not be read\n",
     );
   });
 
   it("prints nothing at all for a listing that matched no task", async () => {
-    const { code, out, err } = await runTask(["list", "-p", "TASM"], { [LISTING]: ok({ entries: [], excluded: [] }) });
+    const { code, out, err } = await runTask(["list", "-p", "SAGA"], { [LISTING]: ok({ entries: [], excluded: [] }) });
 
     expect(code).toBe(0);
     expect(out).toBe("");
@@ -167,7 +167,7 @@ describe("task list", () => {
 
   it("refuses an answer that is not a task listing", async () => {
     for (const data of [{ entries: {}, excluded: [] }, { entries: [] }, []]) {
-      const { code, out, err } = await runTask(["list", "-p", "TASM"], { [LISTING]: ok(data) });
+      const { code, out, err } = await runTask(["list", "-p", "SAGA"], { [LISTING]: ok(data) });
 
       expect(code).toBe(3);
       expect(out).toBe("");
@@ -176,8 +176,8 @@ describe("task list", () => {
   });
 
   it("prints an entry that is not a record as a row of marks", async () => {
-    const { code, out } = await runTask(["list", "-p", "TASM"],
-      { [LISTING]: ok({ entries: ["TASM-1"], excluded: [null] }) });
+    const { code, out } = await runTask(["list", "-p", "SAGA"],
+      { [LISTING]: ok({ entries: ["SAGA-1"], excluded: [null] }) });
 
     expect(code).toBe(0);
     expect(out).toBe("-  -  -  -  -\n");
@@ -186,21 +186,21 @@ describe("task list", () => {
 
 describe("task view", () => {
   it("asks for the file without the collapsed bodies, and with --full for all of it", async () => {
-    expect(await pathOf(["view", "TASM-1"])).toBe("GET /projects/TASM/tasks/TASM-1/text?collapsed=false");
-    expect(await pathOf(["view", "TASM-1", "--full"])).toBe("GET /projects/TASM/tasks/TASM-1/text");
+    expect(await pathOf(["view", "SAGA-1"])).toBe("GET /projects/SAGA/tasks/SAGA-1/text?collapsed=false");
+    expect(await pathOf(["view", "SAGA-1", "--full"])).toBe("GET /projects/SAGA/tasks/SAGA-1/text");
   });
 
   it("writes the text as the file holds it, adding the one break the prompt needs", async () => {
-    const { code, out, err } = await runTask(["view", "TASM-1", "--full"],
-      { [FULL]: ok({ text: "---\nid: TASM-1\n---\n\n# Goal", hidden: [] }) });
+    const { code, out, err } = await runTask(["view", "SAGA-1", "--full"],
+      { [FULL]: ok({ text: "---\nid: SAGA-1\n---\n\n# Goal", hidden: [] }) });
 
     expect(code).toBe(0);
-    expect(out).toBe("---\nid: TASM-1\n---\n\n# Goal\n");
+    expect(out).toBe("---\nid: SAGA-1\n---\n\n# Goal\n");
     expect(err).toBe("");
   });
 
   it("adds no second break to a text that ends with one", async () => {
-    const { out } = await runTask(["view", "TASM-1", "--full"], { [FULL]: ok({ text: "# Goal\n", hidden: [] }) });
+    const { out } = await runTask(["view", "SAGA-1", "--full"], { [FULL]: ok({ text: "# Goal\n", hidden: [] }) });
 
     expect(out).toBe("# Goal\n");
   });
@@ -208,23 +208,23 @@ describe("task view", () => {
   // The default hides a body, so the reader is told what was left out and how to
   // read it.
   it("names the comments it left out, and how to read them", async () => {
-    const one = await runTask(["view", "TASM-1"], { [TEXT]: ok({ text: "x", hidden: [2] }) });
-    const three = await runTask(["view", "TASM-1"], { [TEXT]: ok({ text: "x", hidden: [2, 5, 7] }) });
+    const one = await runTask(["view", "SAGA-1"], { [TEXT]: ok({ text: "x", hidden: [2] }) });
+    const three = await runTask(["view", "SAGA-1"], { [TEXT]: ok({ text: "x", hidden: [2, 5, 7] }) });
 
-    expect(one.err).toBe("tasma: 1 comment collapsed (2): comment view TASM-1 <n> prints one, task view TASM-1 --full prints all\n");
+    expect(one.err).toBe("tasma: 1 comment collapsed (2): comment view SAGA-1 <n> prints one, task view SAGA-1 --full prints all\n");
     expect(three.err)
-      .toBe("tasma: 3 comments collapsed (2, 5, 7): comment view TASM-1 <n> prints one, task view TASM-1 --full prints all\n");
+      .toBe("tasma: 3 comments collapsed (2, 5, 7): comment view SAGA-1 <n> prints one, task view SAGA-1 --full prints all\n");
   });
 
   it("names none where the read left nothing out", async () => {
-    const { err } = await runTask(["view", "TASM-1", "--full"], { [FULL]: ok({ text: "x", hidden: [] }) });
+    const { err } = await runTask(["view", "SAGA-1", "--full"], { [FULL]: ok({ text: "x", hidden: [] }) });
 
     expect(err).toBe("");
   });
 
   it("refuses an answer that is not a task's text", async () => {
     for (const data of [{ text: 1, hidden: [] }, { text: "x", hidden: 2 }, "x"]) {
-      const { code, out, err } = await runTask(["view", "TASM-1"], { [TEXT]: ok(data) });
+      const { code, out, err } = await runTask(["view", "SAGA-1"], { [TEXT]: ok(data) });
 
       expect(code).toBe(3);
       expect(out).toBe("");
@@ -234,24 +234,24 @@ describe("task view", () => {
 
   it("refuses a verb given no id, and one given more than it takes", async () => {
     const none = await runTask(["view"]);
-    const extra = await runTask(["view", "TASM-1", "TASM-2"]);
+    const extra = await runTask(["view", "SAGA-1", "SAGA-2"]);
 
     expect(none.code).toBe(2);
     expect(none.err).toContain("tasma: task view needs a task id");
     expect(extra.code).toBe(2);
-    expect(extra.err).toContain("tasma: task view takes one argument: TASM-2");
+    expect(extra.err).toContain("tasma: task view takes one argument: SAGA-2");
   });
 });
 
 describe("the id a read verb is given", () => {
   it("carries the project tag the call is made against", async () => {
-    expect(await pathOf(["view", "TASM-1"])).toBe("GET /projects/TASM/tasks/TASM-1/text?collapsed=false");
+    expect(await pathOf(["view", "SAGA-1"])).toBe("GET /projects/SAGA/tasks/SAGA-1/text?collapsed=false");
   });
 
   // Refused here rather than thrown out of buildPath, which raises a plain Error
   // that would reach the caller as a stack trace.
   it("is refused where it names no tag, or where either part is not one path component", async () => {
-    for (const id of ["foo", "TASM-", "..-1", "a/b-1"]) {
+    for (const id of ["foo", "SAGA-", "..-1", "a/b-1"]) {
       const { code, err, seen } = await runTask(["view", id]);
 
       expect(code).toBe(2);
@@ -285,12 +285,12 @@ describe("the id a read verb is given", () => {
 
 describe("taskIdOf", () => {
   it("splits at the first dash, and keeps the whole text as the id", () => {
-    expect(taskIdOf("TASM-47")).toEqual({ tag: "TASM", id: "TASM-47" });
-    expect(taskIdOf("TASM-47-2")).toEqual({ tag: "TASM", id: "TASM-47-2" });
+    expect(taskIdOf("SAGA-47")).toEqual({ tag: "SAGA", id: "SAGA-47" });
+    expect(taskIdOf("SAGA-47-2")).toEqual({ tag: "SAGA", id: "SAGA-47-2" });
   });
 
   it("names no id where either part is empty or unusable", () => {
-    for (const text of ["foo", "-1", "TASM-", "", "..-1", "a/b-1", "TASM-a/b"]) {
+    for (const text of ["foo", "-1", "SAGA-", "", "..-1", "a/b-1", "SAGA-a/b"]) {
       expect(taskIdOf(text), text).toBeUndefined();
     }
   });
@@ -321,25 +321,25 @@ describe("the task noun", () => {
   });
 
   it("reports a refusal the daemon answered with, at exit 1", async () => {
-    const { code, out, err } = await runTask(["view", "TASM-1"], {
-      [TEXT]: { ok: false, error: { kind: "store", code: "task-not-found", message: "no task TASM-1" } },
+    const { code, out, err } = await runTask(["view", "SAGA-1"], {
+      [TEXT]: { ok: false, error: { kind: "store", code: "task-not-found", message: "no task SAGA-1" } },
     });
 
     expect(code).toBe(1);
     expect(out).toBe("");
-    expect(err).toBe("tasma: store/task-not-found: no task TASM-1\n");
+    expect(err).toBe("tasma: store/task-not-found: no task SAGA-1\n");
   });
 
   // `attempt` writes the notes after the writer returns, so the verb's own lines
   // come first however the answer arrived.
   it("writes the notes of the answer after the lines the verb wrote itself", async () => {
-    const { code, err } = await runTask(["view", "TASM-1"], {
+    const { code, err } = await runTask(["view", "SAGA-1"], {
       [TEXT]: ok({ text: "x", hidden: [2] }, [{ code: "workflow-unknown", message: "no workflow dev" }]),
     });
 
     expect(code).toBe(0);
     expect(err).toBe(
-      "tasma: 1 comment collapsed (2): comment view TASM-1 <n> prints one, task view TASM-1 --full prints all\n"
+      "tasma: 1 comment collapsed (2): comment view SAGA-1 <n> prints one, task view SAGA-1 --full prints all\n"
       + "tasma: note: workflow-unknown: no workflow dev\n",
     );
   });

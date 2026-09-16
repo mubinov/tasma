@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { onTestFinished } from "vitest";
 import { openProject, type Project, type StoreDiagnostic, TaskStoreError } from "@tasma/engine";
 
-export const PROJECT = "TASM";
+export const PROJECT = "SAGA";
 
 export const TIMESTAMP = "2026-01-01T00:00:00+03:00";
 

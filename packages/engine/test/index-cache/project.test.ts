@@ -141,14 +141,14 @@ describe("a write made through the index", () => {
 
 describe("the references to one task", () => {
   /**
-   * `TASM-1` names itself, `TASM-2` names it as its parent, `TASM-10` as a
-   * blocker, and `TASM-3` names another task alone.
+   * `SAGA-1` names itself, `SAGA-2` names it as its parent, `SAGA-10` as a
+   * blocker, and `SAGA-3` names another task alone.
    */
   async function referenced(root: string): Promise<IndexedProject> {
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "blocked_by: [TASM-1]\n"));
-    await plant(taskFile(root, "TASM-2"), taskText("TASM-2", "parent: TASM-1\n"));
-    await plant(taskFile(root, "TASM-3"), taskText("TASM-3", "parent: TASM-2\nblocked_by: [TASM-10]\n"));
-    await plant(taskFile(root, "TASM-10"), taskText("TASM-10", "blocked_by: [TASM-3, TASM-1]\n"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1", "blocked_by: [SAGA-1]\n"));
+    await plant(taskFile(root, "SAGA-2"), taskText("SAGA-2", "parent: SAGA-1\n"));
+    await plant(taskFile(root, "SAGA-3"), taskText("SAGA-3", "parent: SAGA-2\nblocked_by: [SAGA-10]\n"));
+    await plant(taskFile(root, "SAGA-10"), taskText("SAGA-10", "blocked_by: [SAGA-3, SAGA-1]\n"));
     return unwatched(project(root));
   }
 
@@ -156,95 +156,95 @@ describe("the references to one task", () => {
     const root = await tempRoot();
     const indexed = await referenced(root);
 
-    expect(indexed.referencesTo("TASM-1")).toEqual(["TASM-2", "TASM-10"]);
+    expect(indexed.referencesTo("SAGA-1")).toEqual(["SAGA-2", "SAGA-10"]);
   });
 
   it("removes a reference through the store and holds the rewritten task by the time the call returns", async () => {
     const root = await tempRoot();
     const indexed = await referenced(root);
 
-    await indexed.removeReference("TASM-10", "TASM-1");
+    await indexed.removeReference("SAGA-10", "SAGA-1");
 
-    expect(indexed.query().entries.find((entry) => entry.id === "TASM-10")?.frontmatter.blocked_by).toEqual(["TASM-3"]);
+    expect(indexed.query().entries.find((entry) => entry.id === "SAGA-10")?.frontmatter.blocked_by).toEqual(["SAGA-3"]);
   });
 
   it("removes the deleted id from every task that named it", async () => {
     const root = await tempRoot();
     const indexed = await referenced(root);
 
-    const result = await indexed.deleteTask("TASM-1");
+    const result = await indexed.deleteTask("SAGA-1");
 
-    expect(result).toEqual({ id: "TASM-1", diagnostics: [] });
+    expect(result).toEqual({ id: "SAGA-1", diagnostics: [] });
     const entries = indexed.query().entries;
-    expect(entries.map((entry) => entry.id)).toEqual(["TASM-2", "TASM-3", "TASM-10"]);
+    expect(entries.map((entry) => entry.id)).toEqual(["SAGA-2", "SAGA-3", "SAGA-10"]);
     expect(Object.hasOwn(entries[0]!.frontmatter, "parent")).toBe(false);
-    expect(entries[1]?.frontmatter).toMatchObject({ parent: "TASM-2", blocked_by: ["TASM-10"] });
-    expect(entries[2]?.frontmatter.blocked_by).toEqual(["TASM-3"]);
-    expect((await project(root).readTask("TASM-10")).task.frontmatter.blocked_by).toEqual(["TASM-3"]);
+    expect(entries[1]?.frontmatter).toMatchObject({ parent: "SAGA-2", blocked_by: ["SAGA-10"] });
+    expect(entries[2]?.frontmatter.blocked_by).toEqual(["SAGA-3"]);
+    expect((await project(root).readTask("SAGA-10")).task.frontmatter.blocked_by).toEqual(["SAGA-3"]);
   });
 
   it("reports a task it could not rewrite, and still rewrites the others", async () => {
     const root = await tempRoot();
     const indexed = await referenced(root);
-    await plant(taskFile(root, "TASM-2"), "no frontmatter here\n");
+    await plant(taskFile(root, "SAGA-2"), "no frontmatter here\n");
 
-    const result = await indexed.deleteTask("TASM-1");
+    const result = await indexed.deleteTask("SAGA-1");
 
     expect(result.diagnostics).toEqual([
       {
         code: "reference-not-removed",
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- an asymmetric matcher is typed `any`
-        message: expect.stringMatching(/^task TASM-2 still names TASM-1: .+/),
-        path: taskFile(root, "TASM-2"),
+        message: expect.stringMatching(/^task SAGA-2 still names SAGA-1: .+/),
+        path: taskFile(root, "SAGA-2"),
       },
     ]);
-    expect(ids(indexed)).toEqual(["TASM-3", "TASM-10"]);
-    expect(indexed.query().entries[1]?.frontmatter.blocked_by).toEqual(["TASM-3"]);
+    expect(ids(indexed)).toEqual(["SAGA-3", "SAGA-10"]);
+    expect(indexed.query().entries[1]?.frontmatter.blocked_by).toEqual(["SAGA-3"]);
   });
 
   it("reports nothing for a task whose file a hand edit removed, which names nothing any more", async () => {
     const root = await tempRoot();
     const indexed = await referenced(root);
-    await rm(taskFile(root, "TASM-2"));
+    await rm(taskFile(root, "SAGA-2"));
 
-    const result = await indexed.deleteTask("TASM-1");
+    const result = await indexed.deleteTask("SAGA-1");
 
     expect(result.diagnostics).toEqual([]);
-    expect(ids(indexed)).toEqual(["TASM-3", "TASM-10"]);
-    expect(indexed.query().entries[1]?.frontmatter.blocked_by).toEqual(["TASM-3"]);
+    expect(ids(indexed)).toEqual(["SAGA-3", "SAGA-10"]);
+    expect(indexed.query().entries[1]?.frontmatter.blocked_by).toEqual(["SAGA-3"]);
   });
 
   it("writes nothing to a task a hand edit already took the reference out of", async () => {
     const root = await tempRoot();
     const indexed = await referenced(root);
-    await plant(taskFile(root, "TASM-2"), taskText("TASM-2"));
+    await plant(taskFile(root, "SAGA-2"), taskText("SAGA-2"));
 
-    const result = await indexed.deleteTask("TASM-1");
+    const result = await indexed.deleteTask("SAGA-1");
 
     expect(result.diagnostics).toEqual([]);
-    expect(await read(taskFile(root, "TASM-2"))).toBe(taskText("TASM-2"));
+    expect(await read(taskFile(root, "SAGA-2"))).toBe(taskText("SAGA-2"));
   });
 
   it("carries the reader notes of a rewritten task in the result of the delete", async () => {
     const root = await tempRoot();
     const indexed = await referenced(root);
-    await plant(taskFile(root, "TASM-2"), `${taskText("TASM-2", "parent: TASM-1\n")}\n\`\`\`sh\nnever closed\n`);
+    await plant(taskFile(root, "SAGA-2"), `${taskText("SAGA-2", "parent: SAGA-1\n")}\n\`\`\`sh\nnever closed\n`);
 
-    const result = await indexed.deleteTask("TASM-1");
+    const result = await indexed.deleteTask("SAGA-1");
 
     expect(result.diagnostics.map((diagnostic) => [diagnostic.code, diagnostic.path])).toEqual([
-      ["unterminated-fence", taskFile(root, "TASM-2")],
+      ["unterminated-fence", taskFile(root, "SAGA-2")],
     ]);
   });
 
   it("rewrites no task when the delete itself is refused", async () => {
     const root = await tempRoot();
     const indexed = await referenced(root);
-    await rm(taskFile(root, "TASM-1"));
+    await rm(taskFile(root, "SAGA-1"));
 
-    expect((await storeError(indexed.deleteTask("TASM-1"))).code).toBe("task-not-found");
-    expect(await read(taskFile(root, "TASM-2"))).toBe(taskText("TASM-2", "parent: TASM-1\n"));
-    expect(await read(taskFile(root, "TASM-10"))).toBe(taskText("TASM-10", "blocked_by: [TASM-3, TASM-1]\n"));
+    expect((await storeError(indexed.deleteTask("SAGA-1"))).code).toBe("task-not-found");
+    expect(await read(taskFile(root, "SAGA-2"))).toBe(taskText("SAGA-2", "parent: SAGA-1\n"));
+    expect(await read(taskFile(root, "SAGA-10"))).toBe(taskText("SAGA-10", "blocked_by: [SAGA-3, SAGA-1]\n"));
   });
 });
 
@@ -253,30 +253,30 @@ describe("rescanning behind the index", () => {
     const root = await tempRoot();
     const indexed = await unwatched(project(root));
 
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
     await indexed.rescan();
 
-    expect(ids(indexed)).toEqual(["TASM-1"]);
+    expect(ids(indexed)).toEqual(["SAGA-1"]);
   });
 
   it("excludes a file that opens with a byte-order mark, which a read of the task refuses too", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), `${BOM}${taskText("TASM-1")}`);
+    await plant(taskFile(root, "SAGA-1"), `${BOM}${taskText("SAGA-1")}`);
     const indexed = await unwatched(project(root));
 
     // One file, one answer: an entry the index admitted and a read that throws
     // would put the same task on both sides of the invariant.
     expect(ids(indexed)).toEqual([]);
     expect(indexed.query().excluded.map((file) => file.code)).toEqual(["task-file-unreadable"]);
-    await expect(indexed.readTask("TASM-1")).rejects.toThrow(TaskParseError);
+    await expect(indexed.readTask("SAGA-1")).rejects.toThrow(TaskParseError);
   });
 
   it("drops a file that a hand edit removed", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
     const indexed = await unwatched(project(root));
 
-    await rm(taskFile(root, "TASM-1"));
+    await rm(taskFile(root, "SAGA-1"));
     await indexed.rescan();
 
     expect(ids(indexed)).toEqual([]);
@@ -301,9 +301,9 @@ describe("what the index does with what a watch reports", () => {
   it("reads the file a watch names", async () => {
     const root = await tempRoot();
     const { indexed, handlers } = await wired(root, listener());
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
-    handlers.onTask(taskEntry(root, "TASM-1"));
+    handlers.onTask(taskEntry(root, "SAGA-1"));
 
     await until(() => ids(indexed).length === 1, "the event reached the index");
   });
@@ -324,10 +324,10 @@ describe("what the index does with what a watch reports", () => {
     const { indexed, handlers } = await wired(root, seen);
     await indexed.close();
     // A file the index would report on if it read it at all.
-    await plant(taskFile(root, "TASM-1"), "Not a task file.\n");
+    await plant(taskFile(root, "SAGA-1"), "Not a task file.\n");
 
     handlers.onTasksDirectory();
-    handlers.onTask(taskEntry(root, "TASM-1"));
+    handlers.onTask(taskEntry(root, "SAGA-1"));
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(() => indexed.query()).toThrow(TaskStoreError);
@@ -351,11 +351,11 @@ describe("what the index does with what a watch reports", () => {
     const root = await tempRoot();
     const seen = listener();
     const { indexed, handlers } = await wired(root, seen);
-    await plant(taskFile(root, "TASM-1"), "Not a task file.\n");
+    await plant(taskFile(root, "SAGA-1"), "Not a task file.\n");
 
     // The read holds the file open and reaches the listener, so a close that
     // returned before it would leave both behind the caller's back.
-    handlers.onTask(taskEntry(root, "TASM-1"));
+    handlers.onTask(taskEntry(root, "SAGA-1"));
     await indexed.close();
 
     expect(seen.codes()).toEqual(["task-file-unreadable"]);
@@ -405,7 +405,7 @@ describe("what the index does with what a watch reports", () => {
   it("reads the whole directory when the tasks directory moved", async () => {
     const root = await tempRoot();
     const { indexed, handlers } = await wired(root, listener());
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
     handlers.onTasksDirectory();
 
@@ -467,7 +467,7 @@ describe("whether the index follows the disk", () => {
 
   it("stops following it after a rescan over a directory that is still gone, which reports nothing", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
     const seen = listener();
     const indexed = await unwatched(project(root), { onDiagnostic: seen.on });
     expect(indexed.followsDisk()).toBe(true);
@@ -485,16 +485,16 @@ describe("whether the index follows the disk", () => {
 
   it("follows it again once the directory is back", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
     const indexed = await unwatched(project(root));
     await rm(tasksDir(root), { recursive: true, force: true });
     await indexed.rescan();
 
-    await plant(taskFile(root, "TASM-2"), taskText("TASM-2"));
+    await plant(taskFile(root, "SAGA-2"), taskText("SAGA-2"));
     await indexed.rescan();
 
     expect(indexed.followsDisk()).toBe(true);
-    expect(ids(indexed)).toEqual(["TASM-2"]);
+    expect(ids(indexed)).toEqual(["SAGA-2"]);
     await indexed.close();
   });
 });
@@ -507,19 +507,19 @@ describe("a closed index", () => {
 
     expect(() => indexed.query()).toThrow(TaskStoreError);
     expect(() => indexed.followsDisk()).toThrow(TaskStoreError);
-    expect(() => indexed.referencesTo("TASM-1")).toThrow(TaskStoreError);
+    expect(() => indexed.referencesTo("SAGA-1")).toThrow(TaskStoreError);
     for (const call of [
       indexed.rescan(),
-      indexed.readTask("TASM-1"),
+      indexed.readTask("SAGA-1"),
       indexed.config(),
       indexed.listTaskIds(),
       indexed.createTask({ title: "First" }),
-      indexed.updateTask("TASM-1", { title: "x" }),
-      indexed.deleteTask("TASM-1"),
-      indexed.removeReference("TASM-1", "TASM-2"),
-      indexed.addComment("TASM-1", { title: "One" }),
-      indexed.updateComment("TASM-1", 1, { title: "One" }),
-      indexed.deleteComment("TASM-1", 1),
+      indexed.updateTask("SAGA-1", { title: "x" }),
+      indexed.deleteTask("SAGA-1"),
+      indexed.removeReference("SAGA-1", "SAGA-2"),
+      indexed.addComment("SAGA-1", { title: "One" }),
+      indexed.updateComment("SAGA-1", 1, { title: "One" }),
+      indexed.deleteComment("SAGA-1", 1),
       indexed.stepInstructions("dev", "research"),
     ]) {
       expect((await storeError(call)).code).toBe("index-closed");
@@ -548,11 +548,11 @@ describe("a closed index", () => {
 describe("openIndexedProject", () => {
   it("holds the tasks of the project it opened", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
     const indexed = await openIndexedProject(project(root));
 
-    expect(ids(indexed)).toEqual(["TASM-1"]);
+    expect(ids(indexed)).toEqual(["SAGA-1"]);
     await indexed.close();
   });
 
@@ -564,7 +564,7 @@ describe("openIndexedProject", () => {
 
   it("reports what the first build found", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), "Not a task file.\n");
+    await plant(taskFile(root, "SAGA-1"), "Not a task file.\n");
     const seen = listener();
 
     const indexed = await openIndexedProject(project(root), { onDiagnostic: seen.on });

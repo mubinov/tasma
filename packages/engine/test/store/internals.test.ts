@@ -24,10 +24,10 @@ import {
   tempRoot,
 } from "./helpers.js";
 
-const PATH = "/tmp/tree/projects/TASM/tasks/TASM-1.md";
+const PATH = "/tmp/tree/projects/SAGA/tasks/SAGA-1.md";
 
 function parsed() {
-  return parseTask(`${taskText("TASM-1")}\n<!-- task:comment {id: 1, title: One, created: "${TIMESTAMP}"} -->\n`).task;
+  return parseTask(`${taskText("SAGA-1")}\n<!-- task:comment {id: 1, title: One, created: "${TIMESTAMP}"} -->\n`).task;
 }
 
 // States the public API is built to make unreachable, staged against the module
@@ -92,19 +92,19 @@ describe("validateLabels over a list as long as a request body carries", () => {
 describe("validateBlockedBy over a list as long as a request body carries", () => {
   it("reports an id stated many times once, so the report follows the distinct ids", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
     const paths = projectPaths({ project: PROJECT, root });
     const diagnostics: StoreDiagnostic[] = [];
 
     const stored = await validateBlockedBy(
-      Array.from({ length: 100_000 }, () => "TASM-1"),
+      Array.from({ length: 100_000 }, () => "SAGA-1"),
       paths,
-      "TASM-2",
+      "SAGA-2",
       PATH,
       diagnostics,
     );
 
-    expect(stored).toEqual(["TASM-1"]);
+    expect(stored).toEqual(["SAGA-1"]);
     expect(codes(diagnostics)).toEqual(["blocked-by-duplicate-dropped"]);
   });
 });
@@ -112,7 +112,7 @@ describe("validateBlockedBy over a list as long as a request body carries", () =
 describe("a second collision", () => {
   it("reports the directory rather than guessing again", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
     await plant(statePath(root), "next_task_id: 1\n");
     const paths = projectPaths({ project: PROJECT, root });
     const diagnostics: StoreDiagnostic[] = [];
@@ -126,7 +126,7 @@ describe("a second collision", () => {
     const error = await storeError(createTaskFile(paths, diagnostics, build));
 
     expect(error.code).toBe("task-exists");
-    expect(error.path).toBe(taskFile(root, "TASM-2"));
+    expect(error.path).toBe(taskFile(root, "SAGA-2"));
   });
 });
 
@@ -154,7 +154,7 @@ describe("a fault that is not a filesystem fault", () => {
 describe("causeOf", () => {
   it.each([
     [new Error("the file could not be read"), "the file could not be read"],
-    [new TaskStoreError("task-not-found", "there is no task TASM-1"), "there is no task TASM-1"],
+    [new TaskStoreError("task-not-found", "there is no task SAGA-1"), "there is no task SAGA-1"],
     ["a value of another kind", "a value of another kind"],
     [undefined, "undefined"],
   ])("states the explanation of %s without the class that carried it", (thrown, explanation) => {
@@ -167,9 +167,9 @@ describe("a name the rebuild reads after the scan classified it", () => {
     [
       "a symbolic link swapped in behind the scan",
       async (root: string) => {
-        await plant(join(root, "outside.md"), taskText("TASM-9"));
+        await plant(join(root, "outside.md"), taskText("SAGA-9"));
         await mkdir(tasksDir(root), { recursive: true });
-        await symlink(join(root, "outside.md"), taskFile(root, "TASM-1"));
+        await symlink(join(root, "outside.md"), taskFile(root, "SAGA-1"));
       },
     ],
     ["a name the read no longer finds", async () => {}],
@@ -179,7 +179,7 @@ describe("a name the rebuild reads after the scan classified it", () => {
     const paths = projectPaths({ project: PROJECT, root });
     const diagnostics: StoreDiagnostic[] = [];
 
-    const claimed = await frontmatterNumber(paths, taskFile(root, "TASM-1"), diagnostics);
+    const claimed = await frontmatterNumber(paths, taskFile(root, "SAGA-1"), diagnostics);
 
     expect(claimed).toBeUndefined();
     expect(codes(diagnostics)).toEqual(["task-file-unreadable"]);

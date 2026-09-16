@@ -105,7 +105,7 @@ export async function projectsRoot(...tags: string[]): Promise<string> {
 
 /** A directory a project can stand for, outside the tree that registers it. */
 export async function target(): Promise<string> {
-  const path = join(await projectsRoot(), "tasma");
+  const path = join(await projectsRoot(), "saga");
   await mkdir(path);
   return path;
 }
@@ -215,7 +215,7 @@ next_comment_id: 3
 
 Body.
 
-<!-- task:comment {id: 1, title: "First", created: "${TIMESTAMP}", author: almaz} -->
+<!-- task:comment {id: 1, title: "First", created: "${TIMESTAMP}", author: alice} -->
 
 Ünïcödé.
 

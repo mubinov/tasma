@@ -37,8 +37,8 @@ Second body.
 /** A tree holding one planted task, and the path it stands under. */
 async function planted(counter?: number): Promise<{ root: string; path: string }> {
   const root = await tempRoot();
-  const path = taskFile(root, "TASM-1");
-  await plant(path, taskWithComments("TASM-1", counter));
+  const path = taskFile(root, "SAGA-1");
+  await plant(path, taskWithComments("SAGA-1", counter));
   return { root, path };
 }
 
@@ -46,7 +46,7 @@ describe("readTaskText", () => {
   it("answers with the bytes on disk when the selection states nothing", async () => {
     const { root, path } = await planted();
 
-    const result = await project(root).readTaskText("TASM-1");
+    const result = await project(root).readTaskText("SAGA-1");
 
     expect(result.text).toBe(await read(path));
     expect(result.hidden).toEqual([]);
@@ -56,7 +56,7 @@ describe("readTaskText", () => {
   it("answers with the same bytes under collapsed=true", async () => {
     const { root, path } = await planted();
 
-    const result = await project(root).readTaskText("TASM-1", { collapsed: true });
+    const result = await project(root).readTaskText("SAGA-1", { collapsed: true });
 
     expect(result.text).toBe(await read(path));
     expect(result.hidden).toEqual([]);
@@ -65,7 +65,7 @@ describe("readTaskText", () => {
   it("leaves the body of a collapsed comment out under collapsed=false, and names it", async () => {
     const { root, path } = await planted();
 
-    const result = await project(root).readTaskText("TASM-1", { collapsed: false });
+    const result = await project(root).readTaskText("SAGA-1", { collapsed: false });
 
     expect(result.text).toBe((await read(path)).replace("\nSecond body.\n", ""));
     expect(result.text).toContain("First body.");
@@ -75,7 +75,7 @@ describe("readTaskText", () => {
   it("answers with one comment alone, its marker and its body", async () => {
     const { root } = await planted();
 
-    const result = await project(root).readTaskText("TASM-1", { comment: 1 });
+    const result = await project(root).readTaskText("SAGA-1", { comment: 1 });
 
     expect(result.text).toBe(`<!-- task:comment {id: 1, title: "First", created: "${TIMESTAMP}"} -->\n\nFirst body.\n\n`);
     expect(result.hidden).toEqual([]);
@@ -84,7 +84,7 @@ describe("readTaskText", () => {
   it("answers with a collapsed comment in full where the selection names it", async () => {
     const { root } = await planted();
 
-    const result = await project(root).readTaskText("TASM-1", { comment: 2 });
+    const result = await project(root).readTaskText("SAGA-1", { comment: 2 });
 
     expect(result.text).toContain("Second body.");
   });
@@ -92,7 +92,7 @@ describe("readTaskText", () => {
   it("refuses a comment id the file carries no comment under", async () => {
     const { root, path } = await planted();
 
-    const error = await storeError(project(root).readTaskText("TASM-1", { comment: 9 }));
+    const error = await storeError(project(root).readTaskText("SAGA-1", { comment: 9 }));
 
     expect(error.code).toBe("comment-not-found");
     expect(error.message).toContain("9");
@@ -102,32 +102,32 @@ describe("readTaskText", () => {
   it("refuses a task that does not exist", async () => {
     const root = await tempRoot();
 
-    expect((await storeError(project(root).readTaskText("TASM-9"))).code).toBe("task-not-found");
+    expect((await storeError(project(root).readTaskText("SAGA-9"))).code).toBe("task-not-found");
   });
 
   it("refuses a project with no directory", async () => {
     const root = await bareRoot();
 
-    expect((await storeError(project(root).readTaskText("TASM-1"))).code).toBe("project-not-found");
+    expect((await storeError(project(root).readTaskText("SAGA-1"))).code).toBe("project-not-found");
   });
 
   it("reports what a read of the same file reports", async () => {
     const { root } = await planted(2);
     const handle = project(root);
 
-    const { diagnostics } = await handle.readTaskText("TASM-1", { collapsed: false });
+    const { diagnostics } = await handle.readTaskText("SAGA-1", { collapsed: false });
 
     expect(codes(diagnostics)).toContain("stale-next-comment-id");
-    expect(diagnostics).toEqual((await handle.readTask("TASM-1")).diagnostics);
+    expect(diagnostics).toEqual((await handle.readTask("SAGA-1")).diagnostics);
   });
 
   it("answers through an index, and refuses once it is closed", async () => {
     const { root, path } = await planted();
     const indexed = await openIndexedProject(project(root));
 
-    expect((await indexed.readTaskText("TASM-1")).text).toBe(await read(path));
+    expect((await indexed.readTaskText("SAGA-1")).text).toBe(await read(path));
 
     await indexed.close();
-    expect((await storeError(indexed.readTaskText("TASM-1"))).code).toBe("index-closed");
+    expect((await storeError(indexed.readTaskText("SAGA-1"))).code).toBe("index-closed");
   });
 });

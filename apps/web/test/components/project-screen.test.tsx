@@ -11,15 +11,15 @@ const CONFIG = {
   final_statuses: ["Done"],
   priorities: ["high", "medium", "low"],
   workflows: ["dev", "design"],
-  instructions: ["/repos/dobby/AGENTS.md", "/repos/dobby/CLAUDE.md"],
+  instructions: ["/repos/delta/AGENTS.md", "/repos/delta/CLAUDE.md"],
 };
 
-const PROJECT = { tag: "DOBBY", name: "Dobby", path: "/repos/dobby", live: true, config: CONFIG };
+const PROJECT = { tag: "DELTA", name: "Delta", path: "/repos/delta", live: true, config: CONFIG };
 
-const WARNING: Diagnostic = { code: "path-missing", message: "the repository is not on disk", path: "/repos/dobby" };
+const WARNING: Diagnostic = { code: "path-missing", message: "the repository is not on disk", path: "/repos/delta" };
 
 /** Mounts the page over one project answer, with the fields a test cares about changed. */
-async function renderProject(overrides: Record<string, unknown>, tag = "DOBBY") {
+async function renderProject(overrides: Record<string, unknown>, tag = "DELTA") {
   const { transport } = stubTransport({ [`/projects/${tag}`]: successReply({ ...PROJECT, ...overrides }) });
 
   return renderWithRouter(`/projects/${tag}`, transport);
@@ -65,22 +65,22 @@ it("heads the page with the name and marks the tag beside it", async () => {
 
   const heading = screen.getByRole("heading", { level: 1 });
 
-  expect(heading.textContent).toBe("Dobby");
-  expect(screen.getByRole("main").textContent).toContain("DOBBY");
-  expect(screen.getByText("/repos/dobby")).toBeTruthy();
-  expect(document.title).toBe("Dobby · tasma");
+  expect(heading.textContent).toBe("Delta");
+  expect(screen.getByRole("main").textContent).toContain("DELTA");
+  expect(screen.getByText("/repos/delta")).toBeTruthy();
+  expect(document.title).toBe("Delta · tasma");
 });
 
 // With no name the heading is already the tag, so the chip is dropped rather
 // than showing the same token twice.
 it("heads the page with the tag when the project declares no name", async () => {
-  await renderProject({ tag: "CLIB", name: undefined, path: undefined }, "CLIB");
+  await renderProject({ tag: "ACME", name: undefined, path: undefined }, "ACME");
 
   const main = screen.getByRole("main");
 
-  expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("CLIB");
-  expect(within(main).getAllByText("CLIB")).toHaveLength(1);
-  expect(document.title).toBe("CLIB · tasma");
+  expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("ACME");
+  expect(within(main).getAllByText("ACME")).toHaveLength(1);
+  expect(document.title).toBe("ACME · tasma");
 });
 
 it("marks the default and the final statuses on the statuses row", async () => {
@@ -97,11 +97,11 @@ it("renders a configuration that declares the same value twice", async () => {
   const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
   await renderProject({
-    config: { ...CONFIG, statuses: ["Backlog", "Backlog"], instructions: ["/repos/dobby/AGENTS.md", "/repos/dobby/AGENTS.md"] },
+    config: { ...CONFIG, statuses: ["Backlog", "Backlog"], instructions: ["/repos/delta/AGENTS.md", "/repos/delta/AGENTS.md"] },
   });
 
   expect(chipsIn("Statuses")).toEqual(["Backlog default", "Backlog default"]);
-  expect(valueCellOf("Project instructions").textContent).toBe("/repos/dobby/AGENTS.md/repos/dobby/AGENTS.md");
+  expect(valueCellOf("Project instructions").textContent).toBe("/repos/delta/AGENTS.md/repos/delta/AGENTS.md");
   expect(consoleError).not.toHaveBeenCalled();
 });
 
@@ -110,7 +110,7 @@ it("lists the priorities, the workflows and the project instructions in the daem
 
   expect(chipsIn("Priorities")).toEqual(["high", "medium", "low"]);
   expect(chipsIn("Workflows")).toEqual(["dev", "design"]);
-  expect(valueCellOf("Project instructions").textContent).toBe("/repos/dobby/AGENTS.md/repos/dobby/CLAUDE.md");
+  expect(valueCellOf("Project instructions").textContent).toBe("/repos/delta/AGENTS.md/repos/delta/CLAUDE.md");
 });
 
 /*
@@ -159,9 +159,9 @@ it("says None where the project declares no workflow and no instruction", async 
 // It is a user-level key that applies to every project, and the screen cannot
 // tell a declared value from the built-in default it stands for.
 it("does not show the workflows path", async () => {
-  await renderProject({ config: { ...CONFIG, workflows_path: "/repos/dobby/workflows" } });
+  await renderProject({ config: { ...CONFIG, workflows_path: "/repos/delta/workflows" } });
 
-  expect(screen.getByRole("main").textContent).not.toContain("/repos/dobby/workflows");
+  expect(screen.getByRole("main").textContent).not.toContain("/repos/delta/workflows");
 });
 
 it("shows the notice only when the index stopped following the disk", async () => {
@@ -176,12 +176,12 @@ it("shows the notice only when the index stopped following the disk", async () =
 it("shows the daemon's warnings about the project", async () => {
   const user = userEvent.setup();
   const { transport } = stubTransport({
-    "/projects/DOBBY": successReply(PROJECT, [
-      { code: "path-missing", message: "the repository is not on disk", path: "/repos/dobby" },
-      { code: "config-key-unknown", message: "unknown key: colour", path: "/repos/dobby/config.yml", line: 4 },
+    "/projects/DELTA": successReply(PROJECT, [
+      { code: "path-missing", message: "the repository is not on disk", path: "/repos/delta" },
+      { code: "config-key-unknown", message: "unknown key: colour", path: "/repos/delta/config.yml", line: 4 },
     ]),
   });
-  await renderWithRouter("/projects/DOBBY", transport);
+  await renderWithRouter("/projects/DELTA", transport);
 
   const line = within(screen.getByRole("main")).getByRole("heading", { level: 2, name: /warnings/ });
   expect(line.textContent).toBe("2 warnings about this project");
@@ -195,8 +195,8 @@ it.each([
   { place: "under the notice", live: false, margin: "mt-3" },
   { place: "with no notice", live: true, margin: "mt-7" },
 ])("spaces the warnings line $place", async ({ live, margin }) => {
-  const { transport } = stubTransport({ "/projects/DOBBY": successReply({ ...PROJECT, live }, [WARNING]) });
-  await renderWithRouter("/projects/DOBBY", transport);
+  const { transport } = stubTransport({ "/projects/DELTA": successReply({ ...PROJECT, live }, [WARNING]) });
+  await renderWithRouter("/projects/DELTA", transport);
 
   const line = screen.getByRole("heading", { level: 2, name: /warning/ }).parentElement!;
 
@@ -219,9 +219,9 @@ it.each([
     said: "The index is not following the disk. 2 warnings about this project.",
   },
 ])("announces $state", async ({ live, warnings, said }) => {
-  const { transport } = stubTransport({ "/projects/DOBBY": successReply({ ...PROJECT, live }, warnings) });
+  const { transport } = stubTransport({ "/projects/DELTA": successReply({ ...PROJECT, live }, warnings) });
 
-  await renderWithRouter("/projects/DOBBY", transport);
+  await renderWithRouter("/projects/DELTA", transport);
 
   expect(screen.getByRole("status").textContent).toBe(said);
 });
@@ -238,15 +238,15 @@ it("shows no warnings line where the daemon reported nothing", async () => {
  * background, and the page has to stay on screen while that answer is on its way.
  */
 it("keeps the page on screen while a background refetch answers again", async () => {
-  const { transport, paths } = stubTransport({ "/projects/DOBBY": successReply(PROJECT) });
-  const router = await renderWithRouter("/projects/DOBBY", transport);
+  const { transport, paths } = stubTransport({ "/projects/DELTA": successReply(PROJECT) });
+  const router = await renderWithRouter("/projects/DELTA", transport);
 
   await act(async () => {
-    await router.options.context.queryClient.invalidateQueries({ queryKey: daemonKeys.project("DOBBY") });
+    await router.options.context.queryClient.invalidateQueries({ queryKey: daemonKeys.project("DELTA") });
   });
 
-  expect(paths.filter((path) => path === "/projects/DOBBY")).toHaveLength(2);
-  expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Dobby");
+  expect(paths.filter((path) => path === "/projects/DELTA")).toHaveLength(2);
+  expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Delta");
   expect(chipsIn("Statuses")).toEqual(["Backlog default", "To Do", "In Progress", "Done final"]);
 });
 
@@ -255,14 +255,14 @@ it("keeps the page on screen while a background refetch answers again", async ()
 it("hands a refused configuration to the failure panel", async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   const { transport } = stubTransport({
-    "/projects/DOBBY": refusalReply(422, {
+    "/projects/DELTA": refusalReply(422, {
       kind: "store",
       code: "config-invalid",
-      message: "/repos/dobby/config.yml line 4: statuses must be a sequence",
+      message: "/repos/delta/config.yml line 4: statuses must be a sequence",
     }),
   });
 
-  await renderWithRouter("/projects/DOBBY", transport);
+  await renderWithRouter("/projects/DELTA", transport);
 
   const alert = screen.getByRole("alert");
   expect(alert.textContent).toContain("store/config-invalid");

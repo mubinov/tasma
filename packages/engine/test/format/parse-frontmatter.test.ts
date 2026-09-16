@@ -53,12 +53,12 @@ describe("parseFrontmatter", () => {
   });
 
   it("names the file it was given in the error it raises", () => {
-    const filename = "/tmp/tree/TASM-1.md";
+    const filename = "/tmp/tree/SAGA-1.md";
     const text = fixture("invalid/frontmatter-missing.md");
 
     const error = parseFault(() => parseFrontmatter(text, { filename }), "parseFrontmatter");
 
-    expect(error.filename).toBe("/tmp/tree/TASM-1.md");
-    expect(error.message).toContain("/tmp/tree/TASM-1.md:1:");
+    expect(error.filename).toBe("/tmp/tree/SAGA-1.md");
+    expect(error.message).toContain("/tmp/tree/SAGA-1.md:1:");
   });
 });

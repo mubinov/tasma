@@ -15,9 +15,9 @@ import { refusalReply, stubTransport, successReply } from "../helpers";
 
 const HEALTH = { name: "tasma-daemon", version: "0.0.0" };
 
-const PROJECTS = [{ tag: "TASM", name: "tasma", path: "/repos/tasma" }];
+const PROJECTS = [{ tag: "SAGA", name: "saga", path: "/repos/saga" }];
 
-const PROJECT = { tag: "TASM", name: "tasma" };
+const PROJECT = { tag: "SAGA", name: "saga" };
 
 /** Answers every call with one envelope, and records the paths asked for. */
 function stubDaemon(data: unknown = HEALTH) {
@@ -77,7 +77,7 @@ it("descends every key from the one prefix that invalidates the daemon's answers
 
   expect(builders.length).toBeGreaterThan(0);
   for (const build of builders) {
-    const key = build("TASM");
+    const key = build("SAGA");
     expect(key.slice(0, daemonKeys.all.length), key.join("/")).toEqual([...daemonKeys.all]);
   }
 });
@@ -100,11 +100,11 @@ it("asks for one project by the tag it is given", async () => {
   const paths = stubDaemon(PROJECT);
 
   const success = await createAppQueryClient().query({
-    ...projectQuery(createDaemonClient(), "TASM"),
+    ...projectQuery(createDaemonClient(), "SAGA"),
     staleTime: "static",
   });
 
-  expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects/TASM`]);
+  expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects/SAGA`]);
   expect(success).toEqual({ data: PROJECT, diagnostics: [] });
 });
 
@@ -113,14 +113,14 @@ it("asks for one project by the tag it is given", async () => {
 it("nests one project's key inside the list's", () => {
   const projects = daemonKeys.projects();
 
-  expect(daemonKeys.project("TASM").slice(0, projects.length)).toEqual([...projects]);
+  expect(daemonKeys.project("SAGA").slice(0, projects.length)).toEqual([...projects]);
 });
 
 it("nests a project's tasks inside the project, and one workflow inside the workflows", () => {
-  const project = daemonKeys.project("TASM");
+  const project = daemonKeys.project("SAGA");
   const workflows = daemonKeys.workflows();
 
-  expect(daemonKeys.tasks("TASM").slice(0, project.length)).toEqual([...project]);
+  expect(daemonKeys.tasks("SAGA").slice(0, project.length)).toEqual([...project]);
   expect(daemonKeys.workflow("dev").slice(0, workflows.length)).toEqual([...workflows]);
 });
 
@@ -129,11 +129,11 @@ it("asks for the tasks of one project, with no filter", async () => {
   const paths = stubDaemon(listing);
 
   const success = await createAppQueryClient().query({
-    ...tasksQuery(createDaemonClient(), "TASM"),
+    ...tasksQuery(createDaemonClient(), "SAGA"),
     staleTime: "static",
   });
 
-  expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects/TASM/tasks`]);
+  expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects/SAGA/tasks`]);
   expect(success).toEqual({ data: listing, diagnostics: [] });
 });
 

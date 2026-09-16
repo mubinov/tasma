@@ -31,63 +31,63 @@ function blockedIds(entries: IndexEntry[], finalStatuses: readonly string[] = FI
 
 describe("resolveBlocked", () => {
   it("blocks no task that states no blocker", () => {
-    expect(blockedIds([entry("TASM-1", "To Do"), entry("TASM-2", "Done")])).toEqual([]);
+    expect(blockedIds([entry("SAGA-1", "To Do"), entry("SAGA-2", "Done")])).toEqual([]);
   });
 
   it("blocks no task whose blocker list is empty", () => {
-    expect(blockedIds([entry("TASM-1", "To Do", [])])).toEqual([]);
+    expect(blockedIds([entry("SAGA-1", "To Do", [])])).toEqual([]);
   });
 
   it("blocks no task whose every blocker reached a final status", () => {
-    const entries = [entry("TASM-1", "To Do", ["TASM-2", "TASM-3"]), entry("TASM-2", "Done"), entry("TASM-3", "Done")];
+    const entries = [entry("SAGA-1", "To Do", ["SAGA-2", "SAGA-3"]), entry("SAGA-2", "Done"), entry("SAGA-3", "Done")];
 
     expect(blockedIds(entries)).toEqual([]);
   });
 
   it("blocks a task while one of its blockers is open", () => {
     const entries = [
-      entry("TASM-1", "To Do", ["TASM-2", "TASM-3"]),
-      entry("TASM-2", "Done"),
-      entry("TASM-3", "In Progress"),
+      entry("SAGA-1", "To Do", ["SAGA-2", "SAGA-3"]),
+      entry("SAGA-2", "Done"),
+      entry("SAGA-3", "In Progress"),
     ];
 
-    expect(blockedIds(entries)).toEqual(["TASM-1"]);
+    expect(blockedIds(entries)).toEqual(["SAGA-1"]);
   });
 
   it("reads a status that matches a final status in another case as final", () => {
-    const entries = [entry("TASM-1", "To Do", ["TASM-2"]), entry("TASM-2", "done")];
+    const entries = [entry("SAGA-1", "To Do", ["SAGA-2"]), entry("SAGA-2", "done")];
 
     expect(blockedIds(entries)).toEqual([]);
   });
 
   it("honours every status of the final list", () => {
     const entries = [
-      entry("TASM-1", "To Do", ["TASM-2"]),
-      entry("TASM-2", "Cancelled"),
-      entry("TASM-3", "To Do", ["TASM-4"]),
-      entry("TASM-4", "In Progress"),
+      entry("SAGA-1", "To Do", ["SAGA-2"]),
+      entry("SAGA-2", "Cancelled"),
+      entry("SAGA-3", "To Do", ["SAGA-4"]),
+      entry("SAGA-4", "In Progress"),
     ];
 
-    expect(blockedIds(entries, ["Done", "Cancelled"])).toEqual(["TASM-3"]);
+    expect(blockedIds(entries, ["Done", "Cancelled"])).toEqual(["SAGA-3"]);
   });
 
   it("blocks a task whose blocker names no entry, and reports the id once", () => {
-    const entries = [entry("TASM-1", "To Do", ["TASM-9"]), entry("TASM-2", "Done")];
+    const entries = [entry("SAGA-1", "To Do", ["SAGA-9"]), entry("SAGA-2", "Done")];
 
     const result = resolveBlocked(entries, FINAL);
 
-    expect(flaggedIds(result)).toEqual(["TASM-1"]);
+    expect(flaggedIds(result)).toEqual(["SAGA-1"]);
     expect(result.unresolved).toEqual([
       {
         code: "blocked-by-unresolved",
-        message: 'this task states the blocker "TASM-9", which the listing holds no task for',
-        path: "/tasks/TASM-1.md",
+        message: 'this task states the blocker "SAGA-9", which the listing holds no task for',
+        path: "/tasks/SAGA-1.md",
       },
     ]);
   });
 
   it("strips from a reported blocker the characters that would drive a terminal", () => {
-    const entries = [entry("TASM-1", "To Do", ["\u001b[31mred\u2028"])];
+    const entries = [entry("SAGA-1", "To Do", ["\u001b[31mred\u2028"])];
 
     expect(resolveBlocked(entries, FINAL).unresolved[0]?.message).toBe(
       'this task states the blocker " [31mred ", which the listing holds no task for',
@@ -95,7 +95,7 @@ describe("resolveBlocked", () => {
   });
 
   it("cuts a reported blocker to the length the index chose", () => {
-    const entries = [entry("TASM-1", "To Do", ["x".repeat(80)])];
+    const entries = [entry("SAGA-1", "To Do", ["x".repeat(80)])];
 
     expect(resolveBlocked(entries, FINAL).unresolved[0]?.message).toBe(
       `this task states the blocker "${"x".repeat(60)}...", which the listing holds no task for`,
@@ -103,7 +103,7 @@ describe("resolveBlocked", () => {
   });
 
   it("reports one diagnostic per unresolved blocker of one task", () => {
-    const entries = [entry("TASM-1", "To Do", ["TASM-8", "TASM-9"])];
+    const entries = [entry("SAGA-1", "To Do", ["SAGA-8", "SAGA-9"])];
 
     expect(resolveBlocked(entries, FINAL).unresolved).toHaveLength(2);
   });
@@ -111,49 +111,49 @@ describe("resolveBlocked", () => {
   it("reports an unresolved blocker once however often the file states it", () => {
     // A reader accepts any list of strings, so a hand-edited file reaches the
     // index with the repeat the store would have dropped on a write.
-    const entries = [entry("TASM-1", "To Do", ["TASM-9", "TASM-9", "TASM-9"])];
+    const entries = [entry("SAGA-1", "To Do", ["SAGA-9", "SAGA-9", "SAGA-9"])];
 
     const result = resolveBlocked(entries, FINAL);
 
-    expect(flaggedIds(result)).toEqual(["TASM-1"]);
+    expect(flaggedIds(result)).toEqual(["SAGA-1"]);
     expect(result.unresolved).toHaveLength(1);
   });
 
   it("reports the same unresolved blocker once for each task that states it", () => {
-    const entries = [entry("TASM-1", "To Do", ["TASM-9"]), entry("TASM-2", "To Do", ["TASM-9"])];
+    const entries = [entry("SAGA-1", "To Do", ["SAGA-9"]), entry("SAGA-2", "To Do", ["SAGA-9"])];
 
     expect(resolveBlocked(entries, FINAL).unresolved.map((diagnostic) => diagnostic.path)).toEqual([
-      "/tasks/TASM-1.md",
-      "/tasks/TASM-2.md",
+      "/tasks/SAGA-1.md",
+      "/tasks/SAGA-2.md",
     ]);
   });
 
   it("blocks a task whose blocker the index excluded, which reaches it as an id naming no entry", () => {
     // The blocker's file is in the project and unreadable, so the listing holds
     // no entry for it.
-    const entries = [entry("TASM-1", "To Do", ["TASM-2"])];
+    const entries = [entry("SAGA-1", "To Do", ["SAGA-2"])];
 
     const result = resolveBlocked(entries, FINAL);
 
-    expect(flaggedIds(result)).toEqual(["TASM-1"]);
+    expect(flaggedIds(result)).toEqual(["SAGA-1"]);
     expect(result.unresolved).toHaveLength(1);
   });
 
   it("blocks both tasks of a cycle and terminates", () => {
-    const entries = [entry("TASM-1", "To Do", ["TASM-2"]), entry("TASM-2", "To Do", ["TASM-1"])];
+    const entries = [entry("SAGA-1", "To Do", ["SAGA-2"]), entry("SAGA-2", "To Do", ["SAGA-1"])];
 
     const result = resolveBlocked(entries, FINAL);
 
-    expect(flaggedIds(result)).toEqual(["TASM-1", "TASM-2"]);
+    expect(flaggedIds(result)).toEqual(["SAGA-1", "SAGA-2"]);
     expect(result.unresolved).toEqual([]);
   });
 
   it("follows one level alone, so a blocker's own blocker is not walked", () => {
-    // TASM-2 blocks TASM-1 and is itself final, so TASM-1 is not blocked. Only a
-    // walk past it would reach the open TASM-3 and block TASM-1 as well.
-    const entries = [entry("TASM-1", "To Do", ["TASM-2"]), entry("TASM-2", "Done", ["TASM-3"]), entry("TASM-3", "To Do")];
+    // SAGA-2 blocks SAGA-1 and is itself final, so SAGA-1 is not blocked. Only a
+    // walk past it would reach the open SAGA-3 and block SAGA-1 as well.
+    const entries = [entry("SAGA-1", "To Do", ["SAGA-2"]), entry("SAGA-2", "Done", ["SAGA-3"]), entry("SAGA-3", "To Do")];
 
-    expect(blockedIds(entries)).toEqual(["TASM-2"]);
+    expect(blockedIds(entries)).toEqual(["SAGA-2"]);
   });
 
   it("answers for no task over an empty listing", () => {
@@ -164,19 +164,19 @@ describe("resolveBlocked", () => {
   });
 
   it("returns every entry in the input order, each unblocked entry with blocked false", () => {
-    const entries = [entry("TASM-3", "To Do", ["TASM-1"]), entry("TASM-1", "In Progress"), entry("TASM-2", "Done")];
+    const entries = [entry("SAGA-3", "To Do", ["SAGA-1"]), entry("SAGA-1", "In Progress"), entry("SAGA-2", "Done")];
 
     const listed = resolveBlocked(entries, FINAL).entries;
 
     expect(listed.map(({ id, blocked }) => ({ id, blocked }))).toEqual([
-      { id: "TASM-3", blocked: true },
-      { id: "TASM-1", blocked: false },
-      { id: "TASM-2", blocked: false },
+      { id: "SAGA-3", blocked: true },
+      { id: "SAGA-1", blocked: false },
+      { id: "SAGA-2", blocked: false },
     ]);
   });
 
   it("keeps the id, the path and the frontmatter object of each entry", () => {
-    const entries = [entry("TASM-1", "To Do", ["TASM-2"]), entry("TASM-2", "Done")];
+    const entries = [entry("SAGA-1", "To Do", ["SAGA-2"]), entry("SAGA-2", "Done")];
 
     const listed = resolveBlocked(entries, FINAL).entries;
 

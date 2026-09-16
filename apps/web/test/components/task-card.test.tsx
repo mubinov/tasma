@@ -6,11 +6,11 @@ import type { StepView } from "../../src/lib/board";
 
 function entry(fields: Partial<Frontmatter> = {}, blocked = false): TaskEntry {
   return {
-    id: "TASM-55",
-    path: "/tasks/TASM-55.md",
+    id: "SAGA-55",
+    path: "/tasks/SAGA-55.md",
     blocked,
     frontmatter: {
-      id: "TASM-55",
+      id: "SAGA-55",
       title: "Web: Tasks board",
       status: "In Progress",
       created: "2026-09-01T10:00:00Z",
@@ -36,7 +36,7 @@ afterEach(() => {
 it("shows the id and the title, with the right side of the title kept free", () => {
   renderCard();
 
-  expect(screen.getByText("TASM-55").className).toContain("font-mono");
+  expect(screen.getByText("SAGA-55").className).toContain("font-mono");
   expect(classesOf(screen.getByText("Web: Tasks board"))).toEqual(expect.arrayContaining(["pr-6", "wrap-anywhere"]));
 });
 

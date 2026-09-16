@@ -134,7 +134,7 @@ describe("refuseClears", () => {
 
 describe("flagsGiven", () => {
   it("names each key the parser answered with as the flag that was typed", () => {
-    expect(flagsGiven({ "title": "New", "blocked-by": ["TASM-3"] })).toEqual(new Set(["--title", "--blocked-by"]));
+    expect(flagsGiven({ "title": "New", "blocked-by": ["SAGA-3"] })).toEqual(new Set(["--title", "--blocked-by"]));
   });
 
   it("names none where the parser answered no key at all", () => {

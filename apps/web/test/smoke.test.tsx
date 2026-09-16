@@ -129,7 +129,7 @@ it("lists the daemon's projects through the wired entry path", async () => {
   window.location.hash = "#/projects";
   vi.stubGlobal("fetch", (input: string) =>
     input.endsWith("/daemon/projects")
-      ? Promise.resolve(Response.json({ ok: true, data: [{ tag: "TASM", name: "tasma" }], diagnostics: [] }))
+      ? Promise.resolve(Response.json({ ok: true, data: [{ tag: "SAGA", name: "saga" }], diagnostics: [] }))
       : Promise.reject(new Error(`no stub answers ${input}`)));
 
   await act(async () => {
@@ -139,8 +139,8 @@ it("lists the daemon's projects through the wired entry path", async () => {
   const row = screen.getByRole("list", { name: "Projects" }).querySelector("a");
 
   expect(screen.getByRole("heading", { level: 1, name: "Projects" })).toBeTruthy();
-  expect(row?.getAttribute("href")).toBe("/#/projects/TASM");
-  expect(row?.textContent).toBe("tasmaTASM");
+  expect(row?.getAttribute("href")).toBe("/#/projects/SAGA");
+  expect(row?.textContent).toBe("sagaSAGA");
 });
 
 it("fails loudly when the document carries no #root", async () => {

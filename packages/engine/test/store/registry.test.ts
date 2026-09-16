@@ -27,7 +27,7 @@ import {
 } from "./helpers.js";
 
 /** A directory a project can stand for, outside the tree that registers it. */
-async function target(name = "tasma"): Promise<string> {
+async function target(name = "saga"): Promise<string> {
   const path = join(await bareRoot(), name);
   await mkdir(path);
   return path;
@@ -44,27 +44,27 @@ describe("registering a project", () => {
     const folder = await target();
 
     await expect(createProject({ root, path: folder })).resolves.toEqual({
-      tag: "TASM",
-      name: "tasma",
+      tag: "SAGA",
+      name: "saga",
       path: folder,
       diagnostics: [],
     });
 
     await expect(entries(projectDir(root))).resolves.toEqual(["config.yml"]);
-    expect(await read(projectConfig(root))).toBe(`name: tasma\npath: ${folder}\n`);
+    expect(await read(projectConfig(root))).toBe(`name: saga\npath: ${folder}\n`);
   });
 
   it("takes the tag the caller states as it stands", async () => {
     const root = await bareRoot();
 
-    await expect(createProject({ root, path: await target(), tag: "CLIB" })).resolves.toMatchObject({ tag: "CLIB" });
+    await expect(createProject({ root, path: await target(), tag: "ACME" })).resolves.toMatchObject({ tag: "ACME" });
   });
 
   it("takes the name the caller states over the one the folder gives", async () => {
     const root = await bareRoot();
 
-    await expect(createProject({ root, path: await target(), name: "Tasma" })).resolves.toMatchObject({
-      name: "Tasma",
+    await expect(createProject({ root, path: await target(), name: "Saga" })).resolves.toMatchObject({
+      name: "Saga",
     });
   });
 
@@ -95,7 +95,7 @@ describe("registering a project", () => {
     const root = await bareRoot();
     const folder = await target();
 
-    await expect(createProject({ root, path: `${folder}/sub/..` })).resolves.toMatchObject({ tag: "TASM" });
+    await expect(createProject({ root, path: `${folder}/sub/..` })).resolves.toMatchObject({ tag: "SAGA" });
   });
 
   it("refuses a name that is empty", async () => {
@@ -126,15 +126,15 @@ describe("registering a project", () => {
 
   it("refuses a path that is no text where the caller states a tag of its own", async () => {
     const root = await bareRoot();
-    const input = { root, path: 5, tag: "TASM" } as unknown as CreateProjectInput;
+    const input = { root, path: 5, tag: "SAGA" } as unknown as CreateProjectInput;
 
     expect((await storeError(createProject(input))).code).toBe("path-invalid");
     await expect(entries(root)).resolves.toEqual([]);
   });
 
   it.each([
-    ["states no field of a create", { tags: "TASM" }],
-    ["is no name at all", { [Symbol("tag")]: "TASM" }],
+    ["states no field of a create", { tags: "SAGA" }],
+    ["is no name at all", { [Symbol("tag")]: "SAGA" }],
   ])("refuses a key that %s", async (_reason, stated) => {
     const root = await bareRoot();
     const input = { root, path: await target(), ...stated } as unknown as CreateProjectInput;
@@ -150,22 +150,22 @@ describe("registering a project", () => {
   });
 
   it("refuses a tag another project already stands under", async () => {
-    const root = await projectsRoot("TASM");
+    const root = await projectsRoot("SAGA");
 
-    expect((await storeError(createProject({ root, path: await target(), tag: "TASM" }))).code).toBe("project-exists");
+    expect((await storeError(createProject({ root, path: await target(), tag: "SAGA" }))).code).toBe("project-exists");
   });
 
   it("refuses the path of another project, naming that project, and writes nothing", async () => {
     const root = await bareRoot();
     const folder = await target();
-    await createProject({ root, path: folder, tag: "CLIB" });
+    await createProject({ root, path: folder, tag: "ACME" });
 
     const error = await storeError(createProject({ root, path: folder }));
 
     expect(error.code).toBe("path-taken");
     expect(error.path).toBe(folder);
-    expect(error.message).toBe(`${folder}: project CLIB holds this directory`);
-    await expect(entries(join(root, "projects"))).resolves.toEqual(["CLIB"]);
+    expect(error.message).toBe(`${folder}: project ACME holds this directory`);
+    await expect(entries(join(root, "projects"))).resolves.toEqual(["ACME"]);
   });
 
   it.each([
@@ -179,16 +179,16 @@ describe("registering a project", () => {
   ])("refuses the path of another project stated %s", async (_form, build) => {
     const root = await bareRoot();
     const folder = await target();
-    await createProject({ root, path: folder, tag: "CLIB" });
+    await createProject({ root, path: folder, tag: "ACME" });
 
     expect((await storeError(createProject({ root, path: await build(folder) }))).code).toBe("path-taken");
-    await expect(entries(join(root, "projects"))).resolves.toEqual(["CLIB"]);
+    await expect(entries(join(root, "projects"))).resolves.toEqual(["ACME"]);
   });
 
   it("registers a folder inside the folder of another project, and a folder around it", async () => {
     const root = await bareRoot();
     const folder = await target();
-    await createProject({ root, path: folder, tag: "CLIB" });
+    await createProject({ root, path: folder, tag: "ACME" });
     const inner = join(folder, "inner");
     await mkdir(inner);
 
@@ -197,46 +197,46 @@ describe("registering a project", () => {
   });
 
   it("registers the path of a project whose configuration it cannot parse", async () => {
-    const root = await projectsRoot("CLIB");
+    const root = await projectsRoot("ACME");
     const folder = await target();
-    await plant(projectConfig(root, "CLIB"), `path: ${folder}\nname: [Clib\n`);
+    await plant(projectConfig(root, "ACME"), `path: ${folder}\nname: [Acme\n`);
 
-    await expect(createProject({ root, path: folder, tag: "TASM" })).resolves.toMatchObject({ tag: "TASM" });
+    await expect(createProject({ root, path: folder, tag: "SAGA" })).resolves.toMatchObject({ tag: "SAGA" });
   });
 
   it("numbers a generated tag another project already stands under", async () => {
-    const root = await projectsRoot("TASM");
+    const root = await projectsRoot("SAGA");
 
-    await expect(createProject({ root, path: await target() })).resolves.toMatchObject({ tag: "TASM2" });
+    await expect(createProject({ root, path: await target() })).resolves.toMatchObject({ tag: "SAGA2" });
   });
 
   it("numbers past a name the discovery could not see", async () => {
-    const root = await projectsRoot("CLIB");
+    const root = await projectsRoot("ACME");
     // A symbolic link is no project, so the discovery leaves it out while the
     // exclusive create still finds the name taken.
-    await symlink(projectDir(root, "CLIB"), projectDir(root, "TASM"));
+    await symlink(projectDir(root, "ACME"), projectDir(root, "SAGA"));
 
-    await expect(createProject({ root, path: await target() })).resolves.toMatchObject({ tag: "TASM2" });
+    await expect(createProject({ root, path: await target() })).resolves.toMatchObject({ tag: "SAGA2" });
   });
 
   it.each([
-    ["is relative", async () => "projects/tasma"],
+    ["is relative", async () => "projects/saga"],
     ["names a file", async () => {
-      const path = join(await bareRoot(), "tasma");
+      const path = join(await bareRoot(), "saga");
       await writeFile(path, "text", "utf8");
       return path;
     }],
-    ["names nothing", async () => join(await bareRoot(), "tasma")],
+    ["names nothing", async () => join(await bareRoot(), "saga")],
     ["leads through something that is no directory", async () => {
-      const file = join(await bareRoot(), "tasma");
+      const file = join(await bareRoot(), "saga");
       await writeFile(file, "text", "utf8");
       return join(file, "inside");
     }],
     ["loops", async () => {
       const parent = await bareRoot();
-      await symlink(join(parent, "second"), join(parent, "tasma"));
-      await symlink(join(parent, "tasma"), join(parent, "second"));
-      return join(parent, "tasma");
+      await symlink(join(parent, "second"), join(parent, "saga"));
+      await symlink(join(parent, "saga"), join(parent, "second"));
+      return join(parent, "saga");
     }],
     ["holds a byte no name on a filesystem carries", async () => "/tmp/a\0b"],
     ["is longer than any name a filesystem holds", async () => `/tmp/${"a".repeat(4096)}`],
@@ -253,15 +253,15 @@ describe("registering a project", () => {
     await chmod(parent, 0o000);
     onTestFinished(() => chmod(parent, 0o700));
 
-    await expect(createProject({ root, path: join(parent, "tasma") })).rejects.toMatchObject({ code: "EACCES" });
+    await expect(createProject({ root, path: join(parent, "saga") })).rejects.toMatchObject({ code: "EACCES" });
   });
 
   it("makes the tree and its projects directory where neither exists", async () => {
     const root = join(await bareRoot(), "tree");
 
-    await expect(createProject({ root, path: await target() })).resolves.toMatchObject({ tag: "TASM" });
+    await expect(createProject({ root, path: await target() })).resolves.toMatchObject({ tag: "SAGA" });
 
-    await expect(entries(join(root, "projects"))).resolves.toEqual(["TASM"]);
+    await expect(entries(join(root, "projects"))).resolves.toEqual(["SAGA"]);
   });
 
   it("passes on a fault of a tree it cannot make", async () => {
@@ -303,11 +303,11 @@ describe("reading a project", () => {
   it("answers with the tag, the name and the path its file states", async () => {
     const root = await tempRoot();
     const folder = await target();
-    await plant(projectConfig(root), `name: Tasma\npath: ${folder}\n`);
+    await plant(projectConfig(root), `name: Saga\npath: ${folder}\n`);
 
     await expect(readProject({ project: PROJECT, root })).resolves.toEqual({
       tag: PROJECT,
-      name: "Tasma",
+      name: "Saga",
       path: folder,
       diagnostics: [],
     });
@@ -327,11 +327,11 @@ describe("reading a project", () => {
   it("reports a path that names no directory, leaving the project usable", async () => {
     const root = await tempRoot();
     const gone = join(await bareRoot(), "gone");
-    await plant(projectConfig(root), `name: Tasma\npath: ${gone}\n`);
+    await plant(projectConfig(root), `name: Saga\npath: ${gone}\n`);
 
     const info = await readProject({ project: PROJECT, root });
 
-    expect(info).toMatchObject({ tag: PROJECT, name: "Tasma", path: gone });
+    expect(info).toMatchObject({ tag: PROJECT, name: "Saga", path: gone });
     expect(info.diagnostics).toEqual([
       { code: "path-missing", message: "the project path does not name a directory", path: gone },
     ]);
@@ -340,7 +340,7 @@ describe("reading a project", () => {
   it("reports a path it is not allowed to reach as missing", async () => {
     const root = await tempRoot();
     const parent = await bareRoot();
-    const folder = join(parent, "tasma");
+    const folder = join(parent, "saga");
     await mkdir(folder);
     await plant(projectConfig(root), `path: ${folder}\n`);
     await chmod(parent, 0o000);
@@ -351,7 +351,7 @@ describe("reading a project", () => {
 
   it("reports what the read of the file found, which the listing drops", async () => {
     const root = await tempRoot();
-    await plant(projectConfig(root), "name: Tasma\nwanted: yes\n");
+    await plant(projectConfig(root), "name: Saga\nwanted: yes\n");
 
     expect(codes((await readProject({ project: PROJECT, root })).diagnostics)).toEqual(["config-key-unknown"]);
   });
@@ -363,15 +363,15 @@ describe("reading a project", () => {
   });
 
   it("refuses a project directory that is a symbolic link", async () => {
-    const root = await projectsRoot("CLIB");
-    await symlink(projectDir(root, "CLIB"), projectDir(root));
+    const root = await projectsRoot("ACME");
+    await symlink(projectDir(root, "ACME"), projectDir(root));
 
     expect((await storeError(readProject({ project: PROJECT, root }))).code).toBe("project-invalid");
   });
 
   it("refuses a file this engine cannot parse", async () => {
     const root = await tempRoot();
-    await plant(projectConfig(root), "name: [Tasma\n");
+    await plant(projectConfig(root), "name: [Saga\n");
 
     expect((await storeError(readProject({ project: PROJECT, root }))).code).toBe("config-invalid");
   });
@@ -397,12 +397,12 @@ describe("the finding a read adds about the folder a project stands for", () => 
 const MERGED_NAME = "%YAML 1.1\n---\nshared: &s\n  name: Shared\n<<: *s\n";
 
 /** A file whose `name` key is written as an alias, which resolves to the text its anchor holds. */
-const ALIASED_NAME = "which: &k name\n*k : Tasma\n";
+const ALIASED_NAME = "which: &k name\n*k : Saga\n";
 
 describe("writing what a project states", () => {
   it("sets the name", async () => {
     const root = await tempRoot();
-    await plant(projectConfig(root), "name: Tasma\n");
+    await plant(projectConfig(root), "name: Saga\n");
 
     await expect(updateProject({ project: PROJECT, root }, { name: "Renamed" })).resolves.toMatchObject({
       name: "Renamed",
@@ -412,7 +412,7 @@ describe("writing what a project states", () => {
 
   it("clears the name, so the reader falls back to the tag", async () => {
     const root = await tempRoot();
-    await plant(projectConfig(root), "name: Tasma\nstatuses:\n  - Backlog\n");
+    await plant(projectConfig(root), "name: Saga\nstatuses:\n  - Backlog\n");
 
     await expect(updateProject({ project: PROJECT, root }, { name: null })).resolves.toMatchObject({
       name: undefined,
@@ -422,7 +422,7 @@ describe("writing what a project states", () => {
 
   it("clears the name for a key the change carries with no value at all", async () => {
     const root = await tempRoot();
-    await plant(projectConfig(root), "name: Tasma\nstatuses:\n  - Backlog\n");
+    await plant(projectConfig(root), "name: Saga\nstatuses:\n  - Backlog\n");
 
     await expect(updateProject({ project: PROJECT, root }, { name: undefined })).resolves.toMatchObject({
       name: undefined,
@@ -439,38 +439,38 @@ describe("writing what a project states", () => {
   });
 
   it("refuses the path of another project, leaving the file as it stands", async () => {
-    const root = await projectsRoot(PROJECT, "CLIB");
+    const root = await projectsRoot(PROJECT, "ACME");
     const folder = await target();
-    await plant(projectConfig(root), "name: Tasma\n");
-    await plant(projectConfig(root, "CLIB"), `path: ${folder}\n`);
+    await plant(projectConfig(root), "name: Saga\n");
+    await plant(projectConfig(root, "ACME"), `path: ${folder}\n`);
 
     const error = await storeError(updateProject({ project: PROJECT, root }, { path: folder }));
 
     expect(error.code).toBe("path-taken");
-    expect(error.message).toBe(`${folder}: project CLIB holds this directory`);
-    expect(await read(projectConfig(root))).toBe("name: Tasma\n");
+    expect(error.message).toBe(`${folder}: project ACME holds this directory`);
+    expect(await read(projectConfig(root))).toBe("name: Saga\n");
   });
 
   it("sets the path the project already stands at", async () => {
-    const root = await projectsRoot(PROJECT, "CLIB");
+    const root = await projectsRoot(PROJECT, "ACME");
     const folder = await target();
     await plant(projectConfig(root), `path: ${folder}\n`);
-    await plant(projectConfig(root, "CLIB"), `path: ${await target("clib")}\n`);
+    await plant(projectConfig(root, "ACME"), `path: ${await target("acme")}\n`);
 
     await expect(updateProject({ project: PROJECT, root }, { path: folder })).resolves.toMatchObject({ path: folder });
   });
 
   it("writes the name of a project a hand edit put at the path of another, and refuses that path", async () => {
-    const root = await projectsRoot(PROJECT, "CLIB");
+    const root = await projectsRoot(PROJECT, "ACME");
     const folder = await target();
     await plant(projectConfig(root), `path: ${folder}\n`);
-    await plant(projectConfig(root, "CLIB"), `path: ${folder}\n`);
+    await plant(projectConfig(root, "ACME"), `path: ${folder}\n`);
 
-    await expect(updateProject({ project: PROJECT, root }, { name: "Tasma" })).resolves.toMatchObject({
-      name: "Tasma",
+    await expect(updateProject({ project: PROJECT, root }, { name: "Saga" })).resolves.toMatchObject({
+      name: "Saga",
     });
     expect((await storeError(updateProject({ project: PROJECT, root }, { path: folder }))).code).toBe("path-taken");
-    expect(await read(projectConfig(root))).toBe(`path: ${folder}\nname: Tasma\n`);
+    expect(await read(projectConfig(root))).toBe(`path: ${folder}\nname: Saga\n`);
   });
 
   it("refuses a name that is empty", async () => {
@@ -488,20 +488,20 @@ describe("writing what a project states", () => {
 
   it("refuses a name that is no text, leaving the file as it stands", async () => {
     const root = await tempRoot();
-    await plant(projectConfig(root), "name: Tasma\n");
+    await plant(projectConfig(root), "name: Saga\n");
     const change = { name: 5 } as unknown as ProjectChange;
 
     expect((await storeError(updateProject({ project: PROJECT, root }, change))).code).toBe("field-required");
-    expect(await read(projectConfig(root))).toBe("name: Tasma\n");
+    expect(await read(projectConfig(root))).toBe("name: Saga\n");
   });
 
   it("refuses a path that is no text, leaving the file as it stands", async () => {
     const root = await tempRoot();
-    await plant(projectConfig(root), "name: Tasma\n");
+    await plant(projectConfig(root), "name: Saga\n");
     const change = { path: 5 } as unknown as ProjectChange;
 
     expect((await storeError(updateProject({ project: PROJECT, root }, change))).code).toBe("path-invalid");
-    expect(await read(projectConfig(root))).toBe("name: Tasma\n");
+    expect(await read(projectConfig(root))).toBe("name: Saga\n");
   });
 
   it("refuses a path the change carries with no value at all", async () => {
@@ -513,7 +513,7 @@ describe("writing what a project states", () => {
 
   it("refuses the tag, which no write of a project sets", async () => {
     const root = await tempRoot();
-    const change = { tag: "CLIB" } as unknown as ProjectChange;
+    const change = { tag: "ACME" } as unknown as ProjectChange;
 
     const error = await storeError(updateProject({ project: PROJECT, root }, change));
 
@@ -523,7 +523,7 @@ describe("writing what a project states", () => {
 
   it("refuses a key that is no name at all", async () => {
     const root = await tempRoot();
-    const change = { [Symbol("wanted")]: "CLIB" } as unknown as ProjectChange;
+    const change = { [Symbol("wanted")]: "ACME" } as unknown as ProjectChange;
 
     const error = await storeError(updateProject({ project: PROJECT, root }, change));
 
@@ -534,21 +534,21 @@ describe("writing what a project states", () => {
   it("refuses a path outside the two forms a project path takes", async () => {
     const root = await tempRoot();
 
-    expect((await storeError(updateProject({ project: PROJECT, root }, { path: "tasma" }))).code).toBe("path-invalid");
+    expect((await storeError(updateProject({ project: PROJECT, root }, { path: "saga" }))).code).toBe("path-invalid");
   });
 
   it("refuses a path holding a byte no name on a filesystem carries", async () => {
     const root = await tempRoot();
-    await plant(projectConfig(root), "name: Tasma\n");
+    await plant(projectConfig(root), "name: Saga\n");
 
     expect((await storeError(updateProject({ project: PROJECT, root }, { path: "/tmp/a\0b" }))).code)
       .toBe("path-invalid");
-    expect(await read(projectConfig(root))).toBe("name: Tasma\n");
+    expect(await read(projectConfig(root))).toBe("name: Saga\n");
   });
 
   it("keeps every other key and every comment the file carries", async () => {
     const root = await tempRoot();
-    await plant(projectConfig(root), "# What this project is.\nname: Tasma\nstatuses:\n  - Backlog\n");
+    await plant(projectConfig(root), "# What this project is.\nname: Saga\nstatuses:\n  - Backlog\n");
 
     await updateProject({ project: PROJECT, root }, { name: "Renamed" });
 
@@ -558,19 +558,19 @@ describe("writing what a project states", () => {
   it("installs a file a project made by hand never had", async () => {
     const root = await tempRoot();
 
-    await updateProject({ project: PROJECT, root }, { name: "Tasma" });
+    await updateProject({ project: PROJECT, root }, { name: "Saga" });
 
-    expect(await read(projectConfig(root))).toBe("name: Tasma\n");
+    expect(await read(projectConfig(root))).toBe("name: Saga\n");
   });
 
   it.each([
     ["is a symbolic link, which the rename would replace", async (root: string) => {
-      await plant(join(root, "elsewhere.yml"), "name: Tasma\n");
+      await plant(join(root, "elsewhere.yml"), "name: Saga\n");
       await symlink(join(root, "elsewhere.yml"), projectConfig(root));
     }],
     ["holds a directory", async (root: string) => mkdir(projectConfig(root))],
-    ["cannot be parsed", async (root: string) => plant(projectConfig(root), "name: [Tasma\n")],
-    ["holds no mapping", async (root: string) => plant(projectConfig(root), "- Tasma\n- Other\n")],
+    ["cannot be parsed", async (root: string) => plant(projectConfig(root), "name: [Saga\n")],
+    ["holds no mapping", async (root: string) => plant(projectConfig(root), "- Saga\n- Other\n")],
     ["holds a null and nothing else", async (root: string) => plant(projectConfig(root), "null\n")],
     ["holds that null written as a tilde", async (root: string) => plant(projectConfig(root), "# A note.\n~\n")],
   ])("refuses a file that %s", async (_reason, plantFile) => {
@@ -593,10 +593,10 @@ describe("writing what a project states", () => {
   });
 
   it.each([
-    ["the value it sets stands on", "name: &n Tasma\nother: *n\n", { name: "Renamed" }],
-    ["the value it clears stands on", "name: &n Tasma\nother: *n\n", { name: null }],
-    ["the key it clears carries", "&k name: Tasma\nother: *k\n", { name: null }],
-    ["a value nested in the one it sets carries", "name:\n  full: &n Tasma\nother: *n\n", { name: "R" }],
+    ["the value it sets stands on", "name: &n Saga\nother: *n\n", { name: "Renamed" }],
+    ["the value it clears stands on", "name: &n Saga\nother: *n\n", { name: null }],
+    ["the key it clears carries", "&k name: Saga\nother: *k\n", { name: null }],
+    ["a value nested in the one it sets carries", "name:\n  full: &n Saga\nother: *n\n", { name: "R" }],
   ])("refuses a change where an anchor %s is read elsewhere in the file", async (_reason, text, change) => {
     const root = await tempRoot();
     await plant(projectConfig(root), text);
@@ -607,7 +607,7 @@ describe("writing what a project states", () => {
 
   it("refuses a file holding an alias that resolves to no anchor", async () => {
     const root = await tempRoot();
-    const text = "name: Tasma\nother: *n\n";
+    const text = "name: Saga\nother: *n\n";
     await plant(projectConfig(root), text);
 
     expect((await storeError(updateProject({ project: PROJECT, root }, { name: "Renamed" }))).code)
@@ -632,14 +632,14 @@ describe("writing what a project states", () => {
     const root = await tempRoot();
     await plant(projectConfig(root), "# Only a note.\n");
 
-    await updateProject({ project: PROJECT, root }, { name: "Tasma" });
+    await updateProject({ project: PROJECT, root }, { name: "Saga" });
 
-    expect(await read(projectConfig(root))).toBe("# Only a note.\n\nname: Tasma\n");
+    expect(await read(projectConfig(root))).toBe("# Only a note.\n\nname: Saga\n");
   });
 
   it("writes beside an anchor no value of the file reads", async () => {
     const root = await tempRoot();
-    await plant(projectConfig(root), "name: Tasma\nfirst: &s Backlog\nsecond: *s\n");
+    await plant(projectConfig(root), "name: Saga\nfirst: &s Backlog\nsecond: *s\n");
 
     await updateProject({ project: PROJECT, root }, { name: "Renamed" });
 
@@ -670,11 +670,11 @@ describe("writing what a project states", () => {
 
   it("leaves the file as it stands for a change naming no key", async () => {
     const root = await tempRoot();
-    await plant(projectConfig(root), "# Kept.\nname: Tasma\n");
+    await plant(projectConfig(root), "# Kept.\nname: Saga\n");
 
-    await expect(updateProject({ project: PROJECT, root }, {})).resolves.toMatchObject({ name: "Tasma" });
+    await expect(updateProject({ project: PROJECT, root }, {})).resolves.toMatchObject({ name: "Saga" });
 
-    expect(await read(projectConfig(root))).toBe("# Kept.\nname: Tasma\n");
+    expect(await read(projectConfig(root))).toBe("# Kept.\nname: Saga\n");
   });
 
   it("refuses a project no directory of the tree stands under, whatever the change states", async () => {
@@ -688,7 +688,7 @@ describe("writing what a project states", () => {
     const gone = join(await bareRoot(), "gone");
     await plant(projectConfig(root), `path: ${gone}\n`);
 
-    const info = await updateProject({ project: PROJECT, root }, { name: "Tasma" });
+    const info = await updateProject({ project: PROJECT, root }, { name: "Saga" });
 
     expect(codes(info.diagnostics)).toEqual(["path-missing"]);
   });
@@ -714,11 +714,11 @@ describe("removing a project", () => {
   });
 
   it("refuses a project directory that is a symbolic link", async () => {
-    const root = await projectsRoot("CLIB");
-    await symlink(projectDir(root, "CLIB"), projectDir(root));
+    const root = await projectsRoot("ACME");
+    await symlink(projectDir(root, "ACME"), projectDir(root));
 
     expect((await storeError(removeProject({ project: PROJECT, root }))).code).toBe("project-invalid");
-    await expect(entries(projectDir(root, "CLIB"))).resolves.toEqual([]);
+    await expect(entries(projectDir(root, "ACME"))).resolves.toEqual([]);
   });
 
   it("deletes a project whose tasks directory no other call of this layer would open", async () => {
@@ -750,9 +750,9 @@ describe("removing a project", () => {
     await removeProject({ project: tag, root });
 
     await expect(discoverProjects(root)).resolves.toEqual([]);
-    await expect(createProject({ root, path: folder })).resolves.toMatchObject({ tag: "TASM" });
-    await expect(openProject({ project: "TASM", root }).createTask({ title: "Again" })).resolves.toMatchObject({
-      id: "TASM-1",
+    await expect(createProject({ root, path: folder })).resolves.toMatchObject({ tag: "SAGA" });
+    await expect(openProject({ project: "SAGA", root }).createTask({ title: "Again" })).resolves.toMatchObject({
+      id: "SAGA-1",
     });
   });
 });
@@ -761,14 +761,14 @@ describe("a projects directory that is a symbolic link", () => {
   /** A tree whose `projects/` leads to the projects of another tree. */
   async function linkedRoot(): Promise<{ root: string; elsewhere: string }> {
     const elsewhere = await projectsRoot(PROJECT);
-    await plant(projectConfig(elsewhere), "name: Tasma\n");
+    await plant(projectConfig(elsewhere), "name: Saga\n");
     const root = await bareRoot();
     await symlink(join(elsewhere, "projects"), join(root, "projects"));
     return { root, elsewhere };
   }
 
   it.each<[string, (root: string) => Promise<unknown>]>([
-    ["a create", async (root) => createProject({ root, path: "/", tag: "CLIB" })],
+    ["a create", async (root) => createProject({ root, path: "/", tag: "ACME" })],
     ["a read", async (root) => readProject({ project: PROJECT, root })],
     ["an update", async (root) => updateProject({ project: PROJECT, root }, { name: "Renamed" })],
     ["a remove", async (root) => removeProject({ project: PROJECT, root })],
@@ -778,7 +778,7 @@ describe("a projects directory that is a symbolic link", () => {
     expect((await storeError(run(root))).code).toBe("project-invalid");
 
     await expect(entries(join(elsewhere, "projects"))).resolves.toEqual([PROJECT]);
-    expect(await read(projectConfig(elsewhere))).toBe("name: Tasma\n");
+    expect(await read(projectConfig(elsewhere))).toBe("name: Saga\n");
   });
 });
 
@@ -790,7 +790,7 @@ describe("the project a create leaves behind", () => {
     await expect(discoverProjects(root)).resolves.toEqual([tag]);
 
     await expect(openProject({ project: tag, root }).createTask({ title: "First" })).resolves.toMatchObject({
-      id: "TASM-1",
+      id: "SAGA-1",
     });
     await expect(entries(projectDir(root, tag))).resolves.toEqual(["config.yml", "state.yml", "tasks"]);
   });

@@ -4,7 +4,7 @@ import { actingProject } from "../../src/commands/project-tag.js";
 import { at, capture, CWD, HEALTH, HINT, ok, RESOLVED, resolvedFor, serveAnswers, startServer } from "../helpers.js";
 
 /** The summary the route answers, of which the helper reads the tag alone. */
-const PROJECT = ok({ tag: "TASM", name: "Tasma", path: CWD });
+const PROJECT = ok({ tag: "SAGA", name: "Saga", path: CWD });
 
 /** What one resolution answered, what it wrote, and the calls the server saw. */
 type Resolution = { answer: string | number; out: string; err: string; seen: string[] };
@@ -63,7 +63,7 @@ describe("the project a verb acts on", () => {
   it("sends the directory as it stands and answers the tag the reply carried", async () => {
     const { answer, seen } = await resolve({ [RESOLVED]: PROJECT });
 
-    expect(answer).toBe("TASM");
+    expect(answer).toBe("SAGA");
     expect(seen).toEqual([RESOLVED]);
   });
 
@@ -71,7 +71,7 @@ describe("the project a verb acts on", () => {
     const { out, err } = await resolve({ [RESOLVED]: PROJECT });
 
     expect(out).toBe("");
-    expect(err).toBe("tasma: project TASM, from /srv/repo\n");
+    expect(err).toBe("tasma: project SAGA, from /srv/repo\n");
   });
 
   it("refuses a directory no project holds, pointing at the flag", async () => {
@@ -84,7 +84,7 @@ describe("the project a verb acts on", () => {
   });
 
   it("refuses an answer that is not a project", async () => {
-    for (const data of ["TASM", 7, { tag: 7 }, {}]) {
+    for (const data of ["SAGA", 7, { tag: 7 }, {}]) {
       const { answer, out, err } = await resolve({ [RESOLVED]: ok(data) });
 
       expect(answer, JSON.stringify(data)).toBe(3);

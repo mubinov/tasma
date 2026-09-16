@@ -5,14 +5,14 @@ import { afterEach, expect, it } from "vitest";
 import { Diagnostics } from "../../src/components/diagnostics";
 
 const WARNINGS: Diagnostic[] = [
-  { code: "config-key-unknown", message: "unknown key: colour", path: "/repos/dobby/config.yml", line: 4 },
-  { code: "path-missing", message: "the repository is not on disk", path: "/repos/dobby" },
+  { code: "config-key-unknown", message: "unknown key: colour", path: "/repos/delta/config.yml", line: 4 },
+  { code: "path-missing", message: "the repository is not on disk", path: "/repos/delta" },
   { code: "next-task-id-rebuilt", message: "the next id was rebuilt from the files on disk" },
 ];
 
 const EXCLUDED: ExcludedFile[] = [
-  { path: "/repos/dobby/tasks/DOBBY-7.md", code: "task-file-unreadable", message: "the front matter is not YAML" },
-  { path: "/repos/dobby/tasks/notes.md", code: "task-file-misnamed", message: "the name holds no task id" },
+  { path: "/repos/delta/tasks/DELTA-7.md", code: "task-file-unreadable", message: "the front matter is not YAML" },
+  { path: "/repos/delta/tasks/notes.md", code: "task-file-misnamed", message: "the name holds no task id" },
 ];
 
 function rows(name: string): HTMLElement[] {
@@ -98,10 +98,10 @@ it("lists the files that were not read first, each with its path and no line", a
   await unfold();
 
   expect(rows("4 warnings about this project").map((row) => row.textContent)).toEqual([
-    "task-file-unreadableThe file was not read: the front matter is not YAML/repos/dobby/tasks/DOBBY-7.md",
-    "task-file-misnamedThe file was not read: the name holds no task id/repos/dobby/tasks/notes.md",
-    "config-key-unknownunknown key: colour/repos/dobby/config.yml:4",
-    "path-missingthe repository is not on disk/repos/dobby",
+    "task-file-unreadableThe file was not read: the front matter is not YAML/repos/delta/tasks/DELTA-7.md",
+    "task-file-misnamedThe file was not read: the name holds no task id/repos/delta/tasks/notes.md",
+    "config-key-unknownunknown key: colour/repos/delta/config.yml:4",
+    "path-missingthe repository is not on disk/repos/delta",
   ]);
 });
 
@@ -110,8 +110,8 @@ it("renders one row per warning, with its code and its message", async () => {
   await unfold();
 
   expect(rows("3 warnings about this project").map((row) => row.textContent)).toEqual([
-    "config-key-unknownunknown key: colour/repos/dobby/config.yml:4",
-    "path-missingthe repository is not on disk/repos/dobby",
+    "config-key-unknownunknown key: colour/repos/delta/config.yml:4",
+    "path-missingthe repository is not on disk/repos/delta",
     "next-task-id-rebuiltthe next id was rebuilt from the files on disk",
   ]);
 });
@@ -123,8 +123,8 @@ it("appends the line to the path only where the warning names one", async () => 
   await unfold();
 
   const listed = rows("3 warnings about this project");
-  expect(within(listed[0]!).getByText("/repos/dobby/config.yml:4")).toBeTruthy();
-  expect(within(listed[1]!).getByText("/repos/dobby")).toBeTruthy();
+  expect(within(listed[0]!).getByText("/repos/delta/config.yml:4")).toBeTruthy();
+  expect(within(listed[1]!).getByText("/repos/delta")).toBeTruthy();
   // The location line is the row's own child; the code chip is nested inside it.
   expect(listed[2]!.querySelector(":scope > span")).toBeNull();
 });
@@ -205,10 +205,10 @@ it("leaves focus where it is when the line goes without it", () => {
 });
 
 it("shows the line folded under a new key", async () => {
-  const { rerender } = render(<Diagnostics key="DOBBY" items={WARNINGS} subject="this project" />);
+  const { rerender } = render(<Diagnostics key="DELTA" items={WARNINGS} subject="this project" />);
   await unfold();
 
-  rerender(<Diagnostics key="CLIB" items={WARNINGS} subject="this project" />);
+  rerender(<Diagnostics key="ACME" items={WARNINGS} subject="this project" />);
 
   expect(toggle().getAttribute("aria-expanded")).toBe("false");
   expect(screen.queryByRole("list")).toBeNull();

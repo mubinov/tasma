@@ -46,7 +46,7 @@ const UNUSED_PID = 2_147_483_647;
  * stderr exactly what the verb wrote.
  */
 const TASK_HEAD = `---
-id: TASM-1
+id: SAGA-1
 title: Read the tree through the CLI
 status: To Do
 created: "2026-09-07T10:00:00+02:00"
@@ -58,7 +58,7 @@ next_comment_id: 3
 
 The body of the planted task.
 
-<!-- task:comment {id: 1, title: "Dev notes #1", created: "2026-09-07T10:05:00+02:00", author: almaz} -->
+<!-- task:comment {id: 1, title: "Dev notes #1", created: "2026-09-07T10:05:00+02:00", author: alice} -->
 
 The body of comment 1.
 
@@ -165,7 +165,7 @@ function recordPathIn(home: string): string {
 
 /** Where the tree of a home holds the planted project. */
 function projectDirIn(home: string): string {
-  return join(home, ".tasma", "projects", "TASM");
+  return join(home, ".tasma", "projects", "SAGA");
 }
 
 /** Where that project holds its task files. */
@@ -327,7 +327,7 @@ describe("the built executables", () => {
       const tasks = tasksDirIn(home);
 
       mkdirSync(tasks, { recursive: true });
-      writeFileSync(join(tasks, "TASM-1.md"), TASK_FILE);
+      writeFileSync(join(tasks, "SAGA-1.md"), TASK_FILE);
 
       // A workflow is a directory holding a workflow.yml, so planting one is
       // writing that file and the documents it names.
@@ -392,27 +392,27 @@ describe("the built executables", () => {
 
       expect(stderr).toBe("");
       expect(code).toBe(0);
-      expect(stdout).toBe("TASM  -  -\n");
+      expect(stdout).toBe("SAGA  -  -\n");
     });
 
     it("lists the tasks of one project", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["task", "list", "--project", "TASM"], { env: treeEnv(home) });
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "list", "--project", "SAGA"], { env: treeEnv(home) });
 
       expect(stderr).toBe("");
       expect(code).toBe(0);
-      expect(stdout).toBe("TASM-1  To Do  -  -  Read the tree through the CLI\n");
+      expect(stdout).toBe("SAGA-1  To Do  -  -  Read the tree through the CLI\n");
     });
 
     it("prints the task without the collapsed body, and names what it left out", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["task", "view", "TASM-1"], { env: treeEnv(home) });
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "view", "SAGA-1"], { env: treeEnv(home) });
 
       expect(code).toBe(0);
       expect(stdout).toBe(`${TASK_HEAD}${COLLAPSED_MARKER}`);
-      expect(stderr).toBe("tasma: 1 comment collapsed (2): comment view TASM-1 <n> prints one, task view TASM-1 --full prints all\n");
+      expect(stderr).toBe("tasma: 1 comment collapsed (2): comment view SAGA-1 <n> prints one, task view SAGA-1 --full prints all\n");
     });
 
     it("prints the whole file with --full, the collapsed body included", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["task", "view", "TASM-1", "--full"], { env: treeEnv(home) });
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "view", "SAGA-1", "--full"], { env: treeEnv(home) });
 
       expect(stderr).toBe("");
       expect(code).toBe(0);
@@ -420,20 +420,20 @@ describe("the built executables", () => {
     });
 
     it("maps the comments of the task", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["comment", "list", "TASM-1"], { env: treeEnv(home) });
+      const { code, stdout, stderr } = await node(executable(CLI), ["comment", "list", "SAGA-1"], { env: treeEnv(home) });
       const lines = stdout.split("\n").filter((line) => line !== "");
 
       expect(stderr).toBe("");
       expect(code).toBe(0);
       expect(lines).toHaveLength(2);
-      expect(lines[0]).toContain("almaz");
+      expect(lines[0]).toContain("alice");
       expect(lines[0]).toContain("Dev notes #1");
       expect(lines[1]).toContain("collapsed");
       expect(lines[1]).toContain("Review #1: FAIL");
     });
 
     it("prints one collapsed comment alone, whole", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["comment", "view", "TASM-1", "2"], { env: treeEnv(home) });
+      const { code, stdout, stderr } = await node(executable(CLI), ["comment", "view", "SAGA-1", "2"], { env: treeEnv(home) });
 
       expect(stderr).toBe("");
       expect(code).toBe(0);
@@ -481,12 +481,12 @@ describe("the built executables", () => {
       writeFileSync(path, SECOND_BODY);
 
       const { code, stdout, stderr } = await node(executable(CLI), [
-        "task", "create", "-p", "TASM", "--title", "Second",
+        "task", "create", "-p", "SAGA", "--title", "Second",
         "--priority", "high", "--label", "Infra", "--body-file", path,
       ], { env: treeEnv(home) });
 
       expect(code).toBe(0);
-      expect(stdout).toBe("TASM-2\n");
+      expect(stdout).toBe("SAGA-2\n");
       // Validation runs before the file has a name, so its note quotes the
       // directory the task is about to stand in.
       expect(stderr).toBe(
@@ -497,7 +497,7 @@ describe("the built executables", () => {
     });
 
     it("shows the task the create wrote", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["task", "view", "TASM-2"], { env: treeEnv(home) });
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "view", "SAGA-2"], { env: treeEnv(home) });
 
       expect(stderr).toBe("");
       expect(code).toBe(0);
@@ -508,16 +508,16 @@ describe("the built executables", () => {
 
     it("corrects the case of a status it stores, and removes the field a clear names", async () => {
       const written = await node(executable(CLI),
-        ["task", "edit", "TASM-2", "--status", "in progress", "--clear", "priority"], { env: treeEnv(home) });
+        ["task", "edit", "SAGA-2", "--status", "in progress", "--clear", "priority"], { env: treeEnv(home) });
 
       expect(written.code).toBe(0);
-      expect(written.stdout).toBe("TASM-2\n");
+      expect(written.stdout).toBe("SAGA-2\n");
       expect(written.stderr).toBe(
         'tasma: note: status-case-corrected: status "in progress" was stored as the declared "In Progress" '
-        + `(${taskPathIn(home, "TASM-2")})\n`,
+        + `(${taskPathIn(home, "SAGA-2")})\n`,
       );
 
-      const { stdout } = await node(executable(CLI), ["task", "view", "TASM-2"], { env: treeEnv(home) });
+      const { stdout } = await node(executable(CLI), ["task", "view", "SAGA-2"], { env: treeEnv(home) });
 
       expect(stdout).toContain("status: In Progress\n");
       expect(stdout).not.toContain("priority:");
@@ -525,35 +525,35 @@ describe("the built executables", () => {
 
     it("adds text after the stored body, read from a pipe", async () => {
       const written = await node(executable(CLI),
-        ["task", "edit", "TASM-2", "--body-file", "-", "--append"], { env: treeEnv(home), input: "more" });
+        ["task", "edit", "SAGA-2", "--body-file", "-", "--append"], { env: treeEnv(home), input: "more" });
 
       expect(written.stderr).toBe("");
       expect(written.code).toBe(0);
-      expect(written.stdout).toBe("TASM-2\n");
+      expect(written.stdout).toBe("SAGA-2\n");
 
-      const { stdout } = await node(executable(CLI), ["task", "view", "TASM-2"], { env: treeEnv(home) });
+      const { stdout } = await node(executable(CLI), ["task", "view", "SAGA-2"], { env: treeEnv(home) });
 
       expect(stdout).toContain(`${SECOND_BODY.trimEnd()}\n\nmore\n`);
     });
 
     it("deletes the task, and the file with it", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["task", "delete", "TASM-2"], { env: treeEnv(home) });
+      const { code, stdout, stderr } = await node(executable(CLI), ["task", "delete", "SAGA-2"], { env: treeEnv(home) });
 
       expect(stderr).toBe("");
       expect(code).toBe(0);
-      expect(stdout).toBe("TASM-2\n");
-      expect(existsSync(taskPathIn(home, "TASM-2"))).toBe(false);
+      expect(stdout).toBe("SAGA-2\n");
+      expect(existsSync(taskPathIn(home, "SAGA-2"))).toBe(false);
 
-      const listed = await node(executable(CLI), ["task", "list", "-p", "TASM"], { env: treeEnv(home) });
+      const listed = await node(executable(CLI), ["task", "list", "-p", "SAGA"], { env: treeEnv(home) });
 
-      expect(listed.stdout).toBe("TASM-1  To Do  -  -  Read the tree through the CLI\n");
+      expect(listed.stdout).toBe("SAGA-1  To Do  -  -  Read the tree through the CLI\n");
     });
 
     // The comment writes, on the task the read steps planted: each acts on what
     // the step before it left, and the id the add issues carries through them.
     it("adds a comment from a pipe, and issues its id", async () => {
       const { code, stdout, stderr } = await node(executable(CLI),
-        ["comment", "add", "TASM-1", "--title", "Smoke", "--body-file", "-"],
+        ["comment", "add", "SAGA-1", "--title", "Smoke", "--body-file", "-"],
         { env: treeEnv(home), input: COMMENT_BODY });
 
       expect(stderr).toBe("");
@@ -562,7 +562,7 @@ describe("the built executables", () => {
     });
 
     it("shows the comment the add wrote, collapsed by nothing", async () => {
-      const { code, stdout, stderr } = await node(executable(CLI), ["comment", "list", "TASM-1"], { env: treeEnv(home) });
+      const { code, stdout, stderr } = await node(executable(CLI), ["comment", "list", "SAGA-1"], { env: treeEnv(home) });
       const lines = stdout.split("\n").filter((line) => line !== "");
 
       expect(stderr).toBe("");
@@ -577,19 +577,19 @@ describe("the built executables", () => {
     // read prints it whole.
     it("collapses it, which the task view then hides and the comment view still prints", async () => {
       const written = await node(executable(CLI),
-        ["comment", "edit", "TASM-1", "3", "--collapsed"], { env: treeEnv(home) });
+        ["comment", "edit", "SAGA-1", "3", "--collapsed"], { env: treeEnv(home) });
 
       expect(written.stderr).toBe("");
       expect(written.code).toBe(0);
       expect(written.stdout).toBe("3\n");
 
-      const viewed = await node(executable(CLI), ["task", "view", "TASM-1"], { env: treeEnv(home) });
+      const viewed = await node(executable(CLI), ["task", "view", "SAGA-1"], { env: treeEnv(home) });
 
       expect(viewed.stderr)
-        .toBe("tasma: 2 comments collapsed (2, 3): comment view TASM-1 <n> prints one, task view TASM-1 --full prints all\n");
+        .toBe("tasma: 2 comments collapsed (2, 3): comment view SAGA-1 <n> prints one, task view SAGA-1 --full prints all\n");
       expect(viewed.stdout).not.toContain(COMMENT_BODY);
 
-      const alone = await node(executable(CLI), ["comment", "view", "TASM-1", "3"], { env: treeEnv(home) });
+      const alone = await node(executable(CLI), ["comment", "view", "SAGA-1", "3"], { env: treeEnv(home) });
 
       expect(alone.code).toBe(0);
       expect(alone.stdout).toContain(COMMENT_BODY);
@@ -598,26 +598,26 @@ describe("the built executables", () => {
 
     it("adds text after the stored body of the comment, read from a pipe", async () => {
       const written = await node(executable(CLI),
-        ["comment", "edit", "TASM-1", "3", "--body-file", "-", "--append"], { env: treeEnv(home), input: "more" });
+        ["comment", "edit", "SAGA-1", "3", "--body-file", "-", "--append"], { env: treeEnv(home), input: "more" });
 
       expect(written.stderr).toBe("");
       expect(written.code).toBe(0);
       expect(written.stdout).toBe("3\n");
 
-      const { stdout } = await node(executable(CLI), ["comment", "view", "TASM-1", "3"], { env: treeEnv(home) });
+      const { stdout } = await node(executable(CLI), ["comment", "view", "SAGA-1", "3"], { env: treeEnv(home) });
 
       expect(stdout).toContain(`${COMMENT_BODY.trimEnd()}\n\nmore\n`);
     });
 
     it("deletes the comment, and the row with it", async () => {
       const { code, stdout, stderr } = await node(executable(CLI),
-        ["comment", "delete", "TASM-1", "3"], { env: treeEnv(home) });
+        ["comment", "delete", "SAGA-1", "3"], { env: treeEnv(home) });
 
       expect(stderr).toBe("");
       expect(code).toBe(0);
       expect(stdout).toBe("3\n");
 
-      const listed = await node(executable(CLI), ["comment", "list", "TASM-1"], { env: treeEnv(home) });
+      const listed = await node(executable(CLI), ["comment", "list", "SAGA-1"], { env: treeEnv(home) });
       const lines = listed.stdout.split("\n").filter((line) => line !== "");
 
       expect(lines).toHaveLength(2);

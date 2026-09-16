@@ -31,8 +31,8 @@ describe("cell", () => {
 
 describe("table", () => {
   it("pads every column but the last, two spaces apart", () => {
-    expect(table([["TASM-1", "To Do", "a title"], ["TASM-46", "Done", "b"]])).toBe(
-      "TASM-1   To Do  a title\nTASM-46  Done   b\n",
+    expect(table([["SAGA-1", "To Do", "a title"], ["SAGA-46", "Done", "b"]])).toBe(
+      "SAGA-1   To Do  a title\nSAGA-46  Done   b\n",
     );
   });
 
@@ -64,13 +64,13 @@ describe("withLineBreak", () => {
 
 describe("fieldsOf", () => {
   it("reads the fields of a record", () => {
-    expect(fieldsOf({ tag: "TASM" }).tag).toBe("TASM");
+    expect(fieldsOf({ tag: "SAGA" }).tag).toBe("SAGA");
   });
 
   // An element of a listing is whatever answered the port, and a writer reads a
   // field off every one of them.
   it("answers with no field at all for a value that is no record", () => {
-    for (const value of [undefined, null, "TASM", 1]) {
+    for (const value of [undefined, null, "SAGA", 1]) {
       expect(fieldsOf(value)).toEqual({});
     }
   });

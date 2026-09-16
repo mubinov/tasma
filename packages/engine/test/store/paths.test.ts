@@ -24,7 +24,7 @@ describe("pathsUnder", () => {
   });
 
   it("takes a tag no path rule accepts, because the name rule alone reads it", () => {
-    expect(pathsUnder({ project: "tasm", root: "/tmp/tree", directory: "/tmp/tree/held" }).project).toBe("tasm");
+    expect(pathsUnder({ project: "saga", root: "/tmp/tree", directory: "/tmp/tree/held" }).project).toBe("saga");
   });
 });
 
@@ -33,10 +33,10 @@ describe("projectPaths", () => {
     const built = projectPaths({ project: PROJECT, root: "/tmp/tree" });
 
     expect(built.userConfig).toBe("/tmp/tree/config.yml");
-    expect(built.directory).toBe("/tmp/tree/projects/TASM");
-    expect(built.projectConfig).toBe("/tmp/tree/projects/TASM/config.yml");
-    expect(built.state).toBe("/tmp/tree/projects/TASM/state.yml");
-    expect(built.tasks).toBe("/tmp/tree/projects/TASM/tasks");
+    expect(built.directory).toBe("/tmp/tree/projects/SAGA");
+    expect(built.projectConfig).toBe("/tmp/tree/projects/SAGA/config.yml");
+    expect(built.state).toBe("/tmp/tree/projects/SAGA/state.yml");
+    expect(built.tasks).toBe("/tmp/tree/projects/SAGA/tasks");
   });
 
   it("defaults the root to ~/.tasma, expanded once", () => {
@@ -54,21 +54,21 @@ describe("projectPaths", () => {
     expect(projectPaths({ project: PROJECT, root }).root).toBe(expanded);
   });
 
-  it.each(["..", ".", "a/b", "a\\b", "tasm", "TASM-1", "TA SM", ""])("rejects the tag %s", (project) => {
+  it.each(["..", ".", "a/b", "a\\b", "saga", "SAGA-1", "SA GA", ""])("rejects the tag %s", (project) => {
     expect(storeFault(() => projectPaths({ project, root: "/tmp/tree" })).code).toBe("project-invalid");
   });
 
-  it.each(["TASM", "T", "A1", "0"])("accepts the tag %s", (project) => {
+  it.each(["SAGA", "T", "A1", "0"])("accepts the tag %s", (project) => {
     expect(projectPaths({ project, root: "/tmp/tree" }).project).toBe(project);
   });
 });
 
 describe("taskPath", () => {
   it("names the file of a task", () => {
-    expect(taskPath(paths("/tmp/tree"), "TASM-7")).toBe("/tmp/tree/projects/TASM/tasks/TASM-7.md");
+    expect(taskPath(paths("/tmp/tree"), "SAGA-7")).toBe("/tmp/tree/projects/SAGA/tasks/SAGA-7.md");
   });
 
-  it.each(["TASM-1/../../x", "../TASM-1", "TASM-x", "OTHER-1", "TASM-", "TASM-1.md", "tasm-1"])(
+  it.each(["SAGA-1/../../x", "../SAGA-1", "SAGA-x", "OTHER-1", "SAGA-", "SAGA-1.md", "saga-1"])(
     "reports %s as no task of this project",
     (id) => {
       expect(storeFault(() => taskPath(paths("/tmp/tree"), id)).code).toBe("task-not-found");
@@ -78,9 +78,9 @@ describe("taskPath", () => {
 
 describe("tempPath", () => {
   it("puts the temp file beside its target, so the rename stays on one filesystem", () => {
-    const temp = tempPath("/tmp/tree/projects/TASM/tasks/TASM-7.md");
+    const temp = tempPath("/tmp/tree/projects/SAGA/tasks/SAGA-7.md");
 
-    expect(temp.startsWith("/tmp/tree/projects/TASM/tasks/.TASM-7.md.")).toBe(true);
+    expect(temp.startsWith("/tmp/tree/projects/SAGA/tasks/.SAGA-7.md.")).toBe(true);
     expect(temp.endsWith(".tmp")).toBe(true);
   });
 
@@ -98,13 +98,13 @@ describe("scanTasks", () => {
 
   it("returns the task files in the order of their number", async () => {
     const root = await tempRoot();
-    for (const id of ["TASM-10", "TASM-2", "TASM-1"]) {
+    for (const id of ["SAGA-10", "SAGA-2", "SAGA-1"]) {
       await plant(join(tasksDir(root), `${id}.md`), taskText(id));
     }
 
     const scan = await scanTasks(paths(root));
 
-    expect(scan.entries.map((entry) => entry.id)).toEqual(["TASM-1", "TASM-2", "TASM-10"]);
+    expect(scan.entries.map((entry) => entry.id)).toEqual(["SAGA-1", "SAGA-2", "SAGA-10"]);
     expect(scan.entries.map((entry) => entry.number)).toEqual([1, 2, 10]);
     expect(scan.diagnostics).toEqual([]);
   });
@@ -124,7 +124,7 @@ describe("scanTasks", () => {
 
   it("reports a leftover temp file and deletes nothing", async () => {
     const root = await tempRoot();
-    const temp = join(tasksDir(root), ".TASM-1.md.a1b2c3.tmp");
+    const temp = join(tasksDir(root), ".SAGA-1.md.a1b2c3.tmp");
     await plant(temp, "half a file");
 
     const scan = await scanTasks(paths(root));
@@ -134,7 +134,7 @@ describe("scanTasks", () => {
     await expect(read(temp)).resolves.toBe("half a file");
   });
 
-  it.each(["TASM-1.md.bak", "TASM-1.txt", "README", "TASM-1"])("passes over %s in silence", async (name) => {
+  it.each(["SAGA-1.md.bak", "SAGA-1.txt", "README", "SAGA-1"])("passes over %s in silence", async (name) => {
     const root = await tempRoot();
     await plant(join(tasksDir(root), name), "not a task file");
 
@@ -145,7 +145,7 @@ describe("scanTasks", () => {
 
   it("passes over a directory that carries a task name", async () => {
     const root = await tempRoot();
-    await plant(join(tasksDir(root), "TASM-1.md", "inside"), "a directory, not a file");
+    await plant(join(tasksDir(root), "SAGA-1.md", "inside"), "a directory, not a file");
 
     await expect(scanTasks(paths(root))).resolves.toEqual({ entries: [], diagnostics: [] });
   });

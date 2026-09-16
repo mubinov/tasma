@@ -51,35 +51,35 @@ const invocations: Invocation[] = [
   },
   {
     name: "createProject",
-    send: (client) => client.createProject({ path: "/srv/tasma", name: "Tasma" }),
+    send: (client) => client.createProject({ path: "/srv/saga", name: "Saga" }),
     method: "POST",
     path: "/projects",
-    body: { path: "/srv/tasma", name: "Tasma" },
+    body: { path: "/srv/saga", name: "Saga" },
   },
   {
     name: "readProject",
-    send: (client) => client.readProject("TASM"),
+    send: (client) => client.readProject("SAGA"),
     method: "GET",
-    path: "/projects/TASM",
+    path: "/projects/SAGA",
   },
   {
     name: "updateProject",
-    send: (client) => client.updateProject("TASM", { name: null }),
+    send: (client) => client.updateProject("SAGA", { name: null }),
     method: "PATCH",
-    path: "/projects/TASM",
+    path: "/projects/SAGA",
     body: { name: null },
   },
   {
     name: "deleteProject",
-    send: (client) => client.deleteProject("TASM"),
+    send: (client) => client.deleteProject("SAGA"),
     method: "DELETE",
-    path: "/projects/TASM",
+    path: "/projects/SAGA",
   },
   {
     name: "renameProject",
-    send: (client) => client.renameProject("TASM", { tag: "NEW" }),
+    send: (client) => client.renameProject("SAGA", { tag: "NEW" }),
     method: "POST",
-    path: "/projects/TASM/rename",
+    path: "/projects/SAGA/rename",
     body: { tag: "NEW" },
   },
   {
@@ -92,85 +92,85 @@ const invocations: Invocation[] = [
   },
   {
     name: "listTasks",
-    send: (client) => client.listTasks("TASM", { status: "To Do", label: ["dev"] }),
+    send: (client) => client.listTasks("SAGA", { status: "To Do", label: ["dev"] }),
     method: "GET",
-    path: "/projects/TASM/tasks?status=To%20Do&label=dev",
+    path: "/projects/SAGA/tasks?status=To%20Do&label=dev",
   },
   {
     name: "createTask",
-    send: (client) => client.createTask("TASM", { title: "Write it", body: "text" }),
+    send: (client) => client.createTask("SAGA", { title: "Write it", body: "text" }),
     method: "POST",
-    path: "/projects/TASM/tasks",
+    path: "/projects/SAGA/tasks",
     body: { title: "Write it", body: "text" },
   },
   {
     name: "readTask",
-    send: (client) => client.readTask("TASM", "TASM-3"),
+    send: (client) => client.readTask("SAGA", "SAGA-3"),
     method: "GET",
-    path: "/projects/TASM/tasks/TASM-3",
+    path: "/projects/SAGA/tasks/SAGA-3",
   },
   {
     name: "readTask without the comments",
-    send: (client) => client.readTask("TASM", "TASM-3", { comments: false }),
+    send: (client) => client.readTask("SAGA", "SAGA-3", { comments: false }),
     method: "GET",
-    path: "/projects/TASM/tasks/TASM-3?comments=false",
+    path: "/projects/SAGA/tasks/SAGA-3?comments=false",
   },
   {
     name: "readTaskText",
-    send: (client) => client.readTaskText("TASM", "TASM-3"),
+    send: (client) => client.readTaskText("SAGA", "SAGA-3"),
     method: "GET",
-    path: "/projects/TASM/tasks/TASM-3/text",
+    path: "/projects/SAGA/tasks/SAGA-3/text",
   },
   {
     name: "readTaskText without the collapsed bodies",
-    send: (client) => client.readTaskText("TASM", "TASM-3", { collapsed: false }),
+    send: (client) => client.readTaskText("SAGA", "SAGA-3", { collapsed: false }),
     method: "GET",
-    path: "/projects/TASM/tasks/TASM-3/text?collapsed=false",
+    path: "/projects/SAGA/tasks/SAGA-3/text?collapsed=false",
   },
   {
     name: "readTaskText of one comment",
-    send: (client) => client.readTaskText("TASM", "TASM-3", { comment: 2 }),
+    send: (client) => client.readTaskText("SAGA", "SAGA-3", { comment: 2 }),
     method: "GET",
-    path: "/projects/TASM/tasks/TASM-3/text?comment=2",
+    path: "/projects/SAGA/tasks/SAGA-3/text?comment=2",
   },
   {
     name: "updateTask",
-    send: (client) => client.updateTask("TASM", "TASM-3", { status: "Done" }),
+    send: (client) => client.updateTask("SAGA", "SAGA-3", { status: "Done" }),
     method: "PATCH",
-    path: "/projects/TASM/tasks/TASM-3",
+    path: "/projects/SAGA/tasks/SAGA-3",
     body: { status: "Done" },
   },
   {
     name: "deleteTask",
-    send: (client) => client.deleteTask("TASM", "TASM-3"),
+    send: (client) => client.deleteTask("SAGA", "SAGA-3"),
     method: "DELETE",
-    path: "/projects/TASM/tasks/TASM-3",
+    path: "/projects/SAGA/tasks/SAGA-3",
   },
   {
     name: "listComments",
-    send: (client) => client.listComments("TASM", "TASM-3"),
+    send: (client) => client.listComments("SAGA", "SAGA-3"),
     method: "GET",
-    path: "/projects/TASM/tasks/TASM-3/comments",
+    path: "/projects/SAGA/tasks/SAGA-3/comments",
   },
   {
     name: "addComment",
-    send: (client) => client.addComment("TASM", "TASM-3", { title: "Note", body: "text" }),
+    send: (client) => client.addComment("SAGA", "SAGA-3", { title: "Note", body: "text" }),
     method: "POST",
-    path: "/projects/TASM/tasks/TASM-3/comments",
+    path: "/projects/SAGA/tasks/SAGA-3/comments",
     body: { title: "Note", body: "text" },
   },
   {
     name: "updateComment",
-    send: (client) => client.updateComment("TASM", "TASM-3", 7, { collapsed: true }),
+    send: (client) => client.updateComment("SAGA", "SAGA-3", 7, { collapsed: true }),
     method: "PATCH",
-    path: "/projects/TASM/tasks/TASM-3/comments/7",
+    path: "/projects/SAGA/tasks/SAGA-3/comments/7",
     body: { collapsed: true },
   },
   {
     name: "deleteComment",
-    send: (client) => client.deleteComment("TASM", "TASM-3", 7),
+    send: (client) => client.deleteComment("SAGA", "SAGA-3", 7),
     method: "DELETE",
-    path: "/projects/TASM/tasks/TASM-3/comments/7",
+    path: "/projects/SAGA/tasks/SAGA-3/comments/7",
   },
   {
     name: "listWorkflows",
@@ -217,16 +217,16 @@ describe("the client", () => {
 
   it("returns the data and the diagnostics of a success", async () => {
     const diagnostics = [{ code: "temp-file-left" as const, message: "a temporary file was left behind" }];
-    const transport: Transport = async () => ({ status: 200, body: { ok: true, data: { id: "TASM-3" }, diagnostics } });
+    const transport: Transport = async () => ({ status: 200, body: { ok: true, data: { id: "SAGA-3" }, diagnostics } });
 
-    await expect(createClient(transport).deleteTask("TASM", "TASM-3")).resolves.toEqual({
-      data: { id: "TASM-3" },
+    await expect(createClient(transport).deleteTask("SAGA", "SAGA-3")).resolves.toEqual({
+      data: { id: "SAGA-3" },
       diagnostics,
     });
   });
 
   it("returns a project listing as the summaries it carries", async () => {
-    const data: ProjectSummary[] = [{ tag: "CLIB" }, { tag: "TASM", name: "Tasma", path: "/srv/tasma" }];
+    const data: ProjectSummary[] = [{ tag: "ACME" }, { tag: "SAGA", name: "Saga", path: "/srv/saga" }];
     const transport: Transport = async () => ({ status: 200, body: { ok: true, data, diagnostics: [] } });
 
     await expect(createClient(transport).listProjects()).resolves.toEqual({ data, diagnostics: [] });
@@ -244,25 +244,25 @@ describe("the client", () => {
     ];
     const transport: Transport = async () => ({ status: 200, body: { ok: true, data, diagnostics: [] } });
 
-    await expect(createClient(transport).listComments("TASM", "TASM-3")).resolves.toEqual({ data, diagnostics: [] });
+    await expect(createClient(transport).listComments("SAGA", "SAGA-3")).resolves.toEqual({ data, diagnostics: [] });
   });
 
   it("returns a task's text as the text and the comments left out of it", async () => {
-    const data: TaskText = { text: "---\nid: TASM-3\n---\n", hidden: [2] };
+    const data: TaskText = { text: "---\nid: SAGA-3\n---\n", hidden: [2] };
     const transport: Transport = async () => ({ status: 200, body: { ok: true, data, diagnostics: [] } });
 
-    await expect(createClient(transport).readTaskText("TASM", "TASM-3", { collapsed: false })).resolves.toEqual({
+    await expect(createClient(transport).readTaskText("SAGA", "SAGA-3", { collapsed: false })).resolves.toEqual({
       data,
       diagnostics: [],
     });
   });
 
   it("throws the whole failure of a refusal", async () => {
-    const failure: Failure = { kind: "store", code: "task-not-found", message: "no such task", path: "/tmp/TASM-3.md" };
+    const failure: Failure = { kind: "store", code: "task-not-found", message: "no such task", path: "/tmp/SAGA-3.md" };
     const transport: Transport = async () => ({ status: 404, body: { ok: false, error: failure } });
 
     const error = await createClient(transport)
-      .readTask("TASM", "TASM-3")
+      .readTask("SAGA", "SAGA-3")
       .catch((thrown: unknown) => thrown);
 
     expect(error).toBeInstanceOf(ProtocolError);

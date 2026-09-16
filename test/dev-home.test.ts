@@ -22,11 +22,11 @@ describe("the development runner", () => {
   });
 
   it("passes its arguments through unchanged, a flag included", () => {
-    const passed = execFileSync(script, ["printf", "%s\n", "task", "list", "--project", "TASM"], {
+    const passed = execFileSync(script, ["printf", "%s\n", "task", "list", "--project", "SAGA"], {
       encoding: "utf8",
     });
 
-    expect(passed).toBe("task\nlist\n--project\nTASM\n");
+    expect(passed).toBe("task\nlist\n--project\nSAGA\n");
   });
 
   // HOME is changed for the CLI alone and never for pnpm: under a changed HOME

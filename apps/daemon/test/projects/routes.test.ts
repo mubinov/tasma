@@ -46,8 +46,8 @@ async function serving(root: string): Promise<TestServer & { host: ProjectHost }
 
 describe("GET /projects", () => {
   it("answers with the summary of every project of the tree, and no diagnostics", async () => {
-    const root = await projectsRoot("TASM", "CLIB");
-    await plant(projectConfig(root, "TASM"), "name: Tasma\npath: /srv/tasma\n");
+    const root = await projectsRoot("SAGA", "ACME");
+    await plant(projectConfig(root, "SAGA"), "name: Saga\npath: /srv/saga\n");
     const server = await serving(root);
 
     const response = await fetch(`${server.url}/projects`);
@@ -55,25 +55,25 @@ describe("GET /projects", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       ok: true,
-      data: [{ tag: "CLIB" }, { tag: "TASM", name: "Tasma", path: "/srv/tasma" }],
+      data: [{ tag: "ACME" }, { tag: "SAGA", name: "Saga", path: "/srv/saga" }],
       diagnostics: [],
     });
   });
 
   it("lists a project whose configuration it cannot read, and says nothing about it", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(projectConfig(root, "TASM"), "name: [Tasma\n");
+    const root = await projectsRoot("SAGA");
+    await plant(projectConfig(root, "SAGA"), "name: [Saga\n");
     const server = await serving(root);
 
     await expect((await fetch(`${server.url}/projects`)).json()).resolves.toEqual({
       ok: true,
-      data: [{ tag: "TASM" }],
+      data: [{ tag: "SAGA" }],
       diagnostics: [],
     });
   });
 
   it("refuses a query key, so a resolution sent to this route does not read as the whole tree", async () => {
-    const server = await serving(await projectsRoot("TASM"));
+    const server = await serving(await projectsRoot("SAGA"));
 
     const response = await fetch(`${server.url}/projects?path=/x`);
 
@@ -84,19 +84,19 @@ describe("GET /projects", () => {
 
 describe("GET /projects/{project}", () => {
   it("answers with the project, its resolved configuration and its index state", async () => {
-    const root = await projectsRoot("TASM");
+    const root = await projectsRoot("SAGA");
     const path = await target();
-    await plant(projectConfig(root, "TASM"), `name: Tasma\npath: ${path}\nstatuses: [New, Doing]\n`);
+    await plant(projectConfig(root, "SAGA"), `name: Saga\npath: ${path}\nstatuses: [New, Doing]\n`);
     const server = await serving(root);
 
-    const response = await fetch(`${server.url}/projects/TASM`);
+    const response = await fetch(`${server.url}/projects/SAGA`);
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       ok: true,
       data: {
-        tag: "TASM",
-        name: "Tasma",
+        tag: "SAGA",
+        name: "Saga",
         path,
         config: {
           ...BUILT_IN_CONFIG,
@@ -111,57 +111,57 @@ describe("GET /projects/{project}", () => {
   });
 
   it("reports an index that stopped following the disk as no longer live", { timeout: 20000, retry: 3 }, async () => {
-    const root = await projectsRoot("TASM");
-    await plant(join(tasksDir(root, "TASM"), "TASM-1.md"), taskText("TASM-1"));
+    const root = await projectsRoot("SAGA");
+    await plant(join(tasksDir(root, "SAGA"), "SAGA-1.md"), taskText("SAGA-1"));
     const server = await serving(root);
-    const { index } = await server.host.open("TASM");
+    const { index } = await server.host.open("SAGA");
 
-    await loseTasks(root, "TASM", index);
+    await loseTasks(root, "SAGA", index);
 
-    const response = await fetch(`${server.url}/projects/TASM`);
+    const response = await fetch(`${server.url}/projects/SAGA`);
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ ok: true, data: { tag: "TASM", live: false } });
+    await expect(response.json()).resolves.toMatchObject({ ok: true, data: { tag: "SAGA", live: false } });
   });
 
   it("carries the findings of the project's own configuration file", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(projectConfig(root, "TASM"), "statues: [New]\n");
+    const root = await projectsRoot("SAGA");
+    await plant(projectConfig(root, "SAGA"), "statues: [New]\n");
     const server = await serving(root);
 
-    const response = await fetch(`${server.url}/projects/TASM`);
+    const response = await fetch(`${server.url}/projects/SAGA`);
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as { data: unknown; diagnostics: { code: string; path: string }[] };
-    expect(body.data).toEqual({ tag: "TASM", config: BUILT_IN_CONFIG, live: true });
+    expect(body.data).toEqual({ tag: "SAGA", config: BUILT_IN_CONFIG, live: true });
     expect(body.diagnostics).toEqual([
-      { code: "config-key-unknown", message: expect.stringContaining("statues") as unknown, path: projectConfig(root, "TASM") },
+      { code: "config-key-unknown", message: expect.stringContaining("statues") as unknown, path: projectConfig(root, "SAGA") },
     ]);
   });
 
   it("refuses a project whose configuration file cannot be read, which the listing passed over", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(projectConfig(root, "TASM"), "name: [Tasma\n");
+    const root = await projectsRoot("SAGA");
+    await plant(projectConfig(root, "SAGA"), "name: [Saga\n");
     const server = await serving(root);
 
-    const response = await fetch(`${server.url}/projects/TASM`);
+    const response = await fetch(`${server.url}/projects/SAGA`);
 
     expect(response.status).toBe(422);
     await expect(failure(response)).resolves.toMatchObject({
       kind: "store",
       code: "config-invalid",
-      path: projectConfig(root, "TASM"),
+      path: projectConfig(root, "SAGA"),
     });
   });
 
   it("reports the folder the project stands for as gone, naming the path the reply carries", async () => {
-    const root = await projectsRoot("TASM");
+    const root = await projectsRoot("SAGA");
     const path = await target();
-    await plant(projectConfig(root, "TASM"), `path: ${path}\n`);
+    await plant(projectConfig(root, "SAGA"), `path: ${path}\n`);
     const server = await serving(root);
     await rm(path, { recursive: true });
 
-    const response = await fetch(`${server.url}/projects/TASM`);
+    const response = await fetch(`${server.url}/projects/SAGA`);
 
     expect(response.status).toBe(200);
     const { data, diagnostics } = await success<Project>(response);
@@ -172,19 +172,19 @@ describe("GET /projects/{project}", () => {
   });
 
   it("reports nothing about a folder that is there", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(projectConfig(root, "TASM"), `path: ${await target()}\n`);
+    const root = await projectsRoot("SAGA");
+    await plant(projectConfig(root, "SAGA"), `path: ${await target()}\n`);
     const server = await serving(root);
 
-    await expect(success<Project>(await fetch(`${server.url}/projects/TASM`))).resolves.toMatchObject({
+    await expect(success<Project>(await fetch(`${server.url}/projects/SAGA`))).resolves.toMatchObject({
       diagnostics: [],
     });
   });
 
   it("refuses a query key, which this route declares none of", async () => {
-    const server = await serving(await projectsRoot("TASM"));
+    const server = await serving(await projectsRoot("SAGA"));
 
-    const response = await fetch(`${server.url}/projects/TASM?x=1`);
+    const response = await fetch(`${server.url}/projects/SAGA?x=1`);
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
@@ -194,7 +194,7 @@ describe("GET /projects/{project}", () => {
     ["a tag no project of the tree carries", "NOPE"],
     ["a name that is no tag, which must not read as a fault of the request", "abc"],
   ])("answers 404 project-not-found for %s", async (_name, tag) => {
-    const server = await serving(await projectsRoot("TASM"));
+    const server = await serving(await projectsRoot("SAGA"));
 
     const response = await fetch(`${server.url}/projects/${tag}`);
 
@@ -213,33 +213,33 @@ describe("POST /projects", () => {
 
     expect(response.status).toBe(200);
     const { data, diagnostics } = await success<Project>(response);
-    expect(data).toEqual({ tag: "TASM", name: "tasma", path, config: BUILT_IN_CONFIG, live: true });
+    expect(data).toEqual({ tag: "SAGA", name: "saga", path, config: BUILT_IN_CONFIG, live: true });
     expect(diagnostics).toEqual([]);
-    await expect(readFile(projectConfig(root, "TASM"), "utf8")).resolves.toBe(`name: tasma\npath: ${path}\n`);
+    await expect(readFile(projectConfig(root, "SAGA"), "utf8")).resolves.toBe(`name: saga\npath: ${path}\n`);
   });
 
   it("takes the tag the body states", async () => {
     const server = await serving(await projectsRoot());
 
-    const response = await send(server, "POST", "/projects", { path: await target(), tag: "CLIB" });
+    const response = await send(server, "POST", "/projects", { path: await target(), tag: "ACME" });
 
     expect(response.status).toBe(200);
-    await expect(success<Project>(response)).resolves.toMatchObject({ data: { tag: "CLIB" } });
+    await expect(success<Project>(response)).resolves.toMatchObject({ data: { tag: "ACME" } });
   });
 
   it("refuses a path that stands for itself nowhere", async () => {
     const server = await serving(await projectsRoot());
 
-    const response = await send(server, "POST", "/projects", { path: "tasma" });
+    const response = await send(server, "POST", "/projects", { path: "saga" });
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "path-invalid" });
   });
 
   it("refuses a tag another project already stands under", async () => {
-    const server = await serving(await projectsRoot("TASM"));
+    const server = await serving(await projectsRoot("SAGA"));
 
-    const response = await send(server, "POST", "/projects", { path: await target(), tag: "TASM" });
+    const response = await send(server, "POST", "/projects", { path: await target(), tag: "SAGA" });
 
     expect(response.status).toBe(409);
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "project-exists" });
@@ -273,14 +273,14 @@ describe("POST /projects", () => {
   });
 
   it("lets one of a create and a patch of another project to one path sent together through, and refuses the other", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(projectConfig(root, "TASM"), `path: ${await target()}\n`);
+    const root = await projectsRoot("SAGA");
+    await plant(projectConfig(root, "SAGA"), `path: ${await target()}\n`);
     const path = await target();
     const server = await serving(root);
 
     const [created, patched] = await Promise.all([
       send(server, "POST", "/projects", { path, tag: "ONE" }),
-      send(server, "PATCH", "/projects/TASM", { path }),
+      send(server, "PATCH", "/projects/SAGA", { path }),
     ]);
 
     expect([created.status, patched.status].sort()).toEqual([200, 409]);
@@ -289,7 +289,7 @@ describe("POST /projects", () => {
   it("refuses a body that is no object, before anything is written", async () => {
     const server = await serving(await projectsRoot());
 
-    const response = await send(server, "POST", "/projects", ["/srv/tasma"]);
+    const response = await send(server, "POST", "/projects", ["/srv/saga"]);
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
@@ -308,7 +308,7 @@ describe("POST /projects", () => {
   it("refuses a query, which this route declares no key of", async () => {
     const server = await serving(await projectsRoot());
 
-    const response = await send(server, "POST", "/projects?tag=TASM", { path: await target() });
+    const response = await send(server, "POST", "/projects?tag=SAGA", { path: await target() });
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
@@ -317,52 +317,52 @@ describe("POST /projects", () => {
 
 describe("PATCH /projects/{project}", () => {
   it("answers with the project as the write left it", async () => {
-    const root = await projectsRoot("TASM");
+    const root = await projectsRoot("SAGA");
     const path = await target();
-    await plant(projectConfig(root, "TASM"), `name: Tasma\npath: ${path}\n`);
+    await plant(projectConfig(root, "SAGA"), `name: Saga\npath: ${path}\n`);
     const server = await serving(root);
 
-    const response = await send(server, "PATCH", "/projects/TASM", { name: "Renamed" });
+    const response = await send(server, "PATCH", "/projects/SAGA", { name: "Renamed" });
 
     expect(response.status).toBe(200);
     await expect(success<Project>(response)).resolves.toMatchObject({
-      data: { tag: "TASM", name: "Renamed", path, live: true },
+      data: { tag: "SAGA", name: "Renamed", path, live: true },
       diagnostics: [],
     });
   });
 
   it("clears the name for a key the body carries as null, and the file no longer holds it", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(projectConfig(root, "TASM"), "name: Tasma\npath: /srv/tasma\n");
+    const root = await projectsRoot("SAGA");
+    await plant(projectConfig(root, "SAGA"), "name: Saga\npath: /srv/saga\n");
     const server = await serving(root);
 
-    const response = await send(server, "PATCH", "/projects/TASM", { name: null });
+    const response = await send(server, "PATCH", "/projects/SAGA", { name: null });
 
     expect(response.status).toBe(200);
     expect((await success<Project>(response)).data.name).toBeUndefined();
-    await expect(readFile(projectConfig(root, "TASM"), "utf8")).resolves.toBe("path: /srv/tasma\n");
+    await expect(readFile(projectConfig(root, "SAGA"), "utf8")).resolves.toBe("path: /srv/saga\n");
   });
 
   it("leaves the file as it stands for a body naming no key", async () => {
-    const root = await projectsRoot("TASM");
-    const text = "name: Tasma\n# What it stands for.\npath: /srv/tasma\n";
-    await plant(projectConfig(root, "TASM"), text);
+    const root = await projectsRoot("SAGA");
+    const text = "name: Saga\n# What it stands for.\npath: /srv/saga\n";
+    await plant(projectConfig(root, "SAGA"), text);
     const server = await serving(root);
 
-    const response = await send(server, "PATCH", "/projects/TASM", {});
+    const response = await send(server, "PATCH", "/projects/SAGA", {});
 
     expect(response.status).toBe(200);
-    await expect(readFile(projectConfig(root, "TASM"), "utf8")).resolves.toBe(text);
+    await expect(readFile(projectConfig(root, "SAGA"), "utf8")).resolves.toBe(text);
   });
 
   it("reports the folder the project stands for as gone", async () => {
-    const root = await projectsRoot("TASM");
+    const root = await projectsRoot("SAGA");
     const path = await target();
-    await plant(projectConfig(root, "TASM"), `path: ${path}\n`);
+    await plant(projectConfig(root, "SAGA"), `path: ${path}\n`);
     const server = await serving(root);
     await rm(path, { recursive: true });
 
-    const response = await send(server, "PATCH", "/projects/TASM", {});
+    const response = await send(server, "PATCH", "/projects/SAGA", {});
 
     expect(response.status).toBe(200);
     await expect(success<Project>(response)).resolves.toMatchObject({
@@ -371,41 +371,41 @@ describe("PATCH /projects/{project}", () => {
   });
 
   it("refuses the path of another project, and the file keeps its own", async () => {
-    const root = await projectsRoot("TASM", "CLIB");
+    const root = await projectsRoot("SAGA", "ACME");
     const own = await target();
     const taken = await target();
-    await plant(projectConfig(root, "TASM"), `path: ${own}\n`);
-    await plant(projectConfig(root, "CLIB"), `path: ${taken}\n`);
+    await plant(projectConfig(root, "SAGA"), `path: ${own}\n`);
+    await plant(projectConfig(root, "ACME"), `path: ${taken}\n`);
     const server = await serving(root);
 
-    const response = await send(server, "PATCH", "/projects/TASM", { path: taken });
+    const response = await send(server, "PATCH", "/projects/SAGA", { path: taken });
 
     expect(response.status).toBe(409);
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "path-taken", path: taken });
-    await expect(readFile(projectConfig(root, "TASM"), "utf8")).resolves.toBe(`path: ${own}\n`);
+    await expect(readFile(projectConfig(root, "SAGA"), "utf8")).resolves.toBe(`path: ${own}\n`);
   });
 
   it("refuses the tag, which no write of a project sets", async () => {
-    const server = await serving(await projectsRoot("TASM"));
+    const server = await serving(await projectsRoot("SAGA"));
 
-    const response = await send(server, "PATCH", "/projects/TASM", { tag: "CLIB" });
+    const response = await send(server, "PATCH", "/projects/SAGA", { tag: "ACME" });
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "field-not-writable" });
   });
 
   it("answers 404 for a tag the tree does not list", async () => {
-    const server = await serving(await projectsRoot("TASM"));
+    const server = await serving(await projectsRoot("SAGA"));
 
-    const response = await send(server, "PATCH", "/projects/NOPE", { name: "Tasma" });
+    const response = await send(server, "PATCH", "/projects/NOPE", { name: "Saga" });
 
     expect(response.status).toBe(404);
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "project-not-found" });
   });
 
   it("reads back inside its own turn, so a delete waiting behind it runs after the reply is built", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(projectConfig(root, "TASM"), "name: Tasma\npath: /srv/tasma\n");
+    const root = await projectsRoot("SAGA");
+    await plant(projectConfig(root, "SAGA"), "name: Saga\npath: /srv/saga\n");
     const inner = createProjectHost({ root });
     onTestFinished(() => inner.close());
 
@@ -446,9 +446,9 @@ describe("PATCH /projects/{project}", () => {
     });
     const server = await startTestServer(entries);
 
-    const patching = send(server, "PATCH", "/projects/TASM", { name: "Renamed" });
+    const patching = send(server, "PATCH", "/projects/SAGA", { name: "Renamed" });
     await until(() => reached.includes("write"), "the patch took its turn");
-    const removed = await send(server, "DELETE", "/projects/TASM");
+    const removed = await send(server, "DELETE", "/projects/SAGA");
 
     const patched = await patching;
     expect(patched.status).toBe(200);
@@ -460,38 +460,38 @@ describe("PATCH /projects/{project}", () => {
 
 describe("DELETE /projects/{project}", () => {
   it("answers with what the project stated, and the tree holds it no more", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(projectConfig(root, "TASM"), "name: Tasma\npath: /srv/tasma\n");
+    const root = await projectsRoot("SAGA");
+    await plant(projectConfig(root, "SAGA"), "name: Saga\npath: /srv/saga\n");
     const server = await serving(root);
 
-    const response = await send(server, "DELETE", "/projects/TASM");
+    const response = await send(server, "DELETE", "/projects/SAGA");
 
     expect(response.status).toBe(200);
     await expect(success<ProjectSummary>(response)).resolves.toEqual({
-      data: { tag: "TASM", name: "Tasma", path: "/srv/tasma" },
+      data: { tag: "SAGA", name: "Saga", path: "/srv/saga" },
       diagnostics: [],
     });
-    expect((await fetch(`${server.url}/projects/TASM`)).status).toBe(404);
+    expect((await fetch(`${server.url}/projects/SAGA`)).status).toBe(404);
   });
 
   it("answers 404 for a project a delete already took", async () => {
-    const server = await serving(await projectsRoot("TASM"));
-    expect((await send(server, "DELETE", "/projects/TASM")).status).toBe(200);
+    const server = await serving(await projectsRoot("SAGA"));
+    expect((await send(server, "DELETE", "/projects/SAGA")).status).toBe(200);
 
-    const response = await send(server, "DELETE", "/projects/TASM");
+    const response = await send(server, "DELETE", "/projects/SAGA");
 
     expect(response.status).toBe(404);
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "project-not-found" });
   });
 
   it("makes a patch that arrives behind it wait, so the patch is refused rather than faulted", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(projectConfig(root, "TASM"), "name: Tasma\npath: /srv/tasma\n");
+    const root = await projectsRoot("SAGA");
+    await plant(projectConfig(root, "SAGA"), "name: Saga\npath: /srv/saga\n");
     const server = await serving(root);
 
     const [removed, patched] = await Promise.all([
-      send(server, "DELETE", "/projects/TASM"),
-      send(server, "PATCH", "/projects/TASM", { name: "Renamed" }),
+      send(server, "DELETE", "/projects/SAGA"),
+      send(server, "PATCH", "/projects/SAGA", { name: "Renamed" }),
     ]);
 
     expect(removed.status).toBe(200);
@@ -535,41 +535,41 @@ describe("DELETE /projects/{project}", () => {
 
 describe("POST /projects/{project}/rename", () => {
   it("answers with the project under its new tag, its configuration and its index state", async () => {
-    const root = await projectsRoot("TASM");
+    const root = await projectsRoot("SAGA");
     const path = await target();
-    await plant(projectConfig(root, "TASM"), `name: Tasma\npath: ${path}\n`);
-    await plant(taskFile(root, "TASM", "TASM-1"), taskText("TASM-1"));
+    await plant(projectConfig(root, "SAGA"), `name: Saga\npath: ${path}\n`);
+    await plant(taskFile(root, "SAGA", "SAGA-1"), taskText("SAGA-1"));
     const server = await serving(root);
 
-    const response = await send(server, "POST", "/projects/TASM/rename", { tag: "NEW" });
+    const response = await send(server, "POST", "/projects/SAGA/rename", { tag: "NEW" });
 
     expect(response.status).toBe(200);
     await expect(success<Project>(response)).resolves.toEqual({
-      data: { tag: "NEW", name: "Tasma", path, config: BUILT_IN_CONFIG, live: true },
+      data: { tag: "NEW", name: "Saga", path, config: BUILT_IN_CONFIG, live: true },
       diagnostics: [],
     });
   });
 
   it("serves the renamed project and no longer the old tag", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(taskFile(root, "TASM", "TASM-1"), taskText("TASM-1"));
-    await plant(taskFile(root, "TASM", "TASM-2"), taskText("TASM-2"));
+    const root = await projectsRoot("SAGA");
+    await plant(taskFile(root, "SAGA", "SAGA-1"), taskText("SAGA-1"));
+    await plant(taskFile(root, "SAGA", "SAGA-2"), taskText("SAGA-2"));
     const server = await serving(root);
 
-    expect((await send(server, "POST", "/projects/TASM/rename", { tag: "NEW" })).status).toBe(200);
+    expect((await send(server, "POST", "/projects/SAGA/rename", { tag: "NEW" })).status).toBe(200);
 
-    expect((await fetch(`${server.url}/projects/TASM`)).status).toBe(404);
+    expect((await fetch(`${server.url}/projects/SAGA`)).status).toBe(404);
     expect((await fetch(`${server.url}/projects/NEW`)).status).toBe(200);
     const { index } = await server.host.open("NEW");
     expect(index.query().entries.map((entry) => entry.id)).toEqual(["NEW-1", "NEW-2"]);
   });
 
   it("carries the findings of the rename beside the ones of the read", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(join(tasksDir(root, "TASM"), "notes.md"), "not a task file");
+    const root = await projectsRoot("SAGA");
+    await plant(join(tasksDir(root, "SAGA"), "notes.md"), "not a task file");
     const server = await serving(root);
 
-    const response = await send(server, "POST", "/projects/TASM/rename", { tag: "NEW" });
+    const response = await send(server, "POST", "/projects/SAGA/rename", { tag: "NEW" });
 
     await expect(success<Project>(response)).resolves.toMatchObject({
       diagnostics: [{ code: "task-file-unexpected", path: join(tasksDir(root, "NEW"), "notes.md") }],
@@ -577,29 +577,29 @@ describe("POST /projects/{project}/rename", () => {
   });
 
   it.each([
-    ["a key no rename states", { tag: "NEW", name: "Tasma" }, "field-not-writable"],
+    ["a key no rename states", { tag: "NEW", name: "Saga" }, "field-not-writable"],
     ["a body naming no tag", {}, "field-required"],
     ["a tag the create rule refuses", { tag: "new" }, "tag-invalid"],
   ])("answers 400 for %s", async (_name, body, code) => {
-    const server = await serving(await projectsRoot("TASM"));
+    const server = await serving(await projectsRoot("SAGA"));
 
-    const response = await send(server, "POST", "/projects/TASM/rename", body);
+    const response = await send(server, "POST", "/projects/SAGA/rename", body);
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code });
   });
 
   it("answers 400 for a query key", async () => {
-    const server = await serving(await projectsRoot("TASM"));
+    const server = await serving(await projectsRoot("SAGA"));
 
-    const response = await send(server, "POST", "/projects/TASM/rename?tag=NEW", { tag: "NEW" });
+    const response = await send(server, "POST", "/projects/SAGA/rename?tag=NEW", { tag: "NEW" });
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
   });
 
   it("answers 404 for a tag the tree does not list", async () => {
-    const server = await serving(await projectsRoot("TASM"));
+    const server = await serving(await projectsRoot("SAGA"));
 
     const response = await send(server, "POST", "/projects/NOPE/rename", { tag: "NEW" });
 
@@ -608,48 +608,48 @@ describe("POST /projects/{project}/rename", () => {
   });
 
   it("answers 409 for a tag another project already carries", async () => {
-    const server = await serving(await projectsRoot("TASM", "CLIB"));
+    const server = await serving(await projectsRoot("SAGA", "ACME"));
 
-    const response = await send(server, "POST", "/projects/TASM/rename", { tag: "CLIB" });
+    const response = await send(server, "POST", "/projects/SAGA/rename", { tag: "ACME" });
 
     expect(response.status).toBe(409);
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "project-exists" });
   });
 
   it("answers 409 for an entry of the tasks directory named after a task of the new project", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(join(tasksDir(root, "TASM"), "NEW-1.md"), "stray");
+    const root = await projectsRoot("SAGA");
+    await plant(join(tasksDir(root, "SAGA"), "NEW-1.md"), "stray");
     const server = await serving(root);
 
-    const response = await send(server, "POST", "/projects/TASM/rename", { tag: "NEW" });
+    const response = await send(server, "POST", "/projects/SAGA/rename", { tag: "NEW" });
 
     expect(response.status).toBe(409);
     await expect(failure(response)).resolves.toMatchObject({
       kind: "store",
       code: "task-exists",
-      path: join(tasksDir(root, "TASM"), "NEW-1.md"),
+      path: join(tasksDir(root, "SAGA"), "NEW-1.md"),
     });
   });
 
   it("answers 422 for a task file it cannot read, and the tree still holds the old tag alone", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(taskFile(root, "TASM", "TASM-1"), "---\nid: TASM-1\n");
+    const root = await projectsRoot("SAGA");
+    await plant(taskFile(root, "SAGA", "SAGA-1"), "---\nid: SAGA-1\n");
     const server = await serving(root);
 
-    const response = await send(server, "POST", "/projects/TASM/rename", { tag: "NEW" });
+    const response = await send(server, "POST", "/projects/SAGA/rename", { tag: "NEW" });
 
     expect(response.status).toBe(422);
-    await expect(failure(response)).resolves.toMatchObject({ kind: "parse", filename: taskFile(root, "TASM", "TASM-1") });
-    await expect(readdir(join(root, "projects"))).resolves.toEqual(["TASM"]);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "parse", filename: taskFile(root, "SAGA", "SAGA-1") });
+    await expect(readdir(join(root, "projects"))).resolves.toEqual(["SAGA"]);
   });
 
   it("makes a patch of the new tag wait until the rename is complete", async () => {
-    const root = await projectsRoot("TASM");
-    await plant(projectConfig(root, "TASM"), "name: Tasma\npath: /srv/tasma\n");
+    const root = await projectsRoot("SAGA");
+    await plant(projectConfig(root, "SAGA"), "name: Saga\npath: /srv/saga\n");
     const server = await serving(root);
 
     const [renamed, patched] = await Promise.all([
-      send(server, "POST", "/projects/TASM/rename", { tag: "NEW" }),
+      send(server, "POST", "/projects/SAGA/rename", { tag: "NEW" }),
       send(server, "PATCH", "/projects/NEW", { name: "Renamed" }),
     ]);
 
@@ -659,9 +659,9 @@ describe("POST /projects/{project}/rename", () => {
   });
 
   it("makes a create of the path of the project it renames wait until the rename is complete", async () => {
-    const root = await projectsRoot("TASM");
+    const root = await projectsRoot("SAGA");
     const path = await target();
-    await plant(projectConfig(root, "TASM"), `path: ${path}\n`);
+    await plant(projectConfig(root, "SAGA"), `path: ${path}\n`);
     const inner = createProjectHost({ root });
     onTestFinished(() => inner.close());
 
@@ -699,7 +699,7 @@ describe("POST /projects/{project}/rename", () => {
     });
     const server = await startTestServer(entries);
 
-    const renaming = send(server, "POST", "/projects/TASM/rename", { tag: "NEW" });
+    const renaming = send(server, "POST", "/projects/SAGA/rename", { tag: "NEW" });
     await until(() => reached.includes("rename"), "the rename took its turn");
     const created = await send(server, "POST", "/projects", { path, tag: "ONE" });
 
@@ -716,9 +716,9 @@ describe("POST /projects/{project}/rename", () => {
 
 describe("GET /project", () => {
   it("answers with the summary of the project that holds the directory", async () => {
-    const root = await projectsRoot("TASM");
+    const root = await projectsRoot("SAGA");
     const path = await target();
-    await plant(projectConfig(root, "TASM"), `name: Tasma\npath: ${path}\n`);
+    await plant(projectConfig(root, "SAGA"), `name: Saga\npath: ${path}\n`);
     const inside = join(path, "src");
     await mkdir(inside);
     const server = await serving(root);
@@ -728,13 +728,13 @@ describe("GET /project", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       ok: true,
-      data: { tag: "TASM", name: "Tasma", path },
+      data: { tag: "SAGA", name: "Saga", path },
       diagnostics: [],
     });
   });
 
   it("answers with a data key holding null where no project holds the directory", async () => {
-    const server = await serving(await projectsRoot("TASM"));
+    const server = await serving(await projectsRoot("SAGA"));
 
     const response = await fetch(`${server.url}/project?path=${encodeURIComponent(await target())}`);
 
@@ -745,25 +745,25 @@ describe("GET /project", () => {
   });
 
   it("carries the finding of a project the comparison could not read", async () => {
-    const root = await projectsRoot("TASM", "CLIB");
+    const root = await projectsRoot("SAGA", "ACME");
     const path = await target();
-    await plant(projectConfig(root, "TASM"), "name: [Tasma\n");
-    await plant(projectConfig(root, "CLIB"), `path: ${path}\n`);
+    await plant(projectConfig(root, "SAGA"), "name: [Saga\n");
+    await plant(projectConfig(root, "ACME"), `path: ${path}\n`);
     const server = await serving(root);
 
     const response = await fetch(`${server.url}/project?path=${encodeURIComponent(path)}`);
 
     expect(response.status).toBe(200);
     const { data, diagnostics } = await success<ProjectSummary>(response);
-    expect(data.tag).toBe("CLIB");
+    expect(data.tag).toBe("ACME");
     expect(diagnostics).toEqual([
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- every asymmetric matcher is typed `any`.
-      { code: "config-unreadable", message: expect.any(String), path: projectConfig(root, "TASM") },
+      { code: "config-unreadable", message: expect.any(String), path: projectConfig(root, "SAGA") },
     ]);
   });
 
   it("refuses a relative path, which would stand against the daemon's own directory", async () => {
-    const server = await serving(await projectsRoot("TASM"));
+    const server = await serving(await projectsRoot("SAGA"));
 
     const response = await fetch(`${server.url}/project?path=repo`);
 
@@ -776,7 +776,7 @@ describe("GET /project", () => {
     ["no path at all", ""],
     ["an empty path", "path="],
   ])("refuses a query stating %s", async (_name, search) => {
-    const server = await serving(await projectsRoot("TASM"));
+    const server = await serving(await projectsRoot("SAGA"));
 
     const response = await fetch(`${server.url}/project?${search}`);
 

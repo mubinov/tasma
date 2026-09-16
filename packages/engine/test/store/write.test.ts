@@ -20,7 +20,7 @@ import {
 
 /** The reference example under this project's tag: every optional key, YAML comments and two comments. */
 function richTask(): string {
-  return fixture("valid/example.md").replaceAll("PROJ-", "TASM-");
+  return fixture("valid/example.md").replaceAll("PROJ-", "SAGA-");
 }
 
 describe("createTask", () => {
@@ -36,23 +36,23 @@ describe("createTask", () => {
       priority: "high",
       order: 4200,
       labels: ["import"],
-      parent: "TASM-30",
+      parent: "SAGA-30",
       workflow: "delivery",
       step: "build",
       custom: { workflow: { attempts: 2 } },
       body: "\n# Goal\n\nText.\n",
     });
 
-    expect(result.id).toBe("TASM-1");
-    const { task } = await handle.readTask("TASM-1");
+    expect(result.id).toBe("SAGA-1");
+    const { task } = await handle.readTask("SAGA-1");
     expect(task.frontmatter).toMatchObject({
-      id: "TASM-1",
+      id: "SAGA-1",
       title: "Import the address book",
       status: "In Progress",
       priority: "high",
       order: 4200,
       labels: ["import"],
-      parent: "TASM-30",
+      parent: "SAGA-30",
       workflow: "delivery",
       step: "build",
       custom: { workflow: { attempts: 2 } },
@@ -67,9 +67,9 @@ describe("createTask", () => {
     const handle = project(root);
     await handle.createTask({ title: "First" });
 
-    await handle.createTask({ title: "Second", parent: "TASM-1", blocked_by: ["TASM-1"] });
+    await handle.createTask({ title: "Second", parent: "SAGA-1", blocked_by: ["SAGA-1"] });
 
-    expect(await read(taskFile(root, "TASM-2"))).toContain("parent: TASM-1\nblocked_by:\n  - TASM-1\n");
+    expect(await read(taskFile(root, "SAGA-2"))).toContain("parent: SAGA-1\nblocked_by:\n  - SAGA-1\n");
   });
 
   it("writes data of another component under custom", async () => {
@@ -77,7 +77,7 @@ describe("createTask", () => {
 
     await project(root).createTask({ title: "First", custom: { review: { reviewer: "alex" } } });
 
-    expect(parseTask(await read(taskFile(root, "TASM-1"))).task.frontmatter.custom).toEqual({
+    expect(parseTask(await read(taskFile(root, "SAGA-1"))).task.frontmatter.custom).toEqual({
       review: { reviewer: "alex" },
     });
   });
@@ -87,7 +87,7 @@ describe("createTask", () => {
 
     await project(root).createTask({ title: "First" });
 
-    await expect(readdir(tasksDir(root))).resolves.toEqual(["TASM-1.md"]);
+    await expect(readdir(tasksDir(root))).resolves.toEqual(["SAGA-1.md"]);
   });
 
   it("stamps created and updated with the current time, to the second and with an offset", async () => {
@@ -95,7 +95,7 @@ describe("createTask", () => {
 
     await project(root).createTask({ title: "First" });
 
-    const { created } = (await project(root).readTask("TASM-1")).task.frontmatter;
+    const { created } = (await project(root).readTask("SAGA-1")).task.frontmatter;
     expect(created).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/);
     expect(Math.abs(Date.parse(created) - Date.now())).toBeLessThan(60_000);
   });
@@ -105,11 +105,11 @@ describe("updateTask", () => {
   it("leaves every region it did not change byte-identical", async () => {
     const root = await tempRoot();
     const source = richTask();
-    await plant(taskFile(root, "TASM-42"), source);
+    await plant(taskFile(root, "SAGA-42"), source);
 
-    await project(root).updateTask("TASM-42", { title: "Renamed" });
+    await project(root).updateTask("SAGA-42", { title: "Renamed" });
 
-    const written = await read(taskFile(root, "TASM-42"));
+    const written = await read(taskFile(root, "SAGA-42"));
     expect(afterFrontmatter(written)).toBe(afterFrontmatter(source));
     expect(parseTask(written).task.frontmatter).toMatchObject({
       title: "Renamed",
@@ -120,77 +120,77 @@ describe("updateTask", () => {
 
   it("moves updated for a title change", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
-    await project(root).updateTask("TASM-1", { title: "Renamed" });
+    await project(root).updateTask("SAGA-1", { title: "Renamed" });
 
-    const { frontmatter } = (await project(root).readTask("TASM-1")).task;
+    const { frontmatter } = (await project(root).readTask("SAGA-1")).task;
     expect(frontmatter.updated).not.toBe(TIMESTAMP);
     expect(frontmatter.created).toBe(TIMESTAMP);
   });
 
   it("leaves updated alone for a change of order alone", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
-    await project(root).updateTask("TASM-1", { order: 100 });
+    await project(root).updateTask("SAGA-1", { order: 100 });
 
-    const { frontmatter } = (await project(root).readTask("TASM-1")).task;
+    const { frontmatter } = (await project(root).readTask("SAGA-1")).task;
     expect(frontmatter.order).toBe(100);
     expect(frontmatter.updated).toBe(TIMESTAMP);
   });
 
   it("moves updated when order changes together with another field", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
-    await project(root).updateTask("TASM-1", { order: 100, title: "Renamed" });
+    await project(root).updateTask("SAGA-1", { order: 100, title: "Renamed" });
 
-    expect((await project(root).readTask("TASM-1")).task.frontmatter.updated).not.toBe(TIMESTAMP);
+    expect((await project(root).readTask("SAGA-1")).task.frontmatter.updated).not.toBe(TIMESTAMP);
   });
 
   it("writes the body a change states", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
-    await project(root).updateTask("TASM-1", { body: "\nRewritten.\n" });
+    await project(root).updateTask("SAGA-1", { body: "\nRewritten.\n" });
 
-    const { frontmatter, body } = (await project(root).readTask("TASM-1")).task;
+    const { frontmatter, body } = (await project(root).readTask("SAGA-1")).task;
     expect(body).toBe("\nRewritten.\n");
     expect(frontmatter.updated).not.toBe(TIMESTAMP);
   });
 
   it("clears the body a change states with no value", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
-    await project(root).updateTask("TASM-1", { body: undefined });
+    await project(root).updateTask("SAGA-1", { body: undefined });
 
-    const { frontmatter, body } = (await project(root).readTask("TASM-1")).task;
+    const { frontmatter, body } = (await project(root).readTask("SAGA-1")).task;
     expect(body).toBe("");
     expect(frontmatter.updated).not.toBe(TIMESTAMP);
   });
 
   it("changes nothing when every field it states already holds that value", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
-    const before = await read(taskFile(root, "TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    const before = await read(taskFile(root, "SAGA-1"));
 
-    const result = await project(root).updateTask("TASM-1", { title: "Planted", status: "To Do" });
+    const result = await project(root).updateTask("SAGA-1", { title: "Planted", status: "To Do" });
 
     expect(result.diagnostics).toEqual([]);
-    expect(await read(taskFile(root, "TASM-1"))).toBe(before);
+    expect(await read(taskFile(root, "SAGA-1"))).toBe(before);
   });
 
   it("forwards a diagnostic of the reader with the path and the line it points at", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), `${taskText("TASM-1")}\n\`\`\`sh\nnever closed\n`);
+    await plant(taskFile(root, "SAGA-1"), `${taskText("SAGA-1")}\n\`\`\`sh\nnever closed\n`);
 
-    const result = await project(root).updateTask("TASM-1", { title: "Renamed" });
+    const result = await project(root).updateTask("SAGA-1", { title: "Renamed" });
 
     expect(result.diagnostics).toEqual([
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- an asymmetric matcher is typed `any`
-      { code: "unterminated-fence", message: expect.any(String), path: taskFile(root, "TASM-1"), line: 12 },
+      { code: "unterminated-fence", message: expect.any(String), path: taskFile(root, "SAGA-1"), line: 12 },
     ]);
   });
 });
@@ -198,8 +198,8 @@ describe("updateTask", () => {
 describe("comments", () => {
   async function withComment(root: string): Promise<Project> {
     const handle = project(root);
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
-    await handle.addComment("TASM-1", { title: "First note", author: "alex", body: "\nText.\n" });
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    await handle.addComment("SAGA-1", { title: "First note", author: "alex", body: "\nText.\n" });
     return handle;
   }
 
@@ -207,7 +207,7 @@ describe("comments", () => {
     const root = await tempRoot();
     const handle = await withComment(root);
 
-    const { task } = await handle.readTask("TASM-1");
+    const { task } = await handle.readTask("SAGA-1");
 
     expect(task.comments).toHaveLength(1);
     expect(task.comments[0]).toMatchObject({ id: 1, title: "First note", author: "alex" });
@@ -220,9 +220,9 @@ describe("comments", () => {
     const root = await tempRoot();
     const handle = await withComment(root);
 
-    await handle.updateComment("TASM-1", 1, { title: "Edited" });
+    await handle.updateComment("SAGA-1", 1, { title: "Edited" });
 
-    const { task } = await handle.readTask("TASM-1");
+    const { task } = await handle.readTask("SAGA-1");
     expect(task.comments[0]).toMatchObject({ title: "Edited" });
     expect(task.comments[0]?.updated).toBeTypeOf("string");
     expect(task.frontmatter.updated).not.toBe(TIMESTAMP);
@@ -232,37 +232,37 @@ describe("comments", () => {
     const root = await tempRoot();
     const handle = await withComment(root);
 
-    await handle.updateComment("TASM-1", 1, { body: undefined });
+    await handle.updateComment("SAGA-1", 1, { body: undefined });
 
-    expect((await handle.readTask("TASM-1")).task.comments[0]?.body).toBe("");
+    expect((await handle.readTask("SAGA-1")).task.comments[0]?.body).toBe("");
   });
 
   it("writes the body of a comment edit", async () => {
     const root = await tempRoot();
     const handle = await withComment(root);
 
-    await handle.updateComment("TASM-1", 1, { body: "\nRewritten.\n" });
+    await handle.updateComment("SAGA-1", 1, { body: "\nRewritten.\n" });
 
-    expect((await handle.readTask("TASM-1")).task.comments[0]?.body).toBe("\nRewritten.\n");
+    expect((await handle.readTask("SAGA-1")).task.comments[0]?.body).toBe("\nRewritten.\n");
   });
 
   it("changes nothing when a comment edit states the values the comment holds", async () => {
     const root = await tempRoot();
     const handle = await withComment(root);
-    const before = await read(taskFile(root, "TASM-1"));
+    const before = await read(taskFile(root, "SAGA-1"));
 
-    await handle.updateComment("TASM-1", 1, { title: "First note" });
+    await handle.updateComment("SAGA-1", 1, { title: "First note" });
 
-    expect(await read(taskFile(root, "TASM-1"))).toBe(before);
+    expect(await read(taskFile(root, "SAGA-1"))).toBe(before);
   });
 
   it("deletes a comment and leaves the counter where it stands", async () => {
     const root = await tempRoot();
     const handle = await withComment(root);
 
-    await handle.deleteComment("TASM-1", 1);
+    await handle.deleteComment("SAGA-1", 1);
 
-    const { task } = await handle.readTask("TASM-1");
+    const { task } = await handle.readTask("SAGA-1");
     expect(task.comments).toEqual([]);
     expect(task.frontmatter.next_comment_id).toBe(2);
   });
@@ -270,11 +270,11 @@ describe("comments", () => {
   it("keeps a comment it did not touch byte-identical", async () => {
     const root = await tempRoot();
     const source = richTask();
-    await plant(taskFile(root, "TASM-42"), source);
+    await plant(taskFile(root, "SAGA-42"), source);
 
-    await project(root).updateComment("TASM-42", 1, { title: "Renamed" });
+    await project(root).updateComment("SAGA-42", 1, { title: "Renamed" });
 
-    const written = await read(taskFile(root, "TASM-42"));
+    const written = await read(taskFile(root, "SAGA-42"));
     const marker = source.slice(source.indexOf("<!-- task:comment\n"));
     expect(written).toContain(marker);
   });
@@ -286,73 +286,73 @@ describe("deleteTask", () => {
     const handle = project(root);
     await handle.createTask({ title: "First" });
 
-    const result = await handle.deleteTask("TASM-1");
+    const result = await handle.deleteTask("SAGA-1");
 
-    expect(result.id).toBe("TASM-1");
+    expect(result.id).toBe("SAGA-1");
     await expect(readdir(tasksDir(root))).resolves.toEqual([]);
   });
 
   it.each([
-    ["carries the id of another task", taskText("TASM-30")],
+    ["carries the id of another task", taskText("SAGA-30")],
     ["cannot be parsed at all", "no frontmatter here\n"],
   ])("removes a file that %s, because it opens none", async (_name, text) => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), text);
+    await plant(taskFile(root, "SAGA-1"), text);
 
-    await project(root).deleteTask("TASM-1");
+    await project(root).deleteTask("SAGA-1");
 
     await expect(readdir(tasksDir(root))).resolves.toEqual([]);
   });
 });
 
 describe("removeReference", () => {
-  /** Plants `TASM-1` with further frontmatter lines, removes `TASM-2` from it, and reads its frontmatter back. */
+  /** Plants `SAGA-1` with further frontmatter lines, removes `SAGA-2` from it, and reads its frontmatter back. */
   async function removed(extra: string): Promise<Frontmatter> {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", extra));
-    await project(root).removeReference("TASM-1", "TASM-2");
-    return (await project(root).readTask("TASM-1")).task.frontmatter;
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1", extra));
+    await project(root).removeReference("SAGA-1", "SAGA-2");
+    return (await project(root).readTask("SAGA-1")).task.frontmatter;
   }
 
   it("removes the id from blocked_by and keeps the other blockers in their order", async () => {
-    const frontmatter = await removed("blocked_by: [TASM-3, TASM-2, TASM-4]\n");
+    const frontmatter = await removed("blocked_by: [SAGA-3, SAGA-2, SAGA-4]\n");
 
-    expect(frontmatter.blocked_by).toEqual(["TASM-3", "TASM-4"]);
+    expect(frontmatter.blocked_by).toEqual(["SAGA-3", "SAGA-4"]);
   });
 
   it("removes every entry of the id that a hand edit repeated", async () => {
-    const frontmatter = await removed("blocked_by: [TASM-2, TASM-3, TASM-2]\n");
+    const frontmatter = await removed("blocked_by: [SAGA-2, SAGA-3, SAGA-2]\n");
 
-    expect(frontmatter.blocked_by).toEqual(["TASM-3"]);
+    expect(frontmatter.blocked_by).toEqual(["SAGA-3"]);
   });
 
   it("removes the blocked_by key when no blocker is left", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "blocked_by: [TASM-2]\n"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1", "blocked_by: [SAGA-2]\n"));
 
-    await project(root).removeReference("TASM-1", "TASM-2");
+    await project(root).removeReference("SAGA-1", "SAGA-2");
 
-    expect(await read(taskFile(root, "TASM-1"))).not.toContain("blocked_by");
+    expect(await read(taskFile(root, "SAGA-1"))).not.toContain("blocked_by");
   });
 
   it("clears a parent equal to the id, and keeps blockers that name other tasks", async () => {
-    const frontmatter = await removed("parent: TASM-2\nblocked_by: [TASM-3]\n");
+    const frontmatter = await removed("parent: SAGA-2\nblocked_by: [SAGA-3]\n");
 
     expect(Object.hasOwn(frontmatter, "parent")).toBe(false);
-    expect(frontmatter.blocked_by).toEqual(["TASM-3"]);
+    expect(frontmatter.blocked_by).toEqual(["SAGA-3"]);
   });
 
   it("keeps a parent that names another task", async () => {
-    const frontmatter = await removed("parent: TASM-3\nblocked_by: [TASM-2]\n");
+    const frontmatter = await removed("parent: SAGA-3\nblocked_by: [SAGA-2]\n");
 
-    expect(frontmatter.parent).toBe("TASM-3");
+    expect(frontmatter.parent).toBe("SAGA-3");
   });
 
   it("removes the id from both fields in one call", async () => {
-    const frontmatter = await removed("parent: TASM-2\nblocked_by: [TASM-2, TASM-3]\n");
+    const frontmatter = await removed("parent: SAGA-2\nblocked_by: [SAGA-2, SAGA-3]\n");
 
     expect(Object.hasOwn(frontmatter, "parent")).toBe(false);
-    expect(frontmatter.blocked_by).toEqual(["TASM-3"]);
+    expect(frontmatter.blocked_by).toEqual(["SAGA-3"]);
   });
 
   it("moves updated and keeps every other line of the file byte for byte", async () => {
@@ -361,15 +361,15 @@ describe("removeReference", () => {
     // collection and the gap before a comment of a rewritten frontmatter in its
     // own form, whichever key the write changed.
     const frontmatter = `---
-id: TASM-42
+id: SAGA-42
 title: "Import the address book" # kept with its quotes
 status: In Progress
 labels:
   - import
-parent: TASM-41
+parent: SAGA-41
 blocked_by:
-  - TASM-40
-  - TASM-41
+  - SAGA-40
+  - SAGA-41
 created: "${TIMESTAMP}"
 updated: "${TIMESTAMP}"
 next_comment_id: 3
@@ -379,12 +379,12 @@ custom:
 ---
 `;
     const source = `${frontmatter}${afterFrontmatter(richTask())}`;
-    await plant(taskFile(root, "TASM-42"), source);
+    await plant(taskFile(root, "SAGA-42"), source);
 
-    await project(root).removeReference("TASM-42", "TASM-41");
+    await project(root).removeReference("SAGA-42", "SAGA-41");
 
-    const written = await read(taskFile(root, "TASM-42"));
-    const expected = source.replace("parent: TASM-41\n", "").replace("  - TASM-41\n", "");
+    const written = await read(taskFile(root, "SAGA-42"));
+    const expected = source.replace("parent: SAGA-41\n", "").replace("  - SAGA-41\n", "");
     const stamped = /^updated: .*$/m;
     expect(written.replace(stamped, "")).toBe(expected.replace(stamped, ""));
     expect(parseTask(written).task.frontmatter.updated).not.toBe(TIMESTAMP);
@@ -392,59 +392,59 @@ custom:
 
   it("writes nothing when the task does not name the id", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "parent: TASM-3\nblocked_by: [TASM-4]\n"));
-    const before = await read(taskFile(root, "TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1", "parent: SAGA-3\nblocked_by: [SAGA-4]\n"));
+    const before = await read(taskFile(root, "SAGA-1"));
 
-    const result = await project(root).removeReference("TASM-1", "TASM-2");
+    const result = await project(root).removeReference("SAGA-1", "SAGA-2");
 
-    expect(result).toEqual({ id: "TASM-1", diagnostics: [] });
-    expect(await read(taskFile(root, "TASM-1"))).toBe(before);
+    expect(result).toEqual({ id: "SAGA-1", diagnostics: [] });
+    expect(await read(taskFile(root, "SAGA-1"))).toBe(before);
   });
 
   it("forwards a diagnostic of the reader with the path it points at", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), `${taskText("TASM-1", "blocked_by: [TASM-2]\n")}\n\`\`\`sh\nnever closed\n`);
+    await plant(taskFile(root, "SAGA-1"), `${taskText("SAGA-1", "blocked_by: [SAGA-2]\n")}\n\`\`\`sh\nnever closed\n`);
 
-    const result = await project(root).removeReference("TASM-1", "TASM-2");
+    const result = await project(root).removeReference("SAGA-1", "SAGA-2");
 
     expect(codes(result.diagnostics)).toEqual(["unterminated-fence"]);
-    expect(result.diagnostics[0]?.path).toBe(taskFile(root, "TASM-1"));
+    expect(result.diagnostics[0]?.path).toBe(taskFile(root, "SAGA-1"));
   });
 
   it.each([
-    ["task-not-found", "TASM-2", taskText("TASM-2")],
-    ["id-mismatch", "TASM-1", taskText("TASM-30", "blocked_by: [TASM-2]\n")],
+    ["task-not-found", "SAGA-2", taskText("SAGA-2")],
+    ["id-mismatch", "SAGA-1", taskText("SAGA-30", "blocked_by: [SAGA-2]\n")],
   ])("refuses with %s", async (code, planted, text) => {
     const root = await tempRoot();
     await plant(taskFile(root, planted), text);
 
-    const error = await storeError(project(root).removeReference("TASM-1", "TASM-2"));
+    const error = await storeError(project(root).removeReference("SAGA-1", "SAGA-2"));
 
     expect(error.code).toBe(code);
-    expect(error.path).toBe(taskFile(root, "TASM-1"));
+    expect(error.path).toBe(taskFile(root, "SAGA-1"));
   });
 
   it("refuses with the parse error of a file it cannot read", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), "no frontmatter here\n");
+    await plant(taskFile(root, "SAGA-1"), "no frontmatter here\n");
 
-    await expect(project(root).removeReference("TASM-1", "TASM-2")).rejects.toBeInstanceOf(TaskParseError);
+    await expect(project(root).removeReference("SAGA-1", "SAGA-2")).rejects.toBeInstanceOf(TaskParseError);
   });
 
   it("checks no other blocker, so one that names no task stays in the file", async () => {
-    const frontmatter = await removed("blocked_by: [TASM-2, TASM-77]\n");
+    const frontmatter = await removed("blocked_by: [SAGA-2, SAGA-77]\n");
 
-    expect(frontmatter.blocked_by).toEqual(["TASM-77"]);
+    expect(frontmatter.blocked_by).toEqual(["SAGA-77"]);
   });
 
   it("rewrites a task whose status the configuration no longer holds", async () => {
     const root = await tempRoot();
-    const text = taskText("TASM-1", "blocked_by: [TASM-2]\n").replace("status: To Do", "status: Frozen");
-    await plant(taskFile(root, "TASM-1"), text);
+    const text = taskText("SAGA-1", "blocked_by: [SAGA-2]\n").replace("status: To Do", "status: Frozen");
+    await plant(taskFile(root, "SAGA-1"), text);
 
-    await project(root).removeReference("TASM-1", "TASM-2");
+    await project(root).removeReference("SAGA-1", "SAGA-2");
 
-    const written = await read(taskFile(root, "TASM-1"));
+    const written = await read(taskFile(root, "SAGA-1"));
     expect(written).toContain("status: Frozen");
     expect(written).not.toContain("blocked_by");
   });
@@ -458,7 +458,7 @@ describe("listTaskIds", () => {
 
     const { ids, diagnostics } = await handle.listTaskIds();
 
-    expect(ids).toEqual(["TASM-1", "TASM-2", "TASM-3"]);
+    expect(ids).toEqual(["SAGA-1", "SAGA-2", "SAGA-3"]);
     expect(diagnostics).toEqual([]);
   });
 
@@ -470,11 +470,11 @@ describe("listTaskIds", () => {
 
   it("returns an id whose file carries another id, because it reads names alone", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-30"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-30"));
 
     const { ids } = await project(root).listTaskIds();
 
-    expect(ids).toEqual(["TASM-1"]);
+    expect(ids).toEqual(["SAGA-1"]);
     expect(codes((await project(root).listTaskIds()).diagnostics)).toEqual([]);
   });
 });

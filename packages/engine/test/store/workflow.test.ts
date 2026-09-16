@@ -43,7 +43,7 @@ describe("a write that states a workflow", () => {
 
     await project(root).createTask({ title: "First", workflow: "dev", step: "research" });
 
-    const { task, diagnostics } = await project(root).readTask("TASM-1");
+    const { task, diagnostics } = await project(root).readTask("SAGA-1");
     expect(task.frontmatter.workflow).toBe("dev");
     expect(task.frontmatter.step).toBe("research");
     expect(diagnostics).toEqual([]);
@@ -111,18 +111,18 @@ describe("a write that states a workflow", () => {
 describe("a write that states a step", () => {
   it("accepts one the effective workflow declares, without restating the workflow", async () => {
     const root = await declaredTree();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "workflow: dev\n"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1", "workflow: dev\n"));
 
-    await project(root).updateTask("TASM-1", { step: "implement" });
+    await project(root).updateTask("SAGA-1", { step: "implement" });
 
-    expect((await project(root).readTask("TASM-1")).task.frontmatter.step).toBe("implement");
+    expect((await project(root).readTask("SAGA-1")).task.frontmatter.step).toBe("implement");
   });
 
   it("refuses one the effective workflow does not declare, naming the workflow file", async () => {
     const root = await declaredTree();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "workflow: dev\n"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1", "workflow: dev\n"));
 
-    const error = await storeError(project(root).updateTask("TASM-1", { step: "review" }));
+    const error = await storeError(project(root).updateTask("SAGA-1", { step: "review" }));
 
     expect(error.code).toBe("step-unknown");
     expect(error.path).toBe(workflowFile(root, "dev"));
@@ -130,63 +130,63 @@ describe("a write that states a step", () => {
 
   it("refuses one when the task names no workflow", async () => {
     const root = await declaredTree();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
-    const error = await storeError(project(root).updateTask("TASM-1", { step: "research" }));
+    const error = await storeError(project(root).updateTask("SAGA-1", { step: "research" }));
 
     expect(error.code).toBe("step-unknown");
-    expect(error.path).toBe(taskFile(root, "TASM-1"));
+    expect(error.path).toBe(taskFile(root, "SAGA-1"));
   });
 
   it("refuses one when the change clears the workflow in the same call", async () => {
     const root = await declaredTree();
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
     expect(
-      (await storeError(project(root).updateTask("TASM-1", { workflow: undefined, step: "implement" }))).code,
+      (await storeError(project(root).updateTask("SAGA-1", { workflow: undefined, step: "implement" }))).code,
     ).toBe("step-unknown");
   });
 
   it("refuses a value that is not a string", async () => {
     const root = await declaredTree();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "workflow: dev\n"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1", "workflow: dev\n"));
 
-    expect((await storeError(project(root).updateTask("TASM-1", { step: 3 }))).code).toBe("step-unknown");
+    expect((await storeError(project(root).updateTask("SAGA-1", { step: 3 }))).code).toBe("step-unknown");
   });
 
   it("matches exactly, unlike a status", async () => {
     const root = await declaredTree();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "workflow: dev\n"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1", "workflow: dev\n"));
 
-    expect((await storeError(project(root).updateTask("TASM-1", { step: "Research" }))).code).toBe("step-unknown");
+    expect((await storeError(project(root).updateTask("SAGA-1", { step: "Research" }))).code).toBe("step-unknown");
   });
 
   it("refuses one against a stored workflow that no longer loads", async () => {
     const root = await declaredTree();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "workflow: dev\n"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1", "workflow: dev\n"));
     await plantWorkflow(root, "dev", "steps: []\n");
 
-    expect((await storeError(project(root).updateTask("TASM-1", { step: "research" }))).code).toBe("workflow-invalid");
+    expect((await storeError(project(root).updateTask("SAGA-1", { step: "research" }))).code).toBe("workflow-invalid");
   });
 
   it("accepts one against a stored workflow the project has since dropped", async () => {
     const root = await declaredTree();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "workflow: dev\n"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1", "workflow: dev\n"));
     await plant(projectConfig(root), "workflows: []\n");
 
-    await project(root).updateTask("TASM-1", { step: "implement" });
+    await project(root).updateTask("SAGA-1", { step: "implement" });
 
-    expect((await project(root).readTask("TASM-1")).task.frontmatter.step).toBe("implement");
+    expect((await project(root).readTask("SAGA-1")).task.frontmatter.step).toBe("implement");
   });
 
   it("accepts a step cleared", async () => {
     const root = await declaredTree();
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    const { diagnostics } = await project(root).updateTask("TASM-1", { step: undefined });
+    const { diagnostics } = await project(root).updateTask("SAGA-1", { step: undefined });
 
     expect(diagnostics).toEqual([]);
-    expect((await project(root).readTask("TASM-1")).task.frontmatter.step).toBeUndefined();
+    expect((await project(root).readTask("SAGA-1")).task.frontmatter.step).toBeUndefined();
   });
 });
 
@@ -206,7 +206,7 @@ describe("a create that states no workflow", () => {
     const { diagnostics } = await project(root).createTask({ title: "First" });
 
     expect(diagnostics).toEqual([]);
-    expect((await project(root).readTask("TASM-1")).task.frontmatter.workflow).toBe("dev");
+    expect((await project(root).readTask("SAGA-1")).task.frontmatter.workflow).toBe("dev");
   });
 
   it("leaves a workflow the create states in place of the first", async () => {
@@ -214,7 +214,7 @@ describe("a create that states no workflow", () => {
 
     await project(root).createTask({ title: "First", workflow: "design" });
 
-    expect((await project(root).readTask("TASM-1")).task.frontmatter.workflow).toBe("design");
+    expect((await project(root).readTask("SAGA-1")).task.frontmatter.workflow).toBe("design");
   });
 
   const noWorkflow: [string, string | undefined][] = [
@@ -228,7 +228,7 @@ describe("a create that states no workflow", () => {
 
     await project(root).createTask({ title: "First" });
 
-    expect((await project(root).readTask("TASM-1")).task.frontmatter.workflow).toBeUndefined();
+    expect((await project(root).readTask("SAGA-1")).task.frontmatter.workflow).toBeUndefined();
   });
 
   it.each(noWorkflow)("refuses a step in a project with %s", async (_name, config) => {
@@ -246,7 +246,7 @@ describe("a create that states no workflow", () => {
 
     await project(root).createTask({ title: "First", step: "research" });
 
-    const { frontmatter } = (await project(root).readTask("TASM-1")).task;
+    const { frontmatter } = (await project(root).readTask("SAGA-1")).task;
     expect(frontmatter.workflow).toBe("dev");
     expect(frontmatter.step).toBe("research");
   });
@@ -291,20 +291,20 @@ describe("a stored step the change does not state", () => {
     await plant(projectConfig(root), "workflows: [dev, design]\n");
     await plantWorkflow(root, "dev", stepsOnly("research"));
     await plantWorkflow(root, "design", stepsOnly("brief"));
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    const { diagnostics } = await project(root).updateTask("TASM-1", { workflow: "design" });
+    const { diagnostics } = await project(root).updateTask("SAGA-1", { workflow: "design" });
 
     expect(codes(diagnostics)).toEqual(["step-stale"]);
-    expect(diagnostics[0]?.path).toBe(taskFile(root, "TASM-1"));
-    expect((await project(root).readTask("TASM-1")).task.frontmatter.step).toBe("research");
+    expect(diagnostics[0]?.path).toBe(taskFile(root, "SAGA-1"));
+    expect((await project(root).readTask("SAGA-1")).task.frontmatter.step).toBe("research");
   });
 
   it("is accepted and reported when the workflow is cleared", async () => {
     const root = await declaredTree();
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    const { diagnostics } = await project(root).updateTask("TASM-1", { workflow: undefined });
+    const { diagnostics } = await project(root).updateTask("SAGA-1", { workflow: undefined });
 
     expect(codes(diagnostics)).toEqual(["step-stale"]);
     expect(diagnostics[0]?.message).toContain("names no workflow");
@@ -315,9 +315,9 @@ describe("a stored step the change does not state", () => {
     await plant(projectConfig(root), "workflows: [dev, design]\n");
     await plantWorkflow(root, "dev", stepsOnly("research"));
     await plantWorkflow(root, "design", stepsOnly("research"));
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    expect((await project(root).updateTask("TASM-1", { workflow: "design" })).diagnostics).toEqual([]);
+    expect((await project(root).updateTask("SAGA-1", { workflow: "design" })).diagnostics).toEqual([]);
   });
 });
 
@@ -325,9 +325,9 @@ describe("a write that touches neither field", () => {
   it("is accepted while the workflow the task names is missing", async () => {
     const root = await tempRoot();
     await plant(projectConfig(root), "workflows: [dev]\n");
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    const { diagnostics } = await project(root).updateTask("TASM-1", { title: "Renamed" });
+    const { diagnostics } = await project(root).updateTask("SAGA-1", { title: "Renamed" });
 
     expect(diagnostics).toEqual([]);
   });
@@ -342,9 +342,9 @@ describe("a write that touches neither field", () => {
 describe("a read", () => {
   it("reports a workflow that does not exist, naming its directory", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    const { diagnostics } = await project(root).readTask("TASM-1");
+    const { diagnostics } = await project(root).readTask("SAGA-1");
 
     expect(codes(diagnostics)).toEqual(["workflow-missing"]);
     expect(diagnostics[0]?.path).toBe(workflowDir(root, "dev"));
@@ -353,9 +353,9 @@ describe("a read", () => {
   it("reports a workflow that does not load", async () => {
     const root = await tempRoot();
     await plantWorkflow(root, "dev", "steps: []\n");
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    const { diagnostics } = await project(root).readTask("TASM-1");
+    const { diagnostics } = await project(root).readTask("SAGA-1");
 
     expect(codes(diagnostics)).toEqual(["workflow-missing"]);
     expect(diagnostics[0]?.path).toBe(workflowFile(root, "dev"));
@@ -363,26 +363,26 @@ describe("a read", () => {
 
   it("reports a workflow whose name breaks the rule", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "workflow: ../../../Documents\n"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1", "workflow: ../../../Documents\n"));
 
-    expect(codes((await project(root).readTask("TASM-1")).diagnostics)).toEqual(["workflow-missing"]);
+    expect(codes((await project(root).readTask("SAGA-1")).diagnostics)).toEqual(["workflow-missing"]);
   });
 
   it("reports a step the workflow dropped, naming the task file", async () => {
     const root = await declaredTree("implement");
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    const { diagnostics } = await project(root).readTask("TASM-1");
+    const { diagnostics } = await project(root).readTask("SAGA-1");
 
     expect(codes(diagnostics)).toEqual(["step-stale"]);
-    expect(diagnostics[0]?.path).toBe(taskFile(root, "TASM-1"));
+    expect(diagnostics[0]?.path).toBe(taskFile(root, "SAGA-1"));
   });
 
   it("reports a step left behind when the workflow was cleared, and reads no workflow file", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", "step: research\n"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1", "step: research\n"));
 
-    const { diagnostics } = await project(root).readTask("TASM-1");
+    const { diagnostics } = await project(root).readTask("SAGA-1");
 
     expect(codes(diagnostics)).toEqual(["step-stale"]);
     expect(diagnostics[0]?.message).toContain("names no workflow");
@@ -391,36 +391,36 @@ describe("a read", () => {
   it("does not consult the list the project declares", async () => {
     const root = await tempRoot();
     await plantWorkflow(root, "dev", stepsOnly("research"));
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    expect((await project(root).readTask("TASM-1")).diagnostics).toEqual([]);
+    expect((await project(root).readTask("SAGA-1")).diagnostics).toEqual([]);
   });
 
   it("stays readable while the configuration of the project is broken", async () => {
     const root = await tempRoot();
     await plantWorkflow(root, "dev", stepsOnly("research"));
     await plant(projectConfig(root), "statuses: not a list\n");
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    expect((await project(root).readTask("TASM-1")).task.frontmatter.step).toBe("research");
+    expect((await project(root).readTask("SAGA-1")).task.frontmatter.step).toBe("research");
   });
 
   it("says nothing about a task that names neither field", async () => {
     const root = await declaredTree();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
-    expect((await project(root).readTask("TASM-1")).diagnostics).toEqual([]);
+    expect((await project(root).readTask("SAGA-1")).diagnostics).toEqual([]);
   });
 
   it("reports a workflow the filesystem refuses to open, rather than refusing the read", async () => {
     const root = await tempRoot();
     await plantWorkflow(root, "dev", stepsOnly("research"));
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
     // Restored so that the temp tree can be taken down.
     await chmod(workflowDir(root, "dev"), 0o000);
     onTestFinished(() => chmod(workflowDir(root, "dev"), 0o700));
 
-    const { task, diagnostics } = await project(root).readTask("TASM-1");
+    const { task, diagnostics } = await project(root).readTask("SAGA-1");
 
     expect(task.frontmatter.step).toBe("research");
     expect(codes(diagnostics)).toEqual(["workflow-missing"]);
@@ -429,9 +429,9 @@ describe("a read", () => {
 
   it("reports a workflow whose name is longer than one path component holds", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", `workflow: ${"a".repeat(256)}\n`));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1", `workflow: ${"a".repeat(256)}\n`));
 
-    const { diagnostics } = await project(root).readTask("TASM-1");
+    const { diagnostics } = await project(root).readTask("SAGA-1");
 
     expect(codes(diagnostics)).toEqual(["workflow-missing"]);
     expect(diagnostics[0]?.path).toBe(join(root, "workflows"));
@@ -440,9 +440,9 @@ describe("a read", () => {
   it("says nothing about the workflow file beyond whether the task fits it", async () => {
     const root = await tempRoot();
     await plantWorkflow(root, "dev", `stpes: []\n${stepsOnly("research")}`);
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    expect((await project(root).readTask("TASM-1")).diagnostics).toEqual([]);
+    expect((await project(root).readTask("SAGA-1")).diagnostics).toEqual([]);
   });
 });
 
@@ -454,7 +454,7 @@ describe("the configuration keys", () => {
     const { config } = await project(root).config();
 
     expect(config.workflows).toEqual(["dev"]);
-    expect(config.instructions[0]).toBe(join(root, "projects", "TASM", "house.md"));
+    expect(config.instructions[0]).toBe(join(root, "projects", "SAGA", "house.md"));
     expect(config.instructions[2]).toBe("/tmp/x.md");
   });
 
@@ -492,9 +492,9 @@ describe("the workflow of one operation", () => {
     const root = await tempRoot();
     await plant(projectConfig(root), "workflows: [dev]\n");
     await plantWorkflow(root, "dev", `stpes: []\n${stepsOnly("research")}`);
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
-    const { diagnostics } = await project(root).updateTask("TASM-1", { workflow: "dev", step: "research" });
+    const { diagnostics } = await project(root).updateTask("SAGA-1", { workflow: "dev", step: "research" });
 
     expect(codes(diagnostics)).toEqual(["workflow-key-unknown"]);
   });
@@ -522,9 +522,9 @@ describe("an operation of the store against a configured workflows directory", (
   it("is where a read resolves it, so a workflow under the default is reported as missing", async () => {
     const { root, path } = await configuredTree();
     await plantWorkflow(root, "dev", stepsOnly("research"));
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    const { diagnostics } = await project(root).readTask("TASM-1");
+    const { diagnostics } = await project(root).readTask("SAGA-1");
 
     expect(codes(diagnostics)).toEqual(["workflow-missing"]);
     expect(diagnostics[0]?.path).toBe(join(path, "dev"));
@@ -533,18 +533,18 @@ describe("an operation of the store against a configured workflows directory", (
   it("leaves a read silent when the workflow stands under it", async () => {
     const { root, path } = await configuredTree();
     await plantWorkflow(root, "dev", stepsOnly("research"), path);
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    expect((await project(root).readTask("TASM-1")).diagnostics).toEqual([]);
+    expect((await project(root).readTask("SAGA-1")).diagnostics).toEqual([]);
   });
 
   it("is where a read resolves it although the project's own configuration is refused", async () => {
     const { root, path } = await configuredTree();
     await plant(projectConfig(root), "workflows: [\n");
     await plantWorkflow(root, "dev", stepsOnly("research"), path);
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    expect((await project(root).readTask("TASM-1")).diagnostics).toEqual([]);
+    expect((await project(root).readTask("SAGA-1")).diagnostics).toEqual([]);
   });
 });
 
@@ -566,9 +566,9 @@ describe("a read whose configuration cannot be resolved", () => {
     const root = await tempRoot();
     await plantWorkflow(root, "dev", stepsOnly("research"));
     await stage(userConfig(root));
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    const { task, diagnostics } = await project(root).readTask("TASM-1");
+    const { task, diagnostics } = await project(root).readTask("SAGA-1");
 
     expect(task.frontmatter.step).toBe("research");
     expect(codes(diagnostics)).toEqual(["config-unreadable"]);
@@ -580,9 +580,9 @@ describe("a read whose configuration cannot be resolved", () => {
     const root = await tempRoot();
     await plantWorkflow(root, "dev", stepsOnly("research"));
     await plant(userConfig(root), "statues: [New]\n");
-    await plant(taskFile(root, "TASM-1"), onStep("TASM-1", "dev", "research"));
+    await plant(taskFile(root, "SAGA-1"), onStep("SAGA-1", "dev", "research"));
 
-    expect((await project(root).readTask("TASM-1")).diagnostics).toEqual([]);
+    expect((await project(root).readTask("SAGA-1")).diagnostics).toEqual([]);
   });
 
   it.each([
@@ -591,9 +591,9 @@ describe("a read whose configuration cannot be resolved", () => {
   ])("resolves no configuration at all for a task %s", async (_name, extra, expected) => {
     const root = await tempRoot();
     await plant(userConfig(root), "workflows_path: [\n");
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1", extra));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1", extra));
 
-    expect(codes((await project(root).readTask("TASM-1")).diagnostics)).toEqual(expected);
+    expect(codes((await project(root).readTask("SAGA-1")).diagnostics)).toEqual(expected);
   });
 });
 

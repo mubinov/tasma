@@ -25,47 +25,47 @@ describe("the watcher of an open index", { timeout: 8000, retry: 3 }, () => {
     const indexed = await watching(root);
 
     await until(() => ids(indexed).length === 1, "the created file reached the index", () =>
-      plant(taskFile(root, "TASM-1"), taskText("TASM-1")),
+      plant(taskFile(root, "SAGA-1"), taskText("SAGA-1")),
     );
 
-    expect(ids(indexed)).toEqual(["TASM-1"]);
+    expect(ids(indexed)).toEqual(["SAGA-1"]);
   });
 
   it("takes up a change a hand edit made", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
     const indexed = await watching(root);
 
     await until(() => indexed.query().entries[0]?.frontmatter.title === "By hand", "the edit reached the index", () =>
-      writeFile(taskFile(root, "TASM-1"), taskText("TASM-1").replace("Planted", "By hand"), "utf8"),
+      writeFile(taskFile(root, "SAGA-1"), taskText("SAGA-1").replace("Planted", "By hand"), "utf8"),
     );
   });
 
   it("drops a file a hand edit removed", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
     const indexed = await watching(root);
 
     // Written again before each removal: a second removal of a file that is
     // already gone changes nothing, so it reports nothing either.
     await until(() => ids(indexed).length === 0, "the removed file left the index", async () => {
-      await writeFile(taskFile(root, "TASM-1"), taskText("TASM-1"), "utf8");
-      await rm(taskFile(root, "TASM-1"), { force: true });
+      await writeFile(taskFile(root, "SAGA-1"), taskText("SAGA-1"), "utf8");
+      await rm(taskFile(root, "SAGA-1"), { force: true });
     });
   });
 
   it("excludes a file a hand edit broke, and reports it", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
     const seen = listener();
     const indexed = await watching(root, seen.on);
 
     await until(() => seen.codes().includes("task-file-unreadable"), "the broken file was reported", () =>
-      writeFile(taskFile(root, "TASM-1"), "Broken by hand.\n", "utf8"),
+      writeFile(taskFile(root, "SAGA-1"), "Broken by hand.\n", "utf8"),
     );
 
     expect(ids(indexed)).toEqual([]);
-    expect(indexed.query().excluded[0]?.path).toBe(taskFile(root, "TASM-1"));
+    expect(indexed.query().excluded[0]?.path).toBe(taskFile(root, "SAGA-1"));
   });
 
   it("takes up a tasks directory that appeared under it", async () => {
@@ -73,18 +73,18 @@ describe("the watcher of an open index", { timeout: 8000, retry: 3 }, () => {
     const indexed = await watching(root);
 
     await until(() => ids(indexed).length === 1, "the new tasks directory reached the index", () =>
-      plant(taskFile(root, "TASM-1"), taskText("TASM-1")),
+      plant(taskFile(root, "SAGA-1"), taskText("SAGA-1")),
     );
   });
 
   it("drops every task when the tasks directory goes away", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
     const seen = listener();
     const indexed = await watching(root, seen.on);
 
     await until(() => seen.codes().includes("tasks-directory-lost"), "the lost directory was reported", async () => {
-      await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+      await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
       await rm(tasksDir(root), { recursive: true, force: true });
     });
 
@@ -93,13 +93,13 @@ describe("the watcher of an open index", { timeout: 8000, retry: 3 }, () => {
 
   it("passes over a file that is no task file of this project", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
     const seen = listener();
     const indexed = await watching(root, seen.on);
 
     await until(() => ids(indexed).length === 2, "the second task reached the index", async () => {
       await plant(join(tasksDir(root), "notes.md"), "notes");
-      await plant(taskFile(root, "TASM-2"), taskText("TASM-2"));
+      await plant(taskFile(root, "SAGA-2"), taskText("SAGA-2"));
     });
 
     expect(seen.codes()).toEqual([]);
@@ -193,7 +193,7 @@ describe("the two watches themselves", () => {
     const { watches, taken } = openWatches(root, { onTask: (file) => void applied.push(file.id) });
     await watches.ensure();
 
-    taken.get(tasksDir(root))?.change("TASM-1.md");
+    taken.get(tasksDir(root))?.change("SAGA-1.md");
     await watches.close();
     await new Promise((resolve) => setTimeout(resolve, 60));
 
@@ -284,14 +284,14 @@ describe("the two watches themselves", () => {
     const { watches, taken } = openWatches(root, { onTask: (file) => void applied.push(file.id) });
     await watches.ensure();
 
-    for (const event of ["rename", "change", "change"]) taken.get(tasksDir(root))?.change("TASM-1.md", event);
+    for (const event of ["rename", "change", "change"]) taken.get(tasksDir(root))?.change("SAGA-1.md", event);
     await until(() => applied.length > 0, "the events were applied");
 
-    expect(applied).toEqual(["TASM-1"]);
+    expect(applied).toEqual(["SAGA-1"]);
     await watches.close();
   });
 
-  it.each(["notes.md", ".TASM-1.md.abcd.tmp", "TASM-x.md", "TASM-1.txt"])("passes over the name %s", async (name) => {
+  it.each(["notes.md", ".SAGA-1.md.abcd.tmp", "SAGA-x.md", "SAGA-1.txt"])("passes over the name %s", async (name) => {
     const root = await tempRoot();
     await mkdir(tasksDir(root), { recursive: true });
     const applied: string[] = [];
@@ -299,10 +299,10 @@ describe("the two watches themselves", () => {
     await watches.ensure();
 
     taken.get(tasksDir(root))?.change(name);
-    taken.get(tasksDir(root))?.change("TASM-1.md");
+    taken.get(tasksDir(root))?.change("SAGA-1.md");
     await until(() => applied.length > 0, "the task file was applied");
 
-    expect(applied).toEqual(["TASM-1"]);
+    expect(applied).toEqual(["SAGA-1"]);
     await watches.close();
   });
 

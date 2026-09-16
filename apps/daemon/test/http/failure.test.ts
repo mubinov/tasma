@@ -17,13 +17,13 @@ function statusOfSerialize(code: SerializeErrorCode): number {
 
 describe("toFailure", () => {
   it("carries the code and the path of a store refusal", () => {
-    const failure = toFailure(new TaskStoreError("task-not-found", "no such task", "/tmp/TASM-3.md"));
+    const failure = toFailure(new TaskStoreError("task-not-found", "no such task", "/tmp/SAGA-3.md"));
 
     expect(failure).toEqual({
       kind: "store",
       code: "task-not-found",
-      message: "/tmp/TASM-3.md: no such task",
-      path: "/tmp/TASM-3.md",
+      message: "/tmp/SAGA-3.md: no such task",
+      path: "/tmp/SAGA-3.md",
     });
   });
 
@@ -37,14 +37,14 @@ describe("toFailure", () => {
   });
 
   it("carries the line and the filename of a parse refusal", () => {
-    const failure = toFailure(new TaskParseError("frontmatter-missing", 1, "no frontmatter", "TASM-3.md"));
+    const failure = toFailure(new TaskParseError("frontmatter-missing", 1, "no frontmatter", "SAGA-3.md"));
 
     expect(failure).toEqual({
       kind: "parse",
       code: "frontmatter-missing",
-      message: "TASM-3.md:1: no frontmatter",
+      message: "SAGA-3.md:1: no frontmatter",
       line: 1,
-      filename: "TASM-3.md",
+      filename: "SAGA-3.md",
     });
   });
 

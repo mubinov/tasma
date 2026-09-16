@@ -3,16 +3,16 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { noticeWords, useNoticeStore, type Notice } from "../../src/store/notices";
 
 const FIRST: Notice = {
-  key: "task-read:TASM-56",
+  key: "task-read:SAGA-56",
   form: "warning",
-  title: "1 warning about TASM-56",
+  title: "1 warning about SAGA-56",
   words: ["label-case-converted · label \"Web\" was converted to \"web\""],
 };
 
 const SECOND: Notice = {
-  key: "task-read:TASM-57",
+  key: "task-read:SAGA-57",
   form: "warning",
-  title: "1 warning about TASM-57",
+  title: "1 warning about SAGA-57",
   words: ["step-stale · step \"dev:doing\" is not a step of dev-personal"],
 };
 
@@ -42,7 +42,7 @@ describe("showNotice", () => {
   });
 
   it("replaces the notice under the key and moves it to the bottom when the content differs", () => {
-    const changed: Notice = { ...FIRST, title: "2 warnings about TASM-56", words: [...FIRST.words, "unterminated-fence · a fence is not closed"] };
+    const changed: Notice = { ...FIRST, title: "2 warnings about SAGA-56", words: [...FIRST.words, "unterminated-fence · a fence is not closed"] };
     useNoticeStore.getState().showNotice(FIRST);
     useNoticeStore.getState().showNotice(SECOND);
 
@@ -158,7 +158,7 @@ describe("closeNotice", () => {
 describe("noticeWords", () => {
   it("gives code · message for each diagnostic and leaves out the path and the line", () => {
     const diagnostics: Diagnostic[] = [
-      { code: "unterminated-fence", message: "a fence is not closed", path: "/home/tasks/TASM-56.md", line: 12 },
+      { code: "unterminated-fence", message: "a fence is not closed", path: "/home/tasks/SAGA-56.md", line: 12 },
       { code: "label-case-converted", message: "label \"Web\" was converted to \"web\"" },
     ];
 

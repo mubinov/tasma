@@ -159,9 +159,9 @@ describe("daemon status", () => {
   it("refuses an argument of its own rather than ignoring it", async () => {
     const { io, out, err } = capture();
 
-    expect(await daemon.run(["status", "TASM"], io, at("http://127.0.0.1:8278"), CWD)).toBe(2);
+    expect(await daemon.run(["status", "SAGA"], io, at("http://127.0.0.1:8278"), CWD)).toBe(2);
     expect(out).toEqual([]);
-    expect(err.join("")).toBe("tasma: daemon status takes no arguments: TASM\nRun 'tasma --help' for usage.\n");
+    expect(err.join("")).toBe("tasma: daemon status takes no arguments: SAGA\nRun 'tasma --help' for usage.\n");
   });
 
   // A verb is handed every token after it, so a global typed after the command

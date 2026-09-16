@@ -6,16 +6,16 @@ import { NoticeStack } from "../../src/components/notice-stack";
 import { useNotice, useNoticeStore, type Notice, type NoticeContent } from "../../src/store/notices";
 
 const FIRST: Notice = {
-  key: "task-read:TASM-56",
+  key: "task-read:SAGA-56",
   form: "warning",
-  title: "2 warnings about TASM-56",
+  title: "2 warnings about SAGA-56",
   words: ["unterminated-fence · a fence is not closed", "label-case-converted · label \"Web\" was converted to \"web\""],
 };
 
 const SECOND: Notice = {
-  key: "task-read:TASM-57",
+  key: "task-read:SAGA-57",
   form: "warning",
-  title: "1 warning about TASM-57",
+  title: "1 warning about SAGA-57",
   words: ["step-stale · step \"dev:doing\" is not a step of dev-personal"],
 };
 
@@ -133,11 +133,11 @@ describe("the stack", () => {
     show(FIRST);
     const panel = stack().firstElementChild;
 
-    show({ ...FIRST, title: "1 warning about TASM-56" });
+    show({ ...FIRST, title: "1 warning about SAGA-56" });
 
     expect(stack().children).toHaveLength(1);
     expect(stack().firstElementChild).not.toBe(panel);
-    expect(stack().firstElementChild?.querySelector("p")?.textContent).toBe("1 warning about TASM-56");
+    expect(stack().firstElementChild?.querySelector("p")?.textContent).toBe("1 warning about SAGA-56");
   });
 
   it("scrolls the stack to the top of the bottom notice, not to its end, so a tall notice shows its title and Dismiss", () => {
@@ -228,12 +228,12 @@ describe("the stack", () => {
     show(FIRST, SECOND);
     dismissControls()[0]!.focus();
 
-    show({ ...FIRST, title: "1 warning about TASM-56" });
+    show({ ...FIRST, title: "1 warning about SAGA-56" });
 
     const bottomDismiss = dismissControls().at(-1);
     expect(document.activeElement).toBe(bottomDismiss);
     expect(document.getElementById(bottomDismiss!.getAttribute("aria-describedby")!)?.textContent).toBe(
-      "1 warning about TASM-56",
+      "1 warning about SAGA-56",
     );
   });
 
@@ -386,9 +386,9 @@ describe("useNotice", () => {
   it("replaces the notice when the content changes", () => {
     const { rerender } = render(<Screen noticeKey={FIRST.key} content={CONTENT} />);
 
-    rerender(<Screen noticeKey={FIRST.key} content={{ ...CONTENT, title: "1 warning about TASM-56" }} />);
+    rerender(<Screen noticeKey={FIRST.key} content={{ ...CONTENT, title: "1 warning about SAGA-56" }} />);
 
-    expect(useNoticeStore.getState().notices).toEqual([{ ...FIRST, title: "1 warning about TASM-56" }]);
+    expect(useNoticeStore.getState().notices).toEqual([{ ...FIRST, title: "1 warning about SAGA-56" }]);
   });
 
   it("closes the notice on null", () => {

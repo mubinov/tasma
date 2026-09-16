@@ -79,7 +79,7 @@ describe("the daemon server", () => {
     };
     const server = await startTestServer([entry(routes.updateTask, record)]);
 
-    const response = await fetch(`${server.url}/projects/TASM/tasks/TASM-3?dry=yes`, {
+    const response = await fetch(`${server.url}/projects/SAGA/tasks/SAGA-3?dry=yes`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ status: "Done" }),
@@ -92,7 +92,7 @@ describe("the daemon server", () => {
       diagnostics: [{ code: "temp-file-left", message: "left" }],
     });
     expect(seen).toEqual([
-      { params: { project: "TASM", id: "TASM-3" }, query: [["dry", "yes"]], body: { status: "Done" } },
+      { params: { project: "SAGA", id: "SAGA-3" }, query: [["dry", "yes"]], body: { status: "Done" } },
     ]);
   });
 
@@ -100,7 +100,7 @@ describe("the daemon server", () => {
     const refuse: Handler = () => Promise.reject(new TaskStoreError("task-not-found", "no such task", "/tmp/a.md"));
     const server = await startTestServer([entry(routes.readTask, refuse)]);
 
-    const response = await fetch(`${server.url}/projects/TASM/tasks/TASM-3`);
+    const response = await fetch(`${server.url}/projects/SAGA/tasks/SAGA-3`);
 
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({
@@ -115,7 +115,7 @@ describe("the daemon server", () => {
     };
     const server = await startTestServer([entry(routes.readTask, broken)]);
 
-    const response = await fetch(`${server.url}/projects/TASM/tasks/TASM-3`);
+    const response = await fetch(`${server.url}/projects/SAGA/tasks/SAGA-3`);
 
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toEqual({
@@ -129,7 +129,7 @@ describe("the daemon server", () => {
     const unserializable: Handler = () => Promise.resolve({ data: 1n, diagnostics: [] });
     const server = await startTestServer([entry(routes.readTask, unserializable)]);
 
-    const response = await fetch(`${server.url}/projects/TASM/tasks/TASM-3`);
+    const response = await fetch(`${server.url}/projects/SAGA/tasks/SAGA-3`);
 
     // The reply is serialized before the head goes out, so this is still reportable.
     expect(response.status).toBe(500);
@@ -139,7 +139,7 @@ describe("the daemon server", () => {
   it("refuses a write that declares another content type", async () => {
     const server = await startTestServer([entry(routes.createTask, ok)]);
 
-    const response = await fetch(`${server.url}/projects/TASM/tasks`, { method: "POST", body: "{}" });
+    const response = await fetch(`${server.url}/projects/SAGA/tasks`, { method: "POST", body: "{}" });
 
     expect(response.status).toBe(415);
     await expect(response.json()).resolves.toMatchObject({ error: { code: "unsupported-media-type" } });
@@ -149,7 +149,7 @@ describe("the daemon server", () => {
     const server = await startTestServer([entry(routes.createTask, ok)]);
 
     const answer = await raw(server.url, [
-      "POST /projects/TASM/tasks HTTP/1.1",
+      "POST /projects/SAGA/tasks HTTP/1.1",
       "host: 127.0.0.1",
       "content-type: application/json",
       `content-length: ${9 * 1024 * 1024}`,
@@ -162,7 +162,7 @@ describe("the daemon server", () => {
   it("answers a chunked body over the cap with the refusal rather than a dead socket", async () => {
     const server = await startTestServer([entry(routes.createTask, ok)]);
 
-    const response = await fetch(`${server.url}/projects/TASM/tasks`, {
+    const response = await fetch(`${server.url}/projects/SAGA/tasks`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: megabytes(9),
@@ -179,7 +179,7 @@ describe("the daemon server", () => {
   it("refuses a path no route serves", async () => {
     const server = await startTestServer([]);
 
-    const response = await fetch(`${server.url}/projects/TASM/notes`);
+    const response = await fetch(`${server.url}/projects/SAGA/notes`);
 
     expect(response.status).toBe(404);
     // The request carried no body, so nothing was left half read: the caller
@@ -191,7 +191,7 @@ describe("the daemon server", () => {
   it("names the methods a path does serve when the one asked for is not among them", async () => {
     const server = await startTestServer([entry(routes.listTasks, ok), entry(routes.createTask, ok)]);
 
-    const response = await fetch(`${server.url}/projects/TASM/tasks`, { method: "DELETE" });
+    const response = await fetch(`${server.url}/projects/SAGA/tasks`, { method: "DELETE" });
 
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("GET, POST");
@@ -224,7 +224,7 @@ describe("the daemon server", () => {
 
     const socket = await open(server.url);
     const head = [
-      "POST /projects/TASM/tasks HTTP/1.1",
+      "POST /projects/SAGA/tasks HTTP/1.1",
       "host: 127.0.0.1",
       "content-type: application/json",
       // Ninety-nine bytes short of what it declares, so the daemon is still
@@ -260,7 +260,7 @@ describe("the host a request names", () => {
   });
 
   it.each([
-    ["a name that is not the daemon's own", "host: tasma.example"],
+    ["a name that is not the daemon's own", "host: saga.example"],
     ["a host no URL can be read from", "host: ["],
   ])("refuses a request naming %s", async (_description, host) => {
     const server = await startTestServer([]);
@@ -285,12 +285,12 @@ describe("a success", () => {
   it("answers 200 whichever method asked for it", async () => {
     const server = await startTestServer([entry(routes.createTask, ok), entry(routes.deleteTask, ok)]);
 
-    const created = await fetch(`${server.url}/projects/TASM/tasks`, {
+    const created = await fetch(`${server.url}/projects/SAGA/tasks`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ title: "Write it" }),
     });
-    const deleted = await fetch(`${server.url}/projects/TASM/tasks/TASM-3`, { method: "DELETE" });
+    const deleted = await fetch(`${server.url}/projects/SAGA/tasks/SAGA-3`, { method: "DELETE" });
 
     expect([created.status, deleted.status]).toEqual([200, 200]);
     const envelope: { ok: true } & Success<string> = { ok: true, data: "served", diagnostics: [] };

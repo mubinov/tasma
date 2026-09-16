@@ -7,6 +7,12 @@
   `/tmp`. A temporary `HOME` of your own is equally fine; the real home
   directory is forbidden. The web application reads no tree — run it with
   `pnpm dev`.
+- Tests, fixtures, examples, docs and comments hold invented data only. Never
+  use the tag, a task id, the name or the path of a real project, or the name
+  of a real person. This project is no exception: no `TASM` or `TASM-<n>`, and
+  no `tasma` as a sample name, title or path. `tasma` appears only where it
+  names the product itself, for example the CLI name, the `tasma:` prefix,
+  `~/.tasma`, `@tasma/*`, `TASMA_*`.
 
 # apps/web
 

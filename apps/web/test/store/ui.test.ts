@@ -146,16 +146,16 @@ describe("the last opened tasks project", () => {
   });
 
   it("persists the tag under its own key and hydrates it back", () => {
-    useUiStore.getState().setLastTasksProject("TASM");
-    expect(useUiStore.getState().lastTasksProject).toBe("TASM");
-    expect(window.localStorage.getItem(TASKS_PROJECT_KEY)).toBe("TASM");
+    useUiStore.getState().setLastTasksProject("SAGA");
+    expect(useUiStore.getState().lastTasksProject).toBe("SAGA");
+    expect(window.localStorage.getItem(TASKS_PROJECT_KEY)).toBe("SAGA");
 
     useUiStore.setState({ lastTasksProject: null });
-    expect(hydrateUiStore().lastTasksProject).toBe("TASM");
-    expect(useUiStore.getState().lastTasksProject).toBe("TASM");
+    expect(hydrateUiStore().lastTasksProject).toBe("SAGA");
+    expect(useUiStore.getState().lastTasksProject).toBe("SAGA");
   });
 
-  it.each([{ stored: "tasm" }, { stored: "" }, { stored: "TASM-1" }, { stored: "../TASM" }])(
+  it.each([{ stored: "saga" }, { stored: "" }, { stored: "SAGA-1" }, { stored: "../SAGA" }])(
     "hydrates the stored value \"$stored\", which is not a tag, as null",
     ({ stored }) => {
       window.localStorage.setItem(TASKS_PROJECT_KEY, stored);

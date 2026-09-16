@@ -11,13 +11,13 @@ function runProject(args: string[], table: Record<string, unknown> = {}, options
 }
 
 const CREATED = "POST /projects";
-const UPDATED = "PATCH /projects/TASM";
-const RENAMED = "POST /projects/TASM/rename";
-const DELETED = "DELETE /projects/TASM";
+const UPDATED = "PATCH /projects/SAGA";
+const RENAMED = "POST /projects/SAGA/rename";
+const DELETED = "DELETE /projects/SAGA";
 
 /** What a write of the planted project answers, and what the rename answers under the new tag. */
-const WRITTEN = ok({ tag: "TASM", name: "tasma", path: "/srv/tasma" });
-const MOVED = ok({ tag: "TAS", name: "tasma", path: "/srv/tasma" });
+const WRITTEN = ok({ tag: "SAGA", name: "saga", path: "/srv/saga" });
+const MOVED = ok({ tag: "SAG", name: "saga", path: "/srv/saga" });
 
 /** The object the write sent, which is the last call behind the probe that proved the address. */
 async function sent(args: string[], table: Record<string, unknown>, options: { cwd?: string } = {}): Promise<unknown> {
@@ -45,50 +45,50 @@ function refusal(code: string, message: string): unknown {
 
 describe("project create", () => {
   it("sends the path alone where no other flag was typed, and prints the tag the daemon generated", async () => {
-    const { code, out, err, seen, bodies } = await runProject(["create", "--path", "/srv/tasma"], { [CREATED]: WRITTEN });
+    const { code, out, err, seen, bodies } = await runProject(["create", "--path", "/srv/saga"], { [CREATED]: WRITTEN });
 
     expect(code).toBe(0);
-    expect(out).toBe("TASM\n");
+    expect(out).toBe("SAGA\n");
     expect(err).toBe("");
     expect(seen).toEqual([HEALTH, CREATED]);
-    expect(bodies.at(-1)).toEqual({ path: "/srv/tasma" });
+    expect(bodies.at(-1)).toEqual({ path: "/srv/saga" });
   });
 
   it("sends the name and the tag as they were typed", async () => {
-    expect(await sent(["create", "--path", "/srv/tasma", "--name", "Tasma app", "--tag", "tasm"], { [CREATED]: WRITTEN }))
-      .toEqual({ path: "/srv/tasma", name: "Tasma app", tag: "tasm" });
+    expect(await sent(["create", "--path", "/srv/saga", "--name", "Saga app", "--tag", "saga"], { [CREATED]: WRITTEN }))
+      .toEqual({ path: "/srv/saga", name: "Saga app", tag: "saga" });
   });
 
   it("writes the notes of the write after the tag", async () => {
-    const { out, err } = await runProject(["create", "--path", "/srv/tasma"], {
-      [CREATED]: ok({ tag: "TASM" }, [{ code: "path-missing", message: "no directory", path: "/srv/tasma" }]),
+    const { out, err } = await runProject(["create", "--path", "/srv/saga"], {
+      [CREATED]: ok({ tag: "SAGA" }, [{ code: "path-missing", message: "no directory", path: "/srv/saga" }]),
     });
 
-    expect(out).toBe("TASM\n");
-    expect(err).toBe("tasma: note: path-missing: no directory (/srv/tasma)\n");
+    expect(out).toBe("SAGA\n");
+    expect(err).toBe("tasma: note: path-missing: no directory (/srv/saga)\n");
   });
 
   it("reports a refusal the daemon answered with, at exit 1", async () => {
-    const { code, out, err } = await runProject(["create", "--path", "/srv/tasma"], {
-      [CREATED]: refusal("project-exists", 'a project tagged "TASM" exists'),
+    const { code, out, err } = await runProject(["create", "--path", "/srv/saga"], {
+      [CREATED]: refusal("project-exists", 'a project tagged "SAGA" exists'),
     });
 
     expect(code).toBe(1);
     expect(out).toBe("");
-    expect(err).toBe('tasma: store/project-exists: a project tagged "TASM" exists\n');
+    expect(err).toBe('tasma: store/project-exists: a project tagged "SAGA" exists\n');
   });
 
   it("refuses every fault visible from argv alone, before it reaches a daemon", async () => {
     await refuses(["create"], "project create needs --path <path>");
     await refuses(["create", "--path", ""], "project create needs --path <path>");
     await refuses(["create", "--name", "x"], "project create needs --path <path>");
-    await refuses(["create", "--path", "/srv/tasma", "--name", ""], "--name needs a value");
-    await refuses(["create", "--path", "/srv/tasma", "--tag", ""], "--tag needs a value");
-    await refuses(["create", "--path", "/srv/tasma", "extra"], "project create takes no arguments: extra");
+    await refuses(["create", "--path", "/srv/saga", "--name", ""], "--name needs a value");
+    await refuses(["create", "--path", "/srv/saga", "--tag", ""], "--tag needs a value");
+    await refuses(["create", "--path", "/srv/saga", "extra"], "project create takes no arguments: extra");
   });
 
   it("knows no --clear", async () => {
-    const { code, err, seen } = await runProject(["create", "--path", "/srv/tasma", "--clear", "name"]);
+    const { code, err, seen } = await runProject(["create", "--path", "/srv/saga", "--clear", "name"]);
 
     expect(code).toBe(2);
     expect(err).toContain("--clear");
@@ -98,61 +98,61 @@ describe("project create", () => {
 
 describe("project edit", () => {
   it("sends only the keys that were typed, and prints the tag", async () => {
-    const { code, out, err, seen, bodies } = await runProject(["edit", "TASM", "--name", "Tasma"], { [UPDATED]: WRITTEN });
+    const { code, out, err, seen, bodies } = await runProject(["edit", "SAGA", "--name", "Saga"], { [UPDATED]: WRITTEN });
 
     expect(code).toBe(0);
-    expect(out).toBe("TASM\n");
+    expect(out).toBe("SAGA\n");
     expect(err).toBe("");
     expect(seen).toEqual([HEALTH, UPDATED]);
-    expect(bodies.at(-1)).toEqual({ name: "Tasma" });
+    expect(bodies.at(-1)).toEqual({ name: "Saga" });
   });
 
   it("sends the path and the name together", async () => {
-    expect(await sent(["edit", "TASM", "--path", "/srv/other", "--name", "Other"], { [UPDATED]: WRITTEN }))
+    expect(await sent(["edit", "SAGA", "--path", "/srv/other", "--name", "Other"], { [UPDATED]: WRITTEN }))
       .toEqual({ path: "/srv/other", name: "Other" });
   });
 
   it("sends --clear name as null, once where it was named twice", async () => {
-    expect(await sent(["edit", "TASM", "--clear", "name"], { [UPDATED]: WRITTEN })).toEqual({ name: null });
-    expect(await sent(["edit", "TASM", "--clear", "name", "--clear", "name"], { [UPDATED]: WRITTEN }))
+    expect(await sent(["edit", "SAGA", "--clear", "name"], { [UPDATED]: WRITTEN })).toEqual({ name: null });
+    expect(await sent(["edit", "SAGA", "--clear", "name", "--clear", "name"], { [UPDATED]: WRITTEN }))
       .toEqual({ name: null });
   });
 
   it("writes the notes of the write after the tag", async () => {
-    const { out, err } = await runProject(["edit", "TASM", "--name", "Tasma"], {
-      [UPDATED]: ok({ tag: "TASM" }, [{ code: "path-missing", message: "no directory" }]),
+    const { out, err } = await runProject(["edit", "SAGA", "--name", "Saga"], {
+      [UPDATED]: ok({ tag: "SAGA" }, [{ code: "path-missing", message: "no directory" }]),
     });
 
-    expect(out).toBe("TASM\n");
+    expect(out).toBe("SAGA\n");
     expect(err).toBe("tasma: note: path-missing: no directory\n");
   });
 
   it("reports a refusal the daemon answered with, at exit 1", async () => {
-    const { code, out, err } = await runProject(["edit", "TASM", "--name", "Tasma"], {
-      [UPDATED]: refusal("project-not-found", 'no project of this tree is tagged "TASM"'),
+    const { code, out, err } = await runProject(["edit", "SAGA", "--name", "Saga"], {
+      [UPDATED]: refusal("project-not-found", 'no project of this tree is tagged "SAGA"'),
     });
 
     expect(code).toBe(1);
     expect(out).toBe("");
-    expect(err).toBe('tasma: store/project-not-found: no project of this tree is tagged "TASM"\n');
+    expect(err).toBe('tasma: store/project-not-found: no project of this tree is tagged "SAGA"\n');
   });
 
   it("refuses every fault visible from argv alone, before it reaches a daemon", async () => {
     await refuses(["edit"], "project edit needs a project tag");
     await refuses(["edit", "", "--name", "x"], "project edit needs a project tag");
     await refuses(["edit", "a/b", "--name", "x"], "not a project tag: a/b");
-    await refuses(["edit", "TASM", "extra", "--name", "x"], "project edit takes one argument: extra");
-    await refuses(["edit", "TASM", "--path", ""], "--path needs a value");
-    await refuses(["edit", "TASM", "--name", ""], "--name needs a value; --clear name removes the field");
-    await refuses(["edit", "TASM", "--clear", ""], "--clear needs a field");
-    await refuses(["edit", "TASM", "--clear", "path"], "not a clearable field: path");
-    await refuses(["edit", "TASM", "--clear", "tag"], "not a clearable field: tag");
-    await refuses(["edit", "TASM", "--clear", "name", "--name", "x"], "--clear name and --name exclude each other");
-    await refuses(["edit", "TASM"], "project edit needs a change");
+    await refuses(["edit", "SAGA", "extra", "--name", "x"], "project edit takes one argument: extra");
+    await refuses(["edit", "SAGA", "--path", ""], "--path needs a value");
+    await refuses(["edit", "SAGA", "--name", ""], "--name needs a value; --clear name removes the field");
+    await refuses(["edit", "SAGA", "--clear", ""], "--clear needs a field");
+    await refuses(["edit", "SAGA", "--clear", "path"], "not a clearable field: path");
+    await refuses(["edit", "SAGA", "--clear", "tag"], "not a clearable field: tag");
+    await refuses(["edit", "SAGA", "--clear", "name", "--name", "x"], "--clear name and --name exclude each other");
+    await refuses(["edit", "SAGA"], "project edit needs a change");
   });
 
   it("knows no --tag", async () => {
-    const { code, err, seen } = await runProject(["edit", "TASM", "--tag", "NEW"]);
+    const { code, err, seen } = await runProject(["edit", "SAGA", "--tag", "NEW"]);
 
     expect(code).toBe(2);
     expect(err).toContain("--tag");
@@ -162,17 +162,17 @@ describe("project edit", () => {
 
 describe("project rename", () => {
   it("sends the new tag in the body, and prints the tag the answer carries", async () => {
-    const { code, out, err, seen, bodies } = await runProject(["rename", "TASM", "TAS"], { [RENAMED]: MOVED });
+    const { code, out, err, seen, bodies } = await runProject(["rename", "SAGA", "SAG"], { [RENAMED]: MOVED });
 
     expect(code).toBe(0);
-    expect(out).toBe("TAS\n");
+    expect(out).toBe("SAG\n");
     expect(err).toBe("");
     expect(seen).toEqual([HEALTH, RENAMED]);
-    expect(bodies.at(-1)).toEqual({ tag: "TAS" });
+    expect(bodies.at(-1)).toEqual({ tag: "SAG" });
   });
 
   it("sends a new tag no path component can hold, for the daemon to refuse", async () => {
-    const { code, err, bodies } = await runProject(["rename", "TASM", "a/b"], {
+    const { code, err, bodies } = await runProject(["rename", "SAGA", "a/b"], {
       [RENAMED]: refusal("tag-invalid", 'the tag "a/b" holds a character other than a letter or a digit'),
     });
 
@@ -182,69 +182,69 @@ describe("project rename", () => {
   });
 
   it("writes the notes of the rename after the tag", async () => {
-    const { out, err } = await runProject(["rename", "TASM", "TAS"], {
-      [RENAMED]: ok({ tag: "TAS" }, [{ code: "task-file-foreign", message: "left as it stands", path: "/t/X-1.md" }]),
+    const { out, err } = await runProject(["rename", "SAGA", "SAG"], {
+      [RENAMED]: ok({ tag: "SAG" }, [{ code: "task-file-foreign", message: "left as it stands", path: "/t/X-1.md" }]),
     });
 
-    expect(out).toBe("TAS\n");
+    expect(out).toBe("SAG\n");
     expect(err).toBe("tasma: note: task-file-foreign: left as it stands (/t/X-1.md)\n");
   });
 
   it("reports a refusal the daemon answered with, at exit 1", async () => {
-    const { code, out, err } = await runProject(["rename", "TASM", "TASM"], {
-      [RENAMED]: refusal("project-exists", 'a project tagged "TASM" exists'),
+    const { code, out, err } = await runProject(["rename", "SAGA", "SAGA"], {
+      [RENAMED]: refusal("project-exists", 'a project tagged "SAGA" exists'),
     });
 
     expect(code).toBe(1);
     expect(out).toBe("");
-    expect(err).toBe('tasma: store/project-exists: a project tagged "TASM" exists\n');
+    expect(err).toBe('tasma: store/project-exists: a project tagged "SAGA" exists\n');
   });
 
   it("refuses every fault visible from argv alone, before it reaches a daemon", async () => {
     await refuses(["rename"], "project rename needs a project tag");
-    await refuses(["rename", "", "TAS"], "project rename needs a project tag");
-    await refuses(["rename", "a/b", "TAS"], "not a project tag: a/b");
-    await refuses(["rename", "TASM"], "project rename needs a new tag");
-    await refuses(["rename", "TASM", ""], "project rename needs a new tag");
-    await refuses(["rename", "TASM", "TAS", "extra"], "project rename takes two arguments: extra");
+    await refuses(["rename", "", "SAG"], "project rename needs a project tag");
+    await refuses(["rename", "a/b", "SAG"], "not a project tag: a/b");
+    await refuses(["rename", "SAGA"], "project rename needs a new tag");
+    await refuses(["rename", "SAGA", ""], "project rename needs a new tag");
+    await refuses(["rename", "SAGA", "SAG", "extra"], "project rename takes two arguments: extra");
   });
 });
 
 describe("project delete", () => {
   it("calls the route with no body at all, and prints the removed tag", async () => {
-    const { code, out, err, seen, bodies } = await runProject(["delete", "TASM"], { [DELETED]: WRITTEN });
+    const { code, out, err, seen, bodies } = await runProject(["delete", "SAGA"], { [DELETED]: WRITTEN });
 
     expect(code).toBe(0);
-    expect(out).toBe("TASM\n");
+    expect(out).toBe("SAGA\n");
     expect(err).toBe("");
     expect(seen).toEqual([HEALTH, DELETED]);
     expect(bodies).toEqual([undefined, undefined]);
   });
 
   it("writes the notes of the delete after the tag", async () => {
-    const { out, err } = await runProject(["delete", "TASM"], {
-      [DELETED]: ok({ tag: "TASM" }, [{ code: "index-stale", message: "rebuilt" }]),
+    const { out, err } = await runProject(["delete", "SAGA"], {
+      [DELETED]: ok({ tag: "SAGA" }, [{ code: "index-stale", message: "rebuilt" }]),
     });
 
-    expect(out).toBe("TASM\n");
+    expect(out).toBe("SAGA\n");
     expect(err).toBe("tasma: note: index-stale: rebuilt\n");
   });
 
   it("reports a refusal the daemon answered with, at exit 1", async () => {
-    const { code, out, err } = await runProject(["delete", "TASM"], {
-      [DELETED]: refusal("project-not-found", 'no project of this tree is tagged "TASM"'),
+    const { code, out, err } = await runProject(["delete", "SAGA"], {
+      [DELETED]: refusal("project-not-found", 'no project of this tree is tagged "SAGA"'),
     });
 
     expect(code).toBe(1);
     expect(out).toBe("");
-    expect(err).toBe('tasma: store/project-not-found: no project of this tree is tagged "TASM"\n');
+    expect(err).toBe('tasma: store/project-not-found: no project of this tree is tagged "SAGA"\n');
   });
 
   it("refuses a missing tag, one that is no tag, and an extra argument", async () => {
     await refuses(["delete"], "project delete needs a project tag");
     await refuses(["delete", ""], "project delete needs a project tag");
     await refuses(["delete", "a/b"], "not a project tag: a/b");
-    await refuses(["delete", "TASM", "extra"], "project delete takes one argument: extra");
+    await refuses(["delete", "SAGA", "extra"], "project delete takes one argument: extra");
   });
 });
 
@@ -252,42 +252,42 @@ describe("the path a write sends", () => {
   it("is made absolute against the working directory where it was typed relative", async () => {
     expect(await sent(["create", "--path", "apps/cli"], { [CREATED]: WRITTEN })).toEqual({ path: `${CWD}/apps/cli` });
     expect(await sent(["create", "--path", "."], { [CREATED]: WRITTEN })).toEqual({ path: CWD });
-    expect(await sent(["edit", "TASM", "--path", "../other"], { [UPDATED]: WRITTEN })).toEqual({ path: "/srv/other" });
+    expect(await sent(["edit", "SAGA", "--path", "../other"], { [UPDATED]: WRITTEN })).toEqual({ path: "/srv/other" });
   });
 
   it("is sent unchanged where it is absolute or starts with ~/", async () => {
-    for (const path of ["/srv/tasma", "~/Projects/tasma"]) {
+    for (const path of ["/srv/saga", "~/Projects/saga"]) {
       expect(await sent(["create", "--path", path], { [CREATED]: WRITTEN }), path).toEqual({ path });
-      expect(await sent(["edit", "TASM", "--path", path], { [UPDATED]: WRITTEN }), path).toEqual({ path });
+      expect(await sent(["edit", "SAGA", "--path", path], { [UPDATED]: WRITTEN }), path).toEqual({ path });
     }
   });
 
   it("is sent unchanged where it is absolute and the working directory could not be read", async () => {
-    expect(await sent(["create", "--path", "/srv/tasma"], { [CREATED]: WRITTEN }, { cwd: "" }))
-      .toEqual({ path: "/srv/tasma" });
-    expect(await sent(["edit", "TASM", "--path", "~/tasma"], { [UPDATED]: WRITTEN }, { cwd: "" }))
-      .toEqual({ path: "~/tasma" });
+    expect(await sent(["create", "--path", "/srv/saga"], { [CREATED]: WRITTEN }, { cwd: "" }))
+      .toEqual({ path: "/srv/saga" });
+    expect(await sent(["edit", "SAGA", "--path", "~/saga"], { [UPDATED]: WRITTEN }, { cwd: "" }))
+      .toEqual({ path: "~/saga" });
   });
 
   it("is refused where it is relative and the working directory could not be read", async () => {
     const line = "the working directory could not be read; state --path as an absolute path";
 
-    await refuses(["create", "--path", "tasma"], line, { cwd: "" });
-    await refuses(["edit", "TASM", "--path", "tasma"], line, { cwd: "" });
+    await refuses(["create", "--path", "saga"], line, { cwd: "" });
+    await refuses(["edit", "SAGA", "--path", "saga"], line, { cwd: "" });
   });
 
   it("is not read where the edit states no path", async () => {
-    expect(await sent(["edit", "TASM", "--name", "Tasma"], { [UPDATED]: WRITTEN }, { cwd: "" })).toEqual({ name: "Tasma" });
+    expect(await sent(["edit", "SAGA", "--name", "Saga"], { [UPDATED]: WRITTEN }, { cwd: "" })).toEqual({ name: "Saga" });
   });
 });
 
 describe("every project write", () => {
   it("proves its address ahead of the call", async () => {
     const invocations: [string[], Record<string, unknown>, string][] = [
-      [["create", "--path", "/srv/tasma"], { [CREATED]: WRITTEN }, CREATED],
-      [["edit", "TASM", "--name", "Tasma"], { [UPDATED]: WRITTEN }, UPDATED],
-      [["rename", "TASM", "TAS"], { [RENAMED]: MOVED }, RENAMED],
-      [["delete", "TASM"], { [DELETED]: WRITTEN }, DELETED],
+      [["create", "--path", "/srv/saga"], { [CREATED]: WRITTEN }, CREATED],
+      [["edit", "SAGA", "--name", "Saga"], { [UPDATED]: WRITTEN }, UPDATED],
+      [["rename", "SAGA", "SAG"], { [RENAMED]: MOVED }, RENAMED],
+      [["delete", "SAGA"], { [DELETED]: WRITTEN }, DELETED],
     ];
 
     for (const [args, table, route] of invocations) {
@@ -300,14 +300,14 @@ describe("every project write", () => {
 
   it("refuses an answer that is not a write receipt", async () => {
     const invocations: [string[], string][] = [
-      [["create", "--path", "/srv/tasma"], CREATED],
-      [["edit", "TASM", "--name", "Tasma"], UPDATED],
-      [["rename", "TASM", "TAS"], RENAMED],
-      [["delete", "TASM"], DELETED],
+      [["create", "--path", "/srv/saga"], CREATED],
+      [["edit", "SAGA", "--name", "Saga"], UPDATED],
+      [["rename", "SAGA", "SAG"], RENAMED],
+      [["delete", "SAGA"], DELETED],
     ];
 
     for (const [args, route] of invocations) {
-      for (const data of [{ tag: 7 }, {}, "TASM", null]) {
+      for (const data of [{ tag: 7 }, {}, "SAGA", null]) {
         const { code, out, err } = await runProject(args, { [route]: ok(data) });
 
         expect(code, `${args.join(" ")} ${JSON.stringify(data)}`).toBe(3);
@@ -329,7 +329,7 @@ describe("every option a project write accepts", () => {
   }
 
   it("is refused with an empty value, before any call is made", async () => {
-    for (const [verb, args] of [["create", ["create", "--path", "/srv/tasma"]], ["edit", ["edit", "TASM"]]] as const) {
+    for (const [verb, args] of [["create", ["create", "--path", "/srv/saga"]], ["edit", ["edit", "SAGA"]]] as const) {
       expect(stringOptions(verb).length, verb).toBeGreaterThan(0);
 
       for (const flag of stringOptions(verb)) {

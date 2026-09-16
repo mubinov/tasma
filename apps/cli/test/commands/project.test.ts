@@ -19,7 +19,7 @@ async function refuses(args: string[], line: string, options: { cwd?: string } =
   expect(seen, args.join(" ")).toEqual([]);
 }
 
-const READ = "GET /projects/TASM";
+const READ = "GET /projects/SAGA";
 
 /** A configuration as the engine resolves one for a project that states no file. */
 const CONFIG = {
@@ -32,19 +32,19 @@ const CONFIG = {
 };
 
 /** The project the read answers, live. */
-const PROJECT = { tag: "TASM", name: "tasma", path: "/Users/x/Projects/tasma", config: CONFIG, live: true };
+const PROJECT = { tag: "SAGA", name: "saga", path: "/Users/x/Projects/saga", config: CONFIG, live: true };
 
 describe("project list", () => {
   it("prints the tag, the name and the path of every project, aligned", async () => {
     const { code, out, err, seen } = await runProject(["list"], {
       "GET /projects": ok([
-        { tag: "TASM", name: "tasma", path: "/Users/x/Projects/tasma" },
-        { tag: "DOB", name: "dobby", path: "/Users/x/Projects/dobby" },
+        { tag: "SAGA", name: "saga", path: "/Users/x/Projects/saga" },
+        { tag: "DEL", name: "delta", path: "/Users/x/Projects/delta" },
       ]),
     });
 
     expect(code).toBe(0);
-    expect(out).toBe("TASM  tasma  /Users/x/Projects/tasma\nDOB   dobby  /Users/x/Projects/dobby\n");
+    expect(out).toBe("SAGA  saga   /Users/x/Projects/saga\nDEL   delta  /Users/x/Projects/delta\n");
     expect(err).toBe("");
     expect(seen).toEqual(["GET /projects"]);
   });
@@ -52,10 +52,10 @@ describe("project list", () => {
   // A project that declares no configuration file states neither field, and the
   // columns after it have to stay where they are.
   it("marks a project that states no name and no path", async () => {
-    const { code, out } = await runProject(["list"], { "GET /projects": ok([{ tag: "TASM" }]) });
+    const { code, out } = await runProject(["list"], { "GET /projects": ok([{ tag: "SAGA" }]) });
 
     expect(code).toBe(0);
-    expect(out).toBe("TASM  -  -\n");
+    expect(out).toBe("SAGA  -  -\n");
   });
 
   it("prints nothing at all for a tree that holds no project", async () => {
@@ -67,11 +67,11 @@ describe("project list", () => {
   });
 
   it("refuses an argument of its own", async () => {
-    const { code, out, err } = await runProject(["list", "TASM"], { "GET /projects": ok([]) });
+    const { code, out, err } = await runProject(["list", "SAGA"], { "GET /projects": ok([]) });
 
     expect(code).toBe(2);
     expect(out).toBe("");
-    expect(err).toBe("tasma: project list takes no arguments: TASM\nRun 'tasma --help' for usage.\n");
+    expect(err).toBe("tasma: project list takes no arguments: SAGA\nRun 'tasma --help' for usage.\n");
   });
 
   it("reports an unknown flag through the parser's own message", async () => {
@@ -95,7 +95,7 @@ describe("project list", () => {
   // The answer is whatever the port sent, so the shape the writer needs is
   // tested before a field is read off it.
   it("refuses an answer that is not a project listing", async () => {
-    const { code, out, err } = await runProject(["list"], { "GET /projects": ok({ tag: "TASM" }) });
+    const { code, out, err } = await runProject(["list"], { "GET /projects": ok({ tag: "SAGA" }) });
 
     expect(code).toBe(3);
     expect(out).toBe("");
@@ -105,7 +105,7 @@ describe("project list", () => {
   // An element is whatever the port sent too, and one that is no object states
   // no field.
   it("prints a listing element that is not a record as a row of marks", async () => {
-    const { code, out } = await runProject(["list"], { "GET /projects": ok(["TASM", null]) });
+    const { code, out } = await runProject(["list"], { "GET /projects": ok(["SAGA", null]) });
 
     expect(code).toBe(0);
     expect(out).toBe("-  -  -\n-  -  -\n");
@@ -123,7 +123,7 @@ describe("project list", () => {
 
   it("writes the notes of the answer after the table", async () => {
     const answers = serveAnswers({
-      "GET /projects": ok([{ tag: "TASM" }], [
+      "GET /projects": ok([{ tag: "SAGA" }], [
         { code: "path-missing", message: "the project path does not name a directory", path: "/gone" },
       ]),
     });
@@ -136,22 +136,22 @@ describe("project list", () => {
       await server.close();
     }
 
-    expect(out.join("")).toBe("TASM  -  -\n");
+    expect(out.join("")).toBe("SAGA  -  -\n");
     expect(err.join("")).toBe("tasma: note: path-missing: the project path does not name a directory (/gone)\n");
   });
 });
 
 describe("project view", () => {
   it("prints one key per row in the config.yml order, a list one value per row", async () => {
-    const { code, out, err, seen } = await runProject(["view", "TASM"], {
+    const { code, out, err, seen } = await runProject(["view", "SAGA"], {
       [READ]: ok({ ...PROJECT, config: { ...CONFIG, workflows_path: "/Users/x/.tasma/workflows" } }),
     });
 
     expect(code).toBe(0);
     expect(out).toBe(
-      "tag             TASM\n"
-      + "name            tasma\n"
-      + "path            /Users/x/Projects/tasma\n"
+      "tag             SAGA\n"
+      + "name            saga\n"
+      + "path            /Users/x/Projects/saga\n"
       + "statuses        Backlog\n"
       + "                To Do\n"
       + "                In Progress\n"
@@ -170,13 +170,13 @@ describe("project view", () => {
   });
 
   it("marks an absent value and an empty list", async () => {
-    const { code, out } = await runProject(["view", "TASM"], {
-      [READ]: ok({ tag: "TASM", config: { statuses: [], instructions: ["/r.md"] }, live: true }),
+    const { code, out } = await runProject(["view", "SAGA"], {
+      [READ]: ok({ tag: "SAGA", config: { statuses: [], instructions: ["/r.md"] }, live: true }),
     });
 
     expect(code).toBe(0);
     expect(out).toBe(
-      "tag             TASM\n"
+      "tag             SAGA\n"
       + "name            -\n"
       + "path            -\n"
       + "statuses        -\n"
@@ -190,7 +190,7 @@ describe("project view", () => {
   });
 
   it("prints a list value that is not an array as one cell", async () => {
-    const { code, out } = await runProject(["view", "TASM"], {
+    const { code, out } = await runProject(["view", "SAGA"], {
       [READ]: ok({ ...PROJECT, config: { ...CONFIG, statuses: "Done" } }),
     });
 
@@ -199,35 +199,35 @@ describe("project view", () => {
   });
 
   it("notes an index that is not following the disk, ahead of the notes of the answer", async () => {
-    const { code, out, err } = await runProject(["view", "TASM"], {
+    const { code, out, err } = await runProject(["view", "SAGA"], {
       [READ]: ok({ ...PROJECT, live: false }, [{ code: "config-unreadable", message: "refused", path: "/c" }]),
     });
 
     expect(code).toBe(0);
-    expect(out).toContain("tag             TASM\n");
+    expect(out).toContain("tag             SAGA\n");
     expect(err).toBe(
-      "tasma: note: the index of TASM is not following the disk; "
+      "tasma: note: the index of SAGA is not following the disk; "
       + "what the daemon reports about this project can be older than the files\n"
       + "tasma: note: config-unreadable: refused (/c)\n",
     );
   });
 
   it("reports a refusal the daemon answered with, at exit 1", async () => {
-    const { code, out, err } = await runProject(["view", "TASM"], {
+    const { code, out, err } = await runProject(["view", "SAGA"], {
       [READ]: {
         ok: false,
-        error: { kind: "store", code: "project-not-found", message: 'no project of this tree is tagged "TASM"' },
+        error: { kind: "store", code: "project-not-found", message: 'no project of this tree is tagged "SAGA"' },
       },
     });
 
     expect(code).toBe(1);
     expect(out).toBe("");
-    expect(err).toBe('tasma: store/project-not-found: no project of this tree is tagged "TASM"\n');
+    expect(err).toBe('tasma: store/project-not-found: no project of this tree is tagged "SAGA"\n');
   });
 
   it("refuses an answer that is not a project", async () => {
-    for (const data of ["TASM", null, { tag: "TASM" }, { ...PROJECT, config: "x" }, { ...PROJECT, config: null }]) {
-      const { code, out, err } = await runProject(["view", "TASM"], { [READ]: ok(data) });
+    for (const data of ["SAGA", null, { tag: "SAGA" }, { ...PROJECT, config: "x" }, { ...PROJECT, config: null }]) {
+      const { code, out, err } = await runProject(["view", "SAGA"], { [READ]: ok(data) });
 
       expect(code, JSON.stringify(data)).toBe(3);
       expect(out, JSON.stringify(data)).toBe("");
@@ -240,16 +240,16 @@ describe("project view", () => {
     await refuses(["view", ""], "project view needs a project tag");
     await refuses(["view", "a/b"], "not a project tag: a/b");
     await refuses(["view", ".."], "not a project tag: ..");
-    await refuses(["view", "TASM", "extra"], "project view takes one argument: extra");
+    await refuses(["view", "SAGA", "extra"], "project view takes one argument: extra");
   });
 });
 
 describe("project current", () => {
   it("prints the tag alone, from one unproven call", async () => {
-    const { code, out, err, seen } = await runProject(["current"], { [RESOLVED]: ok({ tag: "TASM", path: CWD }) });
+    const { code, out, err, seen } = await runProject(["current"], { [RESOLVED]: ok({ tag: "SAGA", path: CWD }) });
 
     expect(code).toBe(0);
-    expect(out).toBe("TASM\n");
+    expect(out).toBe("SAGA\n");
     expect(err).toBe("");
     expect(seen).toEqual([RESOLVED]);
   });
@@ -292,7 +292,7 @@ describe("project current", () => {
   });
 
   it("refuses an answer that is not a project", async () => {
-    for (const data of ["TASM", { tag: 7 }, {}, { tag: "a/b" }, { tag: ".." }]) {
+    for (const data of ["SAGA", { tag: 7 }, {}, { tag: "a/b" }, { tag: ".." }]) {
       const { code, out, err } = await runProject(["current"], { [RESOLVED]: ok(data) });
 
       expect(code, JSON.stringify(data)).toBe(3);
@@ -302,6 +302,6 @@ describe("project current", () => {
   });
 
   it("refuses an argument of its own", async () => {
-    await refuses(["current", "TASM"], "project current takes no arguments: TASM");
+    await refuses(["current", "SAGA"], "project current takes no arguments: SAGA");
   });
 });

@@ -37,9 +37,9 @@ describe("a write that lands", () => {
     const handle = project(root);
     await handle.createTask({ title: "First" });
 
-    await handle.updateTask("TASM-1", { title: "Renamed" });
+    await handle.updateTask("SAGA-1", { title: "Renamed" });
 
-    await expect(readdir(tasksDir(root))).resolves.toEqual(["TASM-1.md"]);
+    await expect(readdir(tasksDir(root))).resolves.toEqual(["SAGA-1.md"]);
   });
 });
 
@@ -50,7 +50,7 @@ describe("what a write leaves readable", () => {
     await project(root).createTask({ title: "First" });
 
     expect(await mode(tasksDir(root))).toBe(0o700);
-    expect(await mode(taskFile(root, "TASM-1"))).toBe(0o600);
+    expect(await mode(taskFile(root, "SAGA-1"))).toBe(0o600);
     expect(await mode(statePath(root))).toBe(0o600);
   });
 
@@ -58,11 +58,11 @@ describe("what a write leaves readable", () => {
     const root = await tempRoot();
     const handle = project(root);
     await handle.createTask({ title: "First" });
-    await chmod(taskFile(root, "TASM-1"), 0o400);
+    await chmod(taskFile(root, "SAGA-1"), 0o400);
 
-    await handle.updateTask("TASM-1", { title: "Renamed" });
+    await handle.updateTask("SAGA-1", { title: "Renamed" });
 
-    expect(await mode(taskFile(root, "TASM-1"))).toBe(0o400);
+    expect(await mode(taskFile(root, "SAGA-1"))).toBe(0o400);
   });
 
   it.each([
@@ -73,11 +73,11 @@ describe("what a write leaves readable", () => {
     const root = await tempRoot();
     const handle = project(root);
     await handle.createTask({ title: "First" });
-    await chmod(taskFile(root, "TASM-1"), planted);
+    await chmod(taskFile(root, "SAGA-1"), planted);
 
-    await handle.updateTask("TASM-1", { title: "Renamed" });
+    await handle.updateTask("SAGA-1", { title: "Renamed" });
 
-    expect(await mode(taskFile(root, "TASM-1"))).toBe(0o600);
+    expect(await mode(taskFile(root, "SAGA-1"))).toBe(0o600);
   });
 
   it("carries no mode over from a name that holds no regular file, and replaces the name", async () => {
@@ -86,11 +86,11 @@ describe("what a write leaves readable", () => {
     await plant(outside, "text");
     await chmod(outside, 0o666);
     await mkdir(tasksDir(root), { recursive: true });
-    await symlink(outside, taskFile(root, "TASM-1"));
+    await symlink(outside, taskFile(root, "SAGA-1"));
 
-    await replaceFile(taskFile(root, "TASM-1"), "new text");
+    await replaceFile(taskFile(root, "SAGA-1"), "new text");
 
-    expect(await mode(taskFile(root, "TASM-1"))).toBe(0o600);
+    expect(await mode(taskFile(root, "SAGA-1"))).toBe(0o600);
     expect(await read(outside)).toBe("text");
   });
 });
@@ -170,41 +170,41 @@ describe("the open flags this layer needs", () => {
 describe("a write that fails", () => {
   it("leaves the file it was replacing byte-identical", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
-    const before = await read(taskFile(root, "TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    const before = await read(taskFile(root, "SAGA-1"));
 
-    await expect(replaceFile(taskFile(root, "TASM-1"), UNWRITABLE_PAYLOAD)).rejects.toThrow();
+    await expect(replaceFile(taskFile(root, "SAGA-1"), UNWRITABLE_PAYLOAD)).rejects.toThrow();
 
-    expect(await read(taskFile(root, "TASM-1"))).toBe(before);
-    await expect(readdir(tasksDir(root))).resolves.toEqual(["TASM-1.md"]);
+    expect(await read(taskFile(root, "SAGA-1"))).toBe(before);
+    await expect(readdir(tasksDir(root))).resolves.toEqual(["SAGA-1.md"]);
   });
 
   it("removes the temp file it had opened", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
-    await expect(replaceFile(taskFile(root, "TASM-1"), UNWRITABLE_PAYLOAD)).rejects.toThrow();
+    await expect(replaceFile(taskFile(root, "SAGA-1"), UNWRITABLE_PAYLOAD)).rejects.toThrow();
 
-    await expect(readdir(tasksDir(root))).resolves.toEqual(["TASM-1.md"]);
+    await expect(readdir(tasksDir(root))).resolves.toEqual(["SAGA-1.md"]);
   });
 
   it("removes a file an exclusive create had just made", async () => {
     const root = await tempRoot();
     await plant(join(tasksDir(root), "other.txt"), "keep me");
 
-    await expect(createExclusive(taskFile(root, "TASM-1"), UNWRITABLE_PAYLOAD)).rejects.toThrow();
+    await expect(createExclusive(taskFile(root, "SAGA-1"), UNWRITABLE_PAYLOAD)).rejects.toThrow();
 
     await expect(readdir(tasksDir(root))).resolves.toEqual(["other.txt"]);
   });
 
   it("leaves a file the exclusive create did not make", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
-    const before = await read(taskFile(root, "TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    const before = await read(taskFile(root, "SAGA-1"));
 
-    await expect(createExclusive(taskFile(root, "TASM-1"), "new text")).rejects.toMatchObject({ code: "EEXIST" });
+    await expect(createExclusive(taskFile(root, "SAGA-1"), "new text")).rejects.toMatchObject({ code: "EEXIST" });
 
-    expect(await read(taskFile(root, "TASM-1"))).toBe(before);
+    expect(await read(taskFile(root, "SAGA-1"))).toBe(before);
   });
 });
 
@@ -213,7 +213,7 @@ describe("a target the filesystem cannot reach", () => {
     const root = await tempRoot();
     await plant(tasksDir(root), "a file where the directory belongs");
 
-    await expect(replaceFile(taskFile(root, "TASM-1"), "text")).rejects.toMatchObject({ code: "ENOTDIR" });
+    await expect(replaceFile(taskFile(root, "SAGA-1"), "text")).rejects.toMatchObject({ code: "ENOTDIR" });
   });
 });
 
@@ -221,10 +221,10 @@ describe("a file written out from one that stands elsewhere", () => {
   it("takes the mode of the file it was written from, narrowed to what this layer installs", async () => {
     const root = await tempRoot();
     const source = join(root, "source.yml");
-    await plant(source, "name: Tasma\n");
+    await plant(source, "name: Saga\n");
     await chmod(source, 0o400);
 
-    await createExclusive(join(root, "copy.yml"), "name: Tasma\n", await carriedMode(source));
+    await createExclusive(join(root, "copy.yml"), "name: Saga\n", await carriedMode(source));
 
     expect(await mode(join(root, "copy.yml"))).toBe(0o400);
   });
@@ -232,10 +232,10 @@ describe("a file written out from one that stands elsewhere", () => {
   it("installs no wider mode than this layer's own", async () => {
     const root = await tempRoot();
     const source = join(root, "source.yml");
-    await plant(source, "name: Tasma\n");
+    await plant(source, "name: Saga\n");
     await chmod(source, 0o666);
 
-    await createExclusive(join(root, "copy.yml"), "name: Tasma\n", await carriedMode(source));
+    await createExclusive(join(root, "copy.yml"), "name: Saga\n", await carriedMode(source));
 
     expect(await mode(join(root, "copy.yml"))).toBe(0o600);
   });
@@ -270,9 +270,9 @@ describe("discardDirectory", () => {
 describe("removeFile", () => {
   it("deletes the file", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
-    await removeFile(taskFile(root, "TASM-1"));
+    await removeFile(taskFile(root, "SAGA-1"));
 
     await expect(readdir(tasksDir(root))).resolves.toEqual([]);
   });
@@ -281,29 +281,29 @@ describe("removeFile", () => {
 describe("two writers on one file", () => {
   it("leaves a file that parses, with the last write winning", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
     const handle = project(root);
     const titles = ["One", "Two", "Three", "Four", "Five"];
 
-    await Promise.all(titles.map((title) => handle.updateTask("TASM-1", { title })));
+    await Promise.all(titles.map((title) => handle.updateTask("SAGA-1", { title })));
 
-    const { task } = parseTask(await read(taskFile(root, "TASM-1")));
+    const { task } = parseTask(await read(taskFile(root, "SAGA-1")));
     expect(titles).toContain(task.frontmatter.title);
-    await expect(readdir(tasksDir(root))).resolves.toEqual(["TASM-1.md"]);
+    await expect(readdir(tasksDir(root))).resolves.toEqual(["SAGA-1.md"]);
   });
 
   it("never lets a reader see a file that is half written", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
     const handle = project(root);
     const long = `\n${"A line of the body.\n".repeat(2000)}`;
 
     const writes = Promise.all([
-      handle.updateTask("TASM-1", { body: long }),
-      handle.updateTask("TASM-1", { body: "\nShort.\n" }),
+      handle.updateTask("SAGA-1", { body: long }),
+      handle.updateTask("SAGA-1", { body: "\nShort.\n" }),
     ]);
     const reads: string[] = [];
-    for (let attempt = 0; attempt < 50; attempt += 1) reads.push(await read(taskFile(root, "TASM-1")));
+    for (let attempt = 0; attempt < 50; attempt += 1) reads.push(await read(taskFile(root, "SAGA-1")));
     await writes;
 
     for (const text of reads) expect(() => parseTask(text)).not.toThrow();
@@ -313,13 +313,13 @@ describe("two writers on one file", () => {
 describe("moveEntry", () => {
   it("installs a whole directory under the new name in one step", async () => {
     const root = await tempRoot();
-    const from = join(root, "projects", "TASM");
+    const from = join(root, "projects", "SAGA");
     const to = join(root, "projects", "NEW");
-    await plant(join(from, "tasks", "TASM-1.md"), taskText("TASM-1"));
+    await plant(join(from, "tasks", "SAGA-1.md"), taskText("SAGA-1"));
 
     await moveEntry(from, to);
 
-    await expect(readdir(join(to, "tasks"))).resolves.toEqual(["TASM-1.md"]);
+    await expect(readdir(join(to, "tasks"))).resolves.toEqual(["SAGA-1.md"]);
     await expect(readdir(join(root, "projects"))).resolves.toEqual(["NEW"]);
   });
 
@@ -328,7 +328,7 @@ describe("moveEntry", () => {
     const to = join(root, "projects", "NEW");
     await mkdir(join(to, "held"), { recursive: true });
 
-    await expect(moveEntry(join(root, "projects", "TASM"), to)).rejects.toMatchObject({
+    await expect(moveEntry(join(root, "projects", "SAGA"), to)).rejects.toMatchObject({
       code: expect.stringMatching(/^(?:ENOTEMPTY|EEXIST)$/) as string,
     });
   });
@@ -337,19 +337,19 @@ describe("moveEntry", () => {
 describe("copyEntry", () => {
   it("copies a directory and everything under it", async () => {
     const root = await tempRoot();
-    const from = join(root, "projects", "TASM");
-    await plant(join(from, "tasks", "TASM-1.md"), taskText("TASM-1"));
+    const from = join(root, "projects", "SAGA");
+    await plant(join(from, "tasks", "SAGA-1.md"), taskText("SAGA-1"));
 
     await copyEntry(from, join(root, "copy"));
 
-    await expect(read(join(root, "copy", "tasks", "TASM-1.md"))).resolves.toBe(taskText("TASM-1"));
-    await expect(read(join(from, "tasks", "TASM-1.md"))).resolves.toBe(taskText("TASM-1"));
+    await expect(read(join(root, "copy", "tasks", "SAGA-1.md"))).resolves.toBe(taskText("SAGA-1"));
+    await expect(read(join(from, "tasks", "SAGA-1.md"))).resolves.toBe(taskText("SAGA-1"));
   });
 
   it("copies a symbolic link as the link it is, following nothing", async () => {
     const root = await tempRoot();
     await plant(join(root, "outside.md"), "outside the copy");
-    const link = join(root, "projects", "TASM", "link.md");
+    const link = join(root, "projects", "SAGA", "link.md");
     await symlink(join(root, "outside.md"), link);
 
     await copyEntry(link, join(root, "copy.md"));
@@ -369,14 +369,14 @@ describe("copyEntry", () => {
 describe("readWithIdentity", () => {
   it("answers with the text and the identity of the bytes it read", async () => {
     const root = await tempRoot();
-    const path = taskFile(root, "TASM-1");
-    await plant(path, taskText("TASM-1"));
+    const path = taskFile(root, "SAGA-1");
+    await plant(path, taskText("SAGA-1"));
     const entry = await stat(path);
 
     const answer = await readWithIdentity(path);
 
     expect(answer).toEqual({
-      text: taskText("TASM-1"),
+      text: taskText("SAGA-1"),
       identity: { ino: entry.ino, size: entry.size, mtimeMs: entry.mtimeMs },
     });
   });
@@ -389,9 +389,9 @@ describe("readWithIdentity", () => {
     }],
   ])("answers %s for a name that holds no regular file it may read", async (answer, build) => {
     const root = await tempRoot();
-    const path = taskFile(root, "TASM-1");
+    const path = taskFile(root, "SAGA-1");
     await mkdir(tasksDir(root), { recursive: true });
-    if (answer === "irregular") await plant(path, taskText("TASM-1"));
+    if (answer === "irregular") await plant(path, taskText("SAGA-1"));
 
     await expect(readWithIdentity(await build(path))).resolves.toBe(answer);
   });

@@ -99,11 +99,11 @@ describe("readFrontmatterText", () => {
 
     // The closing delimiter is there, below what this reader takes, so the file
     // is refused for the bound rather than for a region that never closes.
-    const raised = await readFrontmatterText(source, "TASM-1.md").catch((error: unknown) => error);
+    const raised = await readFrontmatterText(source, "SAGA-1.md").catch((error: unknown) => error);
 
     expect(raised).toBeInstanceOf(FrontmatterTooLong);
     expect((raised as Error).message).toBe(
-      `TASM-1.md: the frontmatter stands past the first ${FRONTMATTER_CAP} bytes, which is the most of one file the index reads`,
+      `SAGA-1.md: the frontmatter stands past the first ${FRONTMATTER_CAP} bytes, which is the most of one file the index reads`,
     );
     expect(source.requested).toBeLessThanOrEqual(FRONTMATTER_CAP + CHUNK_SIZE);
   });
@@ -127,33 +127,33 @@ describe("readFrontmatterText", () => {
 describe("openTaskFile", () => {
   it("reads the frontmatter of a task file on disk", async () => {
     const root = await tempRoot();
-    await plant(taskFile(root, "TASM-1"), taskText("TASM-1"));
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
-    const source = await openTaskFile(taskFile(root, "TASM-1"));
+    const source = await openTaskFile(taskFile(root, "SAGA-1"));
     if (typeof source === "string") throw new Error(`the file did not open: ${source}`);
 
-    expect(await readFrontmatterText(source)).toContain("id: TASM-1");
+    expect(await readFrontmatterText(source)).toContain("id: SAGA-1");
   });
 
   it("reports a name that holds nothing as absent", async () => {
     const root = await tempRoot();
 
-    expect(await openTaskFile(taskFile(root, "TASM-1"))).toBe("absent");
+    expect(await openTaskFile(taskFile(root, "SAGA-1"))).toBe("absent");
   });
 
   it("reports a name that holds a directory as irregular", async () => {
     const root = await tempRoot();
-    await mkdir(taskFile(root, "TASM-1"), { recursive: true });
+    await mkdir(taskFile(root, "SAGA-1"), { recursive: true });
 
-    expect(await openTaskFile(taskFile(root, "TASM-1"))).toBe("irregular");
+    expect(await openTaskFile(taskFile(root, "SAGA-1"))).toBe("irregular");
   });
 
   it("reports a symbolic link as irregular, rather than following it", async () => {
     const root = await tempRoot();
     await mkdir(tasksDir(root), { recursive: true });
-    await plant(join(root, "outside.md"), taskText("TASM-1"));
-    await symlink(join(root, "outside.md"), taskFile(root, "TASM-1"));
+    await plant(join(root, "outside.md"), taskText("SAGA-1"));
+    await symlink(join(root, "outside.md"), taskFile(root, "SAGA-1"));
 
-    expect(await openTaskFile(taskFile(root, "TASM-1"))).toBe("irregular");
+    expect(await openTaskFile(taskFile(root, "SAGA-1"))).toBe("irregular");
   });
 });

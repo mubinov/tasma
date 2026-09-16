@@ -15,8 +15,8 @@ const CONFIG = {
 };
 
 const PROJECTS = [
-  { tag: "TASM", name: "Tasma", path: "/repos/tasma" },
-  { tag: "DOBBY", name: "Dobby", path: "/repos/dobby" },
+  { tag: "SAGA", name: "Saga", path: "/repos/saga" },
+  { tag: "DELTA", name: "Delta", path: "/repos/delta" },
 ];
 
 const WORKFLOW = {
@@ -29,11 +29,11 @@ const WORKFLOW = {
 };
 
 function entry(number: number, fields: Partial<Frontmatter> = {}): TaskEntry {
-  const id = `TASM-${String(number)}`;
+  const id = `SAGA-${String(number)}`;
 
   return {
     id,
-    path: `/repos/tasma/tasks/${id}.md`,
+    path: `/repos/saga/tasks/${id}.md`,
     blocked: false,
     frontmatter: {
       id,
@@ -65,10 +65,10 @@ function daemon(replies: Record<string, TransportReply | Promise<TransportReply>
   const paths: string[] = [];
   const current: Record<string, TransportReply | Promise<TransportReply>> = {
     "/projects": successReply(PROJECTS),
-    "/projects/TASM": project("TASM"),
-    "/projects/TASM/tasks": listing([]),
-    "/projects/DOBBY": project("DOBBY"),
-    "/projects/DOBBY/tasks": listing([]),
+    "/projects/SAGA": project("SAGA"),
+    "/projects/SAGA/tasks": listing([]),
+    "/projects/DELTA": project("DELTA"),
+    "/projects/DELTA/tasks": listing([]),
     ...replies,
   };
 
@@ -131,16 +131,16 @@ describe("the address", () => {
     const { transport } = daemon();
     const router = await renderWithRouter("/tasks", transport);
 
-    expect(router.state.location.search).toEqual({ projects: "TASM" });
-    expect(screen.getByRole("button", { name: "Project Tasma TASM" })).toBeTruthy();
+    expect(router.state.location.search).toEqual({ projects: "SAGA" });
+    expect(screen.getByRole("button", { name: "Project Saga SAGA" })).toBeTruthy();
   });
 
   it("opens the project opened last when the listing holds it", async () => {
-    useUiStore.setState({ lastTasksProject: "DOBBY" });
+    useUiStore.setState({ lastTasksProject: "DELTA" });
     const { transport } = daemon();
     const router = await renderWithRouter("/tasks", transport);
 
-    expect(router.state.location.search).toEqual({ projects: "DOBBY" });
+    expect(router.state.location.search).toEqual({ projects: "DELTA" });
   });
 
   it("opens the first project when the project opened last is gone", async () => {
@@ -148,27 +148,27 @@ describe("the address", () => {
     const { transport } = daemon();
     const router = await renderWithRouter("/tasks", transport);
 
-    expect(router.state.location.search).toEqual({ projects: "TASM" });
+    expect(router.state.location.search).toEqual({ projects: "SAGA" });
   });
 
   it("keeps the first of several projects, and the labels", async () => {
     const { transport } = daemon();
-    const router = await renderWithRouter("/tasks?projects=DOBBY,TASM&labels=web", transport);
+    const router = await renderWithRouter("/tasks?projects=DELTA,SAGA&labels=web", transport);
 
-    expect(router.state.location.search).toEqual({ projects: "DOBBY", labels: "web" });
+    expect(router.state.location.search).toEqual({ projects: "DELTA", labels: "web" });
   });
 
   it("reads an empty label list as no filter", async () => {
-    const { transport } = daemon({ "/projects/TASM/tasks": listing([entry(1, { labels: ["web"] })]) });
-    await renderWithRouter("/tasks?projects=TASM&labels=&view=list", transport);
+    const { transport } = daemon({ "/projects/SAGA/tasks": listing([entry(1, { labels: ["web"] })]) });
+    await renderWithRouter("/tasks?projects=SAGA&labels=&view=list", transport);
 
     expect(countOf("Backlog")).toBe("1");
     expect(screen.getByRole("combobox", { name: "Labels Any" })).toBeTruthy();
   });
 
   it.each(["2026", "1.0", "true", "null"])("reads the label %s as the text the address holds", async (label) => {
-    const { transport } = daemon({ "/projects/TASM/tasks": listing([entry(1, { labels: [label] }), entry(2)]) });
-    await renderWithRouter(`/tasks?projects=TASM&labels=${label}`, transport);
+    const { transport } = daemon({ "/projects/SAGA/tasks": listing([entry(1, { labels: [label] }), entry(2)]) });
+    await renderWithRouter(`/tasks?projects=SAGA&labels=${label}`, transport);
 
     expect(countOf("Backlog")).toBe("1 of 2");
     expect(screen.getByRole("combobox", { name: `Labels ${label}` })).toBeTruthy();
@@ -176,10 +176,10 @@ describe("the address", () => {
 
   it("opens the first of repeated project keys", async () => {
     const { transport } = daemon();
-    const router = await renderWithRouter("/tasks?projects=TASM&projects=DOBBY", transport);
+    const router = await renderWithRouter("/tasks?projects=SAGA&projects=DELTA", transport);
 
-    expect(router.state.location.search).toEqual({ projects: "TASM" });
-    expect(screen.getByRole("button", { name: "Project Tasma TASM" })).toBeTruthy();
+    expect(router.state.location.search).toEqual({ projects: "SAGA" });
+    expect(screen.getByRole("button", { name: "Project Saga SAGA" })).toBeTruthy();
   });
 
   it("asks the daemon for a tag that reads as a number, and keeps the selector under its refusal", async () => {
@@ -217,24 +217,24 @@ describe("a refused project", () => {
   it("keeps the project selector under the failure panel, so another project opens", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const user = userEvent.setup();
-    const { transport } = daemon({ "/projects/TASM": INVALID, "/projects/TASM/tasks": INVALID });
+    const { transport } = daemon({ "/projects/SAGA": INVALID, "/projects/SAGA/tasks": INVALID });
     const router = await renderWithRouter("/tasks", transport);
 
-    expect(router.state.location.search).toEqual({ projects: "TASM" });
+    expect(router.state.location.search).toEqual({ projects: "SAGA" });
     expect(screen.getByRole("alert").textContent).toContain("store/config-invalid");
 
-    await user.click(screen.getByRole("button", { name: "Project Tasma TASM" }));
+    await user.click(screen.getByRole("button", { name: "Project Saga SAGA" }));
     const menu = await screen.findByRole("menu");
     await act(async () => {
-      await user.click(within(menu).getByRole("menuitemradio", { name: "Dobby DOBBY" }));
+      await user.click(within(menu).getByRole("menuitemradio", { name: "Delta DELTA" }));
     });
 
-    expect(router.state.location.search).toEqual({ projects: "DOBBY" });
+    expect(router.state.location.search).toEqual({ projects: "DELTA" });
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.getByText("No tasks in Dobby yet.")).toBeTruthy();
+    expect(screen.getByText("No tasks in Delta yet.")).toBeTruthy();
   });
 
-  it.each(["/tasks", "/tasks?projects=TASM"])("shows no selector at %s when the listing of projects was refused", async (path) => {
+  it.each(["/tasks", "/tasks?projects=SAGA"])("shows no selector at %s when the listing of projects was refused", async (path) => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const { transport } = daemon({ "/projects": INVALID });
     await renderWithRouter(path, transport);
@@ -247,14 +247,14 @@ describe("a refused project", () => {
 describe("the board", () => {
   it("shows the configured columns in order, each with its count", async () => {
     const { transport } = daemon({
-      "/projects/TASM/tasks": listing([
+      "/projects/SAGA/tasks": listing([
         entry(1),
         entry(2, { status: "in progress" }),
         entry(3, { status: "Waiting" }),
         entry(4, { status: "Done" }),
       ]),
     });
-    await renderWithRouter("/tasks?projects=TASM", transport);
+    await renderWithRouter("/tasks?projects=SAGA", transport);
 
     expect(screen.getAllByRole("region").map((region) => region.querySelector("h2")?.textContent)).toEqual(CONFIG.statuses);
     expect(CONFIG.statuses.map(countOf)).toEqual(["2", "0", "1", "1"]);
@@ -264,22 +264,22 @@ describe("the board", () => {
 
   it("says the project has no task, and keeps the columns", async () => {
     const { transport } = daemon();
-    await renderWithRouter("/tasks?projects=TASM", transport);
+    await renderWithRouter("/tasks?projects=SAGA", transport);
 
-    expect(screen.getByText("No tasks in Tasma yet.")).toBeTruthy();
+    expect(screen.getByText("No tasks in Saga yet.")).toBeTruthy();
     expect(screen.getAllByRole("region")).toHaveLength(4);
   });
 
   it("names a project with no name by its tag", async () => {
-    const { transport } = daemon({ "/projects/DOBBY": project("DOBBY", { name: undefined }) });
-    await renderWithRouter("/tasks?projects=DOBBY", transport);
+    const { transport } = daemon({ "/projects/DELTA": project("DELTA", { name: undefined }) });
+    await renderWithRouter("/tasks?projects=DELTA", transport);
 
-    expect(screen.getByText("No tasks in DOBBY yet.")).toBeTruthy();
+    expect(screen.getByText("No tasks in DELTA yet.")).toBeTruthy();
   });
 
   it("shows each task's step from the workflow it names", async () => {
     const { transport, paths } = daemon({
-      "/projects/TASM/tasks": listing([
+      "/projects/SAGA/tasks": listing([
         entry(1, { workflow: "dev", step: "approve" }),
         entry(2, { workflow: "dev", step: "research" }),
         entry(3, { workflow: "gone", step: "research" }),
@@ -288,7 +288,7 @@ describe("the board", () => {
       "/workflows/dev": successReply(WORKFLOW),
       "/workflows/gone": refusalReply(404, { kind: "store", code: "workflow-unknown", message: "no workflow is named gone" }),
     });
-    await renderWithRouter("/tasks?projects=TASM", transport);
+    await renderWithRouter("/tasks?projects=SAGA", transport);
 
     const backlog = column("Backlog");
     expect(within(backlog).getByText(", step 2 of 2, a human's step")).toBeTruthy();
@@ -303,9 +303,9 @@ describe("the board", () => {
 
   it("counts the matching tasks of all under a label filter", async () => {
     const { transport } = daemon({
-      "/projects/TASM/tasks": listing([entry(1, { labels: ["web"] }), entry(2), entry(3, { status: "Done", labels: ["web"] })]),
+      "/projects/SAGA/tasks": listing([entry(1, { labels: ["web"] }), entry(2), entry(3, { status: "Done", labels: ["web"] })]),
     });
-    await renderWithRouter("/tasks?projects=TASM&labels=web", transport);
+    await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
 
     expect(CONFIG.statuses.map(countOf)).toEqual(["1 of 2", "0 of 0", "0 of 0", "1 of 1"]);
     expect(titlesIn("Backlog")).toEqual(["Task 1"]);
@@ -313,17 +313,17 @@ describe("the board", () => {
   });
 
   it("says no task carries a label that matches nothing", async () => {
-    const { transport } = daemon({ "/projects/TASM/tasks": listing([entry(1, { labels: ["web"] }), entry(2)]) });
-    await renderWithRouter("/tasks?projects=TASM&labels=docs", transport);
+    const { transport } = daemon({ "/projects/SAGA/tasks": listing([entry(1, { labels: ["web"] }), entry(2)]) });
+    await renderWithRouter("/tasks?projects=SAGA&labels=docs", transport);
 
-    expect(screen.getByText("No task in Tasma carries any of the selected labels.")).toBeTruthy();
+    expect(screen.getByText("No task in Saga carries any of the selected labels.")).toBeTruthy();
     expect(countOf("Backlog")).toBe("0 of 2");
     expect(screen.getByRole("status").textContent).toBe("0 of 2 tasks carry a selected label.");
   });
 
   it("wraps the heading line, so the controls stay inside a narrow viewport", async () => {
     const { transport } = daemon();
-    await renderWithRouter("/tasks?projects=TASM", transport);
+    await renderWithRouter("/tasks?projects=SAGA", transport);
 
     const line = screen.getByRole("heading", { level: 1 }).parentElement!;
     expect(line.classList.contains("flex-wrap")).toBe(true);
@@ -332,7 +332,7 @@ describe("the board", () => {
 
   it("gives the last column the right padding of main, so the page scrolls past it", async () => {
     const { transport } = daemon();
-    await renderWithRouter("/tasks?projects=TASM", transport);
+    await renderWithRouter("/tasks?projects=SAGA", transport);
 
     const row = screen.getAllByRole("region")[0]!.parentElement!;
     expect([...row.classList]).toEqual(expect.arrayContaining(["-mr-6", "sm:-mr-10", "*:last:box-content", "*:last:pr-6", "sm:*:last:pr-10"]));
@@ -341,10 +341,10 @@ describe("the board", () => {
 
   it("remembers the project it loaded, titles the document, and marks Tasks current", async () => {
     const { transport } = daemon();
-    await renderWithRouter("/tasks?projects=DOBBY", transport);
+    await renderWithRouter("/tasks?projects=DELTA", transport);
 
-    expect(window.localStorage.getItem("tasma.tasks.project")).toBe("DOBBY");
-    expect(useUiStore.getState().lastTasksProject).toBe("DOBBY");
+    expect(window.localStorage.getItem("tasma.tasks.project")).toBe("DELTA");
+    expect(useUiStore.getState().lastTasksProject).toBe("DELTA");
     expect(document.title).toBe("Tasks · tasma");
     const current = screen.getAllByRole("link").filter((link) => link.getAttribute("aria-current") === "page");
     expect(current.map((link) => link.textContent)).toEqual(["Tasks"]);
@@ -352,17 +352,17 @@ describe("the board", () => {
 });
 
 describe("what the daemon reports beside the tasks", () => {
-  const MISSING: Diagnostic = { code: "path-missing", message: "the repository is not on disk", path: "/repos/tasma" };
+  const MISSING: Diagnostic = { code: "path-missing", message: "the repository is not on disk", path: "/repos/saga" };
   const UNKNOWN: Diagnostic = { code: "config-key-unknown", message: "unknown key: colour", path: "/p/config.yml", line: 4 };
-  const BLOCKER: Diagnostic = { code: "blocked-by-unresolved", message: "TASM-9 names no task", path: "/p/TASM-1.md" };
-  const EXCLUDED: ExcludedFile = { path: "/repos/tasma/tasks/TASM-7.md", code: "task-file-unreadable", message: "no frontmatter" };
+  const BLOCKER: Diagnostic = { code: "blocked-by-unresolved", message: "SAGA-9 names no task", path: "/p/SAGA-1.md" };
+  const EXCLUDED: ExcludedFile = { path: "/repos/saga/tasks/SAGA-7.md", code: "task-file-unreadable", message: "no frontmatter" };
 
   it("shows the notice and a warnings line of both reads, with the repeats removed", async () => {
     const { transport } = daemon({
-      "/projects/TASM": successReply({ ...PROJECTS[0], live: false, config: CONFIG }, [MISSING, UNKNOWN]),
-      "/projects/TASM/tasks": listing([entry(1)], [EXCLUDED], [{ ...UNKNOWN }, BLOCKER]),
+      "/projects/SAGA": successReply({ ...PROJECTS[0], live: false, config: CONFIG }, [MISSING, UNKNOWN]),
+      "/projects/SAGA/tasks": listing([entry(1)], [EXCLUDED], [{ ...UNKNOWN }, BLOCKER]),
     });
-    await renderWithRouter("/tasks?projects=TASM", transport);
+    await renderWithRouter("/tasks?projects=SAGA", transport);
 
     expect(within(screen.getByRole("note")).getByText("The index is not following the disk")).toBeTruthy();
     const line = screen.getByRole("heading", { level: 2, name: /warnings/ });
@@ -372,8 +372,8 @@ describe("what the daemon reports beside the tasks", () => {
   });
 
   it("says nothing while there is nothing to report", async () => {
-    const { transport } = daemon({ "/projects/TASM/tasks": listing([entry(1)]) });
-    await renderWithRouter("/tasks?projects=TASM", transport);
+    const { transport } = daemon({ "/projects/SAGA/tasks": listing([entry(1)]) });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
 
     expect(screen.queryByRole("note")).toBeNull();
     expect(screen.queryByRole("heading", { level: 2, name: /warning/ })).toBeNull();
@@ -381,8 +381,8 @@ describe("what the daemon reports beside the tasks", () => {
   });
 
   it("spaces the warnings line under the heading when there is no notice", async () => {
-    const { transport } = daemon({ "/projects/TASM/tasks": listing([entry(1)], [EXCLUDED]) });
-    await renderWithRouter("/tasks?projects=TASM", transport);
+    const { transport } = daemon({ "/projects/SAGA/tasks": listing([entry(1)], [EXCLUDED]) });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
 
     const line = screen.getByRole("heading", { level: 2, name: /warning/ });
     expect(line.textContent).toBe("1 warning about this project");
@@ -411,11 +411,11 @@ describe("polling", () => {
   }
 
   it("follows the disk every 5 seconds", async () => {
-    const { transport, replies } = daemon({ "/projects/TASM/tasks": listing([entry(1), entry(2)]) });
-    await renderWithRouter("/tasks?projects=TASM", transport);
+    const { transport, replies } = daemon({ "/projects/SAGA/tasks": listing([entry(1), entry(2)]) });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
     expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2"]);
 
-    replies["/projects/TASM/tasks"] = listing([entry(1, { status: "Done" }), entry(2)]);
+    replies["/projects/SAGA/tasks"] = listing([entry(1, { status: "Done" }), entry(2)]);
     await poll();
 
     expect(titlesIn("Backlog")).toEqual(["Task 2"]);
@@ -431,14 +431,14 @@ describe("polling", () => {
     await poll();
 
     await vi.waitFor(() => {
-      expect(screen.getByText("No tasks in Tasma yet.")).toBeTruthy();
+      expect(screen.getByText("No tasks in Saga yet.")).toBeTruthy();
     });
-    expect(router.state.location.search).toEqual({ projects: "TASM" });
+    expect(router.state.location.search).toEqual({ projects: "SAGA" });
   });
 
   it("asks nothing while the page is hidden", async () => {
-    const { transport, paths } = daemon({ "/projects/TASM/tasks": listing([entry(1)]) });
-    await renderWithRouter("/tasks?projects=TASM", transport);
+    const { transport, paths } = daemon({ "/projects/SAGA/tasks": listing([entry(1)]) });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
 
     Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
     document.dispatchEvent(new Event("visibilitychange"));
@@ -453,10 +453,10 @@ describe("polling", () => {
     const late = new Promise<TransportReply>((resolve) => {
       answer = resolve;
     });
-    const { transport, replies } = daemon({ "/projects/TASM/tasks": listing([entry(1)]), "/workflows/dev": late });
-    await renderWithRouter("/tasks?projects=TASM", transport);
+    const { transport, replies } = daemon({ "/projects/SAGA/tasks": listing([entry(1)]), "/workflows/dev": late });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
 
-    replies["/projects/TASM/tasks"] = listing([entry(1, { workflow: "dev", step: "approve" })]);
+    replies["/projects/SAGA/tasks"] = listing([entry(1, { workflow: "dev", step: "approve" })]);
     await poll();
 
     expect(screen.getByText("approve").className).toContain("text-dim");
