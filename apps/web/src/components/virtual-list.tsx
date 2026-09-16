@@ -22,8 +22,7 @@ type VirtualListProps<T> = {
 };
 
 /**
- * Renders only the rows in view. Any list that can exceed 50 rows goes through
- * this rather than mapping the whole collection.
+ * Renders only the rows in view.
  *
  * React Compiler skips this component and reports the skip as a warning, which
  * `vite.config.ts` filters because the skip is expected. `useVirtualizer`

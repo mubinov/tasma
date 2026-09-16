@@ -31,11 +31,15 @@ it("serves a screen at every path the sidebar offers", () => {
 });
 
 // The other direction: a top-level route with no entry beside it is a screen
-// nothing in the sidebar reaches.
+// nothing in the sidebar reaches. A route under a destination's address, as
+// /tasks/$project/$task under /tasks, is reached from that destination's screen.
 it("offers every top-level route from the sidebar", () => {
-  const served = (appRouter().routeTree.children ?? []).map((route) => route.fullPath);
+  const offered = LINKED.map((entry) => entry.path);
+  const served = (appRouter().routeTree.children ?? [])
+    .map((route) => route.fullPath)
+    .filter((path) => !offered.some((prefix) => prefix !== "/" && path.startsWith(`${prefix}/`)));
 
-  expect(LINKED.map((entry) => entry.path).sort()).toEqual([...served].sort());
+  expect(offered.sort()).toEqual([...served].sort());
 });
 
 // Each route reads its own entry through this, so a missing key would leave a

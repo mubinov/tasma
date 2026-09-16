@@ -1,12 +1,15 @@
 import type { Diagnostic, Frontmatter, TaskEntry, Workflow } from "@tasma/protocol";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   boardWarnings,
+  type CardClick,
   buildColumns,
   distinctLabels,
+  isFinalStatus,
   isTopPriority,
   joinList,
   labelChoices,
+  opensTask,
   splitList,
   stepView,
   workflowNames,
@@ -65,6 +68,21 @@ describe("joinList", () => {
 
   it("gives undefined for an empty list", () => {
     expect(joinList([])).toBeUndefined();
+  });
+});
+
+describe("isFinalStatus", () => {
+  it.each([
+    { status: "Done", final: true },
+    { status: "done", final: true },
+    { status: "CLOSED", final: true },
+    { status: "In Progress", final: false },
+  ])("says $final for $status", ({ status, final }) => {
+    expect(isFinalStatus(status, ["Done", "Closed"])).toBe(final);
+  });
+
+  it("says false when no status is final", () => {
+    expect(isFinalStatus("Done", [])).toBe(false);
   });
 });
 
@@ -236,11 +254,11 @@ describe("workflowNames", () => {
 
 describe("stepView", () => {
   it("shows no step for a task with no step", () => {
-    expect(stepView(entry("T-1", { workflow: "dev" }), false, WORKFLOW)).toEqual({ kind: "none" });
+    expect(stepView(entry("T-1", { workflow: "dev" }).frontmatter, false, WORKFLOW)).toEqual({ kind: "none" });
   });
 
   it("shows no step in a final column", () => {
-    expect(stepView(entry("T-1", { workflow: "dev", step: "research" }), true, WORKFLOW)).toEqual({ kind: "none" });
+    expect(stepView(entry("T-1", { workflow: "dev", step: "research" }).frontmatter, true, WORKFLOW)).toEqual({ kind: "none" });
   });
 
   it.each([
@@ -249,17 +267,88 @@ describe("stepView", () => {
     { case: "a workflow not read yet", fields: { workflow: "dev", step: "research" }, workflow: undefined },
     { case: "a step the workflow does not declare", fields: { workflow: "dev", step: "deploy" }, workflow: WORKFLOW },
   ])("shows the stale step for $case", ({ fields, workflow }) => {
-    expect(stepView(entry("T-1", fields), false, workflow)).toEqual({ kind: "stale", name: fields.step });
+    expect(stepView(entry("T-1", fields).frontmatter, false, workflow)).toEqual({ kind: "stale", name: fields.step });
   });
 
   it("shows the step with its owner, its position and every owner", () => {
-    expect(stepView(entry("T-1", { workflow: "dev", step: "approve" }), false, WORKFLOW)).toEqual({
+    expect(stepView(entry("T-1", { workflow: "dev", step: "approve" }).frontmatter, false, WORKFLOW)).toEqual({
       kind: "step",
       name: "approve",
       owner: "human",
       current: 1,
       owners: ["agent", "human", "agent"],
     });
+  });
+});
+
+describe("opensTask", () => {
+  function card(): { card: HTMLElement; text: HTMLElement; link: HTMLElement } {
+    document.body.innerHTML = "<div><span>SAGA-1</span><a href=\"#\"><b>Title</b></a></div>";
+    const root = document.body.firstElementChild as HTMLElement;
+
+    return { card: root, text: root.querySelector("span")!, link: root.querySelector("b")! };
+  }
+
+  function click(fields: Partial<CardClick> & Pick<CardClick, "currentTarget">): CardClick {
+    return { target: null, button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...fields };
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    window.getSelection()?.removeAllRanges();
+    document.body.innerHTML = "";
+  });
+
+  it("opens the task for a primary click on the card's text", () => {
+    const { card: currentTarget, text } = card();
+
+    expect(opensTask(click({ currentTarget, target: text }))).toBe(true);
+  });
+
+  it("leaves a click inside a link or a button to that control", () => {
+    const { card: currentTarget, link } = card();
+
+    expect(opensTask(click({ currentTarget, target: link }))).toBe(false);
+  });
+
+  it("leaves a click whose target is outside the card element, as in a portal", () => {
+    const { card: currentTarget } = card();
+    const popup = document.createElement("div");
+    document.body.append(popup);
+
+    expect(opensTask(click({ currentTarget, target: popup }))).toBe(false);
+  });
+
+  it("leaves a click whose target is no element", () => {
+    const { card: currentTarget } = card();
+
+    expect(opensTask(click({ currentTarget, target: document }))).toBe(false);
+  });
+
+  it.each([
+    { case: "the button is not the primary one", fields: { button: 1 } },
+    { case: "Meta is held", fields: { metaKey: true } },
+    { case: "Ctrl is held", fields: { ctrlKey: true } },
+    { case: "Shift is held", fields: { shiftKey: true } },
+    { case: "Alt is held", fields: { altKey: true } },
+  ])("leaves the click when $case", ({ fields }) => {
+    const { card: currentTarget, text } = card();
+
+    expect(opensTask(click({ currentTarget, target: text, ...fields }))).toBe(false);
+  });
+
+  it("opens the task where the document has no selection", () => {
+    const { card: currentTarget, text } = card();
+    vi.spyOn(window, "getSelection").mockReturnValue(null);
+
+    expect(opensTask(click({ currentTarget, target: text }))).toBe(true);
+  });
+
+  it("leaves a click that ends a text selection", () => {
+    const { card: currentTarget, text } = card();
+    window.getSelection()?.selectAllChildren(text);
+
+    expect(opensTask(click({ currentTarget, target: text }))).toBe(false);
   });
 });
 

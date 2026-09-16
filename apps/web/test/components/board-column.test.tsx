@@ -1,9 +1,10 @@
 import type { Frontmatter, TaskEntry, Workflow } from "@tasma/protocol";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BoardColumn } from "../../src/components/board-column";
 import type { ColumnData } from "../../src/lib/board";
+import { renderBesideTaskRoute } from "../helpers";
 
 function entry(number: number, fields: Partial<Frontmatter> = {}): TaskEntry {
   const id = `SAGA-${String(number)}`;
@@ -34,11 +35,11 @@ const WORKFLOW: Workflow = {
   steps: [{ name: "implement", file: "/w/dev/implement.md", owner: "agent" }],
 };
 
-function renderColumn(column: Partial<ColumnData>, filtered = false) {
+async function renderColumn(column: Partial<ColumnData>, filtered = false) {
   const data: ColumnData = { status: "In Progress", final: false, matching: [], total: 0, ...column };
 
-  return render(
-    <BoardColumn column={data} filtered={filtered} priorities={["high", "low"]} workflows={new Map([["dev", WORKFLOW]])} />,
+  return renderBesideTaskRoute(
+    <BoardColumn tag="SAGA" column={data} filtered={filtered} priorities={["high", "low"]} workflows={new Map([["dev", WORKFLOW]])} />,
   );
 }
 
@@ -58,8 +59,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("heads the column with its status and its count", () => {
-  renderColumn({ matching: entries(3), total: 3 });
+it("heads the column with its status and its count", async () => {
+  await renderColumn({ matching: entries(3), total: 3 });
 
   const heading = screen.getByRole("heading", { level: 2, name: "In Progress" });
   expect(heading.nextElementSibling?.textContent).toBe("3");
@@ -67,41 +68,49 @@ it("heads the column with its status and its count", () => {
   expect(within(screen.getByRole("list", { name: "In Progress" })).getAllByRole("listitem")).toHaveLength(3);
 });
 
-it("counts the matching tasks of all while labels are selected", () => {
-  renderColumn({ matching: entries(2), total: 5 }, true);
+it("sets the page's top scroll padding past the sticky header", async () => {
+  await renderColumn({ matching: entries(1), total: 1 });
+
+  const header = screen.getByRole("heading", { level: 2 }).parentElement!;
+  expect(header.classList.contains("sticky")).toBe(true);
+  expect(header.classList.contains("[html:has(&)]:scroll-pt-13")).toBe(true);
+});
+
+it("counts the matching tasks of all while labels are selected", async () => {
+  await renderColumn({ matching: entries(2), total: 5 }, true);
 
   expect(screen.getByRole("heading", { level: 2 }).nextElementSibling?.textContent).toBe("2 of 5");
 });
 
-it("renders no list for a column with no card", () => {
-  renderColumn({ matching: [], total: 4 }, true);
+it("renders no list for a column with no card", async () => {
+  await renderColumn({ matching: [], total: 4 }, true);
 
   expect(screen.queryByRole("list")).toBeNull();
   expect(screen.getByRole("heading", { level: 2 }).nextElementSibling?.textContent).toBe("0 of 4");
 });
 
-it("gives each card its step view and its priority", () => {
-  renderColumn({ matching: [entry(1, { workflow: "dev", step: "implement", priority: "high" })], total: 1 });
+it("gives each card its step view and its priority", async () => {
+  await renderColumn({ matching: [entry(1, { workflow: "dev", step: "implement", priority: "high" })], total: 1 });
 
   expect(screen.getByText("implement").className).toContain("text-text");
   expect(screen.getByText("high").className).toContain("font-medium");
 });
 
-it("shows no step in a final column", () => {
-  renderColumn({ final: true, matching: [entry(1, { workflow: "dev", step: "implement" })], total: 1 });
+it("shows no step in a final column", async () => {
+  await renderColumn({ final: true, matching: [entry(1, { workflow: "dev", step: "implement" })], total: 1 });
 
   expect(screen.queryByText("implement")).toBeNull();
 });
 
-it("shows the stale step for a workflow the column has no read of", () => {
-  renderColumn({ matching: [entry(1, { workflow: "gone", step: "implement" })], total: 1 });
+it("shows the stale step for a workflow the column has no read of", async () => {
+  await renderColumn({ matching: [entry(1, { workflow: "gone", step: "implement" })], total: 1 });
 
   expect(screen.getByText("implement").className).toContain("text-dim");
 });
 
 it("shows the first 20 cards of a final column until Show all is used", async () => {
   const user = userEvent.setup();
-  renderColumn({ final: true, matching: entries(25), total: 25 });
+  await renderColumn({ final: true, matching: entries(25), total: 25 });
 
   expect(cardTitles()).toHaveLength(20);
   const foot = screen.getByText(/20 of 25/);
@@ -115,7 +124,7 @@ it("shows the first 20 cards of a final column until Show all is used", async ()
 
 it("moves focus to the first card Show all reveals", async () => {
   const user = userEvent.setup();
-  renderColumn({ final: true, matching: entries(25), total: 25 });
+  await renderColumn({ final: true, matching: entries(25), total: 25 });
 
   await user.click(screen.getByRole("button", { name: "Show all" }));
 
@@ -126,7 +135,7 @@ it("moves focus to the first card Show all reveals", async () => {
 
 it("moves focus to the heading when the first revealed card is outside a virtual window", async () => {
   const user = userEvent.setup();
-  renderColumn({ final: true, matching: entries(60), total: 60 });
+  await renderColumn({ final: true, matching: entries(60), total: 60 });
 
   await user.click(screen.getByRole("button", { name: "Show all" }));
 
@@ -161,7 +170,7 @@ describe("Show all on a final column of more than 50 cards, scrolled down to it"
 
   it("moves focus to the first card it reveals", async () => {
     const user = userEvent.setup();
-    renderColumn({ final: true, matching: entries(57), total: 57 });
+    await renderColumn({ final: true, matching: entries(57), total: 57 });
 
     await user.click(screen.getByRole("button", { name: "Show all" }));
 
@@ -172,7 +181,9 @@ describe("Show all on a final column of more than 50 cards, scrolled down to it"
 
   it("keeps the cards in view in place, and does not scroll the page", async () => {
     const user = userEvent.setup();
-    renderColumn({ final: true, matching: entries(57), total: 57 });
+    await renderColumn({ final: true, matching: entries(57), total: 57 });
+    // The router scrolls to the top when it mounts.
+    scrollTo.mockClear();
 
     await user.click(screen.getByRole("button", { name: "Show all" }));
 
@@ -182,44 +193,44 @@ describe("Show all on a final column of more than 50 cards, scrolled down to it"
   });
 });
 
-it("underlines Show all at rest", () => {
-  renderColumn({ final: true, matching: entries(25), total: 25 });
+it("underlines Show all at rest", async () => {
+  await renderColumn({ final: true, matching: entries(25), total: 25 });
 
   expect(screen.getByRole("button", { name: "Show all" }).classList.contains("underline")).toBe(true);
 });
 
-it("keeps the separator before Show all clear of the focus ring", () => {
-  renderColumn({ final: true, matching: entries(25), total: 25 });
+it("keeps the separator before Show all clear of the focus ring", async () => {
+  await renderColumn({ final: true, matching: entries(25), total: 25 });
 
   const separator = screen.getByRole("button", { name: "Show all" }).previousElementSibling;
   expect(separator?.textContent).toBe(" · ");
   expect(separator?.classList.contains("mx-1")).toBe(true);
 });
 
-it("shows every card of an open column", () => {
-  renderColumn({ matching: entries(25), total: 25 });
+it("shows every card of an open column", async () => {
+  await renderColumn({ matching: entries(25), total: 25 });
 
   expect(cardTitles()).toHaveLength(25);
   expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
 });
 
-it("shows every card of a final column that holds 20 or fewer", () => {
-  renderColumn({ final: true, matching: entries(20), total: 20 });
+it("shows every card of a final column that holds 20 or fewer", async () => {
+  await renderColumn({ final: true, matching: entries(20), total: 20 });
 
   expect(cardTitles()).toHaveLength(20);
   expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
 });
 
-it("renders more than 50 cards through a list that holds only the rows in view", () => {
-  renderColumn({ matching: entries(60), total: 60 });
+it("renders more than 50 cards through a list that holds only the rows in view", async () => {
+  await renderColumn({ matching: entries(60), total: 60 });
 
   const rows = within(screen.getByRole("list", { name: "In Progress" })).getAllByRole("listitem");
   expect(rows.length).toBeLessThan(60);
   expect(rows[0]?.getAttribute("aria-setsize")).toBe("60");
 });
 
-it("renders 50 cards as a plain list", () => {
-  renderColumn({ matching: entries(50), total: 50 });
+it("renders 50 cards as a plain list", async () => {
+  await renderColumn({ matching: entries(50), total: 50 });
 
   const rows = within(screen.getByRole("list", { name: "In Progress" })).getAllByRole("listitem");
   expect(rows).toHaveLength(50);

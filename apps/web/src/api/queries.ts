@@ -1,6 +1,8 @@
 import { queryOptions } from "@tanstack/react-query";
 import { buildPath, ProtocolError, routes, type Client, type Success, type Workflow } from "@tasma/protocol";
 
+export const POLL_INTERVAL = 5_000;
+
 /**
  * Two properties a new key has to keep: every key descends from `all`, so one
  * prefix invalidation drops everything the daemon said, and keys nest the way
@@ -13,6 +15,7 @@ export const daemonKeys = {
   projects: () => [...daemonKeys.all, "projects"] as const,
   project: (tag: string) => [...daemonKeys.projects(), tag] as const,
   tasks: (tag: string) => [...daemonKeys.project(tag), "tasks"] as const,
+  task: (tag: string, id: string) => [...daemonKeys.tasks(tag), id] as const,
   workflows: () => [...daemonKeys.all, "workflows"] as const,
   workflow: (name: string) => [...daemonKeys.workflows(), name] as const,
 };
@@ -46,6 +49,13 @@ export function tasksQuery(client: Client, tag: string) {
   return queryOptions({
     queryKey: daemonKeys.tasks(tag),
     queryFn: () => client.listTasks(tag),
+  });
+}
+
+export function taskQuery(client: Client, tag: string, id: string) {
+  return queryOptions({
+    queryKey: daemonKeys.task(tag, id),
+    queryFn: () => client.readTask(tag, id),
   });
 }
 

@@ -8,6 +8,7 @@ import {
   healthQuery,
   projectQuery,
   projectsQuery,
+  taskQuery,
   tasksQuery,
   workflowQuery,
 } from "../../src/api/queries";
@@ -68,16 +69,16 @@ it("caches the whole success envelope, diagnostics included", async () => {
 /*
  * The property one prefix invalidation depends on, asked of every key there is.
  * The builders are read off `daemonKeys` rather than listed, so a key added
- * there is covered by existing; the tag argument the keys that take none ignore.
+ * there is covered by existing; a key ignores the arguments it does not take.
  */
 it("descends every key from the one prefix that invalidates the daemon's answers", () => {
-  const builders: ((tag: string) => readonly string[])[] = Object.values(daemonKeys).filter(
+  const builders: ((tag: string, id: string) => readonly string[])[] = Object.values(daemonKeys).filter(
     (value) => typeof value === "function",
   );
 
   expect(builders.length).toBeGreaterThan(0);
   for (const build of builders) {
-    const key = build("SAGA");
+    const key = build("SAGA", "SAGA-1");
     expect(key.slice(0, daemonKeys.all.length), key.join("/")).toEqual([...daemonKeys.all]);
   }
 });
@@ -122,6 +123,26 @@ it("nests a project's tasks inside the project, and one workflow inside the work
 
   expect(daemonKeys.tasks("SAGA").slice(0, project.length)).toEqual([...project]);
   expect(daemonKeys.workflow("dev").slice(0, workflows.length)).toEqual([...workflows]);
+});
+
+// An invalidation of a project's tasks after a write reaches an open task page.
+it("nests one task inside the tasks of its project", () => {
+  const tasks = daemonKeys.tasks("SAGA");
+
+  expect(daemonKeys.task("SAGA", "SAGA-1")).toEqual([...tasks, "SAGA-1"]);
+});
+
+it("asks for one task with its comments in one request", async () => {
+  const task = { frontmatter: { id: "SAGA-1" }, body: "", comments: [] };
+  const paths = stubDaemon(task);
+
+  const success = await createAppQueryClient().query({
+    ...taskQuery(createDaemonClient(), "SAGA", "SAGA-1"),
+    staleTime: "static",
+  });
+
+  expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects/SAGA/tasks/SAGA-1`]);
+  expect(success).toEqual({ data: task, diagnostics: [] });
 });
 
 it("asks for the tasks of one project, with no filter", async () => {

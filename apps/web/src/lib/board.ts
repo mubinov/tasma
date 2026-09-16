@@ -1,4 +1,4 @@
-import type { Config, Diagnostic, StepOwner, TaskEntry, Workflow } from "@tasma/protocol";
+import type { Config, Diagnostic, Frontmatter, StepOwner, TaskEntry, Workflow } from "@tasma/protocol";
 
 export type ColumnData = {
   /** As configured. */
@@ -51,13 +51,18 @@ function finalOrder(a: TaskEntry, b: TaskEntry): number {
   return idNumber(b.id) - idNumber(a.id);
 }
 
+export function isFinalStatus(status: string, finalStatuses: readonly string[]): boolean {
+  const key = status.toLowerCase();
+
+  return finalStatuses.some((final) => final.toLowerCase() === key);
+}
+
 export function buildColumns(
   config: Pick<Config, "statuses" | "final_statuses">,
   entries: readonly TaskEntry[],
   labels: readonly string[],
 ): ColumnData[] {
   const statuses = config.statuses.map((status) => status.toLowerCase());
-  const finals = new Set(config.final_statuses.map((status) => status.toLowerCase()));
   const selected = new Set(labels.map((label) => label.toLowerCase()));
   const columns = config.statuses.map((status) => ({ status, tasks: [] as TaskEntry[] }));
 
@@ -67,7 +72,7 @@ export function buildColumns(
   }
 
   return columns.map(({ status, tasks }) => {
-    const final = finals.has(status.toLowerCase());
+    const final = isFinalStatus(status, config.final_statuses);
     const matching = selected.size === 0
       ? [...tasks]
       : tasks.filter((entry) => (entry.frontmatter.labels ?? []).some((label) => selected.has(label.toLowerCase())));
@@ -120,14 +125,14 @@ export function workflowNames(entries: readonly TaskEntry[]): string[] {
   return [...new Set(entries.flatMap((entry) => entry.frontmatter.workflow ?? []))];
 }
 
-export function stepView(entry: TaskEntry, final: boolean, workflow: Workflow | null | undefined): StepView {
-  const { step } = entry.frontmatter;
+export function stepView(frontmatter: Frontmatter, final: boolean, workflow: Workflow | null | undefined): StepView {
+  const { step } = frontmatter;
 
   if (step === undefined || final) {
     return { kind: "none" };
   }
 
-  const declared = entry.frontmatter.workflow === undefined
+  const declared = frontmatter.workflow === undefined
     ? undefined
     : workflow?.steps.find((candidate) => candidate.name === step);
 
@@ -142,6 +147,28 @@ export function stepView(entry: TaskEntry, final: boolean, workflow: Workflow | 
     current: workflow.steps.indexOf(declared),
     owners: workflow.steps.map((candidate) => candidate.owner),
   };
+}
+
+export type CardClick = Pick<MouseEvent, "target" | "button" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey"> & {
+  currentTarget: Element;
+};
+
+/**
+ * Whether a click on a card opens the task: not for a click on a control of its
+ * own, one that ends a text selection, one from a portal rendered outside the
+ * card, or one that asks the browser for something else.
+ */
+export function opensTask(click: CardClick): boolean {
+  const { target, currentTarget } = click;
+
+  if (!(target instanceof Element) || !currentTarget.contains(target) || target.closest("a, button") !== null) {
+    return false;
+  }
+  if (click.button !== 0 || click.metaKey || click.ctrlKey || click.shiftKey || click.altKey) {
+    return false;
+  }
+
+  return (window.getSelection()?.toString() ?? "") === "";
 }
 
 export function isTopPriority(priority: string | undefined, priorities: readonly string[]): boolean {

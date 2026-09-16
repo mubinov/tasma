@@ -7,14 +7,15 @@ import {
   redirect,
   type RouterHistory,
 } from "@tanstack/react-router";
-import { buildPath, routes as daemonRoutes, type Client } from "@tasma/protocol";
-import { projectQuery, projectsQuery, tasksQuery, workflowQuery } from "./api/queries";
+import { buildPath, routes as daemonRoutes, type Client, type Route } from "@tasma/protocol";
+import { projectQuery, projectsQuery, taskQuery, tasksQuery, workflowQuery } from "./api/queries";
 import { AppShell } from "./components/app-shell";
 import { ErrorScreen, RouteFailure } from "./components/error-boundary";
 import { PlaceholderScreen } from "./components/placeholder-screen";
 import { ProjectScreen } from "./components/project-screen";
 import { ProjectsScreen } from "./components/projects-screen";
 import { SettingsScreen } from "./components/settings-screen";
+import { TaskScreen } from "./components/task-screen";
 import { TasksFailure, TasksScreen } from "./components/tasks-screen";
 import { splitList, workflowNames } from "./lib/board";
 import { NAVIGATION_BY_PATH, type NavigationPath } from "./navigation";
@@ -22,6 +23,20 @@ import { useUiStore } from "./store/ui";
 
 /** What every loader and every screen is handed: the cache, and the daemon. */
 export type RouterContext = { queryClient: QueryClient; client: Client };
+
+/**
+ * The client refuses a segment a URL resolver would remove or climb out of, and
+ * it refuses by throwing, which the failure panel can only read as a fault in
+ * our own code. Its own rule is asked before the load instead, so an address
+ * naming nothing reaches the not-found screen.
+ */
+function requirePath(route: Route, params: Record<string, string>): void {
+  try {
+    buildPath(route, params);
+  } catch {
+    throw notFound();
+  }
+}
 
 const rootRoute = createRootRouteWithContext<RouterContext>()({
   component: AppShell,
@@ -72,13 +87,7 @@ const tasksRoute = createRoute({
       throw redirect({ to: "/tasks", search: { ...search, projects: tag }, replace: true });
     }
     if (tag !== undefined) {
-      // As on the project route: a tag the client cannot write into a path is
-      // an address naming nothing, not a fault in our own code.
-      try {
-        buildPath(daemonRoutes.readProject, { project: tag });
-      } catch {
-        throw notFound();
-      }
+      requirePath(daemonRoutes.readProject, { project: tag });
       return;
     }
 
@@ -110,6 +119,31 @@ const tasksRoute = createRoute({
   errorComponent: TasksFailure,
 });
 
+// A sibling of the board, not its child: under `/tasks` it would take the
+// board's search, its redirect to a project and its loader.
+const taskRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/tasks/$project/$task",
+  beforeLoad: ({ params }) => {
+    requirePath(daemonRoutes.readTask, { project: params.project, id: params.task });
+  },
+  // Another task mounts a new screen, so no comment keeps the open state of the
+  // comment with the same id in the task before, and that task's notice closes.
+  remountDeps: ({ params }) => params,
+  loader: async ({ context: { queryClient, client }, params: { project, task } }) => {
+    const [, { data: read }] = await Promise.all([
+      queryClient.query({ ...projectQuery(client, project), staleTime: "static" }),
+      queryClient.query({ ...taskQuery(client, project, task), staleTime: "static" }),
+    ]);
+    const { workflow } = read.frontmatter;
+
+    if (workflow !== undefined) {
+      await queryClient.query({ ...workflowQuery(client, workflow), staleTime: "static" });
+    }
+  },
+  component: TaskScreen,
+});
+
 // No component of its own, so the router renders the child that matched.
 const projectsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -129,16 +163,8 @@ const projectsIndexRoute = createRoute({
 const projectRoute = createRoute({
   getParentRoute: () => projectsRoute,
   path: "/$project",
-  // The client refuses a segment a URL resolver would remove or climb out of,
-  // and it refuses by throwing, which the failure panel can only read as a fault
-  // in our own code. Its own rule is asked here instead, so an address naming no
-  // project reaches the not-found screen.
   beforeLoad: ({ params }) => {
-    try {
-      buildPath(daemonRoutes.readProject, params);
-    } catch {
-      throw notFound();
-    }
+    requirePath(daemonRoutes.readProject, params);
   },
   loader: ({ context, params }) => context.queryClient.query({
     ...projectQuery(context.client, params.project),
@@ -162,6 +188,7 @@ const settingsRoute = createRoute({
 export const routeTree = rootRoute.addChildren([
   dashboardRoute,
   tasksRoute,
+  taskRoute,
   projectsRoute.addChildren([projectsIndexRoute, projectRoute]),
   workflowsRoute,
   settingsRoute,

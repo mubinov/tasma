@@ -6,6 +6,8 @@ import { TaskCard } from "./task-card";
 import { PageVirtualList } from "./virtual-list";
 
 type BoardColumnProps = {
+  /** The tag of the project the board shows. */
+  tag: string;
   column: ColumnData;
   /** Labels are selected. */
   filtered: boolean;
@@ -18,7 +20,7 @@ const FINAL_CAP = 20;
 const VIRTUAL_ABOVE = 50;
 const ESTIMATED_CARD_HEIGHT = 96;
 
-export function BoardColumn({ column, filtered, priorities, workflows }: BoardColumnProps): ReactNode {
+export function BoardColumn({ tag, column, filtered, priorities, workflows }: BoardColumnProps): ReactNode {
   const { status, final, matching, total } = column;
   const headingId = useId();
   const sectionRef = useRef<HTMLElement>(null);
@@ -52,8 +54,9 @@ export function BoardColumn({ column, filtered, priorities, workflows }: BoardCo
   function renderCard(entry: TaskEntry): ReactNode {
     return (
       <TaskCard
+        tag={tag}
         entry={entry}
-        view={stepView(entry, final, workflows.get(entry.frontmatter.workflow ?? ""))}
+        view={stepView(entry.frontmatter, final, workflows.get(entry.frontmatter.workflow ?? ""))}
         top={isTopPriority(entry.frontmatter.priority, priorities)}
       />
     );
@@ -62,7 +65,8 @@ export function BoardColumn({ column, filtered, priorities, workflows }: BoardCo
   return (
     // No scroll container of its own: one would break the sticky header.
     <section ref={sectionRef} aria-labelledby={headingId} className="min-w-60 flex-1">
-      <div className="sticky top-0 z-(--layer-column-header) -mt-3 flex items-baseline gap-2 bg-bg py-3">
+      {/* The page's scroll padding keeps a focus scroll's target and its ring clear of the header. */}
+      <div className="sticky top-0 z-(--layer-column-header) -mt-3 flex items-baseline gap-2 bg-bg py-3 [html:has(&)]:scroll-pt-13">
         <h2 ref={headingRef} id={headingId} tabIndex={-1} className="font-chrome text-sm font-medium">
           {status}
         </h2>

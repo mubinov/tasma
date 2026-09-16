@@ -2,7 +2,7 @@ import { useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, Link, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import type { Workflow } from "@tasma/protocol";
 import { useDeferredValue, useEffect, type ReactNode } from "react";
-import { projectQuery, projectsQuery, tasksQuery, workflowQuery } from "../api/queries";
+import { POLL_INTERVAL, projectQuery, projectsQuery, tasksQuery, workflowQuery } from "../api/queries";
 import { boardWarnings, buildColumns, distinctLabels, splitList, workflowNames } from "../lib/board";
 import { useDocumentTitle } from "../lib/document-title";
 import { warningCount } from "../lib/warning-count";
@@ -19,8 +19,6 @@ import { ScreenHeading } from "./screen-heading";
 // The route is reached by id rather than imported: the tree in routes.tsx names
 // this component, so importing the route back would close a cycle.
 const route = getRouteApi("/tasks");
-
-const POLL_INTERVAL = 5_000;
 
 const { label: TITLE } = NAVIGATION_BY_PATH["/tasks"];
 
@@ -120,6 +118,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
           // status twice. The tag resets a column's state for the next project.
           <BoardColumn
             key={`${tag}:${String(index)}`}
+            tag={tag}
             column={column}
             filtered={filtered}
             priorities={config.priorities}

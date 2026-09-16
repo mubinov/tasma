@@ -1,7 +1,15 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+} from "@tanstack/react-router";
 import { createClient, type Diagnostic, type Failure, type Transport, type TransportReply } from "@tasma/protocol";
 import { act, render } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { vi } from "vitest";
 import { createAppQueryClient } from "../src/api/client";
 import { createAppRouter, type RouterContext } from "../src/routes";
@@ -49,7 +57,8 @@ export function stubSystemTheme(initial: "light" | "dark") {
  *
  * The default map answers `/health` and an empty `/projects`, which is what
  * every test that only mounts the tree needs. A caller's entries extend it, and
- * override by key.
+ * override by key. The map is returned too: an entry set later answers the
+ * next request.
  */
 export function stubTransport(replies: Record<string, TransportReply> = {}) {
   const paths: string[] = [];
@@ -67,7 +76,7 @@ export function stubTransport(replies: Record<string, TransportReply> = {}) {
     );
   };
 
-  return { transport, paths };
+  return { transport, paths, replies: map };
 }
 
 /** A success envelope, the shape every reply in a stub map starts from. */
@@ -86,6 +95,27 @@ export function testContext(transport?: Transport): RouterContext {
     queryClient: createAppQueryClient(),
     client: createClient(transport ?? stubTransport().transport),
   };
+}
+
+/**
+ * Mounts one component at `/` of a router that also knows the task page's
+ * address, for a component that renders a Link or navigates. The task page
+ * renders nothing, so a test reads where a click went from the router.
+ */
+export async function renderBesideTaskRoute(ui: ReactNode) {
+  const rootRoute = createRootRoute({ component: Outlet });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([
+      createRoute({ getParentRoute: () => rootRoute, path: "/", component: () => ui }),
+      createRoute({ getParentRoute: () => rootRoute, path: "/tasks/$project/$task", component: () => null }),
+    ]),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+
+  await router.load();
+  const result = render(<RouterProvider router={router} />);
+
+  return { ...result, router };
 }
 
 /**

@@ -339,6 +339,20 @@ describe("the board", () => {
     expect(row.lastElementChild?.getAttribute("aria-labelledby")).toBeTruthy();
   });
 
+  it("opens a task's page from the title of its card", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1), entry(2)]),
+      "/projects/SAGA/tasks/SAGA-2": successReply({ frontmatter: entry(2).frontmatter, body: "", comments: [] }),
+    });
+    const router = await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    await user.click(within(column("Backlog")).getByRole("link", { name: "Task 2" }));
+
+    expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-2");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Task 2");
+  });
+
   it("remembers the project it loaded, titles the document, and marks Tasks current", async () => {
     const { transport } = daemon();
     await renderWithRouter("/tasks?projects=DELTA", transport);

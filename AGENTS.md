@@ -38,7 +38,6 @@ Rules in this chapter are for the `apps/web` application alone.
 - Server data belongs in the query cache, never in the store.
 - A route's data: `query({ ...options, staleTime: "static" })` in the loader, `useSuspenseQuery` on the same `queryOptions`. Both clients arrive through router context.
 - State that outlives a restart goes through the store's storage adapter and is hydrated in `main.tsx`.
-- A list that can exceed 50 rows renders through `VirtualList`, or `PageVirtualList` where the page scrolls, once it holds more than 50.
 - Filtering or searching a long list uses `useDeferredValue`.
 - Do not hand-write `useMemo` or `useCallback`. The compiler does it.
 - `VirtualList` and `PageVirtualList` are the components the compiler skips: the compiler knows `useVirtualizer`, and `PageVirtualList` opts out with `"use no memo"`. Leave their virtualizer calls in the components.
