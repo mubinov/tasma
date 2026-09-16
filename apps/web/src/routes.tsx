@@ -134,6 +134,7 @@ const taskRoute = createRoute({
     const [, { data: read }] = await Promise.all([
       queryClient.query({ ...projectQuery(client, project), staleTime: "static" }),
       queryClient.query({ ...taskQuery(client, project, task), staleTime: "static" }),
+      queryClient.query({ ...tasksQuery(client, project), staleTime: "static" }),
     ]);
     const { workflow } = read.frontmatter;
 

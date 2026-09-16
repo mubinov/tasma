@@ -3,6 +3,7 @@ import type { TaskEntry } from "@tasma/protocol";
 import type { ReactNode } from "react";
 import { opensTask, type StepView } from "../lib/board";
 import { ProhibitIcon } from "../lib/icons";
+import { LabelList } from "./label-list";
 import { StepMark, StepTrack } from "./step-view";
 
 type TaskCardProps = {
@@ -61,18 +62,7 @@ export function TaskCard({ tag, entry, view, top }: TaskCardProps): ReactNode {
         {title}
       </Link>
       <FlowRow view={view} />
-      {labels.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
-          {labels.map((label, index) => (
-            // A hand-edited task file can hold the same label twice.
-            // eslint-disable-next-line @eslint-react/no-array-index-key
-            <span key={index} className="inline-flex items-center gap-1.5 text-xs text-muted">
-              <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-graphic" />
-              <span className="min-w-0 wrap-anywhere">{label}</span>
-            </span>
-          ))}
-        </div>
-      )}
+      {labels.length > 0 && <LabelList labels={labels} className="mt-2 text-xs" />}
     </div>
   );
 }

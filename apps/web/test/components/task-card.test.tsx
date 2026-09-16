@@ -1,5 +1,5 @@
 import type { Frontmatter, TaskEntry } from "@tasma/protocol";
-import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TaskCard } from "../../src/components/task-card";
@@ -201,7 +201,7 @@ describe("the flow row", () => {
 it("lists the labels in file order, each with its dot", async () => {
   const { card } = await renderCard(entry({ labels: ["web", "infra", "api"] }));
 
-  const labels = [...card.lastElementChild!.children];
+  const labels = within(card).getAllByRole("listitem");
   expect(labels.map((label) => label.textContent)).toEqual(["web", "infra", "api"]);
   expect(classesOf(labels[0]?.firstElementChild)).toContain("bg-graphic");
 });
