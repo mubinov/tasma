@@ -58,6 +58,10 @@ function options(): [string | null, string | null][] {
   ]);
 }
 
+function highlighted(listbox: HTMLElement): HTMLElement[] {
+  return within(listbox).getAllByRole("option").filter((option) => option.hasAttribute("data-highlighted"));
+}
+
 beforeEach(() => {
   window.localStorage.clear();
   useUiStore.setState({ lastTasksProject: null });
@@ -93,15 +97,54 @@ it("names the popup, the filter input and the list by the visible label", async 
   expect(screen.getByRole("combobox", { name: "Labels" })).toBe(screen.getByPlaceholderText("Filter labels"));
 });
 
-it("draws the focus ring of the filter input on its field", async () => {
+it("draws no focus ring on the filter input or its field", async () => {
   const user = userEvent.setup();
   await renderBoard("");
   await open(user);
 
   const input = screen.getByPlaceholderText("Filter labels");
   expect(input.classList.contains("focus-visible:outline-none")).toBe(true);
-  expect([...input.parentElement!.classList]).toEqual(
-    expect.arrayContaining(["has-focus-visible:outline-3", "has-focus-visible:outline-offset-2", "has-focus-visible:outline-graphic"]),
+  expect([...input.parentElement!.classList].filter((name) => name.startsWith("has-focus-visible:"))).toEqual([]);
+});
+
+it("highlights an option on the arrow keys, not on hover", async () => {
+  const user = userEvent.setup();
+  await renderBoard("");
+  const listbox = await open(user);
+
+  await user.hover(within(listbox).getByRole("option", { name: /infra/ }));
+
+  expect(highlighted(listbox)).toEqual([]);
+
+  await user.keyboard("{ArrowDown}");
+
+  expect(highlighted(listbox)).toHaveLength(1);
+});
+
+it("selects nothing on a press on the trigger, a drag to a label and a release", async () => {
+  const user = userEvent.setup();
+  const router = await renderBoard("&labels=web");
+
+  await user.pointer({ keys: "[MouseLeft>]", target: trigger() });
+  const listbox = await screen.findByRole("listbox");
+  const option = within(listbox).getByRole("option", { name: /infra/ });
+  await act(async () => {
+    await user.pointer([{ target: option }, { keys: "[/MouseLeft]", target: option }]);
+  });
+
+  expect(router.state.location.search.labels).toBe("web");
+  expect(option.getAttribute("aria-selected")).toBe("false");
+  expect(screen.getByRole("listbox")).toBe(listbox);
+});
+
+it("marks a hovered option by its background and a highlighted option by the ring", async () => {
+  const user = userEvent.setup();
+  await renderBoard("");
+  const listbox = await open(user);
+
+  const [option] = within(listbox).getAllByRole("option");
+  expect([...option!.classList]).toEqual(
+    expect.arrayContaining(["hover:bg-surface-2", "data-[highlighted]:outline-3", "data-[highlighted]:outline-graphic"]),
   );
 });
 

@@ -39,8 +39,10 @@ export function LabelFilter({ entries, selected }: LabelFilterProps): ReactNode 
       <span id={labelId} className={LABEL_CLASS}>
         Labels
       </span>
+      {/* Hover does not highlight an item, so the ring is never a hover mark. */}
       <Combobox.Root
         multiple
+        highlightItemOnHover={false}
         items={items}
         value={[...selected]}
         isItemEqualToValue={sameLabel}
@@ -62,8 +64,7 @@ export function LabelFilter({ entries, selected }: LabelFilterProps): ReactNode 
             {/* The popup, the input and the list are named by the "Labels" text,
                 which stays in view beside the trigger while the popup is open. */}
             <Combobox.Popup aria-labelledby={labelId} className={`w-62 ${POPUP_CLASS}`}>
-              {/* The field draws the focus ring of its input, so the ring encloses the icon too. */}
-              <div className="mb-1.5 flex h-8 items-center gap-2 rounded-control border border-line bg-bg px-2 text-sm has-focus-visible:outline-3 has-focus-visible:outline-offset-2 has-focus-visible:outline-graphic">
+              <div className="mb-1.5 flex h-8 items-center gap-2 rounded-control border border-line bg-bg px-2 text-sm">
                 <MagnifyingGlassIcon size={14} aria-hidden="true" className="text-dim" />
                 <Combobox.Input
                   aria-labelledby={labelId}
@@ -81,7 +82,7 @@ export function LabelFilter({ entries, selected }: LabelFilterProps): ReactNode 
                   <Combobox.Item
                     key={label}
                     value={label}
-                    className="flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-sm text-text data-[highlighted]:bg-surface-2 data-[highlighted]:outline-3 data-[highlighted]:-outline-offset-3 data-[highlighted]:outline-graphic"
+                    className="flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-sm text-text hover:bg-surface-2 data-[highlighted]:bg-surface-2 data-[highlighted]:outline-3 data-[highlighted]:-outline-offset-3 data-[highlighted]:outline-graphic"
                   >
                     <Combobox.ItemIndicator
                       keepMounted

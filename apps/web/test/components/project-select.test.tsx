@@ -32,6 +32,17 @@ function renderBoard(path: string) {
   return renderWithRouter(path, transport);
 }
 
+async function openMenu(user: ReturnType<typeof userEvent.setup>) {
+  await renderBoard("/tasks");
+  await user.click(screen.getByRole("button", { name: /^Project / }));
+
+  return screen.findByRole("menu");
+}
+
+function highlighted(menu: HTMLElement): HTMLElement[] {
+  return within(menu).getAllByRole("menuitemradio").filter((item) => item.hasAttribute("data-highlighted"));
+}
+
 beforeEach(() => {
   window.localStorage.clear();
   useUiStore.setState({ lastTasksProject: null });
@@ -82,6 +93,34 @@ it("lets a long name grow the trigger and the menu items down, and keeps the men
   expect(item?.classList.contains("min-h-8")).toBe(true);
   expect(item?.classList.contains("h-8")).toBe(false);
   expect(item?.lastElementChild?.textContent).toBe("Saga SAGA");
+});
+
+it("highlights an item on the arrow keys, not on hover", async () => {
+  const user = userEvent.setup();
+  const menu = await openMenu(user);
+
+  await user.hover(within(menu).getAllByRole("menuitemradio")[1]!);
+
+  expect(highlighted(menu)).toEqual([]);
+
+  await user.keyboard("{ArrowDown}");
+
+  expect(highlighted(menu)).toHaveLength(1);
+});
+
+it("marks a hovered item by its background, and a highlighted item by the ring unless the mouse holds it", async () => {
+  const user = userEvent.setup();
+  const menu = await openMenu(user);
+
+  const [item] = within(menu).getAllByRole("menuitemradio");
+  expect([...item!.classList]).toEqual(
+    expect.arrayContaining([
+      "hover:bg-surface-2",
+      "data-[highlighted]:outline-3",
+      "data-[highlighted]:outline-graphic",
+      "data-[highlighted]:active:outline-hidden",
+    ]),
+  );
 });
 
 it("opens another project with no labels, and closes the menu", async () => {
