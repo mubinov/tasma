@@ -1,25 +1,70 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
-import type { Comment } from "@tasma/protocol";
-import { Fragment, useId, type ReactNode } from "react";
+import type { Comment, Task } from "@tasma/protocol";
+import { Fragment, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { POLL_INTERVAL, projectQuery, taskQuery, tasksQuery, workflowQuery } from "../api/queries";
 import { isFinalStatus, isTopPriority, stepView } from "../lib/board";
 import { useDocumentTitle } from "../lib/document-title";
 import { ArrowLeftIcon, ProhibitIcon } from "../lib/icons";
 import { blockingRows, relationRows, type RelationRow } from "../lib/task-page";
+import { useScrolledPast } from "../lib/use-scrolled-past";
+import { useTopBarLengths } from "../lib/use-top-bar-lengths";
 import { warningCount } from "../lib/warning-count";
 import { noticeWords, useNotice } from "../store/notices";
 import { CommentCard } from "./comment-card";
 import { Markdown } from "./markdown";
 import { ScreenHeading } from "./screen-heading";
+import { ScrollToTop } from "./scroll-to-top";
 import { StepMark } from "./step-view";
+import type { Outline } from "./task-outline";
 import { TaskSidebar } from "./task-sidebar";
 
 // The route is reached by id rather than imported: the tree in routes.tsx names
 // this component, so importing the route back would close a cycle.
 const route = getRouteApi("/tasks/$project/$task");
 
-function Comments({ comments }: { comments: readonly Comment[] }): ReactNode {
+/** The text of the element that is on the screen, without the words only a screen reader hears. */
+function visibleText(element: Element): string {
+  const copy = element.cloneNode(true) as Element;
+  for (const hidden of copy.querySelectorAll(".sr-only")) {
+    hidden.remove();
+  }
+  return copy.textContent;
+}
+
+/**
+ * The body's top headings and the comments, read from the DOM after each render
+ * of a changed task.
+ */
+function useOutline(
+  bodyRef: RefObject<HTMLElement | null>,
+  commentsRef: RefObject<HTMLElement | null>,
+  task: Task,
+): Outline {
+  const [outline, setOutline] = useState<Outline>({ headings: [], comments: [] });
+
+  useLayoutEffect(() => {
+    const headings = [...(bodyRef.current?.querySelectorAll("h2") ?? [])];
+    const list = commentsRef.current;
+    setOutline({
+      headings: headings.map((heading) => ({ label: visibleText(heading), target: heading, sentinel: heading })),
+      comments: (task.comments ?? []).flatMap(({ id, title }) => {
+        const target = list?.querySelector<HTMLElement>(`[data-comment-id="${String(id)}"]`);
+        const sentinel = target?.querySelector("[data-outline-sentinel]");
+        return target && sentinel ? [{ label: title, target, sentinel }] : [];
+      }),
+    });
+  }, [bodyRef, commentsRef, task]);
+
+  return outline;
+}
+
+type CommentsProps = {
+  comments: readonly Comment[];
+  listRef: RefObject<HTMLOListElement | null>;
+};
+
+function Comments({ comments, listRef }: CommentsProps): ReactNode {
   const headingId = useId();
 
   return (
@@ -30,7 +75,7 @@ function Comments({ comments }: { comments: readonly Comment[] }): ReactNode {
         {" "}
         <span className="ml-1.5 text-xs-plus font-normal text-dim">{comments.length}</span>
       </h2>
-      <ol>
+      <ol ref={listRef}>
         {comments.map((comment) => <CommentCard key={comment.id} comment={comment} />)}
       </ol>
     </section>
@@ -96,6 +141,13 @@ export function TaskScreen(): ReactNode {
   const view = stepView(frontmatter, isFinalStatus(status, config.final_statuses), workflow);
   const relations = relationRows(frontmatter, listing.entries, config.final_statuses);
   const blocking = blockingRows(relations.blockers);
+  const barRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const commentsRef = useRef<HTMLOListElement>(null);
+  const { barHeight, scrollPaddingTop } = useTopBarLengths(barRef);
+  const scrolled = useScrolledPast(headingRef, barHeight);
+  const outline = useOutline(bodyRef, commentsRef, task);
 
   useDocumentTitle(`${id} ${title}`);
   useNotice(
@@ -113,7 +165,7 @@ export function TaskScreen(): ReactNode {
           gives up its box and the bar stays over the sidebar too. */}
       <div className="contents lg:block lg:min-w-0 lg:flex-1">
         {/* The page's scroll padding keeps a focus scroll's target and its ring clear of the bar. */}
-        <div className="sticky top-0 z-(--layer-top-bar) flex items-center gap-4 border-b border-line bg-bg px-6 py-2.5 sm:px-10 [html:has(&)]:scroll-pt-12">
+        <div ref={barRef} className="sticky top-0 z-(--layer-top-bar) flex h-top-bar items-center gap-4 border-b border-line bg-bg px-6 sm:px-10 [html:has(&)]:scroll-pt-16">
           <Link
             to="/tasks"
             search={{ projects: tag }}
@@ -122,13 +174,21 @@ export function TaskScreen(): ReactNode {
             <ArrowLeftIcon size={16} aria-hidden="true" />
             Tasks
           </Link>
+          {/* It repeats the h1, so a screen reader skips it. */}
+          <span
+            aria-hidden="true"
+            className={`inline-flex min-w-0 items-center gap-3 transition-[opacity,visibility] duration-(--duration-fast) ${scrolled ? "opacity-100" : "invisible opacity-0"}`}
+          >
+            <span className="shrink-0 font-mono text-sm text-dim">{id}</span>
+            <span className="truncate font-chrome text-base font-medium">{title}</span>
+          </span>
         </div>
 
         <div className="px-6 pb-12 sm:px-10 lg:pb-[calc(--spacing(12)+var(--notice-stack-height,0px))]">
           {/* The title comes first in the DOM, so the h1 opens the content and is
               read before the id shown above it. */}
           <div className="mt-6 flex flex-col-reverse gap-1">
-            <ScreenHeading className="max-w-2xl wrap-anywhere">{title}</ScreenHeading>
+            <ScreenHeading ref={headingRef} tabIndex={-1} className="max-w-2xl wrap-anywhere">{title}</ScreenHeading>
             <p className="font-mono text-sm text-dim">{id}</p>
           </div>
 
@@ -150,15 +210,23 @@ export function TaskScreen(): ReactNode {
           </div>
 
           {body.trim() !== "" && (
-            <div className="mt-8 max-w-2xl">
+            <div ref={bodyRef} className="mt-8 max-w-2xl">
               <Markdown text={body} base={2} title={title} />
             </div>
           )}
 
-          {comments.length > 0 && <Comments comments={comments} />}
+          {comments.length > 0 && <Comments comments={comments} listRef={commentsRef} />}
         </div>
+        <ScrollToTop scrolled={scrolled} headingRef={headingRef} />
       </div>
-      <TaskSidebar tag={tag} frontmatter={frontmatter} view={view} relations={relations} />
+      <TaskSidebar
+        tag={tag}
+        frontmatter={frontmatter}
+        view={view}
+        relations={relations}
+        outline={outline}
+        pageScrollPadding={scrollPaddingTop}
+      />
     </div>
   );
 }

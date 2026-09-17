@@ -1,7 +1,8 @@
 import { Collapsible } from "@base-ui/react/collapsible";
 import type { Diagnostic, ExcludedFile } from "@tasma/protocol";
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { WarningIcon } from "../lib/icons";
+import { useFocusLost } from "../lib/use-focus-lost";
 import { warningCount } from "../lib/warning-count";
 import { Tag } from "./tag";
 
@@ -39,17 +40,10 @@ function WarningsLine({ items, excluded = [], subject, className }: DiagnosticsP
   const actionId = useId();
   const count = excluded.length + items.length;
 
-  // A refetch that clears the warnings removes Show or Hide, and focus on it
-  // would drop to <body>. A layout cleanup runs while the line is still attached.
-  useLayoutEffect(() => {
-    const root = rootRef.current;
-
-    return () => {
-      if (root?.contains(document.activeElement)) {
-        root.closest("main")?.focus();
-      }
-    };
-  }, []);
+  // A refetch that clears the warnings removes the line, Show or Hide included.
+  useFocusLost(rootRef, (root) => {
+    root.closest("main")?.focus();
+  });
 
   return (
     <Collapsible.Root ref={rootRef} open={open} onOpenChange={setOpen} className={className ?? ""}>

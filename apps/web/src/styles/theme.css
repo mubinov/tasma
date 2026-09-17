@@ -66,14 +66,22 @@
   --shadow-*: initial;
   --shadow-float: 0 12px 32px -8px rgb(0 0 0 / 0.45);
 
+  /* Lengths that more than one component places its elements by. */
+  --spacing-top-bar: 3.3125rem;
+  --spacing-task-sidebar: 18rem;
+
   /*
-   * Stacking, bottom to top: a sticky column header over the cards and the
-   * sticky top bar of a task page over its content, the fixed sidebar over
-   * both, a notice over all three, a popup over all of them, so a menu opened
-   * near the corner covers a notice. Used as `z-(--layer-*)`.
+   * Stacking, bottom to top: a sticky comment header over the comment text; a
+   * sticky column header over the cards, and the sticky top bar of a task page
+   * and its scroll-to-top control over its content and its comment headers; the
+   * fixed sidebar over those, a notice over all of them, a popup over
+   * everything, so a menu opened near the corner covers a notice. Used as
+   * `z-(--layer-*)`.
    */
+  --layer-comment-header: 1;
   --layer-column-header: 2;
   --layer-top-bar: 2;
+  --layer-scroll-to-top: 2;
   --layer-sidebar: 3;
   --layer-notice: 4;
   --layer-popup: 5;

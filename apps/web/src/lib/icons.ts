@@ -1,4 +1,5 @@
 import { ArrowLeftIcon } from "@phosphor-icons/react/ArrowLeft";
+import { ArrowUpIcon } from "@phosphor-icons/react/ArrowUp";
 import { CaretDownIcon } from "@phosphor-icons/react/CaretDown";
 import { CaretRightIcon } from "@phosphor-icons/react/CaretRight";
 import { CheckIcon } from "@phosphor-icons/react/Check";
@@ -18,6 +19,7 @@ import { XIcon } from "@phosphor-icons/react/X";
 
 export {
   ArrowLeftIcon,
+  ArrowUpIcon,
   CaretDownIcon,
   CaretRightIcon,
   CheckIcon,

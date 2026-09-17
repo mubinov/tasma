@@ -50,6 +50,76 @@ export function stubSystemTheme(initial: "light" | "dark") {
   };
 }
 
+/** Replaces matchMedia with one that answers the reduced-motion query alone. */
+export function stubReducedMotion(reduce: boolean) {
+  vi.stubGlobal("matchMedia", (media: string) => ({
+    media,
+    matches: reduce && media === "(prefers-reduced-motion: reduce)",
+  }));
+}
+
+/** What a stub observer reports for a target: its box, and whether it meets the root. */
+export type ObserverReport = { target: Element; top: number; bottom?: number; isIntersecting?: boolean };
+
+/**
+ * Replaces IntersectionObserver, which jsdom does not implement, with one that
+ * records every observer and reports only the entries a test hands it.
+ */
+export function stubIntersectionObserver() {
+  const observers: StubIntersectionObserver[] = [];
+
+  class StubIntersectionObserver {
+    readonly callback: IntersectionObserverCallback;
+    readonly options: IntersectionObserverInit;
+    readonly targets = new Set<Element>();
+
+    constructor(callback: IntersectionObserverCallback, options: IntersectionObserverInit = {}) {
+      this.callback = callback;
+      this.options = options;
+      observers.push(this);
+    }
+
+    observe(target: Element) {
+      this.targets.add(target);
+    }
+
+    unobserve(target: Element) {
+      this.targets.delete(target);
+    }
+
+    disconnect() {
+      this.targets.clear();
+    }
+
+    takeRecords() {
+      return [];
+    }
+  }
+
+  vi.stubGlobal("IntersectionObserver", StubIntersectionObserver);
+
+  return {
+    observers,
+    /** Hands each observer the reports about the targets it observes. */
+    report(...reports: ObserverReport[]) {
+      act(() => {
+        for (const observer of observers) {
+          const entries = reports
+            .filter(({ target }) => observer.targets.has(target))
+            .map(({ target, top, bottom = top, isIntersecting = false }) => ({
+              target,
+              isIntersecting,
+              boundingClientRect: { top, bottom },
+            }) as unknown as IntersectionObserverEntry);
+          if (entries.length > 0) {
+            observer.callback(entries, observer as unknown as IntersectionObserver);
+          }
+        }
+      });
+    },
+  };
+}
+
 /**
  * A transport that answers from a map instead of reaching the network. It sits
  * at the seam the client is built on, so the real client, the envelope read and

@@ -1,7 +1,8 @@
 import { Button } from "@base-ui/react/button";
-import { useEffectEvent, useId, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { WarningIcon, XIcon } from "../lib/icons";
+import { useFocusLost } from "../lib/use-focus-lost";
 import { noticeSignature, useNoticeStore, type Notice } from "../store/notices";
 
 /** Set on <html> while a notice is open: the height the stack covers above the window's bottom edge. */
@@ -114,19 +115,7 @@ type WarningNoticeProps = {
 function WarningNotice({ notice, onFocusLost }: WarningNoticeProps): ReactNode {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
-  const focusLost = useEffectEvent(onFocusLost);
-
-  // Focus on a panel that leaves drops to <body>. A layout cleanup runs while
-  // the panel is still attached.
-  useLayoutEffect(() => {
-    const panel = panelRef.current;
-
-    return () => {
-      if (panel?.contains(document.activeElement)) {
-        focusLost();
-      }
-    };
-  }, []);
+  useFocusLost(panelRef, onFocusLost);
 
   return (
     <div
@@ -151,6 +140,7 @@ function WarningNotice({ notice, onFocusLost }: WarningNoticeProps): ReactNode {
         type="button"
         aria-label="Dismiss"
         aria-describedby={titleId}
+        data-notice-dismiss=""
         onClick={() => {
           useNoticeStore.getState().dismissNotice(notice.key);
         }}

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { refusalReply, renderWithRouter, stubTransport, successReply } from "../helpers";
+import { refusalReply, renderWithRouter, stubIntersectionObserver, stubTransport, successReply } from "../helpers";
 
 const CONFIG = {
   statuses: ["Backlog", "In Progress", "Done"],
@@ -88,8 +88,51 @@ function backLink(): HTMLElement {
   return within(screen.getByRole("main")).getByRole("link", { name: "Tasks" });
 }
 
+function topBar(): HTMLElement {
+  return backLink().parentElement!;
+}
+
 function commentCard(title: string): HTMLElement {
   return screen.getByRole("article", { name: title });
+}
+
+/** Replaces ResizeObserver with one that reports a target only when a test asks. */
+function stubResizeObservers() {
+  const callbacks = new Map<Element, () => void>();
+
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      readonly callback: () => void;
+      readonly targets: Element[] = [];
+
+      constructor(callback: () => void) {
+        this.callback = callback;
+      }
+
+      observe(target: Element) {
+        this.targets.push(target);
+        callbacks.set(target, this.callback);
+      }
+
+      unobserve() {}
+
+      disconnect() {
+        for (const target of this.targets) {
+          callbacks.delete(target);
+        }
+      }
+    },
+  );
+
+  return {
+    observed: (target: Element) => callbacks.has(target),
+    report(target: Element) {
+      act(() => {
+        callbacks.get(target)?.();
+      });
+    },
+  };
 }
 
 beforeEach(() => {
@@ -101,6 +144,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  document.documentElement.style.scrollPaddingTop = "";
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -139,7 +183,8 @@ describe("the page", () => {
     expect(back.getAttribute("href")).toBe("/tasks?projects=SAGA");
     expect(back.parentElement?.className).toContain("sticky");
     expect(back.parentElement?.className).toContain("z-(--layer-top-bar)");
-    expect(back.parentElement?.classList.contains("[html:has(&)]:scroll-pt-12")).toBe(true);
+    expect(back.parentElement?.classList.contains("h-top-bar")).toBe(true);
+    expect(back.parentElement?.classList.contains("[html:has(&)]:scroll-pt-16")).toBe(true);
     expect(back.parentElement?.parentElement?.className).toBe("contents lg:block lg:min-w-0 lg:flex-1");
     expect(back.parentElement?.parentElement?.nextElementSibling).toBe(sidebar());
     const current = screen.getAllByRole("link").filter((link) => link.getAttribute("aria-current") === "page");
@@ -261,7 +306,213 @@ describe("the comments", () => {
 
     const card = commentCard("Marker only");
     expect(within(card).queryByRole("button")).toBeNull();
-    expect(card.children).toHaveLength(1);
+    expect([...card.children].map((child) => child.tagName)).toEqual(["SPAN", "DIV"]);
+  });
+
+  it("sticks a comment's header under the top bar, and starts the card with an empty sentinel", async () => {
+    const { transport } = daemon({ [TASK_PATH]: task({ comments: COMMENTS }) });
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    for (const [title, id] of [["Note 1", "1"], ["Note 2", "2"], ["Marker only", "5"]] as const) {
+      const card = commentCard(title);
+      expect(card.dataset.commentId).toBe(id);
+      const [sentinel, header] = [...card.children];
+      expect(sentinel?.className).toBe("block");
+      expect(sentinel?.hasAttribute("data-outline-sentinel")).toBe(true);
+      expect(sentinel?.childNodes).toHaveLength(0);
+      for (const name of [
+        "sticky",
+        "top-top-bar",
+        "z-(--layer-comment-header)",
+        "rounded-t-card",
+        "bg-surface",
+        "group-data-closed/comment:rounded-b-card",
+      ]) {
+        expect(header?.classList.contains(name), name).toBe(true);
+      }
+      expect(card.className).not.toContain("overflow");
+    }
+  });
+
+  it("sets the header's height on the comment, the scroll margin of every element in its text", async () => {
+    const resize = stubResizeObservers();
+    const { transport } = daemon({
+      [TASK_PATH]: task({ comments: [comment(1), comment(5, { title: "Marker only", body: "" })] }),
+    });
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    const card = commentCard("Note 1");
+    const [, header, panel] = [...card.children] as HTMLElement[];
+    expect(panel?.classList.contains("[&_*]:scroll-mt-(--comment-header-height)")).toBe(true);
+
+    Object.defineProperty(header, "offsetHeight", { configurable: true, value: 63 });
+    resize.report(header!);
+    expect(card.parentElement?.style.getPropertyValue("--comment-header-height")).toBe("63px");
+
+    Object.defineProperty(header, "offsetHeight", { configurable: true, value: 85 });
+    resize.report(header!);
+    expect(card.parentElement?.style.getPropertyValue("--comment-header-height")).toBe("85px");
+
+    expect(resize.observed(commentCard("Marker only").children[1]!)).toBe(false);
+    cleanup();
+    expect(resize.observed(header!)).toBe(false);
+  });
+});
+
+describe("the title in the top bar and scroll to top", () => {
+  function barTitle(): HTMLElement {
+    return backLink().nextElementSibling as HTMLElement;
+  }
+
+  it("hides the id and the title in the top bar, and the control, until the h1 has scrolled under the bar", async () => {
+    const io = stubIntersectionObserver();
+    const resize = stubResizeObservers();
+    // The bar's rem height at an 18px root font size.
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return { height: this.classList.contains("h-top-bar") ? 59.625 : 0 } as DOMRect;
+    });
+    const { transport } = daemon();
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    const heading = screen.getByRole("heading", { level: 1 });
+    resize.report(topBar());
+
+    const title = barTitle();
+    expect(title.getAttribute("aria-hidden")).toBe("true");
+    expect([...title.children].map((child) => [child.textContent, child.className])).toEqual([
+      ["SAGA-3", "shrink-0 font-mono text-sm text-dim"],
+      ["Build the parser", "truncate font-chrome text-base font-medium"],
+    ]);
+    expect(title.classList.contains("invisible")).toBe(true);
+    expect(title.classList.contains("opacity-0")).toBe(true);
+    expect(title.classList.contains("duration-(--duration-fast)")).toBe(true);
+    expect(heading.tabIndex).toBe(-1);
+    expect(screen.queryByRole("button", { name: "Scroll to top" })).toBeNull();
+    const [observer] = io.observers.filter((item) => item.targets.has(heading));
+    expect(observer?.options.rootMargin).toBe("-59.625px 0px 0px 0px");
+
+    io.report({ target: heading, top: -20, bottom: 59.5 });
+    expect(title.classList.contains("invisible")).toBe(false);
+    expect(title.classList.contains("opacity-100")).toBe(true);
+    expect(screen.getByRole("button", { name: "Scroll to top" })).toBeTruthy();
+
+    io.report({ target: heading, top: 30, bottom: 60, isIntersecting: true });
+    expect(title.classList.contains("invisible")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Scroll to top" })).toBeNull();
+
+    io.report({ target: heading, top: 900, bottom: 930 });
+    expect(title.classList.contains("invisible")).toBe(true);
+  });
+
+  it("observes nothing until the top bar is measured, and observes again with the new lengths when the bar resizes", async () => {
+    const io = stubIntersectionObserver();
+    const resize = stubResizeObservers();
+    let barHeight = 53;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return { height: this.classList.contains("h-top-bar") ? barHeight : 0 } as DOMRect;
+    });
+    document.documentElement.style.scrollPaddingTop = "64px";
+    const { transport } = daemon({ [TASK_PATH]: task({ body: "## Plan" }) });
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    const heading = screen.getByRole("heading", { level: 1 });
+    const plan = screen.getByRole("heading", { level: 2, name: "Plan" });
+    const rootMargins = () => [heading, plan].map((target) => io.observers
+      .filter((observer) => observer.targets.has(target))
+      .map(({ options }) => options.rootMargin));
+    expect(rootMargins()).toEqual([[], []]);
+
+    resize.report(topBar());
+    expect(rootMargins()).toEqual([["-53px 0px 0px 0px"], ["-72px 0px 10000000px 0px"]]);
+
+    // The root font size goes from 16px to 18px on the open page.
+    barHeight = 59.625;
+    document.documentElement.style.scrollPaddingTop = "72px";
+    resize.report(topBar());
+    expect(rootMargins()).toEqual([["-59.625px 0px 0px 0px"], ["-80px 0px 10000000px 0px"]]);
+
+    const bar = topBar();
+    cleanup();
+    expect(resize.observed(bar)).toBe(false);
+  });
+
+  it("puts the control last in the content column", async () => {
+    const io = stubIntersectionObserver();
+    const resize = stubResizeObservers();
+    const { transport } = daemon();
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    resize.report(topBar());
+    io.report({ target: screen.getByRole("heading", { level: 1 }), top: -40, bottom: -10 });
+
+    const column = backLink().parentElement!.parentElement!;
+    expect(column.lastElementChild).toBe(screen.getByRole("button", { name: "Scroll to top" }));
+  });
+});
+
+describe("the contents outline", () => {
+  const BODY = "Intro.\n\n## Plan\n\nSplit it.\n\n### Deep\n\nMore.\n\n## Build\n\nDone.";
+
+  const COMMENTS = [comment(1), comment(2, { collapsed: true }), comment(5, { title: "Marker only", body: "" })];
+
+  function outline(): HTMLElement {
+    return within(sidebar()).getByRole("navigation", { name: "Contents" });
+  }
+
+  function lines(): string[] {
+    return within(outline()).getAllByRole("button").map((line) => line.textContent);
+  }
+
+  it("ends the sidebar with the body's top headings, then the comment titles under Comments and the count", async () => {
+    const { transport } = daemon({ [TASK_PATH]: task({ body: BODY, comments: COMMENTS }) });
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    expect(lines()).toEqual(["Plan", "Build", "Note 1", "Note 2", "Marker only"]);
+    expect(within(outline()).getByText(/^Comments/).textContent).toBe("Comments 3");
+    expect(outline().parentElement?.parentElement).toBe(sidebar());
+    expect(outline().parentElement).toBe(sidebar().lastElementChild);
+  });
+
+  it("has no body group for a body with no h2, and no nav with no heading and no comment", async () => {
+    const { transport, replies } = daemon({ [TASK_PATH]: task({ body: "Text.\n\n- A list.", comments: [comment(1)] }) });
+    const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    expect(lines()).toEqual(["Note 1"]);
+    expect(within(outline()).getAllByRole("list")).toHaveLength(1);
+
+    replies["/projects/SAGA/tasks/SAGA-4"] = task({ fields: { id: "SAGA-4", title: "Write the docs" }, body: "Text." });
+    await act(async () => {
+      await router.navigate({ to: "/tasks/$project/$task", params: { project: "SAGA", task: "SAGA-4" } });
+    });
+
+    expect(within(sidebar()).queryByRole("navigation")).toBeNull();
+    expect(sidebar().lastElementChild?.childElementCount).toBe(0);
+  });
+
+  it("marks the line of a comment by the sentinel at the top of its card, and a heading by the heading", async () => {
+    const io = stubIntersectionObserver();
+    const resize = stubResizeObservers();
+    const { transport } = daemon({ [TASK_PATH]: task({ body: BODY, comments: COMMENTS }) });
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    resize.report(topBar());
+
+    const current = () => within(outline()).queryAllByRole("button").filter((line) => line.hasAttribute("aria-current"));
+    io.report({ target: screen.getByRole("heading", { level: 2, name: "Build" }), top: -40, bottom: -16 });
+    expect(current().map((line) => line.textContent)).toEqual(["Build"]);
+
+    io.report({ target: commentCard("Note 2").querySelector("[data-outline-sentinel]")!, top: -10 });
+    expect(current().map((line) => line.textContent)).toEqual(["Note 2"]);
+  });
+
+  it("labels a heading line with the heading's visible text, without the words only a screen reader hears", async () => {
+    const { transport } = daemon({
+      [TASK_PATH]: task({ body: "## Read [the guide](https://example.com) first\n\n## Plan" }),
+    });
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    const heading = screen.getByRole("heading", { level: 2, name: /^Read the guide/ });
+    expect(heading.querySelector(".sr-only")?.textContent).toBe(" (opens in a new tab)");
+    expect(lines()).toEqual(["Read the guide first", "Plan"]);
+    expect(within(outline()).getByRole("button", { name: "Read the guide first" })).toBeTruthy();
+    expect(heading.textContent).toBe("Read the guide (opens in a new tab) first");
   });
 });
 
@@ -278,7 +529,7 @@ describe("the sidebar", () => {
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
     const aside = sidebar();
-    for (const name of ["lg:sticky", "lg:h-screen", "lg:w-72", "lg:border-l", "lg:border-t-0", "border-t"]) {
+    for (const name of ["lg:sticky", "lg:h-screen", "lg:w-task-sidebar", "lg:border-l", "lg:border-t-0", "border-t"]) {
       expect(aside.classList.contains(name), name).toBe(true);
     }
     expect(aside.parentElement?.classList.contains("lg:flex-row")).toBe(true);
@@ -603,6 +854,33 @@ describe("polling", () => {
 
     expect(paths.toSorted()).toEqual(["/projects/SAGA", LISTING_PATH, TASK_PATH]);
     expect(screen.getByRole("region", { name: "Comments 2" })).toBeTruthy();
+  });
+
+  it("measures the new header when a poll gives a comment its first text", async () => {
+    const resize = stubResizeObservers();
+    const { transport, replies } = daemon({ [TASK_PATH]: task({ comments: [comment(1, { body: "" })] }) });
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    const before = commentCard("Note 1").children[1]!;
+    expect(resize.observed(before)).toBe(false);
+
+    replies[TASK_PATH] = task({ comments: [comment(1)] });
+    await poll();
+
+    const header = commentCard("Note 1").children[1]!;
+    expect(header).not.toBe(before);
+    expect(resize.observed(header)).toBe(true);
+  });
+
+  it("reads the contents outline again when a poll changes the task", async () => {
+    const { transport, replies } = daemon({ [TASK_PATH]: task({ body: "## Plan", comments: [comment(1)] }) });
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    const outline = () => within(sidebar()).getByRole("navigation", { name: "Contents" });
+
+    replies[TASK_PATH] = task({ body: "## Plan\n\n## Ship", comments: [comment(1), comment(2, { title: "Shipped" })] });
+    await poll();
+
+    expect(within(outline()).getAllByRole("button").map((line) => line.textContent)).toEqual(["Plan", "Ship", "Note 1", "Shipped"]);
+    expect(within(outline()).getByText(/^Comments/).textContent).toBe("Comments 2");
   });
 
   it("keeps the DOM of a comment a poll did not change", async () => {
