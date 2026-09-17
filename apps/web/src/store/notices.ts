@@ -3,8 +3,11 @@ import { useEffect, useEffectEvent } from "react";
 import { create } from "zustand";
 
 export type NoticeContent = {
-  form: "warning";
+  /** A warning lists findings; a failure says what did not happen. */
+  form: "warning" | "failure";
   title: string;
+  /** The muted line under the title. */
+  line?: string;
   words: readonly string[];
 };
 
@@ -13,9 +16,14 @@ export type Notice = NoticeContent & {
   key: string;
 };
 
+export type OpenNotice = Notice & {
+  /** New each time the notice opens or its content changes, also for content equal to the notice it follows. */
+  serial: number;
+};
+
 type NoticeState = {
   /** The newest last. */
-  notices: readonly Notice[];
+  notices: readonly OpenNotice[];
   /** Per key, the content of the notice the reader dismissed last. */
   dismissed: ReadonlyMap<string, NoticeContent>;
   showNotice: (notice: Notice) => void;
@@ -23,13 +31,15 @@ type NoticeState = {
   closeNotice: (key: string) => void;
 };
 
-export function noticeSignature({ form, title, words }: NoticeContent): string {
-  return JSON.stringify([form, title, words]);
+function noticeSignature({ form, title, line, words }: NoticeContent): string {
+  return JSON.stringify([form, title, line ?? null, words]);
 }
 
 function sameContent(left: NoticeContent, right: NoticeContent): boolean {
   return noticeSignature(left) === noticeSignature(right);
 }
+
+let lastSerial = 0;
 
 // Not persisted: a reload clears every notice.
 export const useNoticeStore = create<NoticeState>((set) => ({
@@ -41,7 +51,7 @@ export const useNoticeStore = create<NoticeState>((set) => ({
       if (open !== undefined) {
         return sameContent(open, notice)
           ? state
-          : { notices: [...state.notices.filter((item) => item !== open), notice] };
+          : { notices: [...state.notices.filter((item) => item !== open), { ...notice, serial: ++lastSerial }] };
       }
 
       const dismissed = state.dismissed.get(notice.key);
@@ -49,7 +59,7 @@ export const useNoticeStore = create<NoticeState>((set) => ({
         return state;
       }
 
-      return { notices: [...state.notices, notice] };
+      return { notices: [...state.notices, { ...notice, serial: ++lastSerial }] };
     });
   },
   dismissNotice: (key) => {
@@ -59,10 +69,10 @@ export const useNoticeStore = create<NoticeState>((set) => ({
         return state;
       }
 
-      const { form, title, words } = open;
+      const { form, title, line, words } = open;
       return {
         notices: state.notices.filter((notice) => notice !== open),
-        dismissed: new Map(state.dismissed).set(key, { form, title, words }),
+        dismissed: new Map(state.dismissed).set(key, { form, title, line, words }),
       };
     });
   },

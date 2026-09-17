@@ -1,4 +1,4 @@
-import { QueryClient } from "@tanstack/react-query";
+import { onlineManager, QueryClient } from "@tanstack/react-query";
 import { createClient, ProtocolError, TransportError, type Transport } from "@tasma/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAppQueryClient, createDaemonClient, shouldRetry } from "../../src/api/client";
@@ -51,6 +51,22 @@ it("resolves a query through the transport, the client and the envelope read", a
 
   expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/health`]);
   expect(success).toEqual({ data: HEALTH, diagnostics: [] });
+});
+
+it("reads while the browser reports offline, because the daemon is on this machine", async () => {
+  const paths = stubDaemon();
+  onlineManager.setOnline(false);
+
+  try {
+    const read = createAppQueryClient().query({ ...healthQuery(createDaemonClient()), staleTime: "static" });
+
+    await vi.waitFor(() => {
+      expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/health`]);
+    });
+    expect(await read).toEqual({ data: HEALTH, diagnostics: [] });
+  } finally {
+    onlineManager.setOnline(true);
+  }
 });
 
 // What is cached is the whole envelope, not the data inside it.

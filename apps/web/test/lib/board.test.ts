@@ -1,6 +1,7 @@
 import type { Diagnostic, Frontmatter, TaskEntry, Workflow } from "@tasma/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  applyPending,
   boardWarnings,
   type CardClick,
   buildColumns,
@@ -12,6 +13,7 @@ import {
   opensTask,
   splitList,
   stepView,
+  topOrder,
   workflowNames,
 } from "../../src/lib/board";
 
@@ -393,5 +395,95 @@ describe("boardWarnings", () => {
 
   it("keeps two equal warnings inside one read", () => {
     expect(boardWarnings([MISSING, MISSING], [BLOCKER, BLOCKER])).toEqual([MISSING, MISSING, BLOCKER, BLOCKER]);
+  });
+});
+
+describe("applyPending", () => {
+  const SENT = Date.parse("2026-09-02T08:30:00Z");
+
+  it("gives back the same entries while nothing is pending", () => {
+    const entries = [entry("T-1")];
+
+    expect(applyPending(entries, [])).toBe(entries);
+  });
+
+  it("copies the status and the order of a change onto a copy of its entry, and moves updated with the status", () => {
+    const entries = [entry("T-1"), entry("T-2", { order: 5 })];
+
+    const shown = applyPending(entries, [{ id: "T-2", change: { status: "Done", order: -1000 }, submittedAt: SENT }]);
+
+    expect(shown[0]).toBe(entries[0]);
+    expect(shown[1]?.frontmatter).toEqual({
+      ...entries[1]!.frontmatter,
+      status: "Done",
+      order: -1000,
+      updated: "2026-09-02T08:30:00.000Z",
+    });
+    expect(entries[1]?.frontmatter.status).toBe("Backlog");
+  });
+
+  it("removes the order for a change that clears it", () => {
+    const shown = applyPending([entry("T-1", { order: 5 })], [{ id: "T-1", change: { order: null }, submittedAt: SENT }]);
+
+    expect("order" in shown[0]!.frontmatter).toBe(false);
+  });
+
+  it.each([
+    { name: "an order alone", change: { order: 3 } },
+    { name: "the status the entry has, in another case", change: { status: "backlog" } },
+  ])("keeps updated for $name", ({ change }) => {
+    const shown = applyPending([entry("T-1")], [{ id: "T-1", change, submittedAt: SENT }]);
+
+    expect(shown[0]?.frontmatter.updated).toBe("2026-09-01T10:00:00Z");
+  });
+
+  it("applies the changes to one task in the order they were sent, so the last one wins", () => {
+    const later = SENT + 60_000;
+
+    const shown = applyPending(
+      [entry("T-1")],
+      [
+        { id: "T-1", change: { status: "To Do", order: 1 }, submittedAt: SENT },
+        { id: "T-1", change: { status: "Done", order: 2 }, submittedAt: later },
+      ],
+    );
+
+    expect(shown[0]?.frontmatter).toMatchObject({ status: "Done", order: 2, updated: new Date(later).toISOString() });
+  });
+
+  it("ignores a change to a task the entries do not hold, and a field it does not apply", () => {
+    const entries = [entry("T-1")];
+
+    const shown = applyPending(entries, [
+      { id: "T-9", change: { status: "Done" }, submittedAt: SENT },
+      { id: "T-1", change: { title: "Renamed", priority: "high" }, submittedAt: SENT },
+    ]);
+
+    expect(shown[0]?.frontmatter).toEqual(entries[0]?.frontmatter);
+  });
+});
+
+describe("topOrder", () => {
+  it("is 0 when no task of the column has an order", () => {
+    expect(topOrder([entry("T-1"), entry("T-2")], "T-3")).toBe(0);
+    expect(topOrder([], "T-3")).toBe(0);
+  });
+
+  it("is 1000 below the smallest order of the column", () => {
+    expect(topOrder([entry("T-1", { order: 40 }), entry("T-2"), entry("T-3", { order: -7 })], "T-9")).toBe(-1007);
+  });
+
+  it("leaves the moved task out", () => {
+    expect(topOrder([entry("T-1", { order: -2000 }), entry("T-2", { order: 10 })], "T-1")).toBe(-990);
+    expect(topOrder([entry("T-1", { order: -2000 })], "T-1")).toBe(0);
+  });
+
+  it("counts the tasks the label filter hides, which buildColumns keeps in an unfiltered column", () => {
+    const entries = [entry("T-1", { labels: ["web"] }), entry("T-2", { labels: ["docs"], order: 100 })];
+    const [filtered] = buildColumns(CONFIG, entries, ["web"]);
+    const [unfiltered] = buildColumns(CONFIG, entries, []);
+
+    expect(topOrder(filtered!.matching, "T-9")).toBe(0);
+    expect(topOrder(unfiltered!.matching, "T-9")).toBe(-900);
   });
 });

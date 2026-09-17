@@ -7,7 +7,14 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { createClient, type Diagnostic, type Failure, type Transport, type TransportReply } from "@tasma/protocol";
+import {
+  createClient,
+  type Diagnostic,
+  type Failure,
+  type Transport,
+  type TransportReply,
+  type TransportRequest,
+} from "@tasma/protocol";
 import { act, render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { vi } from "vitest";
@@ -125,28 +132,46 @@ export function stubIntersectionObserver() {
  * at the seam the client is built on, so the real client, the envelope read and
  * the query all run; only the host is faked.
  *
+ * A key is a path, which answers a GET, or a method and a path, such as
+ * `PATCH /projects/P/tasks/P-1`. A reply can be a promise, for an answer a test
+ * holds back.
+ *
  * The default map answers `/health` and an empty `/projects`, which is what
  * every test that only mounts the tree needs. A caller's entries extend it, and
  * override by key. The map is returned too: an entry set later answers the
  * next request.
  */
-export function stubTransport(replies: Record<string, TransportReply> = {}) {
+export function stubTransport(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
   const paths: string[] = [];
-  const map: Record<string, TransportReply> = {
+  const requests: TransportRequest[] = [];
+  const map: Record<string, TransportReply | Promise<TransportReply>> = {
     "/health": successReply({ name: "tasma-daemon", version: "0.0.0" }),
     "/projects": successReply([]),
     ...replies,
   };
 
-  const transport: Transport = ({ path }) => {
+  const transport: Transport = (request) => {
+    const { method, path } = request;
+    const key = method === "GET" ? path : `${method} ${path}`;
     paths.push(path);
+    requests.push(request);
 
     return Promise.resolve(
-      map[path] ?? refusalReply(404, { kind: "daemon", code: "route-not-found", message: `no route serves ${path}` }),
+      map[key] ?? refusalReply(404, { kind: "daemon", code: "route-not-found", message: `no route serves ${key}` }),
     );
   };
 
-  return { transport, paths, replies: map };
+  return { transport, paths, requests, replies: map };
+}
+
+/** A reply for a stub map that the test sends when it chooses. */
+export function heldBack() {
+  let answer: (reply: TransportReply) => void = () => {};
+  const reply = new Promise<TransportReply>((resolve) => {
+    answer = resolve;
+  });
+
+  return { reply, answer };
 }
 
 /** A success envelope, the shape every reply in a stub map starts from. */

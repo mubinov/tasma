@@ -7,4 +7,12 @@ export const TRIGGER_CLASS
 
 export const POPUP_CLASS = "rounded-card border border-line bg-surface p-1.5 shadow-float";
 
+// For a menu root with `highlightItemOnHover={false}`: hover does not highlight
+// an item, so the ring is never a hover mark. A mouse press focuses and
+// highlights the item, so the ring is hidden while the button is held.
+export const MENU_ITEM_CLASS
+  = "flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-sm text-text hover:bg-surface-2 data-[highlighted]:bg-surface-2 data-[highlighted]:outline-3 data-[highlighted]:outline-offset-2 data-[highlighted]:outline-graphic data-[highlighted]:active:outline-hidden";
+
+export const MENU_RADIO_ITEM_CLASS = `${MENU_ITEM_CLASS} data-[checked]:text-dim`;
+
 export const POSITIONER_CLASS = "z-(--layer-popup)";

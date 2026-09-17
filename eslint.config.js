@@ -28,7 +28,7 @@ const duplicatedByReactCompiler = Object.fromEntries(
 // tasma/web-fast-refresh each name apps/web, so a second React app or a React
 // package needs both of those globs widened.
 export default tseslint.config(
-  { name: "tasma/ignores", ignores: ["**/dist/", "**/coverage/"] },
+  { name: "tasma/ignores", ignores: ["**/dist/", "**/coverage/", "**/.playwright-cli/"] },
   // First, so that the typescript-eslint presets below can switch off the core
   // rules they replace. The typescript-eslint presets enable no core rule.
   js.configs.recommended,

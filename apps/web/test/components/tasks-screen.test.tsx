@@ -1,9 +1,12 @@
-import type { Diagnostic, ExcludedFile, Frontmatter, TaskEntry, Transport, TransportReply } from "@tasma/protocol";
-import { act, cleanup, screen, within } from "@testing-library/react";
+import type { Diagnostic, ExcludedFile, Frontmatter, TaskEntry, TransportReply } from "@tasma/protocol";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DAEMON_URL } from "../../src/api/transport";
+import { formatClock } from "../../src/lib/clock";
+import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { refusalReply, renderWithRouter, successReply } from "../helpers";
+import { heldBack, refusalReply, renderWithRouter, stubTransport, successReply } from "../helpers";
 
 const CONFIG = {
   statuses: ["Backlog", "To Do", "In Progress", "Done"],
@@ -57,30 +60,16 @@ function listing(entries: TaskEntry[], excluded: ExcludedFile[] = [], diagnostic
   return successReply({ entries, excluded }, diagnostics);
 }
 
-/**
- * A daemon whose replies a test can change between polls. An unknown path is
- * refused, as the daemon refuses a route it does not serve.
- */
+/** A daemon whose replies a test can change between polls. */
 function daemon(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
-  const paths: string[] = [];
-  const current: Record<string, TransportReply | Promise<TransportReply>> = {
+  return stubTransport({
     "/projects": successReply(PROJECTS),
     "/projects/SAGA": project("SAGA"),
     "/projects/SAGA/tasks": listing([]),
     "/projects/DELTA": project("DELTA"),
     "/projects/DELTA/tasks": listing([]),
     ...replies,
-  };
-
-  const transport: Transport = ({ path }) => {
-    paths.push(path);
-
-    return Promise.resolve(
-      current[path] ?? refusalReply(404, { kind: "daemon", code: "route-not-found", message: `no route serves ${path}` }),
-    );
-  };
-
-  return { transport, paths, replies: current };
+  });
 }
 
 function column(status: string): HTMLElement {
@@ -98,6 +87,7 @@ function titlesIn(status: string): string[] {
 beforeEach(() => {
   window.localStorage.clear();
   useUiStore.setState({ lastTasksProject: null });
+  useNoticeStore.setState({ notices: [], dismissed: new Map() });
   document.title = "tasma";
 });
 
@@ -482,5 +472,379 @@ describe("polling", () => {
     });
 
     expect(screen.getByText("approve").className).toContain("text-text");
+  });
+});
+
+describe("moving a task from the card menu", () => {
+  const TASK_1 = "PATCH /projects/SAGA/tasks/SAGA-1";
+
+  function card(title: string): HTMLElement {
+    return screen.getByText(title).closest<HTMLElement>("[data-task-id]")!;
+  }
+
+  function menuButton(title: string): HTMLElement {
+    return within(card(title)).getByRole("button", { name: "Task menu" });
+  }
+
+  /** Opens the card's menu and picks the status. */
+  async function moveTo(title: string, status: string) {
+    const user = userEvent.setup();
+    await user.click(menuButton(title));
+    const menu = await screen.findByRole("menu");
+    await act(async () => {
+      await user.click(within(menu).getByRole("menuitemradio", { name: status }));
+    });
+  }
+
+  function noticeTitles(): string[] {
+    return useNoticeStore.getState().notices.map(({ title }) => title);
+  }
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  });
+
+  it("shows the card first in its new column at 55%, with the counts changed, until the listing shows the move", async () => {
+    const write = heldBack();
+    const { transport, requests, replies } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1), entry(2, { status: "To Do", order: 5 }), entry(3, { status: "To Do" })]),
+      [TASK_1]: write.reply,
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    await moveTo("Task 1", "To Do");
+
+    expect(requests.filter(({ method }) => method === "PATCH")).toEqual([
+      { method: "PATCH", path: "/projects/SAGA/tasks/SAGA-1", body: { status: "To Do", order: -995 } },
+    ]);
+    expect(titlesIn("To Do")).toEqual(["Task 1", "Task 2", "Task 3"]);
+    expect([countOf("Backlog"), countOf("To Do")]).toEqual(["0", "3"]);
+    expect(card("Task 1").getAttribute("aria-busy")).toBe("true");
+    expect(card("Task 1").className).toContain("opacity-55");
+    expect(card("Task 2").hasAttribute("aria-busy")).toBe(false);
+
+    replies["/projects/SAGA/tasks"] = listing([
+      entry(1, { status: "To Do", order: -995 }),
+      entry(2, { status: "To Do", order: 5 }),
+      entry(3, { status: "To Do" }),
+    ]);
+    await act(async () => {
+      write.answer(successReply({ id: "SAGA-1", status: "To Do" }));
+    });
+
+    await vi.waitFor(() => {
+      expect(card("Task 1").hasAttribute("aria-busy")).toBe(false);
+    });
+    expect(card("Task 1").className).not.toContain("opacity-55");
+    expect(titlesIn("To Do")).toEqual(["Task 1", "Task 2", "Task 3"]);
+    expect(noticeTitles()).toEqual([]);
+  });
+
+  it("shows the card first in a final column whose other cards were updated after it", async () => {
+    vi.setSystemTime(new Date("2026-09-10T08:00:00Z"));
+    const write = heldBack();
+    const { transport } = daemon({
+      "/projects/SAGA/tasks": listing([
+        entry(1, { updated: "2026-09-01T10:00:00Z" }),
+        entry(4, { status: "Done", updated: "2026-09-05T10:00:00Z" }),
+        entry(5, { status: "Done", updated: "2026-09-06T10:00:00Z" }),
+      ]),
+      [TASK_1]: write.reply,
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    await moveTo("Task 1", "Done");
+
+    expect(titlesIn("Done")).toEqual(["Task 1", "Task 5", "Task 4"]);
+    expect(card("Task 1").getAttribute("aria-busy")).toBe("true");
+    write.answer(successReply({ id: "SAGA-1" }));
+  });
+
+  it("counts the tasks the label filter hides when it puts the card first", async () => {
+    const { transport, requests } = daemon({
+      "/projects/SAGA/tasks": listing([
+        entry(1, { labels: ["web"] }),
+        entry(2, { status: "To Do", labels: ["docs"], order: 100 }),
+        entry(3, { status: "To Do", labels: ["web"], order: 400 }),
+      ]),
+      [TASK_1]: successReply({ id: "SAGA-1" }),
+    });
+    await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+
+    await moveTo("Task 1", "To Do");
+
+    expect(requests.find(({ method }) => method === "PATCH")?.body).toEqual({ status: "To Do", order: -900 });
+  });
+
+  it("keeps the card event of a menu item inside the menu, so a pick opens no task", async () => {
+    const { transport, requests } = daemon({ "/projects/SAGA/tasks": listing([entry(1)]) });
+    const router = await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    await moveTo("Task 1", "Backlog");
+
+    expect(router.state.location.pathname).toBe("/tasks");
+    expect(requests.filter(({ method }) => method === "PATCH")).toEqual([]);
+  });
+
+  it("opens the task from Open task in the menu", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1)]),
+      "/projects/SAGA/tasks/SAGA-1": successReply({ frontmatter: entry(1).frontmatter, body: "", comments: [] }),
+    });
+    const router = await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    fireEvent.contextMenu(card("Task 1"), { clientX: 10, clientY: 10 });
+    const menu = await screen.findByRole("menu");
+    await act(async () => {
+      await user.click(within(menu).getByRole("menuitem", { name: "Open task" }));
+    });
+
+    expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-1");
+  });
+
+  it("returns a refused card at once, says why, and closes the notice when a later write succeeds", async () => {
+    const { transport, replies } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1), entry(2)]),
+      [TASK_1]: refusalReply(422, {
+        kind: "store",
+        code: "status-unknown",
+        message: "status \"To Do\" is not one of Backlog, Done",
+      }),
+      "PATCH /projects/SAGA/tasks/SAGA-2": successReply({ id: "SAGA-2" }),
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    await moveTo("Task 1", "To Do");
+
+    await vi.waitFor(() => {
+      expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2"]);
+    });
+    const alert = within(screen.getByRole("main").parentElement!).getByRole("alert");
+    expect(within(alert).getByText("SAGA-1 was not moved")).toBeTruthy();
+    expect(alert.textContent).toContain("store/status-unknown · status \"To Do\" is not one of Backlog, Done");
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(menuButton("Task 1"));
+    });
+
+    replies["/projects/SAGA/tasks"] = listing([entry(1), entry(2, { status: "Done" })]);
+    await moveTo("Task 2", "Done");
+
+    await vi.waitFor(() => {
+      expect(noticeTitles()).toEqual([]);
+    });
+  });
+
+  it("keeps the failure notice open on the task page", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1)]),
+      "/projects/SAGA/tasks/SAGA-1": successReply({ frontmatter: entry(1).frontmatter, body: "", comments: [] }),
+      [TASK_1]: { status: 502 },
+    });
+    const router = await renderWithRouter("/tasks?projects=SAGA", transport);
+    await moveTo("Task 1", "Done");
+    await vi.waitFor(() => {
+      expect(noticeTitles()).toEqual(["SAGA-1 was not moved"]);
+    });
+
+    await user.click(screen.getByRole("link", { name: "Task 1" }));
+
+    expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-1");
+    expect(screen.getByRole("alert").textContent).toContain(`${DAEMON_URL} · HTTP 502`);
+  });
+
+  it("mounts a new alert when the same task is refused again with the same words", async () => {
+    const { transport } = daemon({ "/projects/SAGA/tasks": listing([entry(1)]), [TASK_1]: { status: 502 } });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+    await moveTo("Task 1", "Done");
+    const first = await screen.findByRole("alert");
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(menuButton("Task 1"));
+    });
+
+    await moveTo("Task 1", "Done");
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole("alert")).not.toBe(first);
+    });
+    expect(first.isConnected).toBe(false);
+  });
+
+  it("opens a warning notice for a diagnostic the board does not show, and none for one it shows", async () => {
+    const shown: Diagnostic = { code: "config-key-unknown", message: "unknown key: colour", path: "/p/config.yml" };
+    const fresh: Diagnostic = { code: "label-case-converted", message: "label \"Web\" was converted to \"web\"" };
+    const { transport } = daemon({
+      "/projects/SAGA": successReply({ ...PROJECTS[0], live: true, config: CONFIG }, [shown]),
+      "/projects/SAGA/tasks": listing([entry(1), entry(2)]),
+      [TASK_1]: successReply({ id: "SAGA-1" }, [shown]),
+      "PATCH /projects/SAGA/tasks/SAGA-2": successReply({ id: "SAGA-2" }, [shown, fresh]),
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    await moveTo("Task 1", "To Do");
+    await vi.waitFor(() => {
+      expect(card("Task 1").hasAttribute("aria-busy")).toBe(false);
+    });
+    expect(noticeTitles()).toEqual([]);
+
+    await moveTo("Task 2", "To Do");
+
+    await vi.waitFor(() => {
+      expect(noticeTitles()).toEqual(["1 warning about SAGA-2"]);
+    });
+    expect(useNoticeStore.getState().notices[0]?.words).toEqual(["label-case-converted · label \"Web\" was converted to \"web\""]);
+  });
+
+  it("keeps the card at its new place when a poll lands while the write is pending", async () => {
+    const write = heldBack();
+    const { transport } = daemon({ "/projects/SAGA/tasks": listing([entry(1), entry(2)]), [TASK_1]: write.reply });
+    const router = await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    await moveTo("Task 1", "In Progress");
+    await act(async () => {
+      await router.options.context.queryClient.refetchQueries({ queryKey: ["daemon", "projects", "SAGA", "tasks"] });
+    });
+
+    expect(titlesIn("In Progress")).toEqual(["Task 1"]);
+    expect(titlesIn("Backlog")).toEqual(["Task 2"]);
+    write.answer(successReply({ id: "SAGA-1" }));
+  });
+
+  it("moves focus to the moved card's menu button at its new place", async () => {
+    const { transport } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1), entry(2, { status: "To Do" })]),
+      [TASK_1]: heldBack().reply,
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    await moveTo("Task 1", "To Do");
+
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(menuButton("Task 1"));
+    });
+    expect(column("To Do").contains(document.activeElement)).toBe(true);
+  });
+
+  describe("into a column of more than 50 cards, scrolled away from its top", () => {
+    const LIST_TOP = 400;
+    const CARD_HEIGHT = 96;
+
+    beforeEach(() => {
+      vi.stubGlobal("innerHeight", 600);
+      vi.stubGlobal("scrollY", 4_000);
+      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+        return this.tagName === "LI" ? CARD_HEIGHT : 0;
+      });
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+        () => ({ top: LIST_TOP - window.scrollY }) as DOMRect,
+      );
+      vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(20_000);
+    });
+
+    it("scrolls the column to the card and moves focus to its menu button", async () => {
+      const scrolls: number[] = [];
+      const many = Array.from({ length: 60 }, (_, index) => entry(index + 10, { status: "To Do" }));
+      const { transport } = daemon({ "/projects/SAGA/tasks": listing([entry(1), ...many]), [TASK_1]: heldBack().reply });
+      await renderWithRouter("/tasks?projects=SAGA", transport);
+      vi.stubGlobal("scrollTo", ({ top }: ScrollToOptions) => {
+        scrolls.push(top ?? 0);
+        vi.stubGlobal("scrollY", top);
+        window.dispatchEvent(new Event("scroll"));
+      });
+      act(() => {
+        window.dispatchEvent(new Event("scroll"));
+      });
+      expect(within(column("To Do")).queryByText("Task 10")).toBeNull();
+
+      await moveTo("Task 1", "To Do");
+
+      await vi.waitFor(() => {
+        expect(document.activeElement).toBe(menuButton("Task 1"));
+      });
+      expect(scrolls.length).toBeGreaterThan(0);
+      expect(column("To Do").contains(document.activeElement)).toBe(true);
+    });
+  });
+});
+
+describe("the notice for failed polls", () => {
+  const LISTING = "/projects/SAGA/tasks";
+  const UNREADABLE: TransportReply = { status: 502 };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  /** One poll interval, the retry of an unreadable answer, and the notification of the cache. */
+  async function poll() {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_010);
+    });
+  }
+
+  it("opens after two failed polls, not after one, and closes after a successful poll", async () => {
+    const { transport, replies } = daemon({ [LISTING]: listing([entry(1)]) });
+    const router = await renderWithRouter("/tasks?projects=SAGA", transport);
+    const readAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA", "tasks"])!.dataUpdatedAt;
+
+    replies[LISTING] = UNREADABLE;
+    await poll();
+    expect(useNoticeStore.getState().notices).toEqual([]);
+
+    await poll();
+    expect(useNoticeStore.getState().notices).toMatchObject([
+      {
+        key: "board-poll:SAGA",
+        form: "failure",
+        title: "The board is not up to date",
+        line: `The last reads of SAGA failed. The board shows the tasks as they were at ${formatClock(readAt)}.`,
+        words: [`${DAEMON_URL} · HTTP 502 · GET ${LISTING} answered with no envelope`],
+      },
+    ]);
+    expect(titlesIn("Backlog")).toEqual(["Task 1"]);
+
+    replies[LISTING] = listing([entry(1)]);
+    await poll();
+    expect(useNoticeStore.getState().notices).toEqual([]);
+  });
+
+  it("keeps the notice as it is while the project read fails and the listing polls succeed", async () => {
+    const { transport, replies } = daemon({ [LISTING]: listing([entry(1)]) });
+    const router = await renderWithRouter("/tasks?projects=SAGA", transport);
+    const readAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA"])!.dataUpdatedAt;
+
+    replies["/projects/SAGA"] = refusalReply(422, { kind: "store", code: "config-invalid", message: "priorities is empty" });
+    await poll();
+    await poll();
+    const [notice] = useNoticeStore.getState().notices;
+    expect(notice?.words).toEqual(["store/config-invalid · priorities is empty"]);
+    expect(notice?.line).toBe(`The last reads of SAGA failed. The board shows the tasks as they were at ${formatClock(readAt)}.`);
+
+    await poll();
+    expect(useNoticeStore.getState().notices).toHaveLength(1);
+    expect(useNoticeStore.getState().notices[0]).toBe(notice);
+  });
+
+  it("closes when another project opens", async () => {
+    const { transport, replies } = daemon({ [LISTING]: listing([entry(1)]) });
+    const router = await renderWithRouter("/tasks?projects=SAGA", transport);
+    replies[LISTING] = UNREADABLE;
+    await poll();
+    await poll();
+    expect(useNoticeStore.getState().notices.map(({ key }) => key)).toEqual(["board-poll:SAGA"]);
+
+    await act(async () => {
+      await router.navigate({ to: "/tasks", search: { projects: "DELTA" } });
+    });
+
+    expect(useNoticeStore.getState().notices).toEqual([]);
   });
 });

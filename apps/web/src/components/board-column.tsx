@@ -14,13 +14,32 @@ type BoardColumnProps = {
   priorities: readonly string[];
   /** By name: the workflow, `null` for a refused read, `undefined` while pending. */
   workflows: ReadonlyMap<string, Workflow | null | undefined>;
+  /** The project's statuses, in order. */
+  statuses: readonly string[];
+  /** The ids of the tasks a write the daemon has not answered yet changes. */
+  pendingIds: ReadonlySet<string>;
+  onMove: (id: string, status: string) => void;
+  /** The task whose menu button takes focus once its card renders. */
+  focusId: string | null;
+  onMenuFocused: () => void;
 };
 
 const FINAL_CAP = 20;
 const VIRTUAL_ABOVE = 50;
 const ESTIMATED_CARD_HEIGHT = 96;
 
-export function BoardColumn({ tag, column, filtered, priorities, workflows }: BoardColumnProps): ReactNode {
+export function BoardColumn({
+  tag,
+  column,
+  filtered,
+  priorities,
+  workflows,
+  statuses,
+  pendingIds,
+  onMove,
+  focusId,
+  onMenuFocused,
+}: BoardColumnProps): ReactNode {
   const { status, final, matching, total } = column;
   const headingId = useId();
   const sectionRef = useRef<HTMLElement>(null);
@@ -31,6 +50,7 @@ export function BoardColumn({ tag, column, filtered, priorities, workflows }: Bo
   const [cardHeights, setCardHeights] = useState<ReadonlyMap<string, number>>(() => new Map());
   const capped = final && !showAll && matching.length > FINAL_CAP;
   const shown = capped ? matching.slice(0, FINAL_CAP) : matching;
+  const focusIndex = shown.findIndex((entry) => entry.id === focusId);
 
   function revealAll(): void {
     const rows = plainListRef.current?.children ?? [];
@@ -58,6 +78,13 @@ export function BoardColumn({ tag, column, filtered, priorities, workflows }: Bo
         entry={entry}
         view={stepView(entry.frontmatter, final, workflows.get(entry.frontmatter.workflow ?? ""))}
         top={isTopPriority(entry.frontmatter.priority, priorities)}
+        statuses={statuses}
+        pending={pendingIds.has(entry.id)}
+        onMove={(status) => {
+          onMove(entry.id, status);
+        }}
+        focusMenu={entry.id === focusId}
+        onMenuFocused={onMenuFocused}
       />
     );
   }
@@ -83,6 +110,7 @@ export function BoardColumn({ tag, column, filtered, priorities, workflows }: Bo
               renderItem={renderCard}
               labelledBy={headingId}
               gap={8}
+              scrollToIndex={focusIndex < 0 ? undefined : focusIndex}
             />
           )
         : shown.length > 0 && (

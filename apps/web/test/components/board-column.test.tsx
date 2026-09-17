@@ -39,7 +39,18 @@ async function renderColumn(column: Partial<ColumnData>, filtered = false) {
   const data: ColumnData = { status: "In Progress", final: false, matching: [], total: 0, ...column };
 
   return renderBesideTaskRoute(
-    <BoardColumn tag="SAGA" column={data} filtered={filtered} priorities={["high", "low"]} workflows={new Map([["dev", WORKFLOW]])} />,
+    <BoardColumn
+      tag="SAGA"
+      column={data}
+      filtered={filtered}
+      priorities={["high", "low"]}
+      workflows={new Map([["dev", WORKFLOW]])}
+      statuses={["To Do", "In Progress", "Done"]}
+      pendingIds={new Set()}
+      onMove={() => {}}
+      focusId={null}
+      onMenuFocused={() => {}}
+    />,
   );
 }
 

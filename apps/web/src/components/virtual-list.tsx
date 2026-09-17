@@ -102,6 +102,8 @@ type PageVirtualListProps<T> = {
   labelledBy: string;
   /** Pixels between two rows. */
   gap?: number;
+  /** The row the page scrolls to, when it changes. */
+  scrollToIndex?: number;
 };
 
 /**
@@ -121,6 +123,7 @@ export function PageVirtualList<T>({
   renderItem,
   labelledBy,
   gap,
+  scrollToIndex,
 }: PageVirtualListProps<T>): ReactNode {
   "use no memo";
   const listRef = useRef<HTMLUListElement>(null);
@@ -147,6 +150,12 @@ export function PageVirtualList<T>({
   }
 
   useLayoutEffect(measure);
+
+  useEffect(() => {
+    if (scrollToIndex !== undefined) {
+      virtualizer.scrollToIndex(scrollToIndex);
+    }
+  }, [scrollToIndex, virtualizer]);
 
   useEffect(() => {
     window.addEventListener("resize", measure);

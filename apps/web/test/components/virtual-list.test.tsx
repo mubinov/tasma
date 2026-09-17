@@ -169,6 +169,38 @@ describe("PageVirtualList", () => {
     expect(screen.getByRole("list").style.height).toBe(`${String(499 * ROW_HEIGHT + 100 + 499 * 8)}px`);
   });
 
+  it("scrolls the page to the row it is asked to, which then renders", async () => {
+    // The page is as tall as the list below its top.
+    vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(LIST_TOP + rows.length * (ROW_HEIGHT + 8));
+    vi.stubGlobal("scrollTo", ({ top }: ScrollToOptions) => {
+      vi.stubGlobal("scrollY", top);
+      window.dispatchEvent(new Event("scroll"));
+    });
+    const list = (scrollToIndex?: number) => (
+      <>
+        <h2 id="rows-heading">Rows</h2>
+        <PageVirtualList
+          items={rows}
+          estimateSize={() => ROW_HEIGHT}
+          getKey={(row) => row}
+          renderItem={(row) => row}
+          labelledBy="rows-heading"
+          gap={8}
+          scrollToIndex={scrollToIndex}
+        />
+      </>
+    );
+    const { rerender } = render(list());
+    expect(screen.queryByText("row 300")).toBeNull();
+
+    rerender(list(300));
+
+    await vi.waitFor(() => {
+      expect(screen.getByText("row 300")).toBeTruthy();
+    });
+    expect(window.scrollY).toBeGreaterThan(LIST_TOP + 290 * (ROW_HEIGHT + 8));
+  });
+
   it("makes each row a focus target that is not a tab stop", () => {
     renderPageRows();
 

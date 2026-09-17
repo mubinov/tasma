@@ -1,4 +1,4 @@
-import type { Config, Diagnostic, Frontmatter, StepOwner, TaskEntry, Workflow } from "@tasma/protocol";
+import type { Config, Diagnostic, Frontmatter, StepOwner, TaskEntry, TaskInput, Workflow } from "@tasma/protocol";
 
 export type ColumnData = {
   /** As configured. */
@@ -79,6 +79,65 @@ export function buildColumns(
 
     return { status, final, matching: matching.sort(final ? finalOrder : openOrder), total: tasks.length };
   });
+}
+
+/** One write to a task that the daemon has not answered yet. */
+export type PendingWrite = { id: string; change: TaskInput; submittedAt: number };
+
+/**
+ * The entries as the pending writes, in the order they were sent, leave them:
+ * their `status`, their `order`, and the `updated` a change of status moves, as
+ * the engine moves it.
+ */
+export function applyPending(entries: readonly TaskEntry[], pending: readonly PendingWrite[]): readonly TaskEntry[] {
+  if (pending.length === 0) {
+    return entries;
+  }
+
+  const changed = new Map<string, TaskEntry>();
+
+  for (const { id, change: { status, order }, submittedAt } of pending) {
+    const entry = changed.get(id) ?? entries.find((candidate) => candidate.id === id);
+    if (entry === undefined) {
+      continue;
+    }
+
+    const frontmatter = { ...entry.frontmatter };
+    if (typeof status === "string") {
+      if (status.toLowerCase() !== frontmatter.status.toLowerCase()) {
+        frontmatter.updated = new Date(submittedAt).toISOString();
+      }
+      frontmatter.status = status;
+    }
+    if (order === null) {
+      delete frontmatter.order;
+    } else if (typeof order === "number") {
+      frontmatter.order = order;
+    }
+
+    changed.set(id, { ...entry, frontmatter });
+  }
+
+  return entries.map((entry) => changed.get(entry.id) ?? entry);
+}
+
+const ORDER_STEP = 1000;
+
+/**
+ * The `order` that puts a task above the other tasks of a column.
+ *
+ * @param columnTasks Every task of the target column, before the label filter.
+ */
+export function topOrder(columnTasks: readonly TaskEntry[], movedId: string): number {
+  let smallest: number | undefined;
+
+  for (const { id, frontmatter: { order } } of columnTasks) {
+    if (id !== movedId && typeof order === "number" && (smallest === undefined || order < smallest)) {
+      smallest = order;
+    }
+  }
+
+  return smallest === undefined ? 0 : smallest - ORDER_STEP;
 }
 
 /** Labels that differ only in case are one choice, under the first spelling of the listing. */

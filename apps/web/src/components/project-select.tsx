@@ -3,7 +3,14 @@ import { useNavigate } from "@tanstack/react-router";
 import type { ProjectSummary } from "@tasma/protocol";
 import { useId, type ReactNode } from "react";
 import { CaretDownIcon, CheckIcon } from "../lib/icons";
-import { GROUP_CLASS, LABEL_CLASS, POPUP_CLASS, POSITIONER_CLASS, TRIGGER_CLASS } from "./control-classes";
+import {
+  GROUP_CLASS,
+  LABEL_CLASS,
+  MENU_RADIO_ITEM_CLASS,
+  POPUP_CLASS,
+  POSITIONER_CLASS,
+  TRIGGER_CLASS,
+} from "./control-classes";
 import { Tag } from "./tag";
 
 type ProjectSelectProps = {
@@ -38,7 +45,6 @@ export function ProjectSelect({ projects, tag }: ProjectSelectProps): ReactNode 
       <span id={labelId} className={LABEL_CLASS}>
         Project
       </span>
-      {/* Hover does not highlight an item, so the ring is never a hover mark. */}
       <Menu.Root highlightItemOnHover={false}>
         <Menu.Trigger id={triggerId} aria-labelledby={`${labelId} ${triggerId}`} className={TRIGGER_CLASS}>
           <ProjectName name={name} tag={tag} />
@@ -55,14 +61,8 @@ export function ProjectSelect({ projects, tag }: ProjectSelectProps): ReactNode 
               >
                 {projects.map((project) => (
                   // A radio item stays open on a click by default, and the board
-                  // stays mounted when the project changes. A mouse press focuses
-                  // and highlights the item, so the ring is hidden while the button is held.
-                  <Menu.RadioItem
-                    key={project.tag}
-                    value={project.tag}
-                    closeOnClick
-                    className="flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-sm text-text hover:bg-surface-2 data-[highlighted]:bg-surface-2 data-[highlighted]:outline-3 data-[highlighted]:outline-offset-2 data-[highlighted]:outline-graphic data-[highlighted]:active:outline-hidden data-[checked]:text-dim"
-                  >
+                  // stays mounted when the project changes.
+                  <Menu.RadioItem key={project.tag} value={project.tag} closeOnClick className={MENU_RADIO_ITEM_CLASS}>
                     <Menu.RadioItemIndicator keepMounted className="flex w-3.5 shrink-0 data-[unchecked]:invisible">
                       <CheckIcon size={14} aria-hidden="true" />
                     </Menu.RadioItemIndicator>

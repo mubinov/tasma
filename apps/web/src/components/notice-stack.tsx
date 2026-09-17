@@ -3,16 +3,10 @@ import { useId, useLayoutEffect, useRef, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { WarningIcon, XIcon } from "../lib/icons";
 import { useFocusLost } from "../lib/use-focus-lost";
-import { noticeSignature, useNoticeStore, type Notice } from "../store/notices";
+import { useNoticeStore, type OpenNotice } from "../store/notices";
 
 /** Set on <html> while a notice is open: the height the stack covers above the window's bottom edge. */
 const STACK_HEIGHT_PROPERTY = "--notice-stack-height";
-
-// A replaced notice mounts as a new panel: a text change in place is not an
-// addition to the live region, so it would not be announced.
-function panelKey(notice: Notice): string {
-  return `${notice.key} ${noticeSignature(notice)}`;
-}
 
 /**
  * The open notices at the window's bottom right, the newest at the bottom. The
@@ -24,7 +18,7 @@ export function NoticeStack(): ReactNode {
   const stackRef = useRef<HTMLDivElement>(null);
   const focusLostRef = useRef(false);
   const bottom = notices.at(-1);
-  const bottomPanelKey = bottom === undefined ? null : panelKey(bottom);
+  const bottomSerial = bottom?.serial ?? null;
 
   // A notice above the bottom one that holds focus stays in view. The stack is
   // `fixed`, so it is the offsetParent of its panels; the browser limits a
@@ -42,7 +36,7 @@ export function NoticeStack(): ReactNode {
     }
 
     stack.scrollTop = bottomPanel.offsetTop - Number.parseFloat(getComputedStyle(stack).paddingTop);
-  }, [bottomPanelKey]);
+  }, [bottomSerial]);
 
   useLayoutEffect(() => {
     if (!focusLostRef.current) {
@@ -94,8 +88,10 @@ export function NoticeStack(): ReactNode {
       className="pointer-events-none fixed right-4 bottom-8 z-(--layer-notice) -m-8 -mr-4 flex max-h-screen w-[calc(100%+1rem)] max-w-[488px] flex-col gap-2 overflow-y-auto p-8 pr-4 sm:right-10 sm:-mr-8 sm:max-w-[504px] sm:pr-8 [html:has(&)]:scroll-pb-(--notice-stack-height)"
     >
       {notices.map((notice) => (
-        <WarningNotice
-          key={panelKey(notice)}
+        // Each opening mounts a new panel: a text change in place, or no change
+        // at all, is not an addition to the live region and is not announced.
+        <NoticePanel
+          key={notice.serial}
           notice={notice}
           onFocusLost={() => {
             focusLostRef.current = true;
@@ -106,13 +102,15 @@ export function NoticeStack(): ReactNode {
   );
 }
 
-type WarningNoticeProps = {
-  notice: Notice;
+type NoticePanelProps = {
+  notice: OpenNotice;
   /** The panel leaves while focus is inside it. */
   onFocusLost: () => void;
 };
 
-function WarningNotice({ notice, onFocusLost }: WarningNoticeProps): ReactNode {
+const WORDS_CLASS = "mt-2 space-y-1 rounded-control bg-surface-2 px-2.5 py-2 font-mono text-xs-plus text-dim wrap-anywhere";
+
+function NoticePanel({ notice, onFocusLost }: NoticePanelProps): ReactNode {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   useFocusLost(panelRef, onFocusLost);
@@ -120,6 +118,7 @@ function WarningNotice({ notice, onFocusLost }: WarningNoticeProps): ReactNode {
   return (
     <div
       ref={panelRef}
+      role={notice.form === "failure" ? "alert" : undefined}
       className="pointer-events-auto flex w-full animate-enter gap-3 rounded-card border border-line bg-surface px-4 py-3 shadow-float"
     >
       <WarningIcon size={20} aria-hidden="true" className="mt-px shrink-0 text-signal" />
@@ -127,14 +126,26 @@ function WarningNotice({ notice, onFocusLost }: WarningNoticeProps): ReactNode {
         <p id={titleId} className="font-chrome text-base font-medium text-signal">
           {notice.title}
         </p>
-        <ul className="mt-2 space-y-1 rounded-control bg-surface-2 px-2.5 py-2 font-mono text-xs-plus text-dim wrap-anywhere">
-          {notice.words.map((word, index) => (
-            // Two words can be identical, so the position is the only stable
-            // identity a row has.
-            // eslint-disable-next-line @eslint-react/no-array-index-key
-            <li key={index}>{word}</li>
-          ))}
-        </ul>
+        {notice.line !== undefined && <p className="mt-0.5 text-sm text-muted">{notice.line}</p>}
+        {notice.form === "failure"
+          ? (
+              <div className={WORDS_CLASS}>
+                {notice.words.map((word, index) => (
+                  // Two words can be identical, so the position is the only
+                  // stable identity a row has.
+                  // eslint-disable-next-line @eslint-react/no-array-index-key
+                  <p key={index}>{word}</p>
+                ))}
+              </div>
+            )
+          : (
+              <ul className={WORDS_CLASS}>
+                {notice.words.map((word, index) => (
+                  // eslint-disable-next-line @eslint-react/no-array-index-key
+                  <li key={index}>{word}</li>
+                ))}
+              </ul>
+            )}
       </div>
       <Button
         type="button"

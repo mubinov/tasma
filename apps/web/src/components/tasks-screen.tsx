@@ -1,9 +1,20 @@
-import { useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, Link, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import type { Workflow } from "@tasma/protocol";
-import { useDeferredValue, useEffect, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useState, type ReactNode } from "react";
+import { taskWriteOptions, usePendingTaskWrites } from "../api/mutations";
+import { usePollNotice } from "../api/poll-notice";
 import { POLL_INTERVAL, projectQuery, projectsQuery, tasksQuery, workflowQuery } from "../api/queries";
-import { boardWarnings, buildColumns, distinctLabels, splitList, workflowNames } from "../lib/board";
+import {
+  applyPending,
+  boardWarnings,
+  buildColumns,
+  distinctLabels,
+  splitList,
+  topOrder,
+  workflowNames,
+} from "../lib/board";
+import { formatClock } from "../lib/clock";
 import { useDocumentTitle } from "../lib/document-title";
 import { warningCount } from "../lib/warning-count";
 import { NAVIGATION_BY_PATH } from "../navigation";
@@ -43,8 +54,25 @@ function boardSummary(live: boolean, warnings: number, filter: { matching: numbe
   return said.join(" ");
 }
 
-function Board({ tag, labels }: { tag: string; labels: string | undefined }): ReactNode {
+/**
+ * Apart from the board, so a poll that changes nothing re-renders this alone.
+ * Its reads fetch nothing: the board polls them.
+ */
+function BoardPollNotice({ tag }: { tag: string }): ReactNode {
   const { client } = route.useRouteContext();
+  const projectRead = useQuery({ ...projectQuery(client, tag), enabled: false });
+  const listingRead = useQuery({ ...tasksQuery(client, tag), enabled: false });
+
+  usePollNotice(`board-poll:${tag}`, [listingRead, projectRead], {
+    title: "The board is not up to date",
+    line: (readAt) => `The last reads of ${tag} failed. The board shows the tasks as they were at ${formatClock(readAt)}.`,
+  });
+
+  return null;
+}
+
+function Board({ tag, labels }: { tag: string; labels: string | undefined }): ReactNode {
+  const { client, queryClient } = route.useRouteContext();
   const { data: { data: projects } } = useSuspenseQuery(projectsQuery(client));
   const { data: { data: project, diagnostics: projectWarnings } } = useSuspenseQuery({
     ...projectQuery(client, tag),
@@ -55,6 +83,9 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
     refetchInterval: POLL_INTERVAL,
   });
   const setLastTasksProject = useUiStore((state) => state.setLastTasksProject);
+  const { mutateAsync: write } = useMutation(taskWriteOptions(queryClient, client, tag));
+  const pending = usePendingTaskWrites(tag);
+  const [focusId, setFocusId] = useState<string | null>(null);
   const names = workflowNames(listing.entries);
   // Not under Suspense: a poll can bring a name the loader did not read, and a
   // new key would suspend the whole board until its read lands.
@@ -74,11 +105,28 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
       return [workflowName, read === null ? null : read?.data];
     }),
   );
-  const columns = buildColumns(config, listing.entries, deferredSelected);
+  const entries = applyPending(listing.entries, pending);
+  const pendingIds = new Set(pending.map(({ id }) => id));
+  const columns = buildColumns(config, entries, deferredSelected);
   const filtered = deferredSelected.length > 0;
   const warnings = boardWarnings(projectWarnings, listingWarnings);
   const matching = columns.reduce((sum, column) => sum + column.matching.length, 0);
   const total = columns.reduce((sum, column) => sum + column.total, 0);
+
+  function move(id: string, status: string): void {
+    const key = status.toLowerCase();
+    // Unfiltered, so the tasks the label filter hides count too.
+    // The menu offers only configured statuses, and each of them has a column.
+    const target = buildColumns(config, entries, []).find((column) => column.status.toLowerCase() === key)!;
+    const order = topOrder(target.matching, id);
+
+    // The card takes focus where it renders next: at its new place, and at its
+    // old place again after a refusal.
+    write({ writes: [{ id, change: { status, order } }], title: `${id} was not moved` }).catch(() => {
+      setFocusId(id);
+    });
+    setFocusId(id);
+  }
 
   return (
     <>
@@ -123,9 +171,17 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
             filtered={filtered}
             priorities={config.priorities}
             workflows={workflows}
+            statuses={config.statuses}
+            pendingIds={pendingIds}
+            onMove={move}
+            focusId={focusId}
+            onMenuFocused={() => {
+              setFocusId(null);
+            }}
           />
         ))}
       </div>
+      <BoardPollNotice tag={tag} />
     </>
   );
 }

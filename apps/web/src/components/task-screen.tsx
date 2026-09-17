@@ -2,8 +2,10 @@ import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
 import type { Comment, Task } from "@tasma/protocol";
 import { Fragment, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { usePollNotice } from "../api/poll-notice";
 import { POLL_INTERVAL, projectQuery, taskQuery, tasksQuery, workflowQuery } from "../api/queries";
 import { isFinalStatus, isTopPriority, stepView } from "../lib/board";
+import { formatClock } from "../lib/clock";
 import { useDocumentTitle } from "../lib/document-title";
 import { ArrowLeftIcon, ProhibitIcon } from "../lib/icons";
 import { blockingRows, relationRows, type RelationRow } from "../lib/task-page";
@@ -111,6 +113,24 @@ function BlockedSummary({ tag, blocking }: { tag: string; blocking: readonly Rel
       ))}
     </span>
   );
+}
+
+/**
+ * Apart from the page, so a poll that changes nothing re-renders this alone. Its
+ * reads fetch nothing: the page polls them.
+ */
+function TaskPollNotice({ tag, id }: { tag: string; id: string }): ReactNode {
+  const { client } = route.useRouteContext();
+  const taskRead = useQuery({ ...taskQuery(client, tag, id), enabled: false });
+  const projectRead = useQuery({ ...projectQuery(client, tag), enabled: false });
+  const listingRead = useQuery({ ...tasksQuery(client, tag), enabled: false });
+
+  usePollNotice(`task-poll:${id}`, [taskRead, projectRead, listingRead], {
+    title: `${id} is not up to date`,
+    line: (readAt) => `The last reads of ${id} failed. The page shows the task as it was at ${formatClock(readAt)}.`,
+  });
+
+  return null;
 }
 
 export function TaskScreen(): ReactNode {
@@ -227,6 +247,7 @@ export function TaskScreen(): ReactNode {
         outline={outline}
         pageScrollPadding={scrollPaddingTop}
       />
+      <TaskPollNotice tag={tag} id={taskId} />
     </div>
   );
 }

@@ -24,13 +24,21 @@ export function shouldRetry(failureCount: number, error: unknown): boolean {
  * stream and no polling, returning to the browser after a task file is edited by
  * hand is the only moment this app has to notice. The stale time is what stops
  * that becoming a refetch on every alt-tab.
+ *
+ * The daemon runs on this machine, so the browser's offline state says nothing
+ * about it: in the default network mode an offline event pauses every read and
+ * write until the browser reports online again.
  */
 export function createAppQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
       queries: {
+        networkMode: "always",
         retry: shouldRetry,
         staleTime: 30_000,
+      },
+      mutations: {
+        networkMode: "always",
       },
     },
   });

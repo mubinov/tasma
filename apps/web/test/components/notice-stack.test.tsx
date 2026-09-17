@@ -100,6 +100,44 @@ describe("the stack", () => {
     expect(dismissControls()).toHaveLength(1);
   });
 
+  it("shows no muted line and no alert in the warning form", () => {
+    renderStack();
+
+    show(FIRST);
+
+    const panel = stack().firstElementChild!;
+    expect(panel.getAttribute("role")).toBeNull();
+    expect(panel.querySelectorAll("p")).toHaveLength(1);
+  });
+
+  it("shows the failure form as an alert: the title, the muted line, the words and Dismiss", async () => {
+    const user = userEvent.setup();
+    const failure: Notice = {
+      key: "task-write-failure:SAGA-55",
+      form: "failure",
+      title: "SAGA-55 was not moved",
+      line: "The daemon refused the write, and the task is back where it was. Its own words are below.",
+      words: ["store/status-unknown · status \"Gone\" is not configured"],
+    };
+    renderStack();
+
+    show(failure);
+
+    const alert = within(stack()).getByRole("alert");
+    const [title, line, words] = [...alert.children[1]!.children];
+    expect(title?.textContent).toBe(failure.title);
+    expect(title?.className).toContain("text-signal");
+    expect(line?.textContent).toBe(failure.line);
+    expect(line?.className).toContain("text-muted");
+    expect(words?.textContent).toBe(failure.words[0]);
+    expect(words?.className).toContain("font-mono");
+    expect(within(alert).queryByRole("list")).toBeNull();
+
+    await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
+
+    expect(openKeys()).toEqual([]);
+  });
+
   it("describes each Dismiss control by the title of its notice", () => {
     renderStack();
 
@@ -138,6 +176,20 @@ describe("the stack", () => {
     expect(stack().children).toHaveLength(1);
     expect(stack().firstElementChild).not.toBe(panel);
     expect(stack().firstElementChild?.querySelector("p")?.textContent).toBe("1 warning about SAGA-56");
+  });
+
+  it("mounts a notice closed and shown again with equal content in one update as a new panel", () => {
+    renderStack();
+    show(FIRST);
+    const panel = stack().firstElementChild;
+
+    act(() => {
+      useNoticeStore.getState().closeNotice(FIRST.key);
+      useNoticeStore.getState().showNotice({ ...FIRST });
+    });
+
+    expect(stack().children).toHaveLength(1);
+    expect(stack().firstElementChild).not.toBe(panel);
   });
 
   it("scrolls the stack to the top of the bottom notice, not to its end, so a tall notice shows its title and Dismiss", () => {
@@ -369,7 +421,7 @@ describe("useNotice", () => {
   it("opens the notice on mount", () => {
     renderStack(<Screen noticeKey={FIRST.key} content={CONTENT} />);
 
-    expect(useNoticeStore.getState().notices).toEqual([FIRST]);
+    expect(useNoticeStore.getState().notices).toMatchObject([FIRST]);
     expect(screen.getByText(FIRST.title)).toBeTruthy();
   });
 
@@ -388,7 +440,7 @@ describe("useNotice", () => {
 
     rerender(<Screen noticeKey={FIRST.key} content={{ ...CONTENT, title: "1 warning about SAGA-56" }} />);
 
-    expect(useNoticeStore.getState().notices).toEqual([{ ...FIRST, title: "1 warning about SAGA-56" }]);
+    expect(useNoticeStore.getState().notices).toMatchObject([{ ...FIRST, title: "1 warning about SAGA-56" }]);
   });
 
   it("closes the notice on null", () => {
@@ -412,7 +464,7 @@ describe("useNotice", () => {
 
     rerender(<Screen noticeKey={SECOND.key} content={CONTENT} />);
 
-    expect(useNoticeStore.getState().notices).toEqual([{ ...CONTENT, key: SECOND.key }]);
+    expect(useNoticeStore.getState().notices).toMatchObject([{ ...CONTENT, key: SECOND.key }]);
   });
 
   it("keeps equal content closed after Dismiss and opens changed content", async () => {

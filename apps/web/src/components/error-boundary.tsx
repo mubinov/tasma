@@ -2,8 +2,8 @@ import { Button } from "@base-ui/react/button";
 import { useMatch, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { ProtocolError, TransportError } from "@tasma/protocol";
 import { Component, useEffect, useRef, type ReactNode } from "react";
-import { DAEMON_URL } from "../api/transport";
 import { useDocumentTitle } from "../lib/document-title";
+import { failureWords } from "../lib/failure-words";
 
 // A thrown value need not be an `Error`: a thrown string leaves `message`
 // undefined, and a thrown `null` would read as "nothing failed".
@@ -17,7 +17,6 @@ type Presentation = {
   heading: string;
   /** Names no control: the Retry button renders only where a caller passed a reset. */
   advice: string;
-  detail: ReactNode;
   /** Repeating the call is only worth offering where it could answer next time. */
   offersRetry: boolean;
 };
@@ -36,7 +35,6 @@ function describeFailure(error: unknown): Presentation {
       title: "No daemon",
       heading: "tasma cannot reach the daemon",
       advice: "Start the daemon at the address below. Nothing on disk has been read or changed.",
-      detail: DAEMON_URL,
       offersRetry: true,
     };
   }
@@ -46,12 +44,6 @@ function describeFailure(error: unknown): Presentation {
       title: "Unreadable answer",
       heading: "tasma cannot read the daemon's answer",
       advice: "The address below answered, and not with a daemon reply. Start the daemon there if it is not running.",
-      detail: (
-        <>
-          <span className="block text-muted">{`${DAEMON_URL} · HTTP ${error.status}`}</span>
-          {error.message}
-        </>
-      ),
       offersRetry: true,
     };
   }
@@ -61,15 +53,6 @@ function describeFailure(error: unknown): Presentation {
       title: "Request refused",
       heading: "the daemon refused this request",
       advice: "The daemon read the request and would not carry it out. Its own words are below.",
-      detail: (
-        <>
-          <span className="block text-muted">{`${error.failure.kind}/${error.failure.code}`}</span>
-          {/* The client validates `kind` alone, so a message that is not a
-              string would throw from inside this panel — the one place no
-              boundary above it catches. */}
-          {String(error.failure.message)}
-        </>
-      ),
       offersRetry: false,
     };
   }
@@ -78,9 +61,19 @@ function describeFailure(error: unknown): Presentation {
     title: "Stopped rendering",
     heading: "tasma stopped rendering",
     advice: "Restart the window. If it keeps happening, the message below is what to report.",
-    detail: toError(error).message,
     offersRetry: false,
   };
+}
+
+function FailureDetail({ error }: { error: unknown }): ReactNode {
+  const { head, message } = failureWords(error);
+
+  return (
+    <>
+      {head !== undefined && <span className="block text-muted">{head}</span>}
+      {message}
+    </>
+  );
 }
 
 type ErrorPanelProps = {
@@ -103,7 +96,7 @@ export function ErrorPanel({ error, reset, retrying = false }: ErrorPanelProps):
   const retryRef = useRef<HTMLButtonElement>(null);
   // The state this panel mounted in. A flip later must not move focus again.
   const mountedRetryingRef = useRef(retrying);
-  const { title, heading, advice, detail, offersRetry } = describeFailure(error);
+  const { title, heading, advice, offersRetry } = describeFailure(error);
 
   useDocumentTitle(title);
 
@@ -129,7 +122,9 @@ export function ErrorPanel({ error, reset, retrying = false }: ErrorPanelProps):
     >
       <h1 className="font-chrome text-lg font-semibold">{heading}</h1>
       <p className="mt-2 text-sm text-muted">{advice}</p>
-      <p className="mt-4 rounded-card bg-surface-2 p-3 font-mono text-xs text-dim wrap-anywhere">{detail}</p>
+      <p className="mt-4 rounded-card bg-surface-2 p-3 font-mono text-xs text-dim wrap-anywhere">
+        <FailureDetail error={error} />
+      </p>
       {offersRetry && reset !== undefined && (
         // The hover mark is the border, not the fill: two surfaces alone are
         // about 1.1:1 apart and tell no state from another. The wait is in the

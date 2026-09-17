@@ -23,10 +23,29 @@ function entry(fields: Partial<Frontmatter> = {}, blocked = false): TaskEntry {
   };
 }
 
-async function renderCard(task: TaskEntry = entry(), view: StepView = { kind: "none" }, top = false) {
+type CardState = { pending?: boolean; focusMenu?: boolean; onMenuFocused?: () => void };
+
+async function renderCard(
+  task: TaskEntry = entry(),
+  view: StepView = { kind: "none" },
+  top = false,
+  { pending = false, focusMenu = false, onMenuFocused = () => {} }: CardState = {},
+) {
   // The router scrolls on navigation, which jsdom does not implement.
   vi.stubGlobal("scrollTo", () => {});
-  const { container, router } = await renderBesideTaskRoute(<TaskCard tag="SAGA" entry={task} view={view} top={top} />);
+  const { container, router } = await renderBesideTaskRoute(
+    <TaskCard
+      tag="SAGA"
+      entry={task}
+      view={view}
+      top={top}
+      statuses={["To Do", "In Progress", "Done"]}
+      pending={pending}
+      onMove={() => {}}
+      focusMenu={focusMenu}
+      onMenuFocused={onMenuFocused}
+    />,
+  );
 
   return { card: container.firstElementChild as HTMLElement, router };
 }
@@ -41,24 +60,46 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("shows the id and the title, with the right side of the title kept free", async () => {
-  await renderCard();
+it("shows the id and the title, with the right side of the top row kept free and the title across the card", async () => {
+  await renderCard(entry({ priority: "high" }));
 
-  expect(screen.getByText("SAGA-55").className).toContain("font-mono");
-  expect(classesOf(screen.getByText("Web: Tasks board"))).toEqual(expect.arrayContaining(["pr-6", "wrap-anywhere"]));
+  const id = screen.getByText("SAGA-55");
+  const title = screen.getByText("Web: Tasks board");
+  expect(id.className).toContain("font-mono");
+  expect(classesOf(id.parentElement)).toContain("pr-6");
+  expect(id.parentElement?.lastElementChild?.textContent).toBe("high");
+  expect(classesOf(title)).toContain("wrap-anywhere");
+  expect(classesOf(title)).not.toContain("pr-6");
 });
 
 describe("opening the task", () => {
   const TASK_PATH = "/tasks/SAGA/SAGA-55";
 
-  it("makes the title the one link and the one tab stop", async () => {
+  it("makes the title the one link, and the title and then the menu button the tab stops", async () => {
     const { card } = await renderCard();
 
-    const stops = [...card.querySelectorAll("a, button, [tabindex]")];
-    expect(stops.map((stop) => stop.textContent)).toEqual(["Web: Tasks board"]);
+    const stops = [...card.querySelectorAll<HTMLElement>("a, button, [tabindex]")];
+    expect(stops.map((stop) => stop.textContent || stop.getAttribute("aria-label"))).toEqual(["Web: Tasks board", "Task menu"]);
     expect(stops[0]?.getAttribute("href")).toBe(TASK_PATH);
+    expect(stops.map((stop) => stop.tabIndex)).toEqual([0, 0]);
     expect(card.tabIndex).toBe(-1);
     expect(card.getAttribute("role")).toBeNull();
+  });
+
+  it("describes the menu button by the title, so the menu buttons of a board are told apart", async () => {
+    await renderCard();
+
+    expect(screen.getByRole("button", { name: "Task menu", description: "Web: Tasks board" })).toBeTruthy();
+  });
+
+  it("stays on the board when the click is on the menu button", async () => {
+    const user = userEvent.setup();
+    const { router } = await renderCard();
+
+    await user.click(screen.getByRole("button", { name: "Task menu" }));
+
+    expect(router.state.location.pathname).toBe("/");
+    expect(await screen.findByRole("menu")).toBeTruthy();
   });
 
   it("opens the task from the title", async () => {
@@ -138,13 +179,13 @@ describe("the flow row", () => {
   it("is absent for no step", async () => {
     const { card } = await renderCard(entry(), { kind: "none" });
 
-    expect(card.children).toHaveLength(2);
+    expect(card.children).toHaveLength(3);
   });
 
   it("shows a stale step as its name alone", async () => {
     const { card } = await renderCard(entry(), { kind: "stale", name: "review" });
 
-    const row = card.children[2]!;
+    const row = card.children[3]!;
     expect(row.children).toHaveLength(1);
     expect(row.textContent).toBe("review");
     expect(classesOf(row.firstElementChild)).toContain("text-dim");
@@ -162,7 +203,7 @@ describe("the flow row", () => {
       owners: ["agent", owner, "human", "agent"],
     });
 
-    const [mark, name, spoken, segments] = [...card.children[2]!.children];
+    const [mark, name, spoken, segments] = [...card.children[3]!.children];
     expect(classesOf(mark)).toContain(dot);
     expect(mark?.getAttribute("aria-hidden")).toBe("true");
     expect(name?.textContent).toBe("implement");
@@ -218,5 +259,78 @@ it("lets a long label wrap inside the card, with its dot kept whole", async () =
 it("shows no label row when the task has no label", async () => {
   const { card } = await renderCard(entry({ labels: [] }));
 
-  expect(card.children).toHaveLength(2);
+  expect(card.children).toHaveLength(3);
+});
+
+describe("the menu button", () => {
+  it("sits at the right end of the top row, shown only while the card is hovered or holds focus or the menu is open", async () => {
+    const { card } = await renderCard();
+
+    const button = screen.getByRole("button", { name: "Task menu" });
+    expect(classesOf(card)).toEqual(expect.arrayContaining(["group/card", "relative"]));
+    expect(classesOf(button)).toEqual(
+      expect.arrayContaining([
+        "absolute",
+        "top-1.5",
+        "right-2",
+        "size-6",
+        "opacity-0",
+        "group-hover/card:opacity-100",
+        "group-focus-within/card:opacity-100",
+        "data-[popup-open]:opacity-100",
+      ]),
+    );
+  });
+});
+
+describe("a card a pending write changes", () => {
+  it("is at 55% opacity and busy, and its border does not change on hover", async () => {
+    const { card } = await renderCard(entry(), { kind: "none" }, false, { pending: true });
+
+    expect(classesOf(card)).toContain("opacity-55");
+    expect(classesOf(card)).not.toContain("hover:border-graphic");
+    expect(card.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("is neither dimmed nor busy once the write has an answer", async () => {
+    const { card } = await renderCard();
+
+    expect(classesOf(card)).not.toContain("opacity-55");
+    expect(classesOf(card)).toContain("hover:border-graphic");
+    expect(card.hasAttribute("aria-busy")).toBe(false);
+  });
+});
+
+describe("focus after a move", () => {
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  });
+
+  it("scrolls the card into view, focuses its menu button and reports it", async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+    const onMenuFocused = vi.fn();
+
+    const { card } = await renderCard(entry(), { kind: "none" }, false, { focusMenu: true, onMenuFocused });
+
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Task menu" }));
+    expect(scrollIntoView.mock.contexts).toEqual([card]);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    expect(onMenuFocused).toHaveBeenCalledOnce();
+  });
+
+  it("leaves focus alone while no move asks for it", async () => {
+    const onMenuFocused = vi.fn();
+
+    await renderCard(entry(), { kind: "none" }, false, { onMenuFocused });
+
+    expect(document.activeElement).toBe(document.body);
+    expect(onMenuFocused).not.toHaveBeenCalled();
+  });
+});
+
+it("names the task on the card, for the board to find it", async () => {
+  const { card } = await renderCard();
+
+  expect(card.getAttribute("data-task-id")).toBe("SAGA-55");
 });
