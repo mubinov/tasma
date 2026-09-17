@@ -11,11 +11,12 @@ import {
   buildColumns,
   distinctLabels,
   splitList,
-  topOrder,
   workflowNames,
+  type TaskWrite,
 } from "../lib/board";
 import { formatClock } from "../lib/clock";
 import { useDocumentTitle } from "../lib/document-title";
+import { fullIndex, placeWrites } from "../lib/order";
 import { warningCount } from "../lib/warning-count";
 import { NAVIGATION_BY_PATH } from "../navigation";
 import { useUiStore } from "../store/ui";
@@ -113,19 +114,34 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
   const matching = columns.reduce((sum, column) => sum + column.matching.length, 0);
   const total = columns.reduce((sum, column) => sum + column.total, 0);
 
+  function sendMove(id: string, writes: TaskWrite[]): void {
+    // The card takes focus where it renders next: at its new place, and at its
+    // old place again after a refusal.
+    write({ id, writes, title: `${id} was not moved` }).catch(() => {
+      setFocusId(id);
+    });
+    setFocusId(id);
+  }
+
   function move(id: string, status: string): void {
     const key = status.toLowerCase();
     // Unfiltered, so the tasks the label filter hides count too.
     // The menu offers only configured statuses, and each of them has a column.
     const target = buildColumns(config, entries, []).find((column) => column.status.toLowerCase() === key)!;
-    const order = topOrder(target.matching, id);
+    const card = entries.find((entry) => entry.id === id)!;
 
-    // The card takes focus where it renders next: at its new place, and at its
-    // old place again after a refusal.
-    write({ writes: [{ id, change: { status, order } }], title: `${id} was not moved` }).catch(() => {
-      setFocusId(id);
-    });
-    setFocusId(id);
+    sendMove(id, placeWrites(target.matching.filter((entry) => entry.id !== id), card, 0, status));
+  }
+
+  function moveBy(columnIndex: number, id: string, by: -1 | 1): void {
+    const matching = columns[columnIndex]!.matching;
+    const at = matching.findIndex((entry) => entry.id === id);
+    const moved = matching[at]!;
+    const visible = matching.toSpliced(at, 1);
+    // Unfiltered, so the tasks the label filter hides count too.
+    const column = buildColumns(config, entries, [])[columnIndex]!.matching.filter((entry) => entry.id !== id);
+
+    sendMove(id, placeWrites(column, moved, fullIndex(column, visible, at + by)));
   }
 
   return (
@@ -174,6 +190,9 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
             statuses={config.statuses}
             pendingIds={pendingIds}
             onMove={move}
+            onMoveBy={(id, by) => {
+              moveBy(index, id, by);
+            }}
             focusId={focusId}
             onMenuFocused={() => {
               setFocusId(null);

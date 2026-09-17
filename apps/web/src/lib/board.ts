@@ -20,23 +20,33 @@ function idNumber(id: string): number {
   return Number(id.slice(id.lastIndexOf("-") + 1));
 }
 
-function openOrder(a: TaskEntry, b: TaskEntry): number {
+/** Tasks with an `order` first, by `order`, equal values by id number; `null` when neither has one. */
+function byOrder(a: TaskEntry, b: TaskEntry): number | null {
   const left = a.frontmatter.order;
   const right = b.frontmatter.order;
-  const leftOrdered = typeof left === "number";
-  const rightOrdered = typeof right === "number";
 
-  if (leftOrdered !== rightOrdered) {
-    return leftOrdered ? -1 : 1;
+  if (typeof left === "number" && typeof right === "number") {
+    return left === right ? idNumber(a.id) - idNumber(b.id) : left - right;
   }
-  if (leftOrdered && rightOrdered && left !== right) {
-    return left - right;
+  if (typeof left === "number") {
+    return -1;
   }
-  return idNumber(a.id) - idNumber(b.id);
+  if (typeof right === "number") {
+    return 1;
+  }
+  return null;
+}
+
+function openOrder(a: TaskEntry, b: TaskEntry): number {
+  return byOrder(a, b) ?? idNumber(a.id) - idNumber(b.id);
+}
+
+function finalOrder(a: TaskEntry, b: TaskEntry): number {
+  return byOrder(a, b) ?? byUpdated(a, b);
 }
 
 // The times carry different offsets, so they are compared parsed, never as strings.
-function finalOrder(a: TaskEntry, b: TaskEntry): number {
+function byUpdated(a: TaskEntry, b: TaskEntry): number {
   const left = Date.parse(a.frontmatter.updated);
   const right = Date.parse(b.frontmatter.updated);
   const leftParsed = !Number.isNaN(left);
@@ -81,8 +91,10 @@ export function buildColumns(
   });
 }
 
+export type TaskWrite = { id: string; change: TaskInput };
+
 /** One write to a task that the daemon has not answered yet. */
-export type PendingWrite = { id: string; change: TaskInput; submittedAt: number };
+export type PendingWrite = TaskWrite & { submittedAt: number };
 
 /**
  * The entries as the pending writes, in the order they were sent, leave them:
@@ -119,25 +131,6 @@ export function applyPending(entries: readonly TaskEntry[], pending: readonly Pe
   }
 
   return entries.map((entry) => changed.get(entry.id) ?? entry);
-}
-
-const ORDER_STEP = 1000;
-
-/**
- * The `order` that puts a task above the other tasks of a column.
- *
- * @param columnTasks Every task of the target column, before the label filter.
- */
-export function topOrder(columnTasks: readonly TaskEntry[], movedId: string): number {
-  let smallest: number | undefined;
-
-  for (const { id, frontmatter: { order } } of columnTasks) {
-    if (id !== movedId && typeof order === "number" && (smallest === undefined || order < smallest)) {
-      smallest = order;
-    }
-  }
-
-  return smallest === undefined ? 0 : smallest - ORDER_STEP;
 }
 
 /** Labels that differ only in case are one choice, under the first spelling of the listing. */

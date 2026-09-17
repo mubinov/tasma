@@ -13,7 +13,6 @@ import {
   opensTask,
   splitList,
   stepView,
-  topOrder,
   workflowNames,
 } from "../../src/lib/board";
 
@@ -145,7 +144,24 @@ describe("buildColumns", () => {
     expect(ids(columns[0]!.matching)).toEqual(["T-12", "T-2", "T-4", "T-10", "T-3", "T-9"]);
   });
 
-  it("orders a final column by the parsed update time, newest first", () => {
+  it("orders a final column by order, then by id number, then the tasks with no order by update time", () => {
+    const columns = buildColumns(
+      CONFIG,
+      [
+        entry("T-9", { status: "Done", updated: "2026-09-01T09:00:00Z" }),
+        entry("T-4", { status: "Done", order: 2, updated: "2026-08-01T10:00:00Z" }),
+        entry("T-12", { status: "Done", order: 1 }),
+        entry("T-3", { status: "Done", updated: "2026-09-02T10:00:00Z" }),
+        entry("T-10", { status: "Done", order: 2, updated: "2026-09-03T10:00:00Z" }),
+        entry("T-2", { status: "Done", order: 2 }),
+      ],
+      [],
+    );
+
+    expect(ids(columns[2]!.matching)).toEqual(["T-12", "T-2", "T-4", "T-10", "T-3", "T-9"]);
+  });
+
+  it("orders the tasks with no order in a final column by the parsed update time, newest first", () => {
     const columns = buildColumns(
       CONFIG,
       [
@@ -460,30 +476,5 @@ describe("applyPending", () => {
     ]);
 
     expect(shown[0]?.frontmatter).toEqual(entries[0]?.frontmatter);
-  });
-});
-
-describe("topOrder", () => {
-  it("is 0 when no task of the column has an order", () => {
-    expect(topOrder([entry("T-1"), entry("T-2")], "T-3")).toBe(0);
-    expect(topOrder([], "T-3")).toBe(0);
-  });
-
-  it("is 1000 below the smallest order of the column", () => {
-    expect(topOrder([entry("T-1", { order: 40 }), entry("T-2"), entry("T-3", { order: -7 })], "T-9")).toBe(-1007);
-  });
-
-  it("leaves the moved task out", () => {
-    expect(topOrder([entry("T-1", { order: -2000 }), entry("T-2", { order: 10 })], "T-1")).toBe(-990);
-    expect(topOrder([entry("T-1", { order: -2000 })], "T-1")).toBe(0);
-  });
-
-  it("counts the tasks the label filter hides, which buildColumns keeps in an unfiltered column", () => {
-    const entries = [entry("T-1", { labels: ["web"] }), entry("T-2", { labels: ["docs"], order: 100 })];
-    const [filtered] = buildColumns(CONFIG, entries, ["web"]);
-    const [unfiltered] = buildColumns(CONFIG, entries, []);
-
-    expect(topOrder(filtered!.matching, "T-9")).toBe(0);
-    expect(topOrder(unfiltered!.matching, "T-9")).toBe(-900);
   });
 });

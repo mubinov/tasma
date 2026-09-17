@@ -1,6 +1,7 @@
 import type { Frontmatter, TaskEntry, Workflow } from "@tasma/protocol";
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BoardColumn } from "../../src/components/board-column";
 import type { ColumnData } from "../../src/lib/board";
@@ -35,23 +36,42 @@ const WORKFLOW: Workflow = {
   steps: [{ name: "implement", file: "/w/dev/implement.md", owner: "agent" }],
 };
 
-async function renderColumn(column: Partial<ColumnData>, filtered = false) {
+type ColumnProps = Pick<ComponentProps<typeof BoardColumn>, "filtered" | "onMoveBy" | "focusId" | "onMenuFocused">;
+
+async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnProps> = {}) {
   const data: ColumnData = { status: "In Progress", final: false, matching: [], total: 0, ...column };
 
   return renderBesideTaskRoute(
     <BoardColumn
       tag="SAGA"
       column={data}
-      filtered={filtered}
+      filtered={false}
       priorities={["high", "low"]}
       workflows={new Map([["dev", WORKFLOW]])}
       statuses={["To Do", "In Progress", "Done"]}
       pendingIds={new Set()}
       onMove={() => {}}
+      onMoveBy={() => {}}
       focusId={null}
       onMenuFocused={() => {}}
+      {...props}
     />,
   );
+}
+
+function menuButton(title: string): HTMLElement {
+  return within(screen.getByText(title).closest<HTMLElement>("[data-task-id]")!).getByRole("button", { name: "Task menu" });
+}
+
+/** The names of the place items in the card's menu. */
+async function placeItems(title: string): Promise<string[]> {
+  const user = userEvent.setup();
+  await user.click(menuButton(title));
+  const menu = await screen.findByRole("menu");
+  const names = within(menu).getAllByRole("menuitem").map((item) => item.textContent).filter((name) => name.startsWith("Move"));
+  await user.keyboard("{Escape}");
+
+  return names;
 }
 
 function cardTitles(): string[] {
@@ -88,13 +108,13 @@ it("sets the page's top scroll padding past the sticky header", async () => {
 });
 
 it("counts the matching tasks of all while labels are selected", async () => {
-  await renderColumn({ matching: entries(2), total: 5 }, true);
+  await renderColumn({ matching: entries(2), total: 5 }, { filtered: true });
 
   expect(screen.getByRole("heading", { level: 2 }).nextElementSibling?.textContent).toBe("2 of 5");
 });
 
 it("renders no list for a column with no card", async () => {
-  await renderColumn({ matching: [], total: 4 }, true);
+  await renderColumn({ matching: [], total: 4 }, { filtered: true });
 
   expect(screen.queryByRole("list")).toBeNull();
   expect(screen.getByRole("heading", { level: 2 }).nextElementSibling?.textContent).toBe("0 of 4");
@@ -201,6 +221,70 @@ describe("Show all on a final column of more than 50 cards, scrolled down to it"
     expect(row(19)?.style.transform).toBe(`translateY(${String(19 * ROW)}px)`);
     expect(row(20)?.style.transform).toBe(`translateY(${String(20 * ROW)}px)`);
     expect(scrollTo.mock.calls.map(([options]) => options.top).filter((top) => top !== SCROLL_Y)).toEqual([]);
+  });
+});
+
+describe("a focus id under and above the cap", () => {
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  });
+
+  it("opens Show all, and focus goes to the card's menu button, not to the first revealed row", async () => {
+    const onMenuFocused = vi.fn();
+
+    await renderColumn({ final: true, matching: entries(25), total: 25 }, { focusId: "SAGA-23", onMenuFocused });
+
+    expect(cardTitles()).toHaveLength(25);
+    expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
+    expect(document.activeElement).toBe(menuButton("Task 23"));
+    expect(onMenuFocused).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the column folded for a focus id above the cap", async () => {
+    await renderColumn({ final: true, matching: entries(25), total: 25 }, { focusId: "SAGA-20" });
+
+    expect(cardTitles()).toHaveLength(20);
+    expect(document.activeElement).toBe(menuButton("Task 20"));
+  });
+});
+
+describe("Move up and Move down", () => {
+  it("offer only the places a visible card of the column holds", async () => {
+    await renderColumn({ matching: entries(3), total: 5 }, { filtered: true });
+
+    expect(await placeItems("Task 1")).toEqual(["Move down"]);
+    expect(await placeItems("Task 2")).toEqual(["Move up", "Move down"]);
+    expect(await placeItems("Task 3")).toEqual(["Move up"]);
+  });
+
+  it("offer nothing on the one card of a column", async () => {
+    await renderColumn({ matching: entries(1), total: 1 });
+
+    expect(await placeItems("Task 1")).toEqual([]);
+  });
+
+  it("count the cards under the cap of a folded final column", async () => {
+    await renderColumn({ final: true, matching: entries(25), total: 25 });
+
+    expect(await placeItems("Task 20")).toEqual(["Move up", "Move down"]);
+  });
+
+  it.each([
+    { name: "Move up", by: -1 },
+    { name: "Move down", by: 1 },
+  ])("$name moves the card by $by", async ({ name, by }) => {
+    const onMoveBy = vi.fn();
+    const user = userEvent.setup();
+    await renderColumn({ matching: entries(3), total: 3 }, { onMoveBy });
+
+    await user.click(menuButton("Task 2"));
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name }));
+
+    expect(onMoveBy.mock.calls).toEqual([["SAGA-2", by]]);
   });
 });
 

@@ -1,6 +1,7 @@
 import { MutationObserver, onlineManager, QueryClientProvider, QueryObserver, type QueryClient } from "@tanstack/react-query";
 import {
   createClient,
+  ProtocolError,
   type Client,
   type Diagnostic,
   type Transport,
@@ -11,7 +12,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAppQueryClient } from "../../src/api/client";
-import { taskWriteKey, taskWriteOptions, usePendingTaskWrites, type TaskWrites } from "../../src/api/mutations";
+import { TaskWriteError, taskWriteKey, taskWriteOptions, usePendingTaskWrites, type TaskWrites } from "../../src/api/mutations";
 import { projectQuery, tasksQuery } from "../../src/api/queries";
 import { DAEMON_URL } from "../../src/api/transport";
 import { useNoticeStore } from "../../src/store/notices";
@@ -29,14 +30,22 @@ function written(id: string, diagnostics: Diagnostic[] = []): TransportReply {
   return successReply({ id }, diagnostics);
 }
 
+/** A move of the last task named, which writes the tasks before it first. */
 function moveOf(first: string, ...others: string[]): TaskWrites {
   const write = (id: string, order: number) => ({ id, change: { status: "Done", order } });
+  const moved = others.at(-1) ?? first;
 
   return {
+    id: moved,
     writes: [write(first, 0), ...others.map((id, index) => write(id, index + 1))],
-    title: `${others.at(-1) ?? first} was not moved`,
+    title: `${moved} was not moved`,
   };
 }
+
+/** A move of NOTE-1 that writes only the task below it. */
+const BELOW_ONLY: TaskWrites = { id: "NOTE-1", writes: [{ id: "NOTE-2", change: { order: 0 } }], title: "NOTE-1 was not moved" };
+
+const REFUSAL = refusalReply(422, { kind: "store", code: "status-unknown", message: "status \"Gone\" is not configured" });
 
 function setup(replies: Record<string, TransportReply | Promise<TransportReply>> = {}, transport?: Transport) {
   const stub = stubTransport({ [LISTING]: successReply({ entries: [], excluded: [] }), ...replies });
@@ -69,26 +78,28 @@ afterEach(() => {
 });
 
 describe("taskWriteOptions", () => {
-  it("sends each change as a PATCH of its task, in order, and resolves with the diagnostics of all of them", async () => {
+  it("sends each change as a PATCH of its task, in order, and resolves with the diagnostics beside their task", async () => {
     const found: Diagnostic = { code: "status-case-corrected", message: "status \"done\" was written as \"Done\"" };
     const { observer, requests } = setup({
       [`PATCH ${taskPath("NOTE-1")}`]: written("NOTE-1", [found]),
       [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2"),
     });
 
-    const diagnostics = await observer.mutate(moveOf("NOTE-1", "NOTE-2"));
+    const results = await observer.mutate(moveOf("NOTE-1", "NOTE-2"));
 
     expect(writes(requests)).toEqual([
       { method: "PATCH", path: taskPath("NOTE-1"), body: { status: "Done", order: 0 } },
       { method: "PATCH", path: taskPath("NOTE-2"), body: { status: "Done", order: 1 } },
     ]);
-    expect(diagnostics).toEqual([found]);
+    expect(results).toEqual([
+      { id: "NOTE-1", diagnostics: [found] },
+      { id: "NOTE-2", diagnostics: [] },
+    ]);
   });
 
   it("stops at the first failure, and does not try the write again", async () => {
-    const refusal = refusalReply(422, { kind: "store", code: "status-unknown", message: "status \"Gone\" is not configured" });
     const { observer, requests } = setup({
-      [`PATCH ${taskPath("NOTE-1")}`]: refusal,
+      [`PATCH ${taskPath("NOTE-1")}`]: REFUSAL,
       [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2"),
     });
 
@@ -156,6 +167,34 @@ describe("taskWriteOptions", () => {
     expect(writes(requests).map(({ path }) => path)).toEqual([taskPath("NOTE-1"), taskPath("NOTE-2")]);
   });
 
+  it("drops the writes queued behind a failed write, keeps its notice, and sends a write started after it", async () => {
+    const first = heldBack();
+    const { observer, queryClient, client, requests } = setup({
+      [`PATCH ${taskPath("NOTE-1")}`]: first.reply,
+      [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2"),
+      [`PATCH ${taskPath("NOTE-3")}`]: written("NOTE-3"),
+    });
+    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+
+    const done = [observer.mutate(moveOf("NOTE-1")), another().mutate(moveOf("NOTE-2")), another().mutate(moveOf("NOTE-3"))]
+      .map((sent) => sent.catch((error: unknown) => error));
+    await vi.waitFor(() => {
+      expect(writes(requests)).toHaveLength(1);
+    });
+    first.answer(REFUSAL);
+    const errors = await Promise.all(done);
+
+    expect(writes(requests).map(({ path }) => path)).toEqual([taskPath("NOTE-1")]);
+    expect(errors.map((error) => error instanceof TaskWriteError && error.completed)).toEqual([0, 0, 0]);
+    expect(notices()).toMatchObject([
+      { key: "task-write-failure:NOTE-1", words: ["store/status-unknown · status \"Gone\" is not configured"] },
+    ]);
+
+    await another().mutate(moveOf("NOTE-2"));
+
+    expect(writes(requests).map(({ path }) => path)).toEqual([taskPath("NOTE-1"), taskPath("NOTE-2")]);
+  });
+
   it("sends the write while the browser reports offline, because the daemon is on this machine", async () => {
     const { observer, requests } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: written("NOTE-1") });
     onlineManager.setOnline(false);
@@ -177,18 +216,55 @@ describe("taskWriteOptions", () => {
   });
 });
 
+describe("the error of a write", () => {
+  it("holds the failure and the count of the writes that succeeded before it", async () => {
+    const { observer } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: written("NOTE-1"), [`PATCH ${taskPath("NOTE-2")}`]: REFUSAL });
+
+    const partial = await observer.mutate(moveOf("NOTE-1", "NOTE-2")).catch((error: unknown) => error);
+    const first = await observer.mutate(moveOf("NOTE-2", "NOTE-1")).catch((error: unknown) => error);
+
+    expect(partial).toBeInstanceOf(TaskWriteError);
+    expect(partial).toMatchObject({ completed: 1, message: "status \"Gone\" is not configured" });
+    expect((partial as TaskWriteError).cause).toBeInstanceOf(ProtocolError);
+    expect(first).toMatchObject({ completed: 0 });
+  });
+
+  it("takes the words of a thrown value that is not an Error", async () => {
+    const { queryClient } = setup();
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a thrown value need not be an Error
+    const client = { updateTask: () => Promise.reject("socket closed") } as unknown as Client;
+    const observer = new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+
+    const error = await observer.mutate(moveOf("NOTE-1")).catch((thrown: unknown) => thrown);
+
+    expect(error).toMatchObject({ completed: 0, message: "socket closed", cause: "socket closed" });
+  });
+});
+
 describe("the failure notice", () => {
-  it.each<{ kind: string; reply: TransportReply | null; id?: string; line: string; words: string }>([
+  const FAILURES: {
+    kind: string;
+    reply: TransportReply | null;
+    id?: string;
+    line: string;
+    /** The line when a write before the failed one succeeded. */
+    partial: string;
+    words: string;
+  }[] = [
     {
       kind: "a refusal",
-      reply: refusalReply(422, { kind: "store", code: "status-unknown", message: "status \"Gone\" is not configured" }),
+      reply: REFUSAL,
       line: "The daemon refused the write, and the task is back where it was. Its own words are below.",
+      partial: "The daemon refused a write, and the move did not complete. The board shows what the daemon holds. "
+        + "Its own words are below.",
       words: "store/status-unknown · status \"Gone\" is not configured",
     },
     {
       kind: "no answer",
       reply: null,
       line: "No daemon answered, so nothing was written.",
+      partial: "The daemon stopped answering, and the move did not complete. "
+        + "The board shows what the daemon holds after the next read.",
       words: DAEMON_URL,
     },
     {
@@ -196,6 +272,8 @@ describe("the failure notice", () => {
       reply: { status: 502 },
       line: "The daemon did not answer through the address below. Start the daemon there if it is not running. "
         + "The board shows the task where the daemon holds it after the next read.",
+      partial: "The daemon did not answer through the address below, and the move did not complete. "
+        + "Start the daemon there if it is not running. The board shows what the daemon holds after the next read.",
       words: `${DAEMON_URL} · HTTP 502 · PATCH ${taskPath("NOTE-1")} answered with no envelope`,
     },
     {
@@ -203,13 +281,24 @@ describe("the failure notice", () => {
       reply: null,
       id: "..",
       line: "The write did not start, and the task is back where it was.",
+      partial: "A write did not start, and the move did not complete. The board shows what the daemon holds.",
       words: "/projects/{project}/tasks/{id} cannot take \"..\" as the path parameter \"id\": it is not one path component",
     },
-  ])("says what happened for $kind, with the given title", async ({ reply, id = "NOTE-1", line, words }) => {
-    const { transport: answering } = stubTransport(reply === null ? {} : { [`PATCH ${taskPath(id)}`]: reply });
-    const transport: Transport = (request) =>
-      reply === null && request.method === "PATCH" ? Promise.reject(new Error("connection refused")) : answering(request);
-    const { observer } = setup({}, transport);
+  ];
+
+  /** A daemon that answers the write of NOTE-2 and fails the write of `id` as `reply` says. */
+  function failing(reply: TransportReply | null, id: string): Transport {
+    const { transport: answering } = stubTransport({
+      [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2"),
+      ...(reply === null ? {} : { [`PATCH ${taskPath(id)}`]: reply }),
+    });
+
+    return (request) =>
+      reply === null && request.path === taskPath(id) ? Promise.reject(new Error("connection refused")) : answering(request);
+  }
+
+  it.each(FAILURES)("says what happened for $kind, with the given title", async ({ reply, id = "NOTE-1", line, words }) => {
+    const { observer } = setup({}, failing(reply, id));
 
     await expect(observer.mutate(moveOf(id))).rejects.toThrow();
 
@@ -218,9 +307,31 @@ describe("the failure notice", () => {
     ]);
   });
 
+  it.each(FAILURES)("says the move did not complete for $kind after a write that succeeded", async ({
+    reply,
+    id = "NOTE-1",
+    partial,
+    words,
+  }) => {
+    const { observer } = setup({}, failing(reply, id));
+
+    await expect(observer.mutate(moveOf("NOTE-2", id))).rejects.toThrow();
+
+    expect(notices()).toMatchObject([
+      { key: `task-write-failure:${id}`, form: "failure", title: `${id} was not moved`, line: partial, words: [words] },
+    ]);
+  });
+
+  it("is about the task the writes move, whichever task the failed write is to", async () => {
+    const { observer } = setup({ [`PATCH ${taskPath("NOTE-2")}`]: REFUSAL });
+
+    await expect(observer.mutate(BELOW_ONLY)).rejects.toThrow();
+
+    expect(notices()).toMatchObject([{ key: "task-write-failure:NOTE-1", title: "NOTE-1 was not moved" }]);
+  });
+
   it("opens the notice about the same task anew for each failure with the same words, dismissed or not, and keeps the notice about another task", async () => {
-    const refusal = refusalReply(422, { kind: "store", code: "status-unknown", message: "status \"Gone\" is not configured" });
-    const { observer } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: refusal, [`PATCH ${taskPath("NOTE-2")}`]: refusal });
+    const { observer } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: REFUSAL, [`PATCH ${taskPath("NOTE-2")}`]: REFUSAL });
     const serials: number[] = [];
     const failOne = async () => {
       await expect(observer.mutate(moveOf("NOTE-1"))).rejects.toThrow();
@@ -240,10 +351,9 @@ describe("the failure notice", () => {
   });
 
   it("closes every write failure notice when a write succeeds, and leaves other notices open", async () => {
-    const refusal = refusalReply(422, { kind: "store", code: "status-unknown", message: "status \"Gone\" is not configured" });
     const { observer } = setup({
-      [`PATCH ${taskPath("NOTE-1")}`]: refusal,
-      [`PATCH ${taskPath("NOTE-2")}`]: refusal,
+      [`PATCH ${taskPath("NOTE-1")}`]: REFUSAL,
+      [`PATCH ${taskPath("NOTE-2")}`]: REFUSAL,
       [`PATCH ${taskPath("NOTE-3")}`]: written("NOTE-3"),
     });
     useNoticeStore.getState().showNotice({ key: "task-read:NOTE-9", form: "warning", title: "1 warning about NOTE-9", words: ["a"] });
@@ -261,7 +371,30 @@ describe("the warning notice of a write", () => {
   const LISTED: Diagnostic = { code: "blocked-by-unresolved", message: "NOTE-9 names no task", path: "/p/NOTE-4.md" };
   const FRESH: Diagnostic = { code: "label-case-converted", message: "label \"Web\" was converted to \"web\"" };
 
-  it("lists the diagnostics the board does not already show, about the last task written", async () => {
+  it("is about the task of the write, not the task the writes move", async () => {
+    const { observer } = setup({ [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2", [FRESH]) });
+
+    await observer.mutate(BELOW_ONLY);
+
+    expect(notices()).toMatchObject([{ key: "task-write-warnings:NOTE-2", title: "1 warning about NOTE-2" }]);
+  });
+
+  it("opens one notice per task a sequence warns about", async () => {
+    const other: Diagnostic = { code: "status-case-corrected", message: "status \"done\" was written as \"Done\"" };
+    const { observer } = setup({
+      [`PATCH ${taskPath("NOTE-1")}`]: written("NOTE-1", [FRESH]),
+      [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2", [FRESH, other]),
+    });
+
+    await observer.mutate(moveOf("NOTE-1", "NOTE-2"));
+
+    expect(notices()).toMatchObject([
+      { key: "task-write-warnings:NOTE-1", title: "1 warning about NOTE-1" },
+      { key: "task-write-warnings:NOTE-2", title: "2 warnings about NOTE-2" },
+    ]);
+  });
+
+  it("lists the diagnostics the board does not already show, about the task of the write", async () => {
     const { observer, queryClient, client } = setup({
       "/projects/NOTE": successReply({ tag: TAG }, [KNOWN]),
       [LISTING]: successReply({ entries: [], excluded: [] }, [LISTED]),
@@ -311,7 +444,7 @@ describe("the warning notice of a write", () => {
 });
 
 describe("usePendingTaskWrites", () => {
-  const ELSE_WRITE: TaskWrites = { writes: [{ id: "ELSE-1", change: { order: 1 } }], title: "ELSE-1 was not moved" };
+  const ELSE_WRITE: TaskWrites = { id: "ELSE-1", writes: [{ id: "ELSE-1", change: { order: 1 } }], title: "ELSE-1 was not moved" };
 
   function renderPending(replies: Record<string, TransportReply | Promise<TransportReply>>) {
     const { queryClient, client } = setup(replies);

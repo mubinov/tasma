@@ -1,5 +1,5 @@
 import type { TaskEntry, Workflow } from "@tasma/protocol";
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { isTopPriority, stepView, type ColumnData } from "../lib/board";
 import { TaskCard } from "./task-card";
@@ -19,6 +19,8 @@ type BoardColumnProps = {
   /** The ids of the tasks a write the daemon has not answered yet changes. */
   pendingIds: ReadonlySet<string>;
   onMove: (id: string, status: string) => void;
+  /** Moves the card one visible place up (`-1`) or down (`1`) in this column. */
+  onMoveBy: (id: string, by: -1 | 1) => void;
   /** The task whose menu button takes focus once its card renders. */
   focusId: string | null;
   onMenuFocused: () => void;
@@ -37,6 +39,7 @@ export function BoardColumn({
   statuses,
   pendingIds,
   onMove,
+  onMoveBy,
   focusId,
   onMenuFocused,
 }: BoardColumnProps): ReactNode {
@@ -46,23 +49,34 @@ export function BoardColumn({
   const headingRef = useRef<HTMLHeadingElement>(null);
   const plainListRef = useRef<HTMLUListElement>(null);
   const [showAll, setShowAll] = useState(false);
-  // By id: the heights the capped cards had when "Show all" was used.
+  // By id: the heights the capped cards had when the column opened in full.
   const [cardHeights, setCardHeights] = useState<ReadonlyMap<string, number>>(() => new Map());
   const capped = final && !showAll && matching.length > FINAL_CAP;
   const shown = capped ? matching.slice(0, FINAL_CAP) : matching;
   const focusIndex = shown.findIndex((entry) => entry.id === focusId);
+  const focusCapped = capped && matching.findIndex((entry) => entry.id === focusId) >= FINAL_CAP;
 
-  function revealAll(): void {
+  function openAll(): void {
     const rows = plainListRef.current?.children ?? [];
-    const heights = new Map(shown.map((entry, index) => [entry.id, (rows[index] as HTMLElement).offsetHeight]));
 
+    setCardHeights(new Map(shown.map((entry, index) => [entry.id, (rows[index] as HTMLElement).offsetHeight])));
+    setShowAll(true);
+  }
+
+  // Focus stays where it is: the card to focus takes it once it renders.
+  const openKeepingFocus = useEffectEvent(openAll);
+
+  useLayoutEffect(() => {
+    if (focusCapped) {
+      openKeepingFocus();
+    }
+  }, [focusCapped]);
+
+  function openMovingFocus(): void {
     // The revealed cards have to be in the DOM, and placed by a virtual list,
     // before focus moves.
     // eslint-disable-next-line @eslint-react/dom-no-flush-sync -- focus moves to a card this update renders
-    flushSync(() => {
-      setCardHeights(heights);
-      setShowAll(true);
-    });
+    flushSync(openAll);
 
     // "Show all" removes itself, so focus moves to the first card it revealed.
     // A virtual list can leave that card out of the window; the heading is then
@@ -71,7 +85,7 @@ export function BoardColumn({
     (revealed ?? headingRef.current)?.focus();
   }
 
-  function renderCard(entry: TaskEntry): ReactNode {
+  function renderCard(entry: TaskEntry, index: number): ReactNode {
     return (
       <TaskCard
         tag={tag}
@@ -83,6 +97,19 @@ export function BoardColumn({
         onMove={(status) => {
           onMove(entry.id, status);
         }}
+        onMoveUp={index > 0
+          ? () => {
+              onMoveBy(entry.id, -1);
+            }
+          : undefined}
+        // The cap hides cards but does not stop a move past them, so both
+        // bounds are in `matching`; `shown` is its prefix, so an index into
+        // one is an index into the other.
+        onMoveDown={index < matching.length - 1
+          ? () => {
+              onMoveBy(entry.id, 1);
+            }
+          : undefined}
         focusMenu={entry.id === focusId}
         onMenuFocused={onMenuFocused}
       />
@@ -117,7 +144,7 @@ export function BoardColumn({
           <ul ref={plainListRef} aria-labelledby={headingId} className="flex flex-col gap-2">
             {shown.map((entry, index) => (
               <li key={entry.id} data-index={index} tabIndex={-1}>
-                {renderCard(entry)}
+                {renderCard(entry, index)}
               </li>
             ))}
           </ul>
@@ -129,7 +156,7 @@ export function BoardColumn({
           <span className="mx-1">{" · "}</span>
           <button
             type="button"
-            onClick={revealAll}
+            onClick={openMovingFocus}
             className="text-muted underline underline-offset-2 hover:text-text"
           >
             Show all

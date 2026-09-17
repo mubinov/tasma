@@ -730,6 +730,160 @@ describe("moving a task from the card menu", () => {
     expect(column("To Do").contains(document.activeElement)).toBe(true);
   });
 
+  describe("to a place in its column", () => {
+    /** Opens the card's menu and picks Move up or Move down. */
+    async function place(title: string, name: "Move up" | "Move down") {
+      const user = userEvent.setup();
+      await user.click(menuButton(title));
+      const menu = await screen.findByRole("menu");
+      await act(async () => {
+        await user.click(within(menu).getByRole("menuitem", { name }));
+      });
+    }
+
+    function patches(requests: { method: string; path: string; body?: unknown }[]) {
+      return requests.filter(({ method }) => method === "PATCH").map(({ path, body }) => [path, body]);
+    }
+
+    it("writes the card above first and the moved card last, and shows the board the daemon holds after a refusal", async () => {
+      const above = heldBack();
+      const refetch = heldBack();
+      const { transport, requests, replies } = daemon({
+        "/projects/SAGA/tasks": listing([entry(1), entry(2), entry(3)]),
+        "PATCH /projects/SAGA/tasks/SAGA-2": above.reply,
+        [TASK_1]: refusalReply(404, { kind: "store", code: "task-not-found", message: "no task is SAGA-1" }),
+      });
+      await renderWithRouter("/tasks?projects=SAGA", transport);
+
+      await place("Task 1", "Move down");
+
+      expect(patches(requests)).toEqual([["/projects/SAGA/tasks/SAGA-2", { order: 0 }]]);
+      expect(titlesIn("Backlog")).toEqual(["Task 2", "Task 1", "Task 3"]);
+      expect(["Task 1", "Task 2", "Task 3"].map((title) => card(title).hasAttribute("aria-busy"))).toEqual([true, true, false]);
+
+      replies["/projects/SAGA/tasks"] = refetch.reply;
+      await act(async () => {
+        above.answer(successReply({ id: "SAGA-2" }));
+      });
+
+      await vi.waitFor(() => {
+        expect(noticeTitles()).toEqual(["SAGA-1 was not moved"]);
+      });
+      expect(patches(requests)).toEqual([
+        ["/projects/SAGA/tasks/SAGA-2", { order: 0 }],
+        ["/projects/SAGA/tasks/SAGA-1", { order: 1000 }],
+      ]);
+      expect(useNoticeStore.getState().notices[0]?.line).toBe(
+        "The daemon refused a write, and the move did not complete. The board shows what the daemon holds. "
+        + "Its own words are below.",
+      );
+      expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2", "Task 3"]);
+
+      await act(async () => {
+        refetch.answer(listing([entry(1), entry(2, { order: 0 }), entry(3)]));
+      });
+
+      await vi.waitFor(() => {
+        expect(titlesIn("Backlog")).toEqual(["Task 2", "Task 1", "Task 3"]);
+      });
+      expect(card("Task 2").hasAttribute("aria-busy")).toBe(false);
+      await vi.waitFor(() => {
+        expect(document.activeElement).toBe(menuButton("Task 1"));
+      });
+    });
+
+    it("names the moved card in the failure notice when the move writes only the card below it", async () => {
+      const { transport, requests } = daemon({
+        "/projects/SAGA/tasks": listing([entry(1, { order: 1000 }), entry(2), entry(3)]),
+        "PATCH /projects/SAGA/tasks/SAGA-2": refusalReply(404, { kind: "store", code: "task-not-found", message: "no task is SAGA-2" }),
+      });
+      await renderWithRouter("/tasks?projects=SAGA", transport);
+
+      await place("Task 1", "Move down");
+
+      await vi.waitFor(() => {
+        expect(useNoticeStore.getState().notices.map(({ key, title }) => [key, title])).toEqual([
+          ["task-write-failure:SAGA-1", "SAGA-1 was not moved"],
+        ]);
+      });
+      expect(patches(requests)).toEqual([["/projects/SAGA/tasks/SAGA-2", { order: 0 }]]);
+    });
+
+    it("counts the cards the label filter hides", async () => {
+      const { transport, requests } = daemon({
+        "/projects/SAGA/tasks": listing([
+          entry(1, { labels: ["web"], order: 100 }),
+          entry(2, { labels: ["docs"], order: 200 }),
+          entry(3, { labels: ["web"], order: 300 }),
+        ]),
+        "PATCH /projects/SAGA/tasks/SAGA-3": heldBack().reply,
+      });
+      await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+
+      await place("Task 3", "Move up");
+
+      expect(patches(requests)).toEqual([["/projects/SAGA/tasks/SAGA-3", { order: -900 }]]);
+      expect(titlesIn("Backlog")).toEqual(["Task 3", "Task 1"]);
+    });
+
+    it("puts a card below the last visible card, above the hidden cards after it", async () => {
+      const { transport, requests } = daemon({
+        "/projects/SAGA/tasks": listing([
+          entry(1, { labels: ["web"], order: 100 }),
+          entry(2, { labels: ["web"], order: 200 }),
+          entry(3, { labels: ["docs"], order: 201 }),
+        ]),
+        "PATCH /projects/SAGA/tasks/SAGA-3": successReply({ id: "SAGA-3" }),
+        [TASK_1]: heldBack().reply,
+      });
+      await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+
+      await place("Task 1", "Move down");
+
+      await vi.waitFor(() => {
+        expect(patches(requests)).toEqual([
+          ["/projects/SAGA/tasks/SAGA-3", { order: 2200 }],
+          ["/projects/SAGA/tasks/SAGA-1", { order: 1200 }],
+        ]);
+      });
+      expect(titlesIn("Backlog")).toEqual(["Task 2", "Task 1"]);
+    });
+
+    it("keeps focus on the moved card's menu button after Move up", async () => {
+      const { transport } = daemon({
+        "/projects/SAGA/tasks": listing([entry(1), entry(2)]),
+        "PATCH /projects/SAGA/tasks/SAGA-2": heldBack().reply,
+      });
+      await renderWithRouter("/tasks?projects=SAGA", transport);
+
+      await place("Task 2", "Move up");
+
+      expect(titlesIn("Backlog")).toEqual(["Task 2", "Task 1"]);
+      await vi.waitFor(() => {
+        expect(document.activeElement).toBe(menuButton("Task 2"));
+      });
+    });
+
+    it("opens Show all when Move down puts the 20th card of a folded final column under the cap, and focuses the card", async () => {
+      const done = Array.from({ length: 25 }, (_, index) => entry(index + 1, { status: "Done", order: (index + 1) * 1000 }));
+      const { transport, requests } = daemon({
+        "/projects/SAGA/tasks": listing(done),
+        "PATCH /projects/SAGA/tasks/SAGA-20": heldBack().reply,
+      });
+      await renderWithRouter("/tasks?projects=SAGA", transport);
+      expect(titlesIn("Done")).toHaveLength(20);
+
+      await place("Task 20", "Move down");
+
+      expect(patches(requests)).toEqual([["/projects/SAGA/tasks/SAGA-20", { order: 21_500 }]]);
+      expect(titlesIn("Done").slice(18, 22)).toEqual(["Task 19", "Task 21", "Task 20", "Task 22"]);
+      expect(within(column("Done")).queryByRole("button", { name: "Show all" })).toBeNull();
+      await vi.waitFor(() => {
+        expect(document.activeElement).toBe(menuButton("Task 20"));
+      });
+    });
+  });
+
   describe("into a column of more than 50 cards, scrolled away from its top", () => {
     const LIST_TOP = 400;
     const CARD_HEIGHT = 96;

@@ -19,6 +19,8 @@ type TaskCardProps = {
   /** A write the daemon has not answered yet changes the task. */
   pending: boolean;
   onMove: (status: string) => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
   /** The menu button takes focus once the card has rendered, and `onMenuFocused` is called. */
   focusMenu: boolean;
   onMenuFocused: () => void;
@@ -45,6 +47,8 @@ export function TaskCard({
   statuses,
   pending,
   onMove,
+  onMoveUp,
+  onMoveDown,
   focusMenu,
   onMenuFocused,
 }: TaskCardProps): ReactNode {
@@ -53,7 +57,7 @@ export function TaskCard({
   const cardRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
-  const menu = { tag, id, status, statuses, onMove };
+  const menu = { tag, id, status, statuses, onMove, onMoveUp, onMoveDown };
 
   const takeFocus = useEffectEvent(() => {
     cardRef.current?.scrollIntoView({ block: "nearest" });

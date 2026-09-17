@@ -15,10 +15,14 @@ export type CardMenuItemsProps = {
   statuses: readonly string[];
   /** Called with a configured status the task does not already have. */
   onMove: (status: string) => void;
+  /** Given only when a visible card of the same column is above the card. */
+  onMoveUp?: () => void;
+  /** Given only when a visible card of the same column is below the card. */
+  onMoveDown?: () => void;
 };
 
 /** The items of both card menus. */
-function CardMenuItems({ tag, id, status, statuses, onMove }: CardMenuItemsProps): ReactNode {
+function CardMenuItems({ tag, id, status, statuses, onMove, onMoveUp, onMoveDown }: CardMenuItemsProps): ReactNode {
   const navigate = useNavigate();
   const key = status.toLowerCase();
   const current = statuses.find((candidate) => candidate.toLowerCase() === key) ?? null;
@@ -54,6 +58,18 @@ function CardMenuItems({ tag, id, status, statuses, onMove }: CardMenuItemsProps
             {candidate}
           </Menu.RadioItem>
         ))}
+        {onMoveUp !== undefined && (
+          <Menu.Item onClick={onMoveUp} className={MENU_ITEM_CLASS}>
+            <span className="w-3.5 shrink-0" />
+            Move up
+          </Menu.Item>
+        )}
+        {onMoveDown !== undefined && (
+          <Menu.Item onClick={onMoveDown} className={MENU_ITEM_CLASS}>
+            <span className="w-3.5 shrink-0" />
+            Move down
+          </Menu.Item>
+        )}
       </Menu.RadioGroup>
     </>
   );

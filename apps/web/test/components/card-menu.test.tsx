@@ -3,12 +3,15 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CardContextMenu, CardMenu, type CardMenuItemsProps } from "../../src/components/card-menu";
+import { MENU_ITEM_CLASS } from "../../src/components/control-classes";
 import { renderBesideTaskRoute } from "../helpers";
 
 const STATUSES = ["Backlog", "In Progress", "Done"];
 
-function Card({ status, onMove }: Pick<CardMenuItemsProps, "status" | "onMove">): ReactNode {
-  const menu = { tag: "SAGA", id: "SAGA-7", status, statuses: STATUSES, onMove };
+type CardProps = Pick<CardMenuItemsProps, "status" | "onMove" | "onMoveUp" | "onMoveDown">;
+
+function Card({ status, onMove, onMoveUp, onMoveDown }: CardProps): ReactNode {
+  const menu = { tag: "SAGA", id: "SAGA-7", status, statuses: STATUSES, onMove, onMoveUp, onMoveDown };
 
   return (
     <CardContextMenu menu={menu} data-testid="card">
@@ -18,11 +21,11 @@ function Card({ status, onMove }: Pick<CardMenuItemsProps, "status" | "onMove">)
   );
 }
 
-async function renderMenu(status = "In Progress", onMove: (status: string) => void = () => {}) {
+async function renderMenu(status = "In Progress", handlers: Partial<Omit<CardProps, "status">> = {}) {
   // The router scrolls on navigation, which jsdom does not implement.
   vi.stubGlobal("scrollTo", () => {});
 
-  return renderBesideTaskRoute(<Card status={status} onMove={onMove} />);
+  return renderBesideTaskRoute(<Card status={status} onMove={() => {}} {...handlers} />);
 }
 
 async function openFromButton() {
@@ -74,7 +77,7 @@ describe("the items", () => {
 describe("choosing an item", () => {
   it("moves the task with Enter on another status, and closes the menu", async () => {
     const onMove = vi.fn();
-    await renderMenu("In Progress", onMove);
+    await renderMenu("In Progress", { onMove });
     const user = userEvent.setup();
 
     screen.getByRole("button", { name: "Task menu" }).focus();
@@ -96,7 +99,7 @@ describe("choosing an item", () => {
 
   it("writes nothing for the checked status, and closes the menu", async () => {
     const onMove = vi.fn();
-    await renderMenu("In Progress", onMove);
+    await renderMenu("In Progress", { onMove });
     const { user, menu } = await openFromButton();
 
     await user.click(within(menu).getByRole("menuitemradio", { name: "In Progress" }));
@@ -109,7 +112,7 @@ describe("choosing an item", () => {
 
   it("moves a task whose status the project does not configure to the status its column shows", async () => {
     const onMove = vi.fn();
-    await renderMenu("Waiting", onMove);
+    await renderMenu("Waiting", { onMove });
     const { user, menu } = await openFromButton();
 
     await user.click(within(menu).getByRole("menuitemradio", { name: "Backlog" }));
@@ -126,6 +129,48 @@ describe("choosing an item", () => {
     });
 
     expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-7");
+  });
+});
+
+describe("Move up and Move down", () => {
+  it("follow the statuses inside the Move to group", async () => {
+    await renderMenu("In Progress", { onMoveUp: () => {}, onMoveDown: () => {} });
+    const { menu } = await openFromButton();
+
+    const group = within(menu).getByRole("group", { name: "Move to" });
+    expect([...group.querySelectorAll("[role^=menuitem]")].map((item) => item.textContent)).toEqual([
+      ...STATUSES,
+      "Move up",
+      "Move down",
+    ]);
+    expect(within(group).getByRole("menuitem", { name: "Move up" }).className).toBe(MENU_ITEM_CLASS);
+  });
+
+  it.each([
+    { case: "neither place is given", places: {}, items: [] },
+    { case: "only a place above is given", places: { onMoveUp: () => {} }, items: ["Move up"] },
+    { case: "only a place below is given", places: { onMoveDown: () => {} }, items: ["Move down"] },
+  ])("show only the items whose place is given when $case", async ({ places, items }) => {
+    await renderMenu("In Progress", places);
+    const { menu } = await openFromButton();
+
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open task", ...items]);
+  });
+
+  it.each(["Move up", "Move down"])("%s calls its handler alone, and closes the menu", async (name) => {
+    const onMove = vi.fn();
+    const onMoveUp = vi.fn();
+    const onMoveDown = vi.fn();
+    await renderMenu("In Progress", { onMove, onMoveUp, onMoveDown });
+    const { user, menu } = await openFromButton();
+
+    await user.click(within(menu).getByRole("menuitem", { name }));
+
+    expect([onMoveUp.mock.calls.length, onMoveDown.mock.calls.length]).toEqual(name === "Move up" ? [1, 0] : [0, 1]);
+    expect(onMove).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
   });
 });
 
