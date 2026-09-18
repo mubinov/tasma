@@ -9,19 +9,26 @@ import {
   applyPending,
   boardWarnings,
   buildColumns,
+  cardPlace,
   distinctLabels,
+  isTopPriority,
+  moveTarget,
   splitList,
+  stepView,
   workflowNames,
   type TaskWrite,
 } from "../lib/board";
 import { formatClock } from "../lib/clock";
 import { useDocumentTitle } from "../lib/document-title";
+import type { DropPlace } from "../lib/drag-place";
 import { fullIndex, placeWrites } from "../lib/order";
+import { useCardDrag, type BoardSnapshot } from "../lib/use-card-drag";
 import { warningCount } from "../lib/warning-count";
 import { NAVIGATION_BY_PATH } from "../navigation";
 import { useUiStore } from "../store/ui";
 import { BoardColumn } from "./board-column";
 import { Diagnostics } from "./diagnostics";
+import { DraggedCard } from "./dragged-card";
 import { RouteFailure } from "./error-boundary";
 import { LabelFilter } from "./label-filter";
 import { LiveNotice } from "./live-notice";
@@ -155,21 +162,35 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
       return [workflowName, read === null ? null : read?.data];
     }),
   );
-  const entries = applyPending(listing.entries, pending);
-  const pendingIds = new Set(pending.map(({ id }) => id));
-  const columns = buildColumns(config, entries, deferredSelected);
+  const liveEntries = applyPending(listing.entries, pending.writes);
+  const liveBoard: BoardSnapshot = {
+    entries: liveEntries,
+    columns: buildColumns(config, liveEntries, deferredSelected),
+    pendingIds: new Set(pending.writes.map(({ id }) => id)),
+    movedIds: pending.movedIds,
+  };
+  const { drag, board, liftedRef, press } = useCardDrag({ board: liveBoard, onDrop: dropCard });
+  const { entries, columns, pendingIds, movedIds } = board;
+  const origin = drag === null ? null : cardPlace(columns, drag.taskId);
   const filtered = deferredSelected.length > 0;
   const warnings = boardWarnings(projectWarnings, listingWarnings);
   const matching = columns.reduce((sum, column) => sum + column.matching.length, 0);
   const total = columns.reduce((sum, column) => sum + column.total, 0);
 
-  function sendMove(id: string, writes: TaskWrite[]): void {
-    // The card takes focus where it renders next: at its new place, and at its
-    // old place again after a refusal.
-    write({ id, writes, title: `${id} was not moved` }).catch(() => {
+  /** Sends the writes of a move. `refused` runs when the daemon turns them down. */
+  function sendMove(id: string, writes: TaskWrite[], refused?: () => void): void {
+    write({ id, writes, title: `${id} was not moved` }).catch(() => refused?.());
+  }
+
+  /**
+   * A move from the card menu. The card takes focus where it renders next: at
+   * its new place, and at its old place again after a refusal.
+   */
+  function moveFromMenu(id: string, writes: TaskWrite[]): void {
+    setFocusId(id);
+    sendMove(id, writes, () => {
       setFocusId(id);
     });
-    setFocusId(id);
   }
 
   function recordReturn(id: string): void {
@@ -184,23 +205,31 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
 
   function move(id: string, status: string): void {
     const key = status.toLowerCase();
-    // Unfiltered, so the tasks the label filter hides count too.
     // The menu offers only configured statuses, and each of them has a column.
-    const target = buildColumns(config, entries, []).find((column) => column.status.toLowerCase() === key)!;
-    const card = entries.find((entry) => entry.id === id)!;
+    const index = config.statuses.findIndex((candidate) => candidate.toLowerCase() === key);
+    const { unfiltered, card } = moveTarget(config, entries, columns, index, id);
 
-    sendMove(id, placeWrites(target.matching.filter((entry) => entry.id !== id), card, 0, status));
+    // The top of the column, the tasks the label filter hides counted in.
+    moveFromMenu(id, placeWrites(unfiltered, card, 0, status));
   }
 
-  function moveBy(columnIndex: number, id: string, by: -1 | 1): void {
-    const matching = columns[columnIndex]!.matching;
-    const at = matching.findIndex((entry) => entry.id === id);
-    const moved = matching[at]!;
-    const visible = matching.toSpliced(at, 1);
-    // Unfiltered, so the tasks the label filter hides count too.
-    const column = buildColumns(config, entries, [])[columnIndex]!.matching.filter((entry) => entry.id !== id);
+  function moveBy(index: number, id: string, by: -1 | 1): void {
+    const { unfiltered, visible, card } = moveTarget(config, entries, columns, index, id);
+    const at = columns[index]!.matching.findIndex((entry) => entry.id === id);
 
-    sendMove(id, placeWrites(column, moved, fullIndex(column, visible, at + by)));
+    moveFromMenu(id, placeWrites(unfiltered, card, fullIndex(unfiltered, visible, at + by)));
+  }
+
+  /**
+   * A drop reads the board the drag started on, never the live one: a poll can
+   * have moved the card since. It moves no focus.
+   */
+  function dropCard(id: string, place: DropPlace, snapshot: BoardSnapshot): void {
+    const { unfiltered, visible, card } = moveTarget(config, snapshot.entries, snapshot.columns, place.column, id);
+    const from = cardPlace(snapshot.columns, id)!;
+    const status = from.column === place.column ? undefined : snapshot.columns[place.column]!.status;
+
+    sendMove(id, placeWrites(unfiltered, card, fullIndex(unfiltered, visible, place.index), status));
   }
 
   return (
@@ -249,6 +278,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
             workflows={workflows}
             statuses={config.statuses}
             pendingIds={pendingIds}
+            movedIds={movedIds}
             onMove={move}
             onMoveBy={(id, by) => {
               moveBy(index, id, by);
@@ -258,9 +288,23 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
             onMenuFocused={() => {
               setFocusId(null);
             }}
+            draggingId={drag?.taskId ?? null}
+            slot={drag?.place?.column === index
+              ? { index: drag.place.index, height: drag.box.height }
+              : undefined}
+            onPress={press}
           />
         ))}
       </div>
+      {drag !== null && origin !== null && (
+        <DraggedCard
+          elementRef={liftedRef}
+          width={drag.box.width}
+          entry={origin.entry}
+          view={stepView(origin.entry.frontmatter, origin.final, workflows.get(origin.entry.frontmatter.workflow ?? ""))}
+          top={isTopPriority(origin.entry.frontmatter.priority, config.priorities)}
+        />
+      )}
       <BoardPollNotice tag={tag} />
     </>
   );

@@ -177,8 +177,15 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
   });
 }
 
-/** The writes of the pending and queued task writes of a project, in the order they were sent. */
-export function usePendingTaskWrites(tag: string): PendingWrite[] {
+/** The pending and queued task writes of a project. */
+export type PendingTaskWrites = {
+  /** Every write they carry, in the order they were sent. */
+  writes: PendingWrite[];
+  /** The tasks they move, which is fewer than the tasks they write: a move renumbers its neighbours. */
+  movedIds: Set<string>;
+};
+
+export function usePendingTaskWrites(tag: string): PendingTaskWrites {
   // The filter holds no tag: `useMutationState` reads a changed filter only at
   // the next mutation event, so the project is picked during render.
   const pending = useMutationState({
@@ -190,12 +197,16 @@ export function usePendingTaskWrites(tag: string): PendingWrite[] {
     }),
   });
   const key = hashKey(taskWriteKey(tag));
-
-  return pending
+  const mine = pending
     // A mutation matches a key filter only when it has a key.
     .filter(({ mutationKey }) => hashKey(mutationKey!) === key)
     // A pending mutation always holds the variables it was started with.
-    .flatMap(({ variables, submittedAt }) =>
-      (variables as TaskWrites).writes.map(({ id, change }) => ({ id, change, submittedAt })),
-    );
+    .map(({ variables, submittedAt }) => ({ variables: variables as TaskWrites, submittedAt }));
+
+  return {
+    writes: mine.flatMap(({ variables, submittedAt }) =>
+      variables.writes.map(({ id, change }) => ({ id, change, submittedAt })),
+    ),
+    movedIds: new Set(mine.map(({ variables }) => variables.id)),
+  };
 }

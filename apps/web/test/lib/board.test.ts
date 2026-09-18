@@ -5,11 +5,13 @@ import {
   boardWarnings,
   type CardClick,
   buildColumns,
+  cardPlace,
   distinctLabels,
   isFinalStatus,
   isTopPriority,
   joinList,
   labelChoices,
+  moveTarget,
   opensTask,
   splitList,
   stepView,
@@ -476,5 +478,50 @@ describe("applyPending", () => {
     ]);
 
     expect(shown[0]?.frontmatter).toEqual(entries[0]?.frontmatter);
+  });
+});
+
+describe("cardPlace", () => {
+  const COLUMNS = buildColumns(
+    CONFIG,
+    [entry("T-1"), entry("T-2", { status: "Done", order: 1 }), entry("T-3", { status: "Done", order: 2 })],
+    [],
+  );
+
+  it("names the card's column, its place in it, and whether the column is final", () => {
+    expect(cardPlace(COLUMNS, "T-3")).toMatchObject({ column: 2, index: 1, final: true });
+    expect(cardPlace(COLUMNS, "T-3")?.entry.id).toBe("T-3");
+    expect(cardPlace(COLUMNS, "T-1")).toMatchObject({ column: 0, index: 0, final: false });
+  });
+
+  it("is none for a card no column holds", () => {
+    expect(cardPlace(COLUMNS, "T-9")).toBeNull();
+  });
+});
+
+describe("moveTarget", () => {
+  const ENTRIES = [
+    entry("T-1", { status: "To Do", labels: ["web"], order: 1 }),
+    entry("T-2", { status: "To Do", order: 2 }),
+    entry("T-3", { status: "To Do", labels: ["web"], order: 3 }),
+    entry("T-4", { labels: ["web"] }),
+  ];
+
+  it("reads the target column with the filtered tasks and without them, and never with the moved card", () => {
+    const columns = buildColumns(CONFIG, ENTRIES, ["web"]);
+    const { unfiltered, visible, card } = moveTarget(CONFIG, ENTRIES, columns, 1, "T-1");
+
+    expect(ids(unfiltered)).toEqual(["T-2", "T-3"]);
+    expect(ids(visible)).toEqual(["T-3"]);
+    expect(card.id).toBe("T-1");
+  });
+
+  it("reads a card moving into a column it is no part of yet", () => {
+    const columns = buildColumns(CONFIG, ENTRIES, []);
+    const { unfiltered, visible, card } = moveTarget(CONFIG, ENTRIES, columns, 1, "T-4");
+
+    expect(ids(unfiltered)).toEqual(["T-1", "T-2", "T-3"]);
+    expect(ids(visible)).toEqual(["T-1", "T-2", "T-3"]);
+    expect(card.id).toBe("T-4");
   });
 });

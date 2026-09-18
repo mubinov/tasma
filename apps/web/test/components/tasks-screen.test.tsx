@@ -1,4 +1,4 @@
-import type { Diagnostic, ExcludedFile, Frontmatter, TaskEntry, TransportReply } from "@tasma/protocol";
+import type { Diagnostic, ExcludedFile, TransportReply } from "@tasma/protocol";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,83 +6,8 @@ import { DAEMON_URL } from "../../src/api/transport";
 import { formatClock } from "../../src/lib/clock";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { heldBack, refusalReply, renderWithRouter, stubTransport, successReply } from "../helpers";
-
-const CONFIG = {
-  statuses: ["Backlog", "To Do", "In Progress", "Done"],
-  default_status: "Backlog",
-  final_statuses: ["Done"],
-  priorities: ["high", "medium", "low"],
-  workflows: ["dev"],
-  instructions: [],
-};
-
-const PROJECTS = [
-  { tag: "SAGA", name: "Saga", path: "/repos/saga" },
-  { tag: "DELTA", name: "Delta", path: "/repos/delta" },
-];
-
-const WORKFLOW = {
-  name: "dev",
-  instructions: [],
-  steps: [
-    { name: "research", file: "/w/dev/research.md", owner: "agent" },
-    { name: "approve", file: "/w/dev/approve.md", owner: "human" },
-  ],
-};
-
-function entry(number: number, fields: Partial<Frontmatter> = {}): TaskEntry {
-  const id = `SAGA-${String(number)}`;
-
-  return {
-    id,
-    path: `/repos/saga/tasks/${id}.md`,
-    blocked: false,
-    frontmatter: {
-      id,
-      title: `Task ${String(number)}`,
-      status: "Backlog",
-      created: "2026-09-01T10:00:00Z",
-      updated: "2026-09-01T10:00:00Z",
-      next_comment_id: 1,
-      ...fields,
-    },
-  };
-}
-
-function project(tag: string, fields: Record<string, unknown> = {}): TransportReply {
-  const summary = PROJECTS.find((candidate) => candidate.tag === tag) ?? { tag };
-
-  return successReply({ ...summary, live: true, config: CONFIG, ...fields });
-}
-
-function listing(entries: TaskEntry[], excluded: ExcludedFile[] = [], diagnostics: Diagnostic[] = []): TransportReply {
-  return successReply({ entries, excluded }, diagnostics);
-}
-
-/** A daemon whose replies a test can change between polls. */
-function daemon(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
-  return stubTransport({
-    "/projects": successReply(PROJECTS),
-    "/projects/SAGA": project("SAGA"),
-    "/projects/SAGA/tasks": listing([]),
-    "/projects/DELTA": project("DELTA"),
-    "/projects/DELTA/tasks": listing([]),
-    ...replies,
-  });
-}
-
-function column(status: string): HTMLElement {
-  return screen.getByRole("region", { name: status });
-}
-
-function countOf(status: string): string | null | undefined {
-  return within(column(status)).getByRole("heading", { level: 2 }).nextElementSibling?.textContent;
-}
-
-function titlesIn(status: string): string[] {
-  return within(column(status)).queryAllByText(/^Task \d+$/).map((title) => title.textContent);
-}
+import { CONFIG, column, countOf, daemon, entry, listing, project, PROJECTS, titlesIn, WORKFLOW } from "../board-fixtures";
+import { heldBack, refusalReply, renderWithRouter, successReply } from "../helpers";
 
 beforeEach(() => {
   window.localStorage.clear();

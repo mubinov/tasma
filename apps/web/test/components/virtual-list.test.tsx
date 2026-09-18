@@ -111,17 +111,35 @@ describe("PageVirtualList", () => {
     });
   }
 
-  function renderPageRows(estimateSize: (row: string, index: number) => number = () => ROW_HEIGHT) {
+  /** A list whose row at `at` draws something and holds no item of its own. */
+  function decorationAt(at: number) {
+    return {
+      itemIndex: (_row: string, index: number): number | null => {
+        if (index === at) {
+          return null;
+        }
+
+        return index > at ? index - 1 : index;
+      },
+      itemCount: rows.length - 1,
+    };
+  }
+
+  function renderPageRows(
+    estimateSize: (row: string, index: number) => number = () => ROW_HEIGHT,
+    decoration: ReturnType<typeof decorationAt> | undefined = undefined,
+  ) {
     return render(
       <>
         <h2 id="rows-heading">Rows</h2>
         <PageVirtualList
-          items={rows}
+          rows={rows}
           estimateSize={estimateSize}
           getKey={(row) => row}
-          renderItem={(row) => row}
+          renderRow={(row) => row}
           labelledBy="rows-heading"
           gap={8}
+          {...decoration}
         />
       </>,
     );
@@ -140,6 +158,34 @@ describe("PageVirtualList", () => {
     expect(rendered[0]?.getAttribute("aria-setsize")).toBe("500");
     expect(positions()[0]).toBe(1);
     expect(screen.getByText("row 0")).toBeTruthy();
+  });
+
+  it("hides a row that holds no item, and counts and numbers the list without it", () => {
+    renderPageRows(() => ROW_HEIGHT, decorationAt(2));
+
+    const rendered = [...screen.getByRole("list", { name: "Rows" }).querySelectorAll("li")];
+    expect(rendered[2]?.getAttribute("aria-hidden")).toBe("true");
+    expect(rendered[2]?.getAttribute("aria-posinset")).toBeNull();
+    expect(rendered[0]?.getAttribute("aria-setsize")).toBe("499");
+    expect(rendered.slice(0, 5).map((row) => row.getAttribute("data-index"))).toEqual(["0", "1", null, "2", "3"]);
+    expect(rendered.slice(0, 5).map((row) => row.getAttribute("aria-posinset"))).toEqual(["1", "2", null, "3", "4"]);
+  });
+
+  // The virtualizer reads a measured row back by this attribute, so a row that
+  // holds no item has to carry its own index as well as no item index.
+  it("numbers every row for the virtualizer, the row that holds no item included", () => {
+    renderPageRows(() => ROW_HEIGHT, decorationAt(2));
+
+    const rendered = [...screen.getByRole("list", { name: "Rows" }).querySelectorAll("li")];
+    expect(rendered.slice(0, 5).map((row) => row.getAttribute("data-row-index"))).toEqual(["0", "1", "2", "3", "4"]);
+  });
+
+  it("hands the virtualizer a row index it can read back off every row it measures", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    renderPageRows(() => ROW_HEIGHT, decorationAt(2));
+
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("places each row below the list's top, one gap apart", () => {
@@ -180,10 +226,10 @@ describe("PageVirtualList", () => {
       <>
         <h2 id="rows-heading">Rows</h2>
         <PageVirtualList
-          items={rows}
+          rows={rows}
           estimateSize={() => ROW_HEIGHT}
           getKey={(row) => row}
-          renderItem={(row) => row}
+          renderRow={(row) => row}
           labelledBy="rows-heading"
           gap={8}
           scrollToIndex={scrollToIndex}

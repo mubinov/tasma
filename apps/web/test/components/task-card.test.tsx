@@ -1,35 +1,34 @@
-import type { Frontmatter, TaskEntry } from "@tasma/protocol";
+import type { TaskEntry } from "@tasma/protocol";
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { PointerEvent } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TaskCard } from "../../src/components/task-card";
 import type { StepView } from "../../src/lib/board";
+import { entry } from "../card-fixture";
 import { renderBesideTaskRoute } from "../helpers";
 
-function entry(fields: Partial<Frontmatter> = {}, blocked = false): TaskEntry {
-  return {
-    id: "SAGA-7",
-    path: "/tasks/SAGA-7.md",
-    blocked,
-    frontmatter: {
-      id: "SAGA-7",
-      title: "Build the parser",
-      status: "In Progress",
-      created: "2026-09-01T10:00:00Z",
-      updated: "2026-09-01T10:00:00Z",
-      next_comment_id: 1,
-      ...fields,
-    },
-  };
-}
-
-type CardState = { pending?: boolean; focusMenu?: boolean; onMenuFocused?: () => void; onOpen?: () => void };
+type CardState = {
+  pending?: boolean;
+  focusMenu?: boolean;
+  onMenuFocused?: () => void;
+  onOpen?: () => void;
+  dragging?: boolean;
+  onPress?: (event: PointerEvent<HTMLElement>) => void;
+};
 
 async function renderCard(
   task: TaskEntry = entry(),
   view: StepView = { kind: "none" },
   top = false,
-  { pending = false, focusMenu = false, onMenuFocused = () => {}, onOpen = () => {} }: CardState = {},
+  {
+    pending = false,
+    focusMenu = false,
+    onMenuFocused = () => {},
+    onOpen = () => {},
+    dragging = false,
+    onPress = () => {},
+  }: CardState = {},
 ) {
   // The router scrolls on navigation, which jsdom does not implement.
   vi.stubGlobal("scrollTo", () => {});
@@ -41,10 +40,12 @@ async function renderCard(
       top={top}
       statuses={["To Do", "In Progress", "Done"]}
       pending={pending}
+      dragging={dragging}
       onMove={() => {}}
       onOpen={onOpen}
       focusMenu={focusMenu}
       onMenuFocused={onMenuFocused}
+      onPress={onPress}
     />,
   );
 
@@ -362,4 +363,28 @@ it("names the task on the card and marks the title link, for the board to find b
 
   expect(card.getAttribute("data-task-id")).toBe("SAGA-7");
   expect(card.querySelector("[data-task-title]")).toBe(screen.getByRole("link", { name: "Build the parser" }));
+});
+
+describe("dragging a card", () => {
+  it("hands a press on the card to the board", async () => {
+    const onPress = vi.fn();
+    const { card } = await renderCard(entry(), { kind: "none" }, false, { onPress });
+
+    fireEvent.pointerDown(card, { button: 0, pointerType: "mouse", clientX: 10, clientY: 10 });
+
+    expect(onPress).toHaveBeenCalledOnce();
+  });
+
+  it("leaves the card a drag carries at 35%, with its border unchanged on hover", async () => {
+    const { card } = await renderCard(entry(), { kind: "none" }, false, { dragging: true });
+
+    expect(classesOf(card)).toContain("opacity-35");
+    expect(classesOf(card)).not.toContain("hover:border-graphic");
+  });
+
+  it("keeps the browser from starting a link drag of the title", async () => {
+    await renderCard();
+
+    expect(screen.getByRole("link").getAttribute("draggable")).toBe("false");
+  });
 });

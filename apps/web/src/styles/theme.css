@@ -74,9 +74,9 @@
    * Stacking, bottom to top: a sticky comment header over the comment text; a
    * sticky column header over the cards, and the sticky top bar of a task page
    * and its scroll-to-top control over its content and its comment headers; the
-   * fixed sidebar over those, a notice over all of them, a popup over
-   * everything, so a menu opened near the corner covers a notice. Used as
-   * `z-(--layer-*)`.
+   * fixed sidebar over those, a notice over all of them, a popup over those, so
+   * a menu opened near the corner covers a notice, and the card a drag carries
+   * over everything. Used as `z-(--layer-*)`.
    */
   --layer-comment-header: 1;
   --layer-column-header: 2;
@@ -85,6 +85,7 @@
   --layer-sidebar: 3;
   --layer-notice: 4;
   --layer-popup: 5;
+  --layer-drag: 6;
 
   --duration-fast: 120ms;
   --duration-base: 180ms;

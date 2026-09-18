@@ -1,11 +1,10 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { TaskEntry } from "@tasma/protocol";
-import { useEffect, useEffectEvent, useId, useRef, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useId, useRef, type PointerEvent, type ReactNode } from "react";
 import { opensHere, opensTask, type StepView } from "../lib/board";
-import { ProhibitIcon } from "../lib/icons";
+import { DRAG_ATTRIBUTE } from "../lib/drag-place";
 import { CardContextMenu, CardMenu } from "./card-menu";
-import { LabelList } from "./label-list";
-import { StepMark, StepTrack } from "./step-view";
+import { CARD_CLASS, CARD_TITLE_CLASS, CardFace } from "./card-face";
 
 type TaskCardProps = {
   /** The tag of the project the task belongs to. */
@@ -18,6 +17,8 @@ type TaskCardProps = {
   statuses: readonly string[];
   /** A write the daemon has not answered yet changes the task. */
   pending: boolean;
+  /** A drag carries the card, and this one stays at the origin. */
+  dragging: boolean;
   onMove: (status: string) => void;
   onMoveUp?: () => void;
   onMoveDown?: () => void;
@@ -26,19 +27,20 @@ type TaskCardProps = {
   /** The menu button takes focus once the card has rendered, and `onMenuFocused` is called. */
   focusMenu: boolean;
   onMenuFocused: () => void;
+  /** Every press on the card, whether or not it becomes a drag. */
+  onPress: (event: PointerEvent<HTMLElement>) => void;
 };
 
-function FlowRow({ view }: { view: StepView }): ReactNode {
-  if (view.kind === "none") {
-    return null;
+/** What the card's state adds to its border and its opacity. */
+function stateClass({ dragging, pending }: { dragging: boolean; pending: boolean }): string {
+  if (dragging) {
+    // A deliberate failure of SC 1.4.3: the fade composites the card's text
+    // below 4.5:1. Every word on it is drawn at full contrast on the card the
+    // pointer carries.
+    return "opacity-35";
   }
 
-  return (
-    <div className="mt-2.5 flex items-center gap-2">
-      <StepMark view={view} />
-      {view.kind === "step" && <StepTrack owners={view.owners} current={view.current} className="ml-auto" />}
-    </div>
-  );
+  return pending ? "opacity-55" : "hover:border-graphic";
 }
 
 export function TaskCard({
@@ -48,19 +50,20 @@ export function TaskCard({
   top,
   statuses,
   pending,
+  dragging,
   onMove,
   onMoveUp,
   onMoveDown,
   onOpen,
   focusMenu,
   onMenuFocused,
+  onPress,
 }: TaskCardProps): ReactNode {
-  const { id, blocked, frontmatter: { title, status, priority, labels = [] } } = entry;
+  const { id, frontmatter: { title, status } } = entry;
   const navigate = useNavigate();
   const cardRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
-  const menu = { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen };
 
   const takeFocus = useEffectEvent(() => {
     cardRef.current?.scrollIntoView({ block: "nearest" });
@@ -74,55 +77,50 @@ export function TaskCard({
     }
   }, [focusMenu]);
 
+  const menu = { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen };
+
   return (
     // The title link is the keyboard path, so the card itself is no control.
     <CardContextMenu
       ref={cardRef}
       menu={menu}
-      data-task-id={id}
+      {...{ [DRAG_ATTRIBUTE.card]: id }}
       aria-busy={pending || undefined}
+      onPointerDown={onPress}
       onClick={(event) => {
         if (opensTask(event)) {
           onOpen();
           void navigate({ to: "/tasks/$project/$task", params: { project: tag, task: id } });
         }
       }}
-      className={`group/card relative cursor-pointer rounded-card border border-line bg-surface px-3 pt-2.5 pb-3 ${
-        pending ? "opacity-55" : "hover:border-graphic"
-      }`}
+      className={`${CARD_CLASS} ${stateClass({ dragging, pending })}`}
     >
-      {/* The menu button sits over the right padding. */}
-      <div className="flex h-4.25 items-center gap-2 pr-6">
-        <span className="font-mono text-xs text-dim">{id}</span>
-        {blocked && (
-          <span className="inline-flex items-center gap-1 text-xs text-dim">
-            <ProhibitIcon size={12} aria-hidden="true" />
-            blocked
-          </span>
+      <CardFace
+        entry={entry}
+        view={view}
+        top={top}
+        title={(
+          // A link is draggable of itself, and that native drag would run
+          // against the card's own.
+          <Link
+            id={titleId}
+            to="/tasks/$project/$task"
+            params={{ project: tag, task: id }}
+            draggable={false}
+            // The board returns focus here, and a link added above must not take it.
+            data-task-title=""
+            onClick={(event) => {
+              if (opensHere(event)) {
+                onOpen();
+              }
+            }}
+            className={CARD_TITLE_CLASS}
+          >
+            {title}
+          </Link>
         )}
-        {priority !== undefined && (
-          <span className={`ml-auto text-xs ${top ? "font-medium text-text" : "text-muted"}`}>{priority}</span>
-        )}
-      </div>
-      <Link
-        id={titleId}
-        to="/tasks/$project/$task"
-        params={{ project: tag, task: id }}
-        // The board returns focus here, and a link added above must not take it.
-        data-task-title=""
-        onClick={(event) => {
-          if (opensHere(event)) {
-            onOpen();
-          }
-        }}
-        className="mt-1 block text-sm font-medium wrap-anywhere"
-      >
-        {title}
-      </Link>
-      {/* After the title link, so the menu button follows it in the tab order. */}
-      <CardMenu buttonRef={menuButtonRef} titleId={titleId} {...menu} />
-      <FlowRow view={view} />
-      {labels.length > 0 && <LabelList labels={labels} className="mt-2 text-xs" />}
+        menu={<CardMenu buttonRef={menuButtonRef} titleId={titleId} {...menu} />}
+      />
     </CardContextMenu>
   );
 }

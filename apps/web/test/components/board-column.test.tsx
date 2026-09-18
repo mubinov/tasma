@@ -37,10 +37,7 @@ const WORKFLOW: Workflow = {
   steps: [{ name: "implement", file: "/w/dev/implement.md", owner: "agent" }],
 };
 
-type ColumnProps = Pick<
-  ComponentProps<typeof BoardColumn>,
-  "tag" | "place" | "filtered" | "onMoveBy" | "onOpen" | "focusId" | "onMenuFocused"
->;
+type ColumnProps = Omit<ComponentProps<typeof BoardColumn>, "column">;
 
 async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnProps> = {}) {
   const data: ColumnData = { status: "In Progress", final: false, matching: [], total: 0, ...column };
@@ -55,11 +52,14 @@ async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnPr
       workflows={new Map([["dev", WORKFLOW]])}
       statuses={["To Do", "In Progress", "Done"]}
       pendingIds={new Set()}
+      movedIds={new Set()}
       onMove={() => {}}
       onMoveBy={() => {}}
       onOpen={() => {}}
       focusId={null}
       onMenuFocused={() => {}}
+      draggingId={null}
+      onPress={() => {}}
       {...props}
     />,
   );
@@ -184,6 +184,37 @@ describe("a column Show all has opened, after the board was unmounted", () => {
     await renderColumn({ status: "Done", final: true, matching: entries(25), total: 25 }, { place: 1 });
     expect(cardTitles()).toHaveLength(20);
   });
+});
+
+it("folds a final column out when a move in flight places a card past its cap", async () => {
+  await renderColumn(
+    { final: true, matching: entries(25), total: 25 },
+    { pendingIds: new Set(["SAGA-25"]), movedIds: new Set(["SAGA-25"]) },
+  );
+
+  expect(cardTitles()).toHaveLength(25);
+  expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
+  expect(document.activeElement).toBe(document.body);
+});
+
+it("leaves a final column folded when the move in flight places a card the cap shows", async () => {
+  await renderColumn(
+    { final: true, matching: entries(25), total: 25 },
+    { pendingIds: new Set(["SAGA-3"]), movedIds: new Set(["SAGA-3"]) },
+  );
+
+  expect(cardTitles()).toHaveLength(20);
+  expect(screen.getByRole("button", { name: "Show all" })).toBeTruthy();
+});
+
+it("leaves a final column folded when a move only renumbers the cards past its cap", async () => {
+  await renderColumn(
+    { final: true, matching: entries(25), total: 25 },
+    { pendingIds: new Set(["SAGA-3", "SAGA-24", "SAGA-25"]), movedIds: new Set(["SAGA-3"]) },
+  );
+
+  expect(cardTitles()).toHaveLength(20);
+  expect(screen.getByRole("button", { name: "Show all" })).toBeTruthy();
 });
 
 it("moves focus to the first card Show all reveals", async () => {
@@ -363,4 +394,94 @@ it("renders 50 cards as a plain list", async () => {
   const rows = within(screen.getByRole("list", { name: "In Progress" })).getAllByRole("listitem");
   expect(rows).toHaveLength(50);
   expect(rows[0]?.getAttribute("aria-setsize")).toBeNull();
+});
+
+describe("the slot a drag shows", () => {
+  function rows(): HTMLElement[] {
+    return [...screen.getByRole("list").querySelectorAll("li")];
+  }
+
+  /** The task each row holds, empty for the slot. */
+  function held(): (string | null)[] {
+    return rows().map((row) => row.querySelector("[data-task-id]")?.getAttribute("data-task-id") ?? null);
+  }
+
+  it("stands before the card that holds the place, and counts in no list index", async () => {
+    await renderColumn(
+      { matching: entries(3), total: 3 },
+      { draggingId: "SAGA-2", slot: { index: 1, height: 60 } },
+    );
+
+    const slot = rows()[2];
+    expect(held()).toEqual(["SAGA-1", "SAGA-2", null, "SAGA-3"]);
+    expect(rows().map((row) => row.getAttribute("data-index"))).toEqual(["0", "1", null, "2"]);
+    expect(slot?.getAttribute("aria-hidden")).toBe("true");
+    expect(slot?.firstElementChild?.getAttribute("style")).toBe("height: 60px;");
+    expect(slot?.firstElementChild?.className).toContain("border-dashed");
+  });
+
+  it("ends the list when the place is under the last rendered card", async () => {
+    await renderColumn(
+      { matching: entries(2), total: 2 },
+      { draggingId: "SAGA-1", slot: { index: 1, height: 60 } },
+    );
+
+    expect(held()).toEqual(["SAGA-1", "SAGA-2", null]);
+  });
+
+  it("stands outside a list in a column with no card, which reports no list at all", async () => {
+    await renderColumn({ matching: [], total: 0 }, { draggingId: "SAGA-9", slot: { index: 0, height: 60 } });
+
+    const region = screen.getByRole("region", { name: "In Progress" });
+    expect(screen.queryByRole("list")).toBeNull();
+    expect(region.querySelector("[data-drag-slot]")?.getAttribute("style")).toBe("height: 60px;");
+  });
+
+  it("stands where the cap hides the card that holds the place", async () => {
+    await renderColumn(
+      { final: true, matching: entries(25), total: 25 },
+      { draggingId: "SAGA-25", slot: { index: 20, height: 60 } },
+    );
+
+    expect(rows()).toHaveLength(21);
+    expect(rows()[20]?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("is no part of the list a virtual column reports", async () => {
+    await renderColumn(
+      { matching: entries(60), total: 60 },
+      { draggingId: "SAGA-1", slot: { index: 3, height: 60 } },
+    );
+
+    const listed = rows();
+    const slot = listed.find((row) => row.querySelector("[data-drag-slot]") !== null)!;
+    expect(slot.getAttribute("aria-hidden")).toBe("true");
+    expect(listed.map((row) => row.getAttribute("aria-setsize"))).toEqual(Array.from(listed, () => "60"));
+    expect(listed.filter((row) => row !== slot).map((row) => row.getAttribute("data-index")))
+      .toEqual(Array.from({ length: listed.length - 1 }, (_, index) => String(index)));
+    // The virtualizer measures rows by their own index, which the slot holds too.
+    expect(listed.map((row) => row.getAttribute("data-row-index")))
+      .toEqual(Array.from(listed, (_, index) => String(index)));
+  });
+
+  it("shows no slot while no drag names this column", async () => {
+    await renderColumn({ matching: entries(3), total: 3 }, { draggingId: "SAGA-2" });
+
+    expect(screen.getByRole("list").querySelector("[data-drag-slot]")).toBeNull();
+    expect(rows()).toHaveLength(3);
+  });
+});
+
+it("leaves the card a drag carries in place, dimmed", async () => {
+  await renderColumn({ matching: entries(2), total: 2 }, { draggingId: "SAGA-1" });
+
+  const cards = screen.getAllByText(/^Task \d+$/).map((title) => title.closest("[data-task-id]"));
+  expect(cards[0]?.className).toContain("opacity-35");
+  expect(cards[1]?.className).not.toContain("opacity-35");
+});
+
+it("names its position, so a drag can read the board", async () => {
+  await renderColumn({ matching: entries(1), total: 1 }, { place: 2 });
+
+  expect(screen.getByRole("region", { name: "In Progress" }).getAttribute("data-column-index")).toBe("2");
 });

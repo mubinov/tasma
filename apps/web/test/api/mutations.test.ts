@@ -479,12 +479,12 @@ describe("usePendingTaskWrites", () => {
 
     const done = await send([TAG, moveOf("NOTE-1")], ["ELSE", ELSE_WRITE], [TAG, moveOf("NOTE-2", "NOTE-3")]);
 
-    expect(result.current.map(({ id, change }) => [id, change])).toEqual([
+    expect(result.current.writes.map(({ id, change }) => [id, change])).toEqual([
       ["NOTE-1", { status: "Done", order: 0 }],
       ["NOTE-2", { status: "Done", order: 0 }],
       ["NOTE-3", { status: "Done", order: 1 }],
     ]);
-    expect(result.current.every(({ submittedAt }) => submittedAt > 0)).toBe(true);
+    expect(result.current.writes.every(({ submittedAt }) => submittedAt > 0)).toBe(true);
 
     await act(async () => {
       first.answer(written("NOTE-1"));
@@ -493,7 +493,30 @@ describe("usePendingTaskWrites", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
 
-    expect(result.current).toEqual([]);
+    expect(result.current.writes).toEqual([]);
+  });
+
+  it("gives the task each write moves, which is neither every task it writes nor always one of them", async () => {
+    const first = heldBack();
+    const below = heldBack();
+    const { result, send } = renderPending({
+      [`PATCH ${taskPath("NOTE-1")}`]: first.reply,
+      [`PATCH ${taskPath("NOTE-2")}`]: below.reply,
+    });
+
+    const done = await send([TAG, moveOf("NOTE-1", "NOTE-2")], [TAG, BELOW_ONLY]);
+
+    expect(result.current.writes.map(({ id }) => id)).toEqual(["NOTE-1", "NOTE-2", "NOTE-2"]);
+    expect([...result.current.movedIds]).toEqual(["NOTE-2", "NOTE-1"]);
+
+    await act(async () => {
+      first.answer(written("NOTE-1"));
+      below.answer(written("NOTE-2"));
+      await Promise.all(done);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect([...result.current.movedIds]).toEqual([]);
   });
 
   it("gives the writes of the project it is asked for at each render, with no new write in between", async () => {
@@ -504,7 +527,7 @@ describe("usePendingTaskWrites", () => {
       "PATCH /projects/ELSE/tasks/ELSE-1": other.reply,
     });
     const done = await send([TAG, moveOf("NOTE-1")], ["ELSE", ELSE_WRITE]);
-    const ids = () => result.current.map(({ id }) => id);
+    const ids = () => result.current.writes.map(({ id }) => id);
     expect(ids()).toEqual(["NOTE-1"]);
 
     rerender({ tag: "ELSE" });

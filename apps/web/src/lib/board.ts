@@ -257,3 +257,43 @@ export function splitList(value: string | undefined): string[] {
 export function joinList(values: readonly string[]): string | undefined {
   return values.length === 0 ? undefined : values.join(",");
 }
+
+/**
+ * The tasks of the column a move puts a card in, read the two ways a placement
+ * needs them: with the tasks the label filter hides and without them, both
+ * without the moved card, together with the card itself.
+ *
+ * @param columns The board after the label filter.
+ * @param index The target column's position in the board's row.
+ */
+export function moveTarget(
+  config: Pick<Config, "statuses" | "final_statuses">,
+  entries: readonly TaskEntry[],
+  columns: readonly ColumnData[],
+  index: number,
+  id: string,
+): { unfiltered: TaskEntry[]; visible: TaskEntry[]; card: TaskEntry } {
+  const others = (entry: TaskEntry): boolean => entry.id !== id;
+
+  return {
+    unfiltered: buildColumns(config, entries, [])[index]!.matching.filter(others),
+    visible: columns[index]!.matching.filter(others),
+    card: entries.find((entry) => entry.id === id)!,
+  };
+}
+
+/** Where a card stands on the board: its column, and its place in that column's visible list. */
+export function cardPlace(
+  columns: readonly ColumnData[],
+  id: string,
+): { entry: TaskEntry; column: number; index: number; final: boolean } | null {
+  for (const [column, { matching, final }] of columns.entries()) {
+    const index = matching.findIndex((entry) => entry.id === id);
+
+    if (index >= 0) {
+      return { entry: matching[index]!, column, index, final };
+    }
+  }
+
+  return null;
+}

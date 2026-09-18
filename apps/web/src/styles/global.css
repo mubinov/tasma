@@ -24,3 +24,12 @@
     outline-offset: 2px;
   }
 }
+
+/*
+ * Outside every layer, so it wins over the `cursor-pointer` utility a card
+ * carries: `cursor` inherits only into elements that declare none of their own,
+ * and the element under the pointer during a drag is a card or its title.
+ */
+html.cursor-grabbing * {
+  cursor: grabbing;
+}

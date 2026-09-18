@@ -88,23 +88,37 @@ export function VirtualList<T>({
 }
 
 type PageVirtualListProps<T> = {
-  items: readonly T[];
+  rows: readonly T[];
   /**
-   * An item's row height in pixels before measurement; measured rows override
-   * it. The height a row already has on the page keeps the rows in view in
-   * place when this list replaces a list of the same rows.
+   * A row's height in pixels before measurement; measured rows override it. The
+   * height a row already has on the page keeps the rows in view in place when
+   * this list replaces a list of the same rows.
    */
-  estimateSize: (item: T, index: number) => number;
+  estimateSize: (row: T, index: number) => number;
   /** Row identity across reorders. Keying by index reuses DOM and state silently. */
-  getKey: (item: T, index: number) => string | number;
-  renderItem: (item: T, index: number) => ReactNode;
+  getKey: (row: T, index: number) => string | number;
+  renderRow: (row: T, index: number) => ReactNode;
   /** The id of the visible heading that names the list. */
   labelledBy: string;
   /** Pixels between two rows. */
   gap?: number;
+  /**
+   * A row's place among the items of the list, `null` for a row that draws
+   * something and holds no item. Every row is an item of its own by default.
+   */
+  itemIndex?: (row: T, index: number) => number | null;
+  /** How many of the rows hold an item. As many as there are rows by default. */
+  itemCount?: number;
   /** The row the page scrolls to, when it changes. */
   scrollToIndex?: number;
 };
+
+/**
+ * The row index the virtualizer reads back off a measured element. It is an
+ * attribute of its own because `data-index` carries the item index, which a row
+ * holding no item shifts away from the row index.
+ */
+const ROW_INDEX_ATTRIBUTE = "data-row-index";
 
 /**
  * Renders only the rows in view of a list that scrolls with the page rather than
@@ -117,12 +131,14 @@ type PageVirtualListProps<T> = {
  * following the page scroll.
  */
 export function PageVirtualList<T>({
-  items,
+  rows,
   estimateSize,
   getKey,
-  renderItem,
+  renderRow,
   labelledBy,
   gap,
+  itemIndex,
+  itemCount,
   scrollToIndex,
 }: PageVirtualListProps<T>): ReactNode {
   "use no memo";
@@ -131,13 +147,14 @@ export function PageVirtualList<T>({
   // with no render of the list, so a resize of the body measures it again.
   const [scrollMargin, setScrollMargin] = useState(0);
   const virtualizer = useWindowVirtualizer({
-    count: items.length,
-    // The virtualizer counts items.length, so every index it hands back is in range.
-    estimateSize: (index) => estimateSize(items[index] as T, index),
-    getItemKey: (index) => getKey(items[index] as T, index),
+    count: rows.length,
+    // The virtualizer counts rows.length, so every index it hands back is in range.
+    estimateSize: (index) => estimateSize(rows[index] as T, index),
+    getItemKey: (index) => getKey(rows[index] as T, index),
     overscan: 8,
     gap,
     scrollMargin,
+    indexAttribute: ROW_INDEX_ATTRIBUTE,
   });
 
   function measure(): void {
@@ -176,22 +193,30 @@ export function PageVirtualList<T>({
       className="relative m-0 list-none p-0"
       style={{ height: `${virtualizer.getTotalSize()}px` }}
     >
-      {virtualizer.getVirtualItems().map((row) => (
-        <li
-          key={row.key}
-          role="listitem"
-          aria-setsize={items.length}
-          aria-posinset={row.index + 1}
-          data-index={row.index}
-          // A focus target for a script, never a tab stop.
-          tabIndex={-1}
-          ref={virtualizer.measureElement}
-          className="absolute top-0 left-0 w-full"
-          style={{ transform: `translateY(${row.start - scrollMargin}px)` }}
-        >
-          {renderItem(items[row.index] as T, row.index)}
-        </li>
-      ))}
+      {virtualizer.getVirtualItems().map((virtual) => {
+        // The virtualizer counts rows.length, so every index it hands back is in range.
+        const row = rows[virtual.index] as T;
+        const at = itemIndex === undefined ? virtual.index : itemIndex(row, virtual.index);
+
+        return (
+          <li
+            key={virtual.key}
+            role="listitem"
+            aria-hidden={at === null || undefined}
+            aria-setsize={itemCount ?? rows.length}
+            aria-posinset={at === null ? undefined : at + 1}
+            data-index={at ?? undefined}
+            {...{ [ROW_INDEX_ATTRIBUTE]: virtual.index }}
+            // A focus target for a script, never a tab stop.
+            tabIndex={-1}
+            ref={virtualizer.measureElement}
+            className="absolute top-0 left-0 w-full"
+            style={{ transform: `translateY(${virtual.start - scrollMargin}px)` }}
+          >
+            {renderRow(row, virtual.index)}
+          </li>
+        );
+      })}
     </ul>
   );
 }
