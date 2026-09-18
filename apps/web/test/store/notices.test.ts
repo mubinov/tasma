@@ -21,7 +21,7 @@ function openKeys(): string[] {
 }
 
 beforeEach(() => {
-  useNoticeStore.setState({ notices: [], dismissed: new Map() });
+  useNoticeStore.setState({ notices: [], dismissed: new Map(), modalDialogs: 0 });
 });
 
 describe("showNotice", () => {
@@ -165,6 +165,28 @@ describe("closeNotice", () => {
     useNoticeStore.getState().closeNotice(SECOND.key);
 
     expect(useNoticeStore.getState()).toBe(before);
+  });
+});
+
+describe("the count of open modal dialogs", () => {
+  it("starts at zero", () => {
+    expect(useNoticeStore.getState().modalDialogs).toBe(0);
+  });
+
+  it("counts each open dialog, so a nested pair leaves one behind when the inner closes", () => {
+    useNoticeStore.getState().openModalDialog();
+    useNoticeStore.getState().openModalDialog();
+    expect(useNoticeStore.getState().modalDialogs).toBe(2);
+
+    useNoticeStore.getState().closeModalDialog();
+
+    expect(useNoticeStore.getState().modalDialogs).toBe(1);
+  });
+
+  it("floors at zero, so an unmatched close cannot leave the count negative", () => {
+    useNoticeStore.getState().closeModalDialog();
+
+    expect(useNoticeStore.getState().modalDialogs).toBe(0);
   });
 });
 

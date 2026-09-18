@@ -86,3 +86,9 @@ describe.each([...palettes])("the %s palette", (_theme, palette) => {
 it("declares both palettes", () => {
   expect([...palettes.keys()].sort()).toEqual(["dark", "light"]);
 });
+
+// The scrim is one value for both themes rather than a light-dark() pair, so
+// PALETTE_DECLARATION does not match it and readPalettes never sees it.
+it("declares the scrim, which is outside both palettes", () => {
+  expect(THEME_CSS).toContain("--palette-scrim:");
+});

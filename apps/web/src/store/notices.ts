@@ -26,9 +26,18 @@ type NoticeState = {
   notices: readonly OpenNotice[];
   /** Per key, the content of the notice the reader dismissed last. */
   dismissed: ReadonlyMap<string, NoticeContent>;
+  /**
+   * Open modal dialogs. It lives beside the notices because a notice raised
+   * while one is up is unreachable, not merely covered: Base UI puts
+   * `aria-hidden` on everything outside the popup. A count rather than a flag,
+   * since dialogs nest and a flag owned by two breaks on the first close.
+   */
+  modalDialogs: number;
   showNotice: (notice: Notice) => void;
   dismissNotice: (key: string) => void;
   closeNotice: (key: string) => void;
+  openModalDialog: () => void;
+  closeModalDialog: () => void;
 };
 
 function noticeSignature({ form, title, line, words }: NoticeContent): string {
@@ -45,6 +54,7 @@ let lastSerial = 0;
 export const useNoticeStore = create<NoticeState>((set) => ({
   notices: [],
   dismissed: new Map(),
+  modalDialogs: 0,
   showNotice: (notice) => {
     set((state) => {
       const open = state.notices.find(({ key }) => key === notice.key);
@@ -87,6 +97,14 @@ export const useNoticeStore = create<NoticeState>((set) => ({
       return { notices: state.notices.filter((notice) => notice.key !== key), dismissed };
     });
   },
+  openModalDialog: () => {
+    set((state) => ({ modalDialogs: state.modalDialogs + 1 }));
+  },
+  closeModalDialog: () => {
+    // Floored: one unmatched close would otherwise leave the count negative,
+    // which reads as "no dialog is open" for the rest of the session.
+    set((state) => ({ modalDialogs: Math.max(0, state.modalDialogs - 1) }));
+  },
 }));
 
 export function noticeWords(diagnostics: readonly Diagnostic[]): string[] {
@@ -119,4 +137,23 @@ export function useNotice(key: string, content: NoticeContent | null): void {
     },
     [key],
   );
+}
+
+/**
+ * Keeps the count of open modal dialogs in step with what a dialog renders. The
+ * cleanup counts out a dialog unmounted while still open as well as one that
+ * closes.
+ */
+export function useModalDialog(open: boolean): void {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    useNoticeStore.getState().openModalDialog();
+
+    return () => {
+      useNoticeStore.getState().closeModalDialog();
+    };
+  }, [open]);
 }

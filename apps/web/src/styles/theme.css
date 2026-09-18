@@ -29,6 +29,7 @@
   --color-running: var(--palette-running);
   --color-graphic: var(--palette-graphic);
   --color-line: var(--palette-line);
+  --color-scrim: var(--palette-scrim);
 
   /* Three families, three jobs: chrome, prose, and literal machine data. */
   --font-*: initial;
@@ -71,12 +72,10 @@
   --spacing-task-sidebar: 18rem;
 
   /*
-   * Stacking, bottom to top: a sticky comment header over the comment text; a
-   * sticky column header over the cards, and the sticky top bar of a task page
-   * and its scroll-to-top control over its content and its comment headers; the
-   * fixed sidebar over those, a notice over all of them, a popup over those, so
-   * a menu opened near the corner covers a notice, and the card a drag carries
-   * over everything. Used as `z-(--layer-*)`.
+   * Stacking, bottom to top, in the order the values list them. Used as
+   * `z-(--layer-*)`. Two of the orders are load-bearing: a notice sits under
+   * the scrim rather than floating over a modal panel, and a menu opened
+   * inside a dialog still draws above it.
    */
   --layer-comment-header: 1;
   --layer-column-header: 2;
@@ -84,8 +83,9 @@
   --layer-scroll-to-top: 2;
   --layer-sidebar: 3;
   --layer-notice: 4;
-  --layer-popup: 5;
-  --layer-drag: 6;
+  --layer-dialog: 5;
+  --layer-popup: 6;
+  --layer-drag: 7;
 
   --duration-fast: 120ms;
   --duration-base: 180ms;
@@ -132,6 +132,16 @@
   --palette-running: light-dark(#136b41, #5fc98a);
   --palette-graphic: light-dark(#808791, #666e7a);
   --palette-line: light-dark(#e2e4e8, #343a43);
+
+  /*
+   * One value for both themes: it drops the page behind to about 42% of its
+   * luminance in the light theme and about 57% in the dark one, so the dimming
+   * reads in both. That dimming is what sets a dialog panel off from the page —
+   * the panel's own fill is about 1.03:1 against the page in the light theme
+   * and 1.09:1 in the dark one, so the fill and the line border group the
+   * panel's contents rather than separate it from what is behind it.
+   */
+  --palette-scrim: rgb(0 0 0 / 0.32);
 }
 
 .light {
