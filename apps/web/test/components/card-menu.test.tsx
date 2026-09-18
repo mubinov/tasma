@@ -8,10 +8,10 @@ import { renderBesideTaskRoute } from "../helpers";
 
 const STATUSES = ["Backlog", "In Progress", "Done"];
 
-type CardProps = Pick<CardMenuItemsProps, "status" | "onMove" | "onMoveUp" | "onMoveDown">;
+type CardProps = Pick<CardMenuItemsProps, "status" | "onMove" | "onMoveUp" | "onMoveDown" | "onOpen">;
 
-function Card({ status, onMove, onMoveUp, onMoveDown }: CardProps): ReactNode {
-  const menu = { tag: "SAGA", id: "SAGA-7", status, statuses: STATUSES, onMove, onMoveUp, onMoveDown };
+function Card({ status, onMove, onMoveUp, onMoveDown, onOpen }: CardProps): ReactNode {
+  const menu = { tag: "SAGA", id: "SAGA-7", status, statuses: STATUSES, onMove, onMoveUp, onMoveDown, onOpen };
 
   return (
     <CardContextMenu menu={menu} data-testid="card">
@@ -25,7 +25,7 @@ async function renderMenu(status = "In Progress", handlers: Partial<Omit<CardPro
   // The router scrolls on navigation, which jsdom does not implement.
   vi.stubGlobal("scrollTo", () => {});
 
-  return renderBesideTaskRoute(<Card status={status} onMove={() => {}} {...handlers} />);
+  return renderBesideTaskRoute(<Card status={status} onMove={() => {}} onOpen={() => {}} {...handlers} />);
 }
 
 async function openFromButton() {
@@ -120,8 +120,9 @@ describe("choosing an item", () => {
     expect(onMove.mock.calls).toEqual([["Backlog"]]);
   });
 
-  it("opens the task from Open task", async () => {
-    const { router } = await renderMenu();
+  it("opens the task from Open task, and says so before it navigates", async () => {
+    const onOpen = vi.fn();
+    const { router } = await renderMenu("In Progress", { onOpen });
     const { user, menu } = await openFromButton();
 
     await act(async () => {
@@ -129,6 +130,7 @@ describe("choosing an item", () => {
     });
 
     expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-7");
+    expect(onOpen).toHaveBeenCalledOnce();
   });
 });
 

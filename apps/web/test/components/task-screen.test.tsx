@@ -138,7 +138,12 @@ function stubResizeObservers() {
 
 beforeEach(() => {
   window.localStorage.clear();
-  useUiStore.setState({ lastTasksProject: null });
+  useUiStore.setState({
+    lastTasksProject: null,
+    boardReturn: null,
+    boardRestorePending: false,
+    revealedColumns: new Set(),
+  });
   useNoticeStore.setState({ notices: [], dismissed: new Map() });
   document.title = "tasma";
 });
@@ -201,6 +206,33 @@ describe("the page", () => {
 
     expect(router.state.location.pathname).toBe("/tasks");
     expect(router.state.location.search).toEqual({ projects: "SAGA" });
+  });
+
+  it("carries the label filter of the board the reader left", async () => {
+    const user = userEvent.setup();
+    useUiStore.setState({
+      boardReturn: { projects: "SAGA", labels: "web,infra", scrollX: 0, scrollY: 1200, taskId: "SAGA-3" },
+    });
+    const { transport } = daemon();
+    const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    expect(backLink().getAttribute("href")).toBe("/tasks?projects=SAGA&labels=web,infra");
+
+    await user.click(backLink());
+
+    expect(router.state.location.search).toEqual({ projects: "SAGA", labels: "web,infra" });
+  });
+
+  // A page opened directly holds no record, and a record of another board is not this page's to return to.
+  it.each([
+    { what: "no record", record: null },
+    { what: "a record for another project", record: { projects: "DELTA", labels: "web", scrollX: 0, scrollY: 80, taskId: "DELTA-1" } },
+  ])("opens the project's board unfiltered with $what", async ({ record }) => {
+    useUiStore.setState({ boardReturn: record });
+    const { transport } = daemon();
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    expect(backLink().getAttribute("href")).toBe("/tasks?projects=SAGA");
   });
 
   it("mutes a priority that is not the top one, and shows a stale step as its name alone", async () => {

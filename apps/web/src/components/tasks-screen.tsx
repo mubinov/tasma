@@ -1,7 +1,7 @@
 import { useMutation, useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, Link, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import type { Workflow } from "@tasma/protocol";
-import { useDeferredValue, useEffect, useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useLayoutEffect, useState, type ReactNode } from "react";
 import { taskWriteOptions, usePendingTaskWrites } from "../api/mutations";
 import { usePollNotice } from "../api/poll-notice";
 import { POLL_INTERVAL, projectQuery, projectsQuery, tasksQuery, workflowQuery } from "../api/queries";
@@ -72,6 +72,52 @@ function BoardPollNotice({ tag }: { tag: string }): ReactNode {
   return null;
 }
 
+/**
+ * Puts the board back where the reader left it when they opened a card: the
+ * scroll position that was recorded, and focus on that card.
+ *
+ * The router resets the scroll to the top from an `onRendered` subscriber it
+ * registered when it was created, so a restore in a layout effect is undone.
+ * This one waits for the same event, later in the subscriber list and therefore
+ * after the reset, and it runs once: a later visit opens the board at the top.
+ */
+function useBoardReturn(tag: string, labels: string | undefined): void {
+  const router = useRouter();
+  const boardReturn = useUiStore((state) => state.boardReturn);
+  const pending = useUiStore((state) => state.boardRestorePending);
+  const endBoardRestore = useUiStore((state) => state.endBoardRestore);
+
+  useLayoutEffect(() => {
+    if (boardReturn === null || !pending) {
+      return;
+    }
+    if (boardReturn.projects !== tag || boardReturn.labels !== labels) {
+      endBoardRestore();
+      return;
+    }
+
+    const { scrollX, scrollY, taskId } = boardReturn;
+    let frame = 0;
+    const stop = router.subscribe("onRendered", () => {
+      stop();
+      window.scrollTo(scrollX, scrollY);
+      // A frame after the effect AppShell moves focus to <main> in. A card the
+      // filter now hides, or a task that is gone, leaves the focus there.
+      frame = requestAnimationFrame(() => {
+        // Focus scrolls of its own accord where the restored offset leaves the
+        // card out of view or under the sticky column header.
+        document.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(taskId)}"] [data-task-title]`)?.focus();
+        endBoardRestore();
+      });
+    });
+
+    return () => {
+      stop();
+      cancelAnimationFrame(frame);
+    };
+  }, [boardReturn, pending, tag, labels, router, endBoardRestore]);
+}
+
 function Board({ tag, labels }: { tag: string; labels: string | undefined }): ReactNode {
   const { client, queryClient } = route.useRouteContext();
   const { data: { data: projects } } = useSuspenseQuery(projectsQuery(client));
@@ -84,6 +130,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
     refetchInterval: POLL_INTERVAL,
   });
   const setLastTasksProject = useUiStore((state) => state.setLastTasksProject);
+  const setBoardReturn = useUiStore((state) => state.setBoardReturn);
   const { mutateAsync: write } = useMutation(taskWriteOptions(queryClient, client, tag));
   const pending = usePendingTaskWrites(tag);
   const [focusId, setFocusId] = useState<string | null>(null);
@@ -97,6 +144,8 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
   useEffect(() => {
     setLastTasksProject(tag);
   }, [tag, setLastTasksProject]);
+
+  useBoardReturn(tag, labels);
 
   const { name, live, config } = project;
   const title = name ?? tag;
@@ -121,6 +170,16 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
       setFocusId(id);
     });
     setFocusId(id);
+  }
+
+  function recordReturn(id: string): void {
+    setBoardReturn({
+      projects: tag,
+      ...(labels === undefined ? {} : { labels }),
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+      taskId: id,
+    });
   }
 
   function move(id: string, status: string): void {
@@ -183,6 +242,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
           <BoardColumn
             key={`${tag}:${String(index)}`}
             tag={tag}
+            place={index}
             column={column}
             filtered={filtered}
             priorities={config.priorities}
@@ -193,6 +253,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
             onMoveBy={(id, by) => {
               moveBy(index, id, by);
             }}
+            onOpen={recordReturn}
             focusId={focusId}
             onMenuFocused={() => {
               setFocusId(null);

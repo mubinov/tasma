@@ -8,12 +8,12 @@ import { renderBesideTaskRoute } from "../helpers";
 
 function entry(fields: Partial<Frontmatter> = {}, blocked = false): TaskEntry {
   return {
-    id: "SAGA-55",
-    path: "/tasks/SAGA-55.md",
+    id: "SAGA-7",
+    path: "/tasks/SAGA-7.md",
     blocked,
     frontmatter: {
-      id: "SAGA-55",
-      title: "Web: Tasks board",
+      id: "SAGA-7",
+      title: "Build the parser",
       status: "In Progress",
       created: "2026-09-01T10:00:00Z",
       updated: "2026-09-01T10:00:00Z",
@@ -23,13 +23,13 @@ function entry(fields: Partial<Frontmatter> = {}, blocked = false): TaskEntry {
   };
 }
 
-type CardState = { pending?: boolean; focusMenu?: boolean; onMenuFocused?: () => void };
+type CardState = { pending?: boolean; focusMenu?: boolean; onMenuFocused?: () => void; onOpen?: () => void };
 
 async function renderCard(
   task: TaskEntry = entry(),
   view: StepView = { kind: "none" },
   top = false,
-  { pending = false, focusMenu = false, onMenuFocused = () => {} }: CardState = {},
+  { pending = false, focusMenu = false, onMenuFocused = () => {}, onOpen = () => {} }: CardState = {},
 ) {
   // The router scrolls on navigation, which jsdom does not implement.
   vi.stubGlobal("scrollTo", () => {});
@@ -42,6 +42,7 @@ async function renderCard(
       statuses={["To Do", "In Progress", "Done"]}
       pending={pending}
       onMove={() => {}}
+      onOpen={onOpen}
       focusMenu={focusMenu}
       onMenuFocused={onMenuFocused}
     />,
@@ -63,8 +64,8 @@ afterEach(() => {
 it("shows the id and the title, with the right side of the top row kept free and the title across the card", async () => {
   await renderCard(entry({ priority: "high" }));
 
-  const id = screen.getByText("SAGA-55");
-  const title = screen.getByText("Web: Tasks board");
+  const id = screen.getByText("SAGA-7");
+  const title = screen.getByText("Build the parser");
   expect(id.className).toContain("font-mono");
   expect(classesOf(id.parentElement)).toContain("pr-6");
   expect(id.parentElement?.lastElementChild?.textContent).toBe("high");
@@ -73,13 +74,13 @@ it("shows the id and the title, with the right side of the top row kept free and
 });
 
 describe("opening the task", () => {
-  const TASK_PATH = "/tasks/SAGA/SAGA-55";
+  const TASK_PATH = "/tasks/SAGA/SAGA-7";
 
   it("makes the title the one link, and the title and then the menu button the tab stops", async () => {
     const { card } = await renderCard();
 
     const stops = [...card.querySelectorAll<HTMLElement>("a, button, [tabindex]")];
-    expect(stops.map((stop) => stop.textContent || stop.getAttribute("aria-label"))).toEqual(["Web: Tasks board", "Task menu"]);
+    expect(stops.map((stop) => stop.textContent || stop.getAttribute("aria-label"))).toEqual(["Build the parser", "Task menu"]);
     expect(stops[0]?.getAttribute("href")).toBe(TASK_PATH);
     expect(stops.map((stop) => stop.tabIndex)).toEqual([0, 0]);
     expect(card.tabIndex).toBe(-1);
@@ -89,7 +90,7 @@ describe("opening the task", () => {
   it("describes the menu button by the title, so the menu buttons of a board are told apart", async () => {
     await renderCard();
 
-    expect(screen.getByRole("button", { name: "Task menu", description: "Web: Tasks board" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Task menu", description: "Build the parser" })).toBeTruthy();
   });
 
   it("stays on the board when the click is on the menu button", async () => {
@@ -106,7 +107,7 @@ describe("opening the task", () => {
     const user = userEvent.setup();
     const { router } = await renderCard();
 
-    await user.click(screen.getByRole("link", { name: "Web: Tasks board" }));
+    await user.click(screen.getByRole("link", { name: "Build the parser" }));
 
     expect(router.state.location.pathname).toBe(TASK_PATH);
   });
@@ -124,7 +125,7 @@ describe("opening the task", () => {
   it("stays on the board when the click ends a text selection", async () => {
     const { router } = await renderCard();
 
-    const id = screen.getByText("SAGA-55");
+    const id = screen.getByText("SAGA-7");
     window.getSelection()?.selectAllChildren(id);
     await act(async () => {
       fireEvent.click(id);
@@ -137,10 +138,37 @@ describe("opening the task", () => {
     const { router } = await renderCard();
 
     await act(async () => {
-      fireEvent.click(screen.getByText("SAGA-55"), { ctrlKey: true });
+      fireEvent.click(screen.getByText("SAGA-7"), { ctrlKey: true });
     });
 
     expect(router.state.location.pathname).toBe("/");
+  });
+
+  const OPENS_FROM = [
+    { from: "the title", text: "Build the parser" },
+    { from: "the card", text: "SAGA-7" },
+  ];
+
+  it.each(OPENS_FROM)("says the task is opening, from $from", async ({ text }) => {
+    const onOpen = vi.fn();
+    const user = userEvent.setup();
+    await renderCard(entry(), { kind: "none" }, false, { onOpen });
+
+    await user.click(screen.getByText(text));
+
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
+  // A modified click asks for a new tab, which opens the task page with no board behind it.
+  it.each(OPENS_FROM)("says nothing when a modifier key is held on $from", async ({ text }) => {
+    const onOpen = vi.fn();
+    await renderCard(entry(), { kind: "none" }, false, { onOpen });
+
+    await act(async () => {
+      fireEvent.click(screen.getByText(text), { ctrlKey: true });
+    });
+
+    expect(onOpen).not.toHaveBeenCalled();
   });
 });
 
@@ -329,8 +357,9 @@ describe("focus after a move", () => {
   });
 });
 
-it("names the task on the card, for the board to find it", async () => {
+it("names the task on the card and marks the title link, for the board to find both", async () => {
   const { card } = await renderCard();
 
-  expect(card.getAttribute("data-task-id")).toBe("SAGA-55");
+  expect(card.getAttribute("data-task-id")).toBe("SAGA-7");
+  expect(card.querySelector("[data-task-title]")).toBe(screen.getByRole("link", { name: "Build the parser" }));
 });

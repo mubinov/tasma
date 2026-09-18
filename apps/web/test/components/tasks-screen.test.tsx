@@ -1,5 +1,5 @@
 import type { Diagnostic, ExcludedFile, Frontmatter, TaskEntry, TransportReply } from "@tasma/protocol";
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_URL } from "../../src/api/transport";
@@ -86,7 +86,12 @@ function titlesIn(status: string): string[] {
 
 beforeEach(() => {
   window.localStorage.clear();
-  useUiStore.setState({ lastTasksProject: null });
+  useUiStore.setState({
+    lastTasksProject: null,
+    boardReturn: null,
+    boardRestorePending: false,
+    revealedColumns: new Set(),
+  });
   useNoticeStore.setState({ notices: [], dismissed: new Map() });
   document.title = "tasma";
 });
@@ -1000,5 +1005,214 @@ describe("the notice for failed polls", () => {
     });
 
     expect(useNoticeStore.getState().notices).toEqual([]);
+  });
+});
+
+describe("the board a card was opened from", () => {
+  const SCROLL_X = 40;
+  const SCROLL_Y = 1200;
+
+  const ENTRIES = [entry(1, { labels: ["web"] }), entry(2, { labels: ["web"] }), entry(3, { labels: ["infra"] })];
+
+  function boardDaemon() {
+    return daemon({
+      "/projects/SAGA/tasks": listing(ENTRIES),
+      "/projects/SAGA/tasks/SAGA-2": successReply({ frontmatter: ENTRIES[1]!.frontmatter, body: "", comments: [] }),
+    });
+  }
+
+  /** Puts the page where the reader scrolled it, and records every scroll asked for from there on. */
+  function watchScroll() {
+    const scrollTo = vi.fn<(...args: unknown[]) => void>();
+
+    vi.stubGlobal("scrollTo", scrollTo);
+    vi.stubGlobal("scrollX", SCROLL_X);
+    vi.stubGlobal("scrollY", SCROLL_Y);
+
+    return scrollTo;
+  }
+
+  /** Where the board put the page back, or null: only its restore scrolls by a pair of coordinates. */
+  function restoredTo(scrollTo: ReturnType<typeof watchScroll>): unknown[] | null {
+    return scrollTo.mock.calls.filter((call) => call.length === 2).at(-1) ?? null;
+  }
+
+  function card(title: string): HTMLElement {
+    return screen.getByText(title).closest<HTMLElement>("[data-task-id]")!;
+  }
+
+  function cardLink(title: string): HTMLElement {
+    return within(card(title)).getByRole("link");
+  }
+
+  function backLink(): HTMLElement {
+    return within(screen.getByRole("main")).getByRole("link", { name: "Tasks" });
+  }
+
+  /** The restore moves focus a frame after the shell has moved it to the content region. */
+  async function nextFrame(): Promise<void> {
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    });
+  }
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  });
+
+  it("comes back filtered, scrolled where it was, with the card that was opened in focus", async () => {
+    const user = userEvent.setup();
+    const scrollTo = watchScroll();
+    const { transport } = boardDaemon();
+    const router = await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+
+    await user.click(cardLink("Task 2"));
+    expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-2");
+
+    await user.click(backLink());
+
+    expect(router.state.location.search).toEqual({ projects: "SAGA", labels: "web" });
+    // The router resets the page to the top first, so the restore has to be the last word.
+    expect(scrollTo.mock.lastCall).toEqual([SCROLL_X, SCROLL_Y]);
+
+    await nextFrame();
+    expect(document.activeElement).toBe(cardLink("Task 2"));
+    expect(useUiStore.getState().boardRestorePending).toBe(false);
+  });
+
+  it("still leads back to the filtered board after the restore has run", async () => {
+    const user = userEvent.setup();
+    watchScroll();
+    const { transport } = boardDaemon();
+    const router = await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+
+    await user.click(cardLink("Task 2"));
+    await user.click(backLink());
+    await nextFrame();
+
+    act(() => {
+      router.history.back();
+    });
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-2");
+    });
+    await user.click(backLink());
+
+    expect(router.state.location.search).toEqual({ projects: "SAGA", labels: "web" });
+  });
+
+  it("is recorded by Open task in the card menu too", async () => {
+    const user = userEvent.setup();
+    const scrollTo = watchScroll();
+    const { transport } = boardDaemon();
+    const router = await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+
+    await user.click(within(card("Task 2")).getByRole("button", { name: "Task menu" }));
+    await act(async () => {
+      await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Open task" }));
+    });
+    await user.click(backLink());
+
+    expect(router.state.location.search).toEqual({ projects: "SAGA", labels: "web" });
+    expect(restoredTo(scrollTo)).toEqual([SCROLL_X, SCROLL_Y]);
+    await nextFrame();
+    expect(document.activeElement).toBe(cardLink("Task 2"));
+  });
+
+  it("comes back the same way after the browser Back button", async () => {
+    const user = userEvent.setup();
+    const scrollTo = watchScroll();
+    const { transport } = boardDaemon();
+    const router = await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+
+    await user.click(cardLink("Task 2"));
+    act(() => {
+      router.history.back();
+    });
+
+    await waitFor(() => {
+      expect(restoredTo(scrollTo)).toEqual([SCROLL_X, SCROLL_Y]);
+    });
+    await nextFrame();
+    expect(document.activeElement).toBe(cardLink("Task 2"));
+  });
+
+  it("opens at the top on the visit after the restore", async () => {
+    const user = userEvent.setup();
+    const scrollTo = watchScroll();
+    const { transport } = boardDaemon();
+    const router = await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+
+    await user.click(cardLink("Task 2"));
+    await user.click(backLink());
+    await nextFrame();
+    scrollTo.mockClear();
+
+    await act(async () => {
+      await router.navigate({ to: "/tasks/$project/$task", params: { project: "SAGA", task: "SAGA-2" } });
+    });
+    await act(async () => {
+      await router.navigate({ to: "/tasks", search: { projects: "SAGA", labels: "web" } });
+    });
+    await nextFrame();
+
+    expect(restoredTo(scrollTo)).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+  });
+
+  it("restores nothing, and is spent, when another project's board opens", async () => {
+    const user = userEvent.setup();
+    const scrollTo = watchScroll();
+    const { transport } = boardDaemon();
+    const router = await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+
+    await user.click(cardLink("Task 2"));
+    await act(async () => {
+      await router.navigate({ to: "/tasks", search: { projects: "DELTA" } });
+    });
+    await nextFrame();
+
+    expect(restoredTo(scrollTo)).toBeNull();
+    expect(useUiStore.getState().boardRestorePending).toBe(false);
+  });
+
+  it("restores nothing, and is spent, when the board opens with another label filter", async () => {
+    const user = userEvent.setup();
+    const scrollTo = watchScroll();
+    const { transport } = boardDaemon();
+    const router = await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+
+    await user.click(cardLink("Task 2"));
+    // The sidebar's own item carries no label, so its redirect lands on the same board unfiltered.
+    await user.click(within(screen.getByRole("navigation")).getByRole("link", { name: "Tasks" }));
+    await nextFrame();
+
+    expect(router.state.location.search).toEqual({ projects: "SAGA" });
+    expect(restoredTo(scrollTo)).toBeNull();
+    expect(useUiStore.getState().boardRestorePending).toBe(false);
+  });
+
+  it("scrolls back but leaves focus on the content region when the recorded card is gone", async () => {
+    const user = userEvent.setup();
+    const scrollTo = watchScroll();
+    const { transport } = boardDaemon();
+    await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+
+    await user.click(cardLink("Task 2"));
+    useUiStore.setState({ boardReturn: { ...useUiStore.getState().boardReturn!, taskId: "SAGA-9" } });
+    await user.click(backLink());
+    await nextFrame();
+
+    expect(restoredTo(scrollTo)).toEqual([SCROLL_X, SCROLL_Y]);
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+    expect(useUiStore.getState().boardRestorePending).toBe(false);
   });
 });

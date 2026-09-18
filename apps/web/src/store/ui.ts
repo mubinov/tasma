@@ -62,6 +62,26 @@ export function setPreferenceStorage(next: PreferenceStorage): void {
   storage = next;
 }
 
+/** The board a task page returns to: its address, where it was scrolled, and the card that was opened. */
+export type BoardReturn = {
+  /** The `projects` of the board's address. */
+  projects: string;
+  /** The `labels` of the board's address, absent while no label is selected. */
+  labels?: string;
+  scrollX: number;
+  scrollY: number;
+  taskId: string;
+};
+
+/**
+ * The name a final column is held under in `revealedColumns`. The column's
+ * place names it, not its status: a hand-edited configuration can hold the same
+ * status twice, and the board keys the two columns apart the same way.
+ */
+export function revealedColumnKey(tag: string, place: number): string {
+  return `${tag}/${String(place)}`;
+}
+
 type UiState = {
   themePreference: ThemePreference;
   setThemePreference: (preference: ThemePreference) => void;
@@ -69,6 +89,15 @@ type UiState = {
   setSidebarCollapsed: (collapsed: boolean) => void;
   lastTasksProject: string | null;
   setLastTasksProject: (tag: string) => void;
+  /** Where the open task page's back link leads. Never persisted: a reload has no board behind the page. */
+  boardReturn: BoardReturn | null;
+  /** Whether a board that matches `boardReturn` still has to put itself back. One board visit consumes it. */
+  boardRestorePending: boolean;
+  setBoardReturn: (record: BoardReturn) => void;
+  endBoardRestore: () => void;
+  /** The final columns "Show all" has opened, by `revealedColumnKey`. Never persisted: a reload folds them again. */
+  revealedColumns: ReadonlySet<string>;
+  revealColumn: (tag: string, place: number) => void;
 };
 
 // Starts on the defaults and reads nothing: importing a module must not touch
@@ -88,6 +117,20 @@ export const useUiStore = create<UiState>((set) => ({
   setLastTasksProject: (tag) => {
     storage.write(TASKS_PROJECT_STORAGE_KEY, tag);
     set({ lastTasksProject: tag });
+  },
+  boardReturn: null,
+  boardRestorePending: false,
+  setBoardReturn: (record) => {
+    set({ boardReturn: record, boardRestorePending: true });
+  },
+  endBoardRestore: () => {
+    set({ boardRestorePending: false });
+  },
+  revealedColumns: new Set<string>(),
+  revealColumn: (tag, place) => {
+    set(({ revealedColumns }) => ({
+      revealedColumns: new Set(revealedColumns).add(revealedColumnKey(tag, place)),
+    }));
   },
 }));
 

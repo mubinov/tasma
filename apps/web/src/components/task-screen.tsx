@@ -13,6 +13,7 @@ import { useScrolledPast } from "../lib/use-scrolled-past";
 import { useTopBarLengths } from "../lib/use-top-bar-lengths";
 import { warningCount } from "../lib/warning-count";
 import { noticeWords, useNotice } from "../store/notices";
+import { useUiStore } from "../store/ui";
 import { CommentCard } from "./comment-card";
 import { Markdown } from "./markdown";
 import { ScreenHeading } from "./screen-heading";
@@ -156,6 +157,11 @@ export function TaskScreen(): ReactNode {
     ...workflowQuery(client, workflowName ?? ""),
     enabled: workflowName !== undefined,
   });
+  const boardReturn = useUiStore((state) => state.boardReturn);
+  // A page opened directly, or reached from the board of another project, has
+  // no board to go back to: "Tasks" then opens this project's, unfiltered.
+  const boardLabels = boardReturn?.projects === tag ? boardReturn.labels : undefined;
+  const boardSearch = boardLabels === undefined ? { projects: tag } : { projects: tag, labels: boardLabels };
   const { config } = project;
   const workflow = workflowRead === null ? null : workflowRead?.data;
   const view = stepView(frontmatter, isFinalStatus(status, config.final_statuses), workflow);
@@ -188,7 +194,7 @@ export function TaskScreen(): ReactNode {
         <div ref={barRef} className="sticky top-0 z-(--layer-top-bar) flex h-top-bar items-center gap-4 border-b border-line bg-bg px-6 sm:px-10 [html:has(&)]:scroll-pt-16">
           <Link
             to="/tasks"
-            search={{ projects: tag }}
+            search={boardSearch}
             className="inline-flex items-center gap-1.5 text-sm text-dim hover:text-text"
           >
             <ArrowLeftIcon size={16} aria-hidden="true" />

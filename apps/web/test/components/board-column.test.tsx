@@ -5,6 +5,7 @@ import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BoardColumn } from "../../src/components/board-column";
 import type { ColumnData } from "../../src/lib/board";
+import { useUiStore } from "../../src/store/ui";
 import { renderBesideTaskRoute } from "../helpers";
 
 function entry(number: number, fields: Partial<Frontmatter> = {}): TaskEntry {
@@ -36,7 +37,10 @@ const WORKFLOW: Workflow = {
   steps: [{ name: "implement", file: "/w/dev/implement.md", owner: "agent" }],
 };
 
-type ColumnProps = Pick<ComponentProps<typeof BoardColumn>, "filtered" | "onMoveBy" | "focusId" | "onMenuFocused">;
+type ColumnProps = Pick<
+  ComponentProps<typeof BoardColumn>,
+  "tag" | "place" | "filtered" | "onMoveBy" | "onOpen" | "focusId" | "onMenuFocused"
+>;
 
 async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnProps> = {}) {
   const data: ColumnData = { status: "In Progress", final: false, matching: [], total: 0, ...column };
@@ -44,6 +48,7 @@ async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnPr
   return renderBesideTaskRoute(
     <BoardColumn
       tag="SAGA"
+      place={0}
       column={data}
       filtered={false}
       priorities={["high", "low"]}
@@ -52,6 +57,7 @@ async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnPr
       pendingIds={new Set()}
       onMove={() => {}}
       onMoveBy={() => {}}
+      onOpen={() => {}}
       focusId={null}
       onMenuFocused={() => {}}
       {...props}
@@ -80,6 +86,7 @@ function cardTitles(): string[] {
 
 /* jsdom has no layout; a card measures as tall as the column estimates it. */
 beforeEach(() => {
+  useUiStore.setState({ revealedColumns: new Set() });
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(96);
   vi.stubGlobal("scrollTo", () => {});
 });
@@ -151,6 +158,32 @@ it("shows the first 20 cards of a final column until Show all is used", async ()
 
   expect(cardTitles()).toHaveLength(25);
   expect(screen.queryByText(/20 of 25/)).toBeNull();
+});
+
+describe("a column Show all has opened, after the board was unmounted", () => {
+  it("opens in full again, and a column of another project stays folded", async () => {
+    const user = userEvent.setup();
+    await renderColumn({ final: true, matching: entries(25), total: 25 });
+    await user.click(screen.getByRole("button", { name: "Show all" }));
+    cleanup();
+
+    await renderColumn({ final: true, matching: entries(25), total: 25 });
+    expect(cardTitles()).toHaveLength(25);
+    cleanup();
+
+    await renderColumn({ final: true, matching: entries(25), total: 25 }, { tag: "DELTA" });
+    expect(cardTitles()).toHaveLength(20);
+  });
+
+  it("leaves the next column of its own project folded, that column carrying the same status", async () => {
+    const user = userEvent.setup();
+    await renderColumn({ status: "Done", final: true, matching: entries(25), total: 25 });
+    await user.click(screen.getByRole("button", { name: "Show all" }));
+    cleanup();
+
+    await renderColumn({ status: "Done", final: true, matching: entries(25), total: 25 }, { place: 1 });
+    expect(cardTitles()).toHaveLength(20);
+  });
 });
 
 it("moves focus to the first card Show all reveals", async () => {

@@ -227,8 +227,12 @@ export async function renderBesideTaskRoute(ui: ReactNode) {
  * application shows while a loader is still on its way.
  */
 export async function renderWithRouter(initialPath = "/", transport?: Transport) {
-  // The router scrolls on mount, which jsdom does not implement.
-  vi.stubGlobal("scrollTo", () => {});
+  // The router scrolls on mount, which jsdom does not implement. A test that
+  // watches the scrolls stubs it beforehand, and that stub stands.
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- the value is read, never called
+  if (!vi.isMockFunction(window.scrollTo)) {
+    vi.stubGlobal("scrollTo", () => {});
+  }
 
   const context = testContext(transport);
   const router = createAppRouter(createMemoryHistory({ initialEntries: [initialPath] }), context);

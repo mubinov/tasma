@@ -206,6 +206,15 @@ export type CardClick = Pick<MouseEvent, "target" | "button" | "metaKey" | "ctrl
 };
 
 /**
+ * Whether a click navigates this tab rather than asking the browser for a new
+ * tab or window. It is the rule a router link applies to itself, which the
+ * router does not export.
+ */
+export function opensHere(click: Pick<CardClick, "button" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">): boolean {
+  return click.button === 0 && !click.metaKey && !click.ctrlKey && !click.shiftKey && !click.altKey;
+}
+
+/**
  * Whether a click on a card opens the task: not for a click on a control of its
  * own, one that ends a text selection, one from a portal rendered outside the
  * card, or one that asks the browser for something else.
@@ -216,7 +225,7 @@ export function opensTask(click: CardClick): boolean {
   if (!(target instanceof Element) || !currentTarget.contains(target) || target.closest("a, button") !== null) {
     return false;
   }
-  if (click.button !== 0 || click.metaKey || click.ctrlKey || click.shiftKey || click.altKey) {
+  if (!opensHere(click)) {
     return false;
   }
 

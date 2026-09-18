@@ -2,12 +2,15 @@ import type { TaskEntry, Workflow } from "@tasma/protocol";
 import { useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { isTopPriority, stepView, type ColumnData } from "../lib/board";
+import { revealedColumnKey, useUiStore } from "../store/ui";
 import { TaskCard } from "./task-card";
 import { PageVirtualList } from "./virtual-list";
 
 type BoardColumnProps = {
   /** The tag of the project the board shows. */
   tag: string;
+  /** The column's place on the board, which tells two columns of one status apart. */
+  place: number;
   column: ColumnData;
   /** Labels are selected. */
   filtered: boolean;
@@ -21,6 +24,8 @@ type BoardColumnProps = {
   onMove: (id: string, status: string) => void;
   /** Moves the card one visible place up (`-1`) or down (`1`) in this column. */
   onMoveBy: (id: string, by: -1 | 1) => void;
+  /** Called before the card opens its task in this tab. */
+  onOpen: (id: string) => void;
   /** The task whose menu button takes focus once its card renders. */
   focusId: string | null;
   onMenuFocused: () => void;
@@ -32,6 +37,7 @@ const ESTIMATED_CARD_HEIGHT = 96;
 
 export function BoardColumn({
   tag,
+  place,
   column,
   filtered,
   priorities,
@@ -40,6 +46,7 @@ export function BoardColumn({
   pendingIds,
   onMove,
   onMoveBy,
+  onOpen,
   focusId,
   onMenuFocused,
 }: BoardColumnProps): ReactNode {
@@ -48,7 +55,10 @@ export function BoardColumn({
   const sectionRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const plainListRef = useRef<HTMLUListElement>(null);
-  const [showAll, setShowAll] = useState(false);
+  // In the store rather than in this component: the board unmounts while a task
+  // page is open, and a card revealed here has to be back in place on return.
+  const showAll = useUiStore((state) => state.revealedColumns.has(revealedColumnKey(tag, place)));
+  const revealColumn = useUiStore((state) => state.revealColumn);
   // By id: the heights the capped cards had when the column opened in full.
   const [cardHeights, setCardHeights] = useState<ReadonlyMap<string, number>>(() => new Map());
   const capped = final && !showAll && matching.length > FINAL_CAP;
@@ -60,7 +70,7 @@ export function BoardColumn({
     const rows = plainListRef.current?.children ?? [];
 
     setCardHeights(new Map(shown.map((entry, index) => [entry.id, (rows[index] as HTMLElement).offsetHeight])));
-    setShowAll(true);
+    revealColumn(tag, place);
   }
 
   // Focus stays where it is: the card to focus takes it once it renders.
@@ -110,6 +120,9 @@ export function BoardColumn({
               onMoveBy(entry.id, 1);
             }
           : undefined}
+        onOpen={() => {
+          onOpen(entry.id);
+        }}
         focusMenu={entry.id === focusId}
         onMenuFocused={onMenuFocused}
       />

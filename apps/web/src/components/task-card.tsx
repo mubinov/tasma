@@ -1,7 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { TaskEntry } from "@tasma/protocol";
 import { useEffect, useEffectEvent, useId, useRef, type ReactNode } from "react";
-import { opensTask, type StepView } from "../lib/board";
+import { opensHere, opensTask, type StepView } from "../lib/board";
 import { ProhibitIcon } from "../lib/icons";
 import { CardContextMenu, CardMenu } from "./card-menu";
 import { LabelList } from "./label-list";
@@ -21,6 +21,8 @@ type TaskCardProps = {
   onMove: (status: string) => void;
   onMoveUp?: () => void;
   onMoveDown?: () => void;
+  /** Called before the card opens its task in this tab. */
+  onOpen: () => void;
   /** The menu button takes focus once the card has rendered, and `onMenuFocused` is called. */
   focusMenu: boolean;
   onMenuFocused: () => void;
@@ -49,6 +51,7 @@ export function TaskCard({
   onMove,
   onMoveUp,
   onMoveDown,
+  onOpen,
   focusMenu,
   onMenuFocused,
 }: TaskCardProps): ReactNode {
@@ -57,7 +60,7 @@ export function TaskCard({
   const cardRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
-  const menu = { tag, id, status, statuses, onMove, onMoveUp, onMoveDown };
+  const menu = { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen };
 
   const takeFocus = useEffectEvent(() => {
     cardRef.current?.scrollIntoView({ block: "nearest" });
@@ -80,6 +83,7 @@ export function TaskCard({
       aria-busy={pending || undefined}
       onClick={(event) => {
         if (opensTask(event)) {
+          onOpen();
           void navigate({ to: "/tasks/$project/$task", params: { project: tag, task: id } });
         }
       }}
@@ -104,6 +108,13 @@ export function TaskCard({
         id={titleId}
         to="/tasks/$project/$task"
         params={{ project: tag, task: id }}
+        // The board returns focus here, and a link added above must not take it.
+        data-task-title=""
+        onClick={(event) => {
+          if (opensHere(event)) {
+            onOpen();
+          }
+        }}
         className="mt-1 block text-sm font-medium wrap-anywhere"
       >
         {title}

@@ -19,10 +19,14 @@ export type CardMenuItemsProps = {
   onMoveUp?: () => void;
   /** Given only when a visible card of the same column is below the card. */
   onMoveDown?: () => void;
+  /** Called before the card opens its task in this tab. */
+  onOpen: () => void;
 };
 
 /** The items of both card menus. */
-function CardMenuItems({ tag, id, status, statuses, onMove, onMoveUp, onMoveDown }: CardMenuItemsProps): ReactNode {
+function CardMenuItems(
+  { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen }: CardMenuItemsProps,
+): ReactNode {
   const navigate = useNavigate();
   const key = status.toLowerCase();
   const current = statuses.find((candidate) => candidate.toLowerCase() === key) ?? null;
@@ -31,6 +35,7 @@ function CardMenuItems({ tag, id, status, statuses, onMove, onMoveUp, onMoveDown
     <>
       <Menu.Item
         onClick={() => {
+          onOpen();
           void navigate({ to: "/tasks/$project/$task", params: { project: tag, task: id } });
         }}
         className={MENU_ITEM_CLASS}
