@@ -23,6 +23,7 @@ beforeEach(() => {
     boardReturn: null,
     boardRestorePending: false,
     revealedColumns: new Set(),
+    editRequest: null,
   });
 });
 
@@ -257,5 +258,31 @@ describe("the final columns Show all has opened", () => {
     expect(written).toEqual([]);
     hydrateUiStore();
     expect(useUiStore.getState().revealedColumns.has(revealedColumnKey("SAGA", 3))).toBe(true);
+  });
+});
+
+describe("the request to open a task page with its editor open", () => {
+  it("starts empty", () => {
+    expect(useUiStore.getState().editRequest).toBeNull();
+  });
+
+  it("is read once: the second read finds nothing", () => {
+    useUiStore.getState().requestEdit("SAGA", "SAGA-3");
+
+    expect(useUiStore.getState().takeEditRequest()).toEqual({ tag: "SAGA", id: "SAGA-3" });
+    expect(useUiStore.getState().takeEditRequest()).toBeNull();
+  });
+
+  it("keeps the last request where one follows another", () => {
+    useUiStore.getState().requestEdit("SAGA", "SAGA-3");
+    useUiStore.getState().requestEdit("SAGA", "SAGA-4");
+
+    expect(useUiStore.getState().takeEditRequest()).toEqual({ tag: "SAGA", id: "SAGA-4" });
+  });
+
+  it("writes nothing to storage, so a reload opens the page in reading", () => {
+    useUiStore.getState().requestEdit("SAGA", "SAGA-3");
+
+    expect(window.localStorage.length).toBe(0);
   });
 });

@@ -3,6 +3,7 @@ import { Menu } from "@base-ui/react/menu";
 import { useNavigate } from "@tanstack/react-router";
 import type { ComponentProps, ReactNode, Ref } from "react";
 import { CheckIcon, DotsThreeVerticalIcon } from "../lib/icons";
+import { useUiStore } from "../store/ui";
 import { MENU_ITEM_CLASS, MENU_RADIO_ITEM_CLASS, POPUP_CLASS, POSITIONER_CLASS } from "./control-classes";
 
 export type CardMenuItemsProps = {
@@ -28,20 +29,31 @@ function CardMenuItems(
   { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen }: CardMenuItemsProps,
 ): ReactNode {
   const navigate = useNavigate();
+  const requestEdit = useUiStore((state) => state.requestEdit);
   const key = status.toLowerCase();
   const current = statuses.find((candidate) => candidate.toLowerCase() === key) ?? null;
 
+  function openTask(): void {
+    onOpen();
+    void navigate({ to: "/tasks/$project/$task", params: { project: tag, task: id } });
+  }
+
   return (
     <>
+      <Menu.Item onClick={openTask} className={MENU_ITEM_CLASS}>
+        <span className="w-3.5 shrink-0" />
+        Open task
+      </Menu.Item>
+      {/* The request goes through the store, not the address, so a reload opens the page in reading. */}
       <Menu.Item
         onClick={() => {
-          onOpen();
-          void navigate({ to: "/tasks/$project/$task", params: { project: tag, task: id } });
+          requestEdit(tag, id);
+          openTask();
         }}
         className={MENU_ITEM_CLASS}
       >
         <span className="w-3.5 shrink-0" />
-        Open task
+        Edit
       </Menu.Item>
       <Menu.Separator className="my-1.5 h-px bg-line" />
       <Menu.RadioGroup

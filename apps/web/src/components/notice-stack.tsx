@@ -102,6 +102,23 @@ export function NoticeStack(): ReactNode {
   );
 }
 
+/**
+ * What the application says to a screen reader alone. It is mounted with the
+ * shell, so it is on the page before anything writes to it: a region that
+ * arrives with its first words is not announced. Polite, so it never takes the
+ * caret; each message is a node of its own, so the same words said twice are
+ * two additions and are announced twice.
+ */
+export function SpokenRegion(): ReactNode {
+  const spoken = useNoticeStore(useShallow((state) => state.spoken));
+
+  return (
+    <div aria-live="polite" aria-relevant="additions" className="sr-only">
+      {spoken.map(({ serial, words }) => <p key={serial}>{words}</p>)}
+    </div>
+  );
+}
+
 type NoticePanelProps = {
   notice: OpenNotice;
   /** The panel leaves while focus is inside it. */

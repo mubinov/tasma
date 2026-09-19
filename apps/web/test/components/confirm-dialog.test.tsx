@@ -1,8 +1,9 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useRef, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfirmDialog, type ConfirmDialogProps } from "../../src/components/confirm-dialog";
+import type { FinalFocus } from "../../src/lib/final-focus";
 import { useNoticeStore } from "../../src/store/notices";
 
 /** Longer than the status region's own hold, so a write past it lands at once. */
@@ -171,6 +172,54 @@ describe("the dialog", () => {
   });
 
   /*
+   * Chrome keeps the page behind the dialog readable by a screen reader when
+   * the control that opened it still holds focus, and jsdom has no such rule —
+   * so what is pinned here is the mechanism rather than the tree: the click
+   * that opens the dialog leaves focus on nothing, in the same commit. Base UI
+   * moves it into the panel a frame later, so the assertion runs before any
+   * await.
+   */
+  it("leaves no element outside the panel focused in the commit that opens it", () => {
+    function FromClick(): ReactNode {
+      const openerRef = useRef<HTMLButtonElement>(null);
+      const [open, setOpen] = useState(false);
+
+      return (
+        <>
+          <button
+            type="button"
+            ref={openerRef}
+            onClick={() => {
+              setOpen(true);
+            }}
+          >
+            Leave the editor
+          </button>
+          <ConfirmDialog
+            open={open}
+            title="Discard your changes?"
+            description="There is no undo."
+            cancelLabel="Keep editing"
+            confirmLabel="Discard"
+            onCancel={() => {}}
+            onConfirm={() => {}}
+            finalFocus={openerRef}
+          />
+        </>
+      );
+    }
+
+    render(<FromClick />);
+    const opener = screen.getByRole("button", { name: "Leave the editor" });
+    opener.focus();
+
+    fireEvent.click(opener);
+
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  /*
    * jsdom computes no layout, so the scroll pattern is asserted on the class
    * strings. Whether a tall panel is reachable is checked in a browser.
    */
@@ -274,6 +323,43 @@ describe("where focus goes when it closes", () => {
     await waitFor(() => {
       expect(document.activeElement).toBe(surviving);
     });
+  });
+
+  it("leaves focus alone for a destination of \"keep\", so the screen that replaces the page keeps it", async () => {
+    function LeaveAlone({ open }: { open: boolean }): ReactNode {
+      const nowhereRef = useRef<FinalFocus>("keep");
+
+      return (
+        <>
+          <button type="button">Still on the page</button>
+          <ConfirmDialog
+            open={open}
+            title="Discard your changes?"
+            description="There is no undo."
+            confirmLabel="Discard"
+            onCancel={() => {}}
+            onConfirm={() => {}}
+            finalFocus={nowhereRef}
+          />
+        </>
+      );
+    }
+
+    const { rerender } = render(<LeaveAlone open />);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(cancel());
+    });
+
+    rerender(<LeaveAlone open={false} />);
+    const elsewhere = screen.getByRole("button", { name: "Still on the page" });
+    elsewhere.focus();
+
+    // The window Base UI would restore focus in, which it must not use here.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.activeElement).toBe(elsewhere);
   });
 
   /** The route-change path: the dialog leaves with the screen rather than closing. */

@@ -1,24 +1,39 @@
+import { Button } from "@base-ui/react/button";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
 import type { Comment, Task } from "@tasma/protocol";
-import { Fragment, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import {
+  Fragment,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEventHandler,
+  type ReactNode,
+  type Ref,
+  type RefObject,
+} from "react";
 import { usePollNotice } from "../api/poll-notice";
 import { POLL_INTERVAL, projectQuery, taskQuery, tasksQuery, workflowQuery } from "../api/queries";
 import { isFinalStatus, isTopPriority, stepView } from "../lib/board";
 import { formatClock } from "../lib/clock";
 import { useDocumentTitle } from "../lib/document-title";
-import { ArrowLeftIcon, ProhibitIcon } from "../lib/icons";
+import { ArrowLeftIcon, PencilSimpleIcon, ProhibitIcon } from "../lib/icons";
 import { blockingRows, relationRows, type RelationRow } from "../lib/task-page";
 import { useScrolledPast } from "../lib/use-scrolled-past";
+import { useTaskEditing } from "../lib/use-task-editing";
 import { useTopBarLengths } from "../lib/use-top-bar-lengths";
 import { warningCount } from "../lib/warning-count";
 import { noticeWords, useNotice } from "../store/notices";
 import { useUiStore } from "../store/ui";
 import { CommentCard } from "./comment-card";
+import { ConfirmDialog } from "./confirm-dialog";
+import { BUTTON_CLASS, BUTTON_FILLED_CLASS, BUTTON_QUIET_CLASS } from "./control-classes";
 import { Markdown } from "./markdown";
 import { ScreenHeading } from "./screen-heading";
 import { ScrollToTop } from "./scroll-to-top";
 import { StepMark } from "./step-view";
+import { ChangedOnDisk, TaskEditor } from "./task-editor";
 import type { Outline } from "./task-outline";
 import { TaskSidebar } from "./task-sidebar";
 
@@ -37,12 +52,14 @@ function visibleText(element: Element): string {
 
 /**
  * The body's top headings and the comments, read from the DOM after each render
- * of a changed task.
+ * of a changed task. The editor renders no body, so opening and closing it is
+ * read again too: a kept list would link to elements that are no longer there.
  */
 function useOutline(
   bodyRef: RefObject<HTMLElement | null>,
   commentsRef: RefObject<HTMLElement | null>,
   task: Task,
+  editing: boolean,
 ): Outline {
   const [outline, setOutline] = useState<Outline>({ headings: [], comments: [] });
 
@@ -57,7 +74,7 @@ function useOutline(
         return target && sentinel ? [{ label: title, target, sentinel }] : [];
       }),
     });
-  }, [bodyRef, commentsRef, task]);
+  }, [bodyRef, commentsRef, task, editing]);
 
   return outline;
 }
@@ -116,6 +133,58 @@ function BlockedSummary({ tag, blocking }: { tag: string; blocking: readonly Rel
   );
 }
 
+type ReadingControlsProps = { buttonRef: Ref<HTMLButtonElement>; onEdit: () => void };
+
+function ReadingControls({ buttonRef, onEdit }: ReadingControlsProps): ReactNode {
+  return (
+    <Button ref={buttonRef} type="button" onClick={onEdit} className={BUTTON_CLASS}>
+      <PencilSimpleIcon size={14} aria-hidden="true" />
+      Edit
+    </Button>
+  );
+}
+
+type EditControlsProps = {
+  /** Ties the Save control to the form it submits, which stands below the bar. */
+  formId: string;
+  saving: boolean;
+  cancelButtonRef: Ref<HTMLButtonElement>;
+  saveButtonRef: Ref<HTMLButtonElement>;
+  onCancel: () => void;
+  onKeyDown: KeyboardEventHandler;
+};
+
+function EditControls(
+  { formId, saving, cancelButtonRef, saveButtonRef, onCancel, onKeyDown }: EditControlsProps,
+): ReactNode {
+  return (
+    <>
+      {/* Not offered while a write runs, so the text cannot be dropped on its way to disk. */}
+      {!saving && (
+        <Button
+          ref={cancelButtonRef}
+          type="button"
+          onClick={onCancel}
+          onKeyDown={onKeyDown}
+          className={BUTTON_QUIET_CLASS}
+        >
+          Cancel
+        </Button>
+      )}
+      {/* A wait shows in the label, never in `disabled`. */}
+      <Button
+        ref={saveButtonRef}
+        type="submit"
+        form={formId}
+        onKeyDown={onKeyDown}
+        className={BUTTON_FILLED_CLASS}
+      >
+        {saving ? "Saving…" : "Save"}
+      </Button>
+    </>
+  );
+}
+
 /**
  * Apart from the page, so a poll that changes nothing re-renders this alone. Its
  * reads fetch nothing: the page polls them.
@@ -135,7 +204,7 @@ function TaskPollNotice({ tag, id }: { tag: string; id: string }): ReactNode {
 }
 
 export function TaskScreen(): ReactNode {
-  const { client } = route.useRouteContext();
+  const { client, queryClient } = route.useRouteContext();
   const { project: tag, task: taskId } = route.useParams();
   const { data: { data: project } } = useSuspenseQuery({
     ...projectQuery(client, tag),
@@ -171,9 +240,23 @@ export function TaskScreen(): ReactNode {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const commentsRef = useRef<HTMLOListElement>(null);
+  const formId = useId();
+  const editing = useTaskEditing({
+    queryClient,
+    client,
+    tag,
+    id,
+    disk: { title, body },
+    updated: frontmatter.updated,
+    hasComments: comments.length > 0,
+  });
+  const { draft, diskChange } = editing;
+  // The bar's scroll check and the scroll-to-top control read the same row: the
+  // heading while the page reads, the title input while it is edited.
+  const scrolledRef = draft === null ? headingRef : editing.titleRef;
   const { barHeight, scrollPaddingTop } = useTopBarLengths(barRef);
-  const scrolled = useScrolledPast(headingRef, barHeight);
-  const outline = useOutline(bodyRef, commentsRef, task);
+  const scrolled = useScrolledPast(scrolledRef, barHeight);
+  const outline = useOutline(bodyRef, commentsRef, task, draft !== null);
 
   useDocumentTitle(`${id} ${title}`);
   useNotice(
@@ -181,6 +264,27 @@ export function TaskScreen(): ReactNode {
     diagnostics.length === 0
       ? null
       : { form: "warning", title: `${warningCount(diagnostics.length)} about ${id}`, words: noticeWords(diagnostics) },
+  );
+
+  const idLine = <p className="font-mono text-sm text-dim">{id}</p>;
+
+  const metaLine = (
+    <div className="mt-2.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-sm text-muted">
+      <span className="inline-flex min-h-5.5 items-center rounded-control border border-line bg-surface-2 px-2 text-text">
+        {status}
+      </span>
+      {priority !== undefined && (
+        <span className={isTopPriority(priority, config.priorities) ? "font-medium text-text" : undefined}>
+          {priority}
+        </span>
+      )}
+      {view.kind !== "none" && (
+        <span className="inline-flex items-center gap-2">
+          <StepMark view={view} />
+        </span>
+      )}
+      {blocking.length > 0 && <BlockedSummary tag={tag} blocking={blocking} />}
+    </div>
   );
 
   return (
@@ -208,42 +312,74 @@ export function TaskScreen(): ReactNode {
             <span className="shrink-0 font-mono text-sm text-dim">{id}</span>
             <span className="truncate font-chrome text-base font-medium">{title}</span>
           </span>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {draft === null
+              ? <ReadingControls buttonRef={editing.editRef} onEdit={editing.openEditor} />
+              : (
+                  <EditControls
+                    formId={formId}
+                    saving={editing.saving}
+                    cancelButtonRef={editing.cancelRef}
+                    saveButtonRef={editing.saveRef}
+                    onCancel={editing.cancel}
+                    onKeyDown={editing.onKeyDown}
+                  />
+                )}
+          </div>
         </div>
 
         <div className="px-6 pb-12 sm:px-10 lg:pb-[calc(--spacing(12)+var(--notice-stack-height,0px))]">
-          {/* The title comes first in the DOM, so the h1 opens the content and is
-              read before the id shown above it. */}
-          <div className="mt-6 flex flex-col-reverse gap-1">
-            <ScreenHeading ref={headingRef} tabIndex={-1} className="max-w-2xl wrap-anywhere">{title}</ScreenHeading>
-            <p className="font-mono text-sm text-dim">{id}</p>
-          </div>
-
-          <div className="mt-2.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-sm text-muted">
-            <span className="inline-flex min-h-5.5 items-center rounded-control border border-line bg-surface-2 px-2 text-text">
-              {status}
-            </span>
-            {priority !== undefined && (
-              <span className={isTopPriority(priority, config.priorities) ? "font-medium text-text" : undefined}>
-                {priority}
-              </span>
-            )}
-            {view.kind !== "none" && (
-              <span className="inline-flex items-center gap-2">
-                <StepMark view={view} />
-              </span>
-            )}
-            {blocking.length > 0 && <BlockedSummary tag={tag} blocking={blocking} />}
-          </div>
-
-          {body.trim() !== "" && (
-            <div ref={bodyRef} className="mt-8 max-w-2xl">
-              <Markdown text={body} base={2} title={title} />
-            </div>
-          )}
+          {draft === null
+            ? (
+                <>
+                  {/* The title comes first in the DOM, so the h1 opens the content and is
+                      read before the id shown above it. */}
+                  <div className="mt-6 flex flex-col-reverse gap-1">
+                    <ScreenHeading ref={headingRef} tabIndex={-1} className="max-w-2xl wrap-anywhere">{title}</ScreenHeading>
+                    {idLine}
+                  </div>
+                  {metaLine}
+                  {body.trim() !== "" && (
+                    <div ref={bodyRef} className="mt-8 max-w-2xl">
+                      <Markdown text={body} base={2} title={title} />
+                    </div>
+                  )}
+                </>
+              )
+            : (
+                <div className="mt-6">
+                  {/* The page keeps its one h1 while the title is an input: clipped
+                      rather than hidden, so it stays in the accessibility tree, and
+                      holding the title on disk rather than the typed one. */}
+                  <ScreenHeading ref={headingRef} className="sr-only">{title}</ScreenHeading>
+                  {diskChange.showing && (
+                    <ChangedOnDisk
+                      at={diskChange.at}
+                      lineRef={editing.diskLineRef}
+                      onReload={editing.reload}
+                      onKeyDown={editing.onKeyDown}
+                      onFocusLost={editing.diskLineFocusLost}
+                    />
+                  )}
+                  {idLine}
+                  <TaskEditor
+                    formId={formId}
+                    formRef={editing.formRef}
+                    draft={draft}
+                    onDraftChange={editing.changeDraft}
+                    titleRef={editing.titleRef}
+                    titleError={editing.titleError}
+                    bodyError={editing.bodyError}
+                    meta={metaLine}
+                    onSubmit={editing.save}
+                    onKeyDown={editing.onKeyDown}
+                  />
+                </div>
+              )}
 
           {comments.length > 0 && <Comments comments={comments} listRef={commentsRef} />}
         </div>
-        <ScrollToTop scrolled={scrolled} headingRef={headingRef} />
+        <ScrollToTop scrolled={scrolled} headingRef={scrolledRef} />
       </div>
       <TaskSidebar
         tag={tag}
@@ -252,6 +388,17 @@ export function TaskScreen(): ReactNode {
         relations={relations}
         outline={outline}
         pageScrollPadding={scrollPaddingTop}
+      />
+      <ConfirmDialog
+        open={editing.discardAsked}
+        title="Discard your changes?"
+        description="The title and the body you edited are not saved. There is no undo."
+        cancelLabel="Keep editing"
+        confirmLabel="Discard"
+        onCancel={editing.keepEditing}
+        onConfirm={editing.discard}
+        finalFocus={editing.discardFocusRef}
+        status={editing.saving ? "Saving…" : undefined}
       />
       <TaskPollNotice tag={tag} id={taskId} />
     </div>

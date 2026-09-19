@@ -1,10 +1,10 @@
 import { hashKey, mutationOptions, useMutationState, type QueryClient } from "@tanstack/react-query";
-import { ProtocolError, TransportError, type Client, type Diagnostic } from "@tasma/protocol";
+import { ProtocolError, TransportError, type Client, type Diagnostic, type SerializeErrorCode } from "@tasma/protocol";
 import { boardWarnings, type PendingWrite, type TaskWrite } from "../lib/board";
 import { failureWords, joinFailureWords } from "../lib/failure-words";
 import { warningCount } from "../lib/warning-count";
 import { noticeWords, useNoticeStore, type Notice } from "../store/notices";
-import { daemonKeys, projectQuery, tasksQuery } from "./queries";
+import { daemonKeys, projectQuery, taskQuery, tasksQuery } from "./queries";
 
 /** What one write of a sequence came back with. */
 type Written = {
@@ -19,6 +19,8 @@ export type TaskWrites = {
   writes: readonly TaskWrite[];
   /** The title of the failure notice, e.g. "PROJ-1 was not moved". */
   title: string;
+  /** Which screen sent the writes, which picks the muted line of the failure notice. */
+  place: "board" | "task page";
 };
 
 export function taskWriteKey(tag: string) {
@@ -41,8 +43,10 @@ export class TaskWriteError extends Error {
 }
 
 /**
- * The writes that were queued behind a failed write. Each was computed from a
- * board that showed the failed write, so none of them is sent.
+ * The board writes that were queued behind a failed board write. Each was
+ * computed from a board that showed the failed write, so none of them is sent.
+ * A page write is computed from the text in its own editor, so it is neither
+ * dropped by a failed board write nor drops one.
  */
 const dropped = new WeakSet<TaskWrites>();
 
@@ -78,8 +82,53 @@ const PARTIAL_FAILURE_LINES: Record<FailureKind, string> = {
   unsent: "A write did not start, and the move did not complete. The board shows what the daemon holds.",
 };
 
-function failureLine({ cause, completed }: TaskWriteError): string {
-  return (completed > 0 ? PARTIAL_FAILURE_LINES : WHOLE_FAILURE_LINES)[failureKind(cause)];
+/** A page write is one write, so it has no partial form. */
+const PAGE_FAILURE_LINES: Record<FailureKind, string> = {
+  refused: "The daemon refused the write, so nothing changed on disk. Its own words are below.",
+  unanswered: "No daemon answered, so nothing was written.",
+  address: "The daemon did not answer through the address below. Start the daemon there if it is not running. "
+    + "The page shows the task as the daemon holds it after the next read.",
+  unsent: "The write did not start, so nothing changed on disk.",
+};
+
+/**
+ * The correction a refusal about the body names, by the code the daemon refused
+ * with. A map rather than an object: the daemon's `code` is validated as a
+ * string alone, and a prototype key would index an object literal to something
+ * that is not a message.
+ */
+const BODY_CORRECTIONS = new Map<SerializeErrorCode, string>([
+  [
+    "marker-collision",
+    "The body starts a line with a comment marker. Indent that line, or change its first characters.",
+  ],
+  ["fence-unterminated", "The body opens a code fence that never closes. Close the fence."],
+]);
+
+/**
+ * What a refusal that is about the body tells the reader to correct, and
+ * nothing for a refusal that ties to no field of the editor. It takes the
+ * error a write rejects with as readily as the refusal inside it.
+ */
+export function bodyCorrection(error: unknown): string | undefined {
+  const cause = error instanceof TaskWriteError ? error.cause : error;
+
+  if (!(cause instanceof ProtocolError) || cause.failure.kind !== "serialize") {
+    return undefined;
+  }
+
+  return BODY_CORRECTIONS.get(cause.failure.code);
+}
+
+function failureLine({ cause, completed }: TaskWriteError, place: TaskWrites["place"]): string {
+  if (place === "board") {
+    return (completed > 0 ? PARTIAL_FAILURE_LINES : WHOLE_FAILURE_LINES)[failureKind(cause)];
+  }
+
+  const line = PAGE_FAILURE_LINES[failureKind(cause)];
+  const correction = bodyCorrection(cause);
+
+  return correction === undefined ? line : `${line} ${correction}`;
 }
 
 /** Closed first, so the notice of an earlier write, dismissed or not, does not hold this one back. */
@@ -118,7 +167,7 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
     retry: 0,
     scope: { id: `task-write:${tag}` },
     onSuccess: (results) => {
-      const known = boardWarnings(
+      const board = boardWarnings(
         queryClient.getQueryData(projectQuery(client, tag).queryKey)?.diagnostics ?? [],
         queryClient.getQueryData(tasksQuery(client, tag).queryKey)?.diagnostics ?? [],
       );
@@ -126,6 +175,12 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
       // A notice per written task: a sequence writes the cards a move passes
       // too, and the daemon's words are about the task of their own write.
       for (const { id, diagnostics } of results) {
+        // A write reports what the daemon found in the file before it, so the
+        // task page would repeat every warning its own read already shows.
+        const known = [
+          ...board,
+          ...(queryClient.getQueryData(taskQuery(client, tag, id).queryKey)?.diagnostics ?? []),
+        ];
         const fresh = diagnostics.filter((diagnostic) => !known.some(
           ({ code, message }) => code === diagnostic.code && message === diagnostic.message,
         ));
@@ -151,9 +206,12 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
     onError: (error, variables) => {
       // The failed mutation is still pending here, and every other pending
       // write of the project is queued behind it.
-      for (const { state } of queryClient.getMutationCache().findAll({ mutationKey: taskWriteKey(tag), status: "pending" })) {
-        if (state.variables !== variables) {
-          dropped.add(state.variables as TaskWrites);
+      if (variables.place === "board") {
+        for (const { state } of queryClient.getMutationCache().findAll({ mutationKey: taskWriteKey(tag), status: "pending" })) {
+          const queued = state.variables as TaskWrites;
+          if (queued !== variables && queued.place === "board") {
+            dropped.add(queued);
+          }
         }
       }
       // A dropped write opens no notice, so the notice of the failure that dropped it stays.
@@ -161,12 +219,12 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
         return;
       }
 
-      const { id, title } = variables;
+      const { id, title, place } = variables;
       openWriteNotice({
         key: `${FAILURE_KEY_PREFIX}${id}`,
         form: "failure",
         title,
-        line: failureLine(error),
+        line: failureLine(error, place),
         words: [joinFailureWords(failureWords(error.cause))],
       });
 

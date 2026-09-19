@@ -1,6 +1,7 @@
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Button } from "@base-ui/react/button";
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import type { FinalFocus } from "../lib/final-focus";
 import { useModalDialog } from "../store/notices";
 import {
   BUTTON_CLASS,
@@ -15,6 +16,39 @@ import {
 
 /** How long the status region is held back from its first write, counted from the popup's mount. */
 const STATUS_HOLD = 1000;
+
+/**
+ * Empties focus while the dialog opens, and hands back the element it took it
+ * from.
+ *
+ * Chrome refuses `aria-hidden` on an element a focused descendant sits under,
+ * and does not re-evaluate once focus leaves — so a dialog opened by a pointer
+ * click would leave the container of the clicked control readable by a screen
+ * reader for the life of that dialog. Base UI hides the outside elements from a
+ * passive effect and moves focus into the popup a frame later, which leaves
+ * this layout effect the one place between them.
+ *
+ * Base UI records its own return destination only once the popup registers its
+ * element, a commit after this one, so by then focus is already on nothing.
+ * The element handed back is therefore the only fallback the dialog has.
+ */
+function useFocusEmptiedWhileOpening(open: boolean): RefObject<HTMLElement | null> {
+  const openerRef = useRef<HTMLElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const focused = document.activeElement;
+    const opener = focused instanceof HTMLElement && focused !== document.body ? focused : null;
+
+    openerRef.current = opener;
+    opener?.blur();
+  }, [open]);
+
+  return openerRef;
+}
 
 type DialogStatusProps = { status: string | undefined };
 
@@ -80,7 +114,7 @@ export type ConfirmDialogProps = {
    * element focused before the dialog opened, which on a route change is gone
    * too, so a caller names one that survives the dialog's unmount.
    */
-  finalFocus: RefObject<HTMLElement | null>;
+  finalFocus: RefObject<FinalFocus>;
   /**
    * Spoken inside the dialog: the wait, then a refusal. A caller that keeps the
    * dialog open across a write must pass both — the failure mode is silence.
@@ -107,6 +141,7 @@ export function ConfirmDialog({
 }: ConfirmDialogProps): ReactNode {
   const cancelRef = useRef<HTMLButtonElement>(null);
   useModalDialog(open);
+  const openerRef = useFocusEmptiedWhileOpening(open);
 
   return (
     <AlertDialog.Root
@@ -127,11 +162,20 @@ export function ConfirmDialog({
             initialFocus={cancelRef}
             // A detached destination is truthy to Base UI, which then calls
             // focus() on a disconnected node and leaves focus on <body> with no
-            // fallback. Returning true takes the fallback instead.
+            // fallback. The element the dialog took focus from stands in.
             finalFocus={() => {
               const destination = finalFocus.current;
+              if (destination === "keep") {
+                return false;
+              }
 
-              return destination?.isConnected === true ? destination : true;
+              if (destination?.isConnected === true) {
+                return destination;
+              }
+
+              const opener = openerRef.current;
+
+              return opener?.isConnected === true ? opener : true;
             }}
             className={DIALOG_PANEL_CLASS}
           >

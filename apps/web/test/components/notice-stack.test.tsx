@@ -2,7 +2,7 @@ import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NoticeStack } from "../../src/components/notice-stack";
+import { NoticeStack, SpokenRegion } from "../../src/components/notice-stack";
 import { useNotice, useNoticeStore, type Notice, type NoticeContent } from "../../src/store/notices";
 
 const FIRST: Notice = {
@@ -80,7 +80,7 @@ function Screen({ noticeKey, content }: { noticeKey: string; content: NoticeCont
 }
 
 beforeEach(() => {
-  useNoticeStore.setState({ notices: [], dismissed: new Map() });
+  useNoticeStore.setState({ notices: [], dismissed: new Map(), spoken: [], held: [], modalDialogs: 0 });
 });
 
 afterEach(() => {
@@ -492,5 +492,68 @@ describe("useNotice", () => {
     rerender(<Screen noticeKey={FIRST.key} content={CONTENT} />);
 
     expect(openKeys()).toEqual([FIRST.key]);
+  });
+});
+
+describe("the spoken region", () => {
+  function region(): HTMLElement {
+    return document.querySelector<HTMLElement>("[aria-live].sr-only")!;
+  }
+
+  function say(words: string): void {
+    act(() => {
+      useNoticeStore.getState().say(words);
+    });
+  }
+
+  it("is mounted and empty before anything is said, so its first words are an addition", () => {
+    render(<SpokenRegion />);
+
+    expect(region().getAttribute("aria-live")).toBe("polite");
+    expect(region().children).toHaveLength(0);
+  });
+
+  it("gives the same words said twice a node each, so both are announced", () => {
+    render(<SpokenRegion />);
+
+    say("Saved.");
+    say("Saved.");
+
+    expect([...region().children].map(({ textContent }) => textContent)).toEqual(["Saved.", "Saved."]);
+  });
+
+  it("drops a message three seconds after it is said", () => {
+    vi.useFakeTimers();
+    render(<SpokenRegion />);
+    say("Saved.");
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(region().children).toHaveLength(0);
+    vi.useRealTimers();
+  });
+
+  it("holds a message and a notice while a modal dialog is open, and lets both through when it closes", () => {
+    render(stackTree(<SpokenRegion />));
+    act(() => {
+      useNoticeStore.getState().openModalDialog();
+    });
+
+    say("Saved.");
+    act(() => {
+      useNoticeStore.getState().showNotice(FIRST);
+    });
+
+    expect(region().children).toHaveLength(0);
+    expect(within(stack()).queryByText(FIRST.title)).toBeNull();
+
+    act(() => {
+      useNoticeStore.getState().closeModalDialog();
+    });
+
+    expect([...region().children].map(({ textContent }) => textContent)).toEqual(["Saved."]);
+    expect(within(stack()).getByText(FIRST.title)).not.toBeNull();
   });
 });

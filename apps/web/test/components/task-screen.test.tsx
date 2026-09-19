@@ -397,6 +397,14 @@ describe("the title in the top bar and scroll to top", () => {
     return backLink().nextElementSibling as HTMLElement;
   }
 
+  it("carries Edit at the right end of the bar while the page reads", async () => {
+    const { transport } = daemon();
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    const edit = within(topBar()).getByRole("button", { name: "Edit" });
+    expect(edit.parentElement?.className).toContain("ml-auto");
+  });
+
   it("hides the id and the title in the top bar, and the control, until the h1 has scrolled under the bar", async () => {
     const io = stubIntersectionObserver();
     const resize = stubResizeObservers();

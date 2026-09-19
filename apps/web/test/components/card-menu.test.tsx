@@ -1,9 +1,10 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CardContextMenu, CardMenu, type CardMenuItemsProps } from "../../src/components/card-menu";
 import { MENU_ITEM_CLASS } from "../../src/components/control-classes";
+import { useUiStore } from "../../src/store/ui";
 import { renderBesideTaskRoute } from "../helpers";
 
 const STATUSES = ["Backlog", "In Progress", "Done"];
@@ -39,19 +40,25 @@ function statusItems(menu: HTMLElement): HTMLElement[] {
   return within(menu).getAllByRole("menuitemradio");
 }
 
+beforeEach(() => {
+  useUiStore.setState({ editRequest: null });
+});
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
 describe("the items", () => {
-  it("are Open task, a separator, and the statuses in order under the Move to label", async () => {
+  it("are Open task, Edit, a separator, and the statuses in order under the Move to label", async () => {
     await renderMenu();
     const { menu } = await openFromButton();
 
-    const [open, separator, group] = [...menu.children];
+    const [open, edit, separator, group] = [...menu.children];
     expect(open?.getAttribute("role")).toBe("menuitem");
     expect(open?.textContent).toBe("Open task");
+    expect(edit?.getAttribute("role")).toBe("menuitem");
+    expect(edit?.textContent).toBe("Edit");
     expect(separator?.getAttribute("role")).toBe("separator");
     expect(group).toBe(within(menu).getByRole("group", { name: "Move to" }));
     expect(statusItems(menu).map((item) => item.textContent)).toEqual(STATUSES);
@@ -132,6 +139,20 @@ describe("choosing an item", () => {
     expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-7");
     expect(onOpen).toHaveBeenCalledOnce();
   });
+
+  it("opens the task from Edit, with the request that its editor opens", async () => {
+    const onOpen = vi.fn();
+    const { router } = await renderMenu("In Progress", { onOpen });
+    const { user, menu } = await openFromButton();
+
+    await act(async () => {
+      await user.click(within(menu).getByRole("menuitem", { name: "Edit" }));
+    });
+
+    expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-7");
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(useUiStore.getState().takeEditRequest()).toEqual({ tag: "SAGA", id: "SAGA-7" });
+  });
 });
 
 describe("Move up and Move down", () => {
@@ -156,7 +177,7 @@ describe("Move up and Move down", () => {
     await renderMenu("In Progress", places);
     const { menu } = await openFromButton();
 
-    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open task", ...items]);
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open task", "Edit", ...items]);
   });
 
   it.each(["Move up", "Move down"])("%s calls its handler alone, and closes the menu", async (name) => {
@@ -183,7 +204,7 @@ describe("right click", () => {
     fireEvent.contextMenu(screen.getByText("Draft the schema"), { clientX: 40, clientY: 20 });
 
     const menu = await screen.findByRole("menu");
-    expect(within(menu).getByRole("menuitem").textContent).toBe("Open task");
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open task", "Edit"]);
     expect(statusItems(menu).map((item) => item.textContent)).toEqual(STATUSES);
   });
 

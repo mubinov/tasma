@@ -179,7 +179,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
 
   /** Sends the writes of a move. `refused` runs when the daemon turns them down. */
   function sendMove(id: string, writes: TaskWrite[], refused?: () => void): void {
-    write({ id, writes, title: `${id} was not moved` }).catch(() => refused?.());
+    write({ id, writes, title: `${id} was not moved`, place: "board" }).catch(() => refused?.());
   }
 
   /**

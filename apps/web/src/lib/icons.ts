@@ -12,6 +12,7 @@ import { ListChecksIcon } from "@phosphor-icons/react/ListChecks";
 import { MagnifyingGlassIcon } from "@phosphor-icons/react/MagnifyingGlass";
 import { MonitorIcon } from "@phosphor-icons/react/Monitor";
 import { MoonIcon } from "@phosphor-icons/react/Moon";
+import { PencilSimpleIcon } from "@phosphor-icons/react/PencilSimple";
 import { ProhibitIcon } from "@phosphor-icons/react/Prohibit";
 import { SidebarSimpleIcon } from "@phosphor-icons/react/SidebarSimple";
 import { SunIcon } from "@phosphor-icons/react/Sun";
@@ -33,6 +34,7 @@ export {
   MagnifyingGlassIcon,
   MonitorIcon,
   MoonIcon,
+  PencilSimpleIcon,
   ProhibitIcon,
   SidebarSimpleIcon,
   SunIcon,

@@ -1,6 +1,6 @@
 import type { Frontmatter, TaskEntry } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
-import { blockingRows, customLines, formatStamp, relationRows, type RelationRow } from "../../src/lib/task-page";
+import { blockingRows, customLines, formatMinutes, formatStamp, relationRows, type RelationRow } from "../../src/lib/task-page";
 
 function frontmatter(fields: Partial<Frontmatter> = {}): Frontmatter {
   return {
@@ -19,6 +19,17 @@ function entry(id: string, status: string, title: string): TaskEntry {
 }
 
 const FINAL = ["Done", "Dropped"];
+
+describe("formatMinutes", () => {
+  it("writes the minute in the local time zone, padded", () => {
+    expect(formatMinutes(new Date(2026, 8, 13, 16, 42, 59).toISOString())).toBe("16:42");
+    expect(formatMinutes(new Date(2026, 0, 5, 7, 3).toISOString())).toBe("07:03");
+  });
+
+  it.each([{ value: "" }, { value: "yesterday" }])("returns \"$value\" as written, since it is no date", ({ value }) => {
+    expect(formatMinutes(value)).toBe(value);
+  });
+});
 
 describe("formatStamp", () => {
   it("writes the date and the minute in the local time zone", () => {

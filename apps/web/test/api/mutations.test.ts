@@ -4,6 +4,7 @@ import {
   ProtocolError,
   type Client,
   type Diagnostic,
+  type SerializeErrorCode,
   type Transport,
   type TransportReply,
   type TransportRequest,
@@ -13,7 +14,7 @@ import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAppQueryClient } from "../../src/api/client";
 import { TaskWriteError, taskWriteKey, taskWriteOptions, usePendingTaskWrites, type TaskWrites } from "../../src/api/mutations";
-import { projectQuery, tasksQuery } from "../../src/api/queries";
+import { projectQuery, taskQuery, tasksQuery } from "../../src/api/queries";
 import { DAEMON_URL } from "../../src/api/transport";
 import { useNoticeStore } from "../../src/store/notices";
 import { heldBack, refusalReply, stubTransport, successReply } from "../helpers";
@@ -39,11 +40,22 @@ function moveOf(first: string, ...others: string[]): TaskWrites {
     id: moved,
     writes: [write(first, 0), ...others.map((id, index) => write(id, index + 1))],
     title: `${moved} was not moved`,
+    place: "board",
   };
 }
 
+/** The one write a task page sends: the title and the body of the task it shows. */
+function pageSave(id: string, change: { title?: string; body?: string } = { title: "Renamed" }): TaskWrites {
+  return { id, writes: [{ id, change }], title: `${id} was not saved`, place: "task page" };
+}
+
 /** A move of NOTE-1 that writes only the task below it. */
-const BELOW_ONLY: TaskWrites = { id: "NOTE-1", writes: [{ id: "NOTE-2", change: { order: 0 } }], title: "NOTE-1 was not moved" };
+const BELOW_ONLY: TaskWrites = {
+  id: "NOTE-1",
+  writes: [{ id: "NOTE-2", change: { order: 0 } }],
+  title: "NOTE-1 was not moved",
+  place: "board",
+};
 
 const REFUSAL = refusalReply(422, { kind: "store", code: "status-unknown", message: "status \"Gone\" is not configured" });
 
@@ -191,6 +203,46 @@ describe("taskWriteOptions", () => {
     ]);
 
     await another().mutate(moveOf("NOTE-2"));
+
+    expect(writes(requests).map(({ path }) => path)).toEqual([taskPath("NOTE-1"), taskPath("NOTE-2")]);
+  });
+
+  it("sends a page save queued behind a failed board write, and opens its own notice", async () => {
+    const first = heldBack();
+    const { observer, queryClient, client, requests } = setup({
+      [`PATCH ${taskPath("NOTE-1")}`]: first.reply,
+      [`PATCH ${taskPath("NOTE-2")}`]: REFUSAL,
+    });
+    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+
+    const done = [observer.mutate(moveOf("NOTE-1")), another().mutate(pageSave("NOTE-2"))]
+      .map((sent) => sent.catch((error: unknown) => error));
+    await vi.waitFor(() => {
+      expect(writes(requests)).toHaveLength(1);
+    });
+    first.answer(REFUSAL);
+    await Promise.all(done);
+
+    expect(writes(requests).map(({ path }) => path)).toEqual([taskPath("NOTE-1"), taskPath("NOTE-2")]);
+    expect(notices().map(({ key }) => key))
+      .toEqual(["task-write-failure:NOTE-1", "task-write-failure:NOTE-2"]);
+  });
+
+  it("drops no board write behind a failed page save", async () => {
+    const first = heldBack();
+    const { observer, queryClient, client, requests } = setup({
+      [`PATCH ${taskPath("NOTE-1")}`]: first.reply,
+      [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2"),
+    });
+    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+
+    const done = [observer.mutate(pageSave("NOTE-1")), another().mutate(moveOf("NOTE-2"))]
+      .map((sent) => sent.catch((error: unknown) => error));
+    await vi.waitFor(() => {
+      expect(writes(requests)).toHaveLength(1);
+    });
+    first.answer(REFUSAL);
+    await Promise.all(done);
 
     expect(writes(requests).map(({ path }) => path)).toEqual([taskPath("NOTE-1"), taskPath("NOTE-2")]);
   });
@@ -366,6 +418,84 @@ describe("the failure notice", () => {
   });
 });
 
+describe("the failure notice of a task page write", () => {
+  const PAGE_FAILURES: { kind: string; reply: TransportReply | null; id?: string; line: string }[] = [
+    {
+      kind: "a refusal",
+      reply: REFUSAL,
+      line: "The daemon refused the write, so nothing changed on disk. Its own words are below.",
+    },
+    { kind: "no answer", reply: null, line: "No daemon answered, so nothing was written." },
+    {
+      kind: "an answer that is not the daemon's",
+      reply: { status: 502 },
+      line: "The daemon did not answer through the address below. Start the daemon there if it is not running. "
+        + "The page shows the task as the daemon holds it after the next read.",
+    },
+    {
+      kind: "a write that could not start",
+      reply: null,
+      id: "..",
+      line: "The write did not start, so nothing changed on disk.",
+    },
+  ];
+
+  function failing(reply: TransportReply | null, id: string): Transport {
+    const { transport: answering } = stubTransport(reply === null ? {} : { [`PATCH ${taskPath(id)}`]: reply });
+
+    return (request) =>
+      reply === null && request.path === taskPath(id) ? Promise.reject(new Error("connection refused")) : answering(request);
+  }
+
+  it.each(PAGE_FAILURES)("says nothing changed on disk for $kind", async ({ reply, id = "NOTE-1", line }) => {
+    const { observer } = setup({}, failing(reply, id));
+
+    await expect(observer.mutate(pageSave(id))).rejects.toThrow();
+
+    expect(notices()).toMatchObject([
+      { key: `task-write-failure:${id}`, form: "failure", title: `${id} was not saved`, line },
+    ]);
+  });
+
+  const BODY_REFUSALS: { code: SerializeErrorCode; message: string; correction: string }[] = [
+    {
+      code: "marker-collision",
+      message: "line 4 would be read as a comment marker",
+      correction: "The body starts a line with a comment marker. Indent that line, or change its first characters.",
+    },
+    {
+      code: "fence-unterminated",
+      message: "the fence opened on line 6 is not closed",
+      correction: "The body opens a code fence that never closes. Close the fence.",
+    },
+  ];
+
+  it.each(BODY_REFUSALS)("names the correction for $code at the end of its line", async ({ code, message, correction }) => {
+    const { observer } = setup({
+      [`PATCH ${taskPath("NOTE-1")}`]: refusalReply(422, { kind: "serialize", code, message, line: 4 }),
+    });
+
+    await expect(observer.mutate(pageSave("NOTE-1", { body: "text" }))).rejects.toThrow();
+
+    expect(notices()).toMatchObject([
+      {
+        line: `The daemon refused the write, so nothing changed on disk. Its own words are below. ${correction}`,
+        words: [`serialize/${code} · ${message}`],
+      },
+    ]);
+  });
+
+  it("names no correction for a refusal that ties to no field", async () => {
+    const { observer } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: REFUSAL });
+
+    await expect(observer.mutate(pageSave("NOTE-1"))).rejects.toThrow();
+
+    expect(notices()).toMatchObject([
+      { line: "The daemon refused the write, so nothing changed on disk. Its own words are below." },
+    ]);
+  });
+});
+
 describe("the warning notice of a write", () => {
   const KNOWN: Diagnostic = { code: "config-key-unknown", message: "unknown key: colour", path: "/p/config.yml", line: 2 };
   const LISTED: Diagnostic = { code: "blocked-by-unresolved", message: "NOTE-9 names no task", path: "/p/NOTE-4.md" };
@@ -430,6 +560,32 @@ describe("the warning notice of a write", () => {
     expect(notices()).toEqual([]);
   });
 
+  it("leaves out what the cached task read of the written task already shows", async () => {
+    const { observer, queryClient, client } = setup({
+      [taskPath("NOTE-1")]: successReply({ frontmatter: {}, body: "", comments: [] }, [KNOWN]),
+      [`PATCH ${taskPath("NOTE-1")}`]: written("NOTE-1", [KNOWN, FRESH]),
+    });
+    await queryClient.query(taskQuery(client, TAG, "NOTE-1"));
+
+    await observer.mutate(pageSave("NOTE-1"));
+
+    expect(notices()).toMatchObject([
+      { key: "task-write-warnings:NOTE-1", title: "1 warning about NOTE-1", words: [`${FRESH.code} · ${FRESH.message}`] },
+    ]);
+  });
+
+  it("counts the task read of the written task alone, not of another task", async () => {
+    const { observer, queryClient, client } = setup({
+      [taskPath("NOTE-2")]: successReply({ frontmatter: {}, body: "", comments: [] }, [KNOWN]),
+      [`PATCH ${taskPath("NOTE-1")}`]: written("NOTE-1", [KNOWN]),
+    });
+    await queryClient.query(taskQuery(client, TAG, "NOTE-2"));
+
+    await observer.mutate(pageSave("NOTE-1"));
+
+    expect(notices()).toMatchObject([{ key: "task-write-warnings:NOTE-1", title: "1 warning about NOTE-1" }]);
+  });
+
   it("opens again for a later write after Dismiss", async () => {
     const { observer } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: written("NOTE-1", [FRESH]) });
 
@@ -444,7 +600,12 @@ describe("the warning notice of a write", () => {
 });
 
 describe("usePendingTaskWrites", () => {
-  const ELSE_WRITE: TaskWrites = { id: "ELSE-1", writes: [{ id: "ELSE-1", change: { order: 1 } }], title: "ELSE-1 was not moved" };
+  const ELSE_WRITE: TaskWrites = {
+    id: "ELSE-1",
+    writes: [{ id: "ELSE-1", change: { order: 1 } }],
+    title: "ELSE-1 was not moved",
+    place: "board",
+  };
 
   function renderPending(replies: Record<string, TransportReply | Promise<TransportReply>>) {
     const { queryClient, client } = setup(replies);

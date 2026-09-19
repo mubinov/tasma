@@ -98,11 +98,18 @@ type UiState = {
   /** The final columns "Show all" has opened, by `revealedColumnKey`. Never persisted: a reload folds them again. */
   revealedColumns: ReadonlySet<string>;
   revealColumn: (tag: string, place: number) => void;
+  /** A card menu's request to open a task page with its editor open. Never persisted: a reload opens it in reading. */
+  editRequest: EditRequest | null;
+  requestEdit: (tag: string, id: string) => void;
+  /** Reads the request and clears it, so one request opens one editor. */
+  takeEditRequest: () => EditRequest | null;
 };
+
+export type EditRequest = { tag: string; id: string };
 
 // Starts on the defaults and reads nothing: importing a module must not touch
 // storage. hydrateUiStore loads the persisted values.
-export const useUiStore = create<UiState>((set) => ({
+export const useUiStore = create<UiState>((set, get) => ({
   themePreference: "system",
   setThemePreference: (preference) => {
     storage.write(THEME_STORAGE_KEY, preference);
@@ -131,6 +138,18 @@ export const useUiStore = create<UiState>((set) => ({
     set(({ revealedColumns }) => ({
       revealedColumns: new Set(revealedColumns).add(revealedColumnKey(tag, place)),
     }));
+  },
+  editRequest: null,
+  requestEdit: (tag, id) => {
+    set({ editRequest: { tag, id } });
+  },
+  takeEditRequest: () => {
+    const request = get().editRequest;
+    if (request !== null) {
+      set({ editRequest: null });
+    }
+
+    return request;
   },
 }));
 

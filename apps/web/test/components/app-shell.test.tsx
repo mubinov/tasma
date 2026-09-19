@@ -135,3 +135,13 @@ it("shows the sentence each placeholder route declares", async () => {
     cleanup();
   }
 });
+
+// A live region inserted together with its first words is not announced, so the
+// one the application speaks through is on the page before any screen writes to it.
+it("mounts the spoken region with the shell, empty", async () => {
+  await renderWithRouter();
+
+  const region = document.querySelector("[aria-live].sr-only");
+  expect(region).not.toBeNull();
+  expect(region!.children).toHaveLength(0);
+});

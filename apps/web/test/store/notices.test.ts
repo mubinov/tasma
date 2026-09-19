@@ -1,5 +1,5 @@
 import type { Diagnostic } from "@tasma/protocol";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { noticeWords, useNoticeStore, type Notice } from "../../src/store/notices";
 
 const FIRST: Notice = {
@@ -21,7 +21,7 @@ function openKeys(): string[] {
 }
 
 beforeEach(() => {
-  useNoticeStore.setState({ notices: [], dismissed: new Map(), modalDialogs: 0 });
+  useNoticeStore.setState({ notices: [], dismissed: new Map(), modalDialogs: 0, spoken: [], held: [] });
 });
 
 describe("showNotice", () => {
@@ -228,5 +228,153 @@ describe("the muted line", () => {
     useNoticeStore.getState().showNotice({ ...FAILURE, line: "No daemon answered, so nothing was written." });
 
     expect(openKeys()).toEqual([FAILURE.key]);
+  });
+});
+
+describe("say", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("adds a message node of its own for each call, so the same words said twice are two nodes", () => {
+    useNoticeStore.getState().say("Saved.");
+    useNoticeStore.getState().say("Saved.");
+
+    const spoken = useNoticeStore.getState().spoken;
+    expect(spoken.map(({ words }) => words)).toEqual(["Saved.", "Saved."]);
+    expect(spoken[0]!.serial).not.toBe(spoken[1]!.serial);
+  });
+
+  it("clears a message three seconds after it is said, and leaves a later one standing", () => {
+    vi.useFakeTimers();
+    useNoticeStore.getState().say("Saved.");
+    vi.advanceTimersByTime(1_200);
+    useNoticeStore.getState().say("Changed on disk at 10:15. Saving overwrites that change.");
+
+    vi.advanceTimersByTime(1_800);
+
+    expect(useNoticeStore.getState().spoken.map(({ words }) => words))
+      .toEqual(["Changed on disk at 10:15. Saving overwrites that change."]);
+
+    vi.advanceTimersByTime(1_200);
+
+    expect(useNoticeStore.getState().spoken).toEqual([]);
+  });
+});
+
+describe("what a modal dialog holds back", () => {
+  it("holds a message and says it when the dialog closes", () => {
+    useNoticeStore.getState().openModalDialog();
+    useNoticeStore.getState().say("Saved.");
+    expect(useNoticeStore.getState().spoken).toEqual([]);
+
+    useNoticeStore.getState().closeModalDialog();
+
+    expect(useNoticeStore.getState().spoken.map(({ words }) => words)).toEqual(["Saved."]);
+  });
+
+  it("holds a notice and opens it when the dialog closes", () => {
+    useNoticeStore.getState().openModalDialog();
+    useNoticeStore.getState().showNotice(FIRST);
+    expect(openKeys()).toEqual([]);
+
+    useNoticeStore.getState().closeModalDialog();
+
+    expect(openKeys()).toEqual([FIRST.key]);
+  });
+
+  it("keeps holding while an outer dialog is still open", () => {
+    useNoticeStore.getState().openModalDialog();
+    useNoticeStore.getState().openModalDialog();
+    useNoticeStore.getState().showNotice(FIRST);
+
+    useNoticeStore.getState().closeModalDialog();
+
+    expect(openKeys()).toEqual([]);
+  });
+
+  it("holds one notice per key, the last content of that key", () => {
+    const changed: Notice = { ...FIRST, title: "2 warnings about SAGA-56" };
+    useNoticeStore.getState().openModalDialog();
+    useNoticeStore.getState().showNotice(FIRST);
+    useNoticeStore.getState().showNotice(changed);
+
+    useNoticeStore.getState().closeModalDialog();
+
+    expect(useNoticeStore.getState().notices).toMatchObject([changed]);
+  });
+
+  it("opens what it held in the order it was raised", () => {
+    useNoticeStore.getState().openModalDialog();
+    useNoticeStore.getState().showNotice(FIRST);
+    useNoticeStore.getState().say("Saved.");
+    useNoticeStore.getState().showNotice(SECOND);
+
+    useNoticeStore.getState().closeModalDialog();
+
+    expect(openKeys()).toEqual([FIRST.key, SECOND.key]);
+    expect(useNoticeStore.getState().spoken.map(({ words }) => words)).toEqual(["Saved."]);
+  });
+
+  it("drops a held notice when its key is closed, so an answered refusal never opens", () => {
+    useNoticeStore.getState().openModalDialog();
+    useNoticeStore.getState().showNotice(FIRST);
+
+    useNoticeStore.getState().closeNotice(FIRST.key);
+    useNoticeStore.getState().closeModalDialog();
+
+    expect(openKeys()).toEqual([]);
+  });
+
+  it("drops a held notice when its key is dismissed", () => {
+    useNoticeStore.getState().openModalDialog();
+    useNoticeStore.getState().showNotice(FIRST);
+
+    useNoticeStore.getState().dismissNotice(FIRST.key);
+    useNoticeStore.getState().closeModalDialog();
+
+    expect(openKeys()).toEqual([]);
+  });
+
+  it("changes nothing where a closed key holds neither an open nor a held notice", () => {
+    useNoticeStore.getState().openModalDialog();
+    useNoticeStore.getState().showNotice(FIRST);
+    const before = useNoticeStore.getState();
+
+    useNoticeStore.getState().closeNotice(SECOND.key);
+
+    expect(useNoticeStore.getState()).toBe(before);
+  });
+
+  it("holds one message per key, the last words under that key", () => {
+    useNoticeStore.getState().openModalDialog();
+    useNoticeStore.getState().say("Changed on disk at 10:15. Saving overwrites that change.", "disk-change");
+    useNoticeStore.getState().say("Changed on disk at 11:20. Saving overwrites that change.", "disk-change");
+
+    useNoticeStore.getState().closeModalDialog();
+
+    expect(useNoticeStore.getState().spoken.map(({ words }) => words))
+      .toEqual(["Changed on disk at 11:20. Saving overwrites that change."]);
+  });
+
+  it("drops a held message its raiser withdrew, so words for a line that has gone are never said", () => {
+    useNoticeStore.getState().openModalDialog();
+    useNoticeStore.getState().say("Changed on disk at 10:15. Saving overwrites that change.", "disk-change");
+    useNoticeStore.getState().say("Saved.");
+
+    useNoticeStore.getState().unsay("disk-change");
+    useNoticeStore.getState().closeModalDialog();
+
+    expect(useNoticeStore.getState().spoken.map(({ words }) => words)).toEqual(["Saved."]);
+  });
+
+  it("changes nothing where a withdrawn key holds no message", () => {
+    useNoticeStore.getState().openModalDialog();
+    useNoticeStore.getState().say("Saved.");
+    const before = useNoticeStore.getState();
+
+    useNoticeStore.getState().unsay("disk-change");
+
+    expect(useNoticeStore.getState()).toBe(before);
   });
 });
