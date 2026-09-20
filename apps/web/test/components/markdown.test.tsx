@@ -79,7 +79,7 @@ describe("the headings", () => {
       ["H5", "4"],
       ["H6", "6"],
     ]);
-    const large = "mt-7 font-chrome text-lg font-semibold tracking-tight";
+    const large = "mt-7 font-chrome text-lg font-semibold";
     const medium = "mt-6 font-chrome text-base font-semibold";
     const small = "mt-5 font-chrome text-base font-medium text-muted";
     expect(found.map((heading) => classOf(heading))).toEqual([large, large, medium, small, small]);

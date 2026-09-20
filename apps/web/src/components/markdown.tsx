@@ -21,7 +21,7 @@ type HastNode = NonNullable<ExtraProps["node"]>["children"][number];
 
 function headingClass(depth: number): string {
   if (depth <= 2) {
-    return "mt-7 font-chrome text-lg font-semibold tracking-tight";
+    return "mt-7 font-chrome text-lg font-semibold";
   }
   return depth === 3
     ? "mt-6 font-chrome text-base font-semibold"

@@ -9,7 +9,7 @@ import { MarkdownEditor, MarkdownEditorHint } from "./markdown-editor";
 
 /** The title input carries the type of the heading it stands in for. */
 const TITLE_CLASS
-  = `mt-1 w-full max-w-2xl rounded-control bg-surface px-3 py-1.5 font-chrome text-xl font-semibold tracking-tight text-text ${FIELD_BORDER_CLASS}`;
+  = `mt-1 w-full max-w-2xl rounded-control bg-surface px-3 py-1.5 font-chrome text-xl font-semibold text-text ${FIELD_BORDER_CLASS}`;
 
 export type ChangedOnDiskProps = {
   /** `HH:MM` of the read that first differed. */

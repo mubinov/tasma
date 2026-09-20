@@ -180,7 +180,7 @@ export function ConfirmDialog({
             className={DIALOG_PANEL_CLASS}
           >
             {/* The class every h2 of the application already takes. */}
-            <AlertDialog.Title className="font-chrome text-lg font-semibold tracking-tight">
+            <AlertDialog.Title className="font-chrome text-lg font-semibold">
               {title}
             </AlertDialog.Title>
             <AlertDialog.Description className={DIALOG_BODY_CLASS}>{description}</AlertDialog.Description>

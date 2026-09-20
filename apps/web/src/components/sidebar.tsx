@@ -91,7 +91,7 @@ export function Sidebar(): ReactNode {
             <span className={ICON_BOX_CLASS}>
               <span className="size-6 rounded-control bg-graphic" />
             </span>
-            <CollapsingLabel collapsed={collapsed} className="font-chrome text-lg font-semibold tracking-tight">
+            <CollapsingLabel collapsed={collapsed} className="font-chrome text-lg font-semibold">
               tasma
             </CollapsingLabel>
           </div>

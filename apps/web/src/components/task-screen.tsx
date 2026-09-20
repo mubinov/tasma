@@ -91,7 +91,7 @@ function Comments({ comments, listRef }: CommentsProps): ReactNode {
   return (
     <section aria-labelledby={headingId} className="mt-10 max-w-2xl">
       {/* The space separates the words in speech; flex drops it from the layout. */}
-      <h2 id={headingId} className="flex items-baseline font-chrome text-lg font-semibold tracking-tight">
+      <h2 id={headingId} className="flex items-baseline font-chrome text-lg font-semibold">
         Comments
         {" "}
         <span className="ml-1.5 text-xs-plus font-normal text-dim">{comments.length}</span>

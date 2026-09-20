@@ -1,6 +1,6 @@
 import type { ReactNode, Ref } from "react";
 
-const HEADING_CLASS = "font-chrome text-xl font-semibold tracking-tight";
+const HEADING_CLASS = "font-chrome text-xl font-semibold";
 
 type ScreenHeadingProps = {
   children: ReactNode;
