@@ -1,10 +1,20 @@
 import { hashKey, mutationOptions, useMutationState, type QueryClient } from "@tanstack/react-query";
-import { ProtocolError, TransportError, type Client, type Diagnostic, type SerializeErrorCode } from "@tasma/protocol";
-import { boardWarnings, type PendingWrite, type TaskWrite } from "../lib/board";
-import { failureWords, joinFailureWords } from "../lib/failure-words";
-import { warningCount } from "../lib/warning-count";
-import { noticeWords, useNoticeStore, type Notice } from "../store/notices";
-import { daemonKeys, projectQuery, taskQuery, tasksQuery } from "./queries";
+import { type Client, type Diagnostic } from "@tasma/protocol";
+import { boardWarnings, type PendingWrite, type TaskWrite } from "../../lib/board";
+import { failureWords, joinFailureWords } from "../../lib/failure-words";
+import { warningCount } from "../../lib/warning-count";
+import { noticeWords, useNoticeStore } from "../../store/notices";
+import { daemonKeys, projectQuery, taskQuery, tasksQuery } from "../queries";
+import {
+  bodyCorrection,
+  failureKind,
+  FAILURE_KEY_PREFIX,
+  freshDiagnostics,
+  openWriteNotice,
+  WARNING_KEY_PREFIX,
+  WriteError,
+  type FailureKind,
+} from "./notices";
 
 /** What one write of a sequence came back with. */
 type Written = {
@@ -35,16 +45,12 @@ export function taskWriteKey(tag: string) {
   return [...daemonKeys.tasks(tag), "write"] as const;
 }
 
-const FAILURE_KEY_PREFIX = "task-write-failure:";
-
-const WARNING_KEY_PREFIX = "task-write-warnings:";
-
 /** A write of `TaskWrites` failed. `completed` is the count of the writes before it that succeeded. */
-export class TaskWriteError extends Error {
+export class TaskWriteError extends WriteError {
   readonly completed: number;
 
   constructor(cause: unknown, completed: number) {
-    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    super(cause);
     this.name = "TaskWriteError";
     this.completed = completed;
   }
@@ -65,18 +71,6 @@ const dropped = new WeakSet<TaskWrites>();
  */
 function placesCards({ writes }: TaskWrites): boolean {
   return writes.some(({ change }) => typeof change.order === "number");
-}
-
-type FailureKind = "refused" | "unanswered" | "address" | "unsent";
-
-function failureKind(cause: unknown): FailureKind {
-  if (cause instanceof ProtocolError) {
-    return "refused";
-  }
-  if (cause instanceof TransportError) {
-    return cause.status === undefined ? "unanswered" : "address";
-  }
-  return "unsent";
 }
 
 /** Nothing was written. */
@@ -108,35 +102,6 @@ const PAGE_FAILURE_LINES: Record<FailureKind, string> = {
   unsent: "The write did not start, so nothing changed on disk.",
 };
 
-/**
- * The correction a refusal about the body names, by the code the daemon refused
- * with. A map rather than an object: the daemon's `code` is validated as a
- * string alone, and a prototype key would index an object literal to something
- * that is not a message.
- */
-const BODY_CORRECTIONS = new Map<SerializeErrorCode, string>([
-  [
-    "marker-collision",
-    "The body starts a line with a comment marker. Indent that line, or change its first characters.",
-  ],
-  ["fence-unterminated", "The body opens a code fence that never closes. Close the fence."],
-]);
-
-/**
- * What a refusal that is about the body tells the reader to correct, and
- * nothing for a refusal that ties to no field of the editor. It takes the
- * error a write rejects with as readily as the refusal inside it.
- */
-export function bodyCorrection(error: unknown): string | undefined {
-  const cause = error instanceof TaskWriteError ? error.cause : error;
-
-  if (!(cause instanceof ProtocolError) || cause.failure.kind !== "serialize") {
-    return undefined;
-  }
-
-  return BODY_CORRECTIONS.get(cause.failure.code);
-}
-
 function failureLine({ cause, completed }: TaskWriteError, { place, property }: TaskWrites): string {
   if (place === "board") {
     return (completed > 0 ? PARTIAL_FAILURE_LINES : WHOLE_FAILURE_LINES)[failureKind(cause)];
@@ -147,12 +112,6 @@ function failureLine({ cause, completed }: TaskWriteError, { place, property }: 
   const correction = bodyCorrection(cause);
 
   return correction === undefined ? line : `${line} ${correction}`;
-}
-
-/** Closed first, so the notice of an earlier write, dismissed or not, does not hold this one back. */
-function openWriteNotice(notice: Notice): void {
-  useNoticeStore.getState().closeNotice(notice.key);
-  useNoticeStore.getState().showNotice(notice);
 }
 
 /**
@@ -199,9 +158,7 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
           ...board,
           ...(queryClient.getQueryData(taskQuery(client, tag, id).queryKey)?.diagnostics ?? []),
         ];
-        const fresh = diagnostics.filter((diagnostic) => !known.some(
-          ({ code, message }) => code === diagnostic.code && message === diagnostic.message,
-        ));
+        const fresh = freshDiagnostics(diagnostics, known);
 
         if (fresh.length > 0) {
           openWriteNotice({

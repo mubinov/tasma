@@ -12,12 +12,12 @@ import {
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createAppQueryClient } from "../../src/api/client";
-import { TaskWriteError, taskWriteKey, taskWriteOptions, usePendingTaskWrites, type TaskWrites } from "../../src/api/mutations";
-import { projectQuery, taskQuery, tasksQuery } from "../../src/api/queries";
-import { DAEMON_URL } from "../../src/api/transport";
-import { useNoticeStore } from "../../src/store/notices";
-import { heldBack, refusalReply, stubTransport, successReply } from "../helpers";
+import { createAppQueryClient } from "../../../src/api/client";
+import { TaskWriteError, taskWriteKey, taskWriteOptions, usePendingTaskWrites, type TaskWrites } from "../../../src/api/mutations";
+import { projectQuery, taskQuery, tasksQuery } from "../../../src/api/queries";
+import { DAEMON_URL } from "../../../src/api/transport";
+import { useNoticeStore } from "../../../src/store/notices";
+import { heldBack, refusalReply, stubTransport, successReply } from "../../helpers";
 
 const TAG = "NOTE";
 
