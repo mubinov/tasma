@@ -1,12 +1,35 @@
+# Layout
+
+- `apps/macos` — the macOS application: a Tauri shell that serves the
+  `apps/web` bundle and forwards to the daemon. The only Rust in the repository.
+- `apps/web` — the board, a React application. The browser is for development
+  only; what ships is the macOS app, which serves this same bundle.
+- `apps/daemon` — the HTTP daemon over the engine. Every read and write of a
+  tree goes through it.
+- `apps/cli` — the `tasma` command. It reaches the daemon, never a tree.
+- `packages/engine` — the disk layer: the task and workflow file format, the
+  store, the index cache and the watcher.
+- `packages/protocol` — the wire contract and its client, shared by the daemon,
+  the CLI and the board.
+- `docs/` — documentation for people outside the repository. `README.md` is the
+  GitHub front page, not a documentation page.
+
+`packages/engine` and `packages/protocol` depend on nothing of ours, and
+`apps/cli` never depends on `packages/engine`. Keep it that way.
+
 # Rules
 
 - `~/.tasma` holds real data: live projects, tasks and workflows, with no backup.
   Never write to it, never delete it, and never delete anything under it. A test
   suite that looks polluted is never caused by this tree.
-- Run the CLI through `pnpm dev:cli`, which sets `HOME` to a directory under
-  `/tmp`. A temporary `HOME` of your own is equally fine; the real home
-  directory is forbidden. The web application reads no tree — run it with
+- Every command that resolves a daemon from `HOME` runs under
+  `scripts/dev-home.sh`, which puts `HOME` under `/tmp`: `pnpm dev:cli` and
+  `pnpm app:start` do. A temporary `HOME` of your own is equally fine; the real
+  home directory is forbidden. The web application reads no tree — run it with
   `pnpm dev`.
+- Start the daemon under that same `HOME` before the app. A shell that finds no
+  record falls back to the default port, where a daemon on the real home is
+  listening.
 - Tests, fixtures, examples, docs and comments hold invented data only. Never
   use the tag, a task id, the name or the path of a real project, or the name
   of a real person. This project is no exception: no `TASM` or `TASM-<n>`, and
@@ -14,10 +37,31 @@
   names the product itself, for example the CLI name, the `tasma:` prefix,
   `~/.tasma`, `@tasma/*`, `TASMA_*`.
 
+# apps/macos
+
+Rules in this chapter are for the `apps/macos` shell alone.
+
+- The crate is deliberately not a pnpm workspace package. When
+  `test/workspace.test.ts` fails naming `apps/macos`, delete the `package.json`
+  someone added — never add the scripts the failure asks for.
+- Every run that serves the built bundle passes `--features custom-protocol`,
+  and `app:test` never does: the feature embeds `apps/web/dist`, which no clone
+  carries.
+- `app:start` uses `cargo run`, never the Tauri CLI. `tauri dev` always runs
+  `beforeDevCommand` and then probes `devUrl`, which collides with the dev
+  server's `strictPort`.
+- The window is built in Rust. `app.windows` in `tauri.conf.json` is empty, and
+  a window property written there is read by nothing.
+- Never set a menu of our own and never call `enable_macos_default_menu(false)`.
+  Copy, paste and select-all reach the webview only through the default menu.
+- The first zoom keypress of a session logs one policy violation and one console
+  warning. Never widen `apps/web`'s `connect-src` to silence it.
+
 # apps/web
 
 Rules in this chapter are for the `apps/web` application alone.
 
+- Desktop only. Never design or test a mobile layout.
 - Use Base UI for interactive components.
 - Import icons from `src/lib/icons.ts`, never from `@phosphor-icons/react`.
 - No runtime CSS-in-JS.

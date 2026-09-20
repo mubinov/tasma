@@ -1,0 +1,27 @@
+{
+  "$schema": "../../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Tasma",
+  "identifier": "dev.tasma.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm --filter @tasma/web dev",
+    "beforeBuildCommand": "pnpm --filter @tasma/web build",
+    "devUrl": "http://127.0.0.1:8276",
+    "frontendDist": "../web/dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns"
+    ]
+  }
+}

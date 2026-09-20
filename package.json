@@ -14,7 +14,10 @@
     "lint:fix": "eslint . --max-warnings 0 --fix",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
-    "typecheck": "tsc --noEmit && pnpm -r typecheck"
+    "typecheck": "tsc --noEmit && pnpm -r typecheck",
+    "app:dev": "TASMA_DEV_SERVER=1 TAURI_APP_PATH=apps/macos tauri dev",
+    "app:start": "pnpm --filter @tasma/web build && scripts/dev-home.sh cargo run --manifest-path \"$PWD/apps/macos/Cargo.toml\" --features custom-protocol",
+    "app:test": "cargo test --manifest-path apps/macos/Cargo.toml"
   },
   "devDependencies": {
     "@eslint-react/eslint-plugin": "catalog:",
@@ -23,6 +26,7 @@
     "@tasma/cli": "workspace:*",
     "@tasma/engine": "workspace:*",
     "@tasma/protocol": "workspace:*",
+    "@tauri-apps/cli": "catalog:",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "eslint": "catalog:",

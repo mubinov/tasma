@@ -1,0 +1,39 @@
+[package]
+name = "tasma-macos"
+version = "0.0.0"
+edition = "2024"
+# `window_url` is a let chain, which edition 2024 accepts from 1.88 on. Without
+# the floor an earlier toolchain meets a syntax error rather than a version one.
+rust-version = "1.88"
+publish = false
+
+# The Dock and Command-Tab read the executable name when the binary runs
+# unbundled, so a development run names itself the same as the packaged app.
+[[bin]]
+name = "Tasma"
+path = "src/main.rs"
+
+[features]
+# Tauri reads dev mode from this feature rather than from the build profile, and
+# embeds the bundle only outside dev mode. Every run meant to serve the bundle
+# passes it; without it the resolver reads frontendDist off disk instead, which
+# a packaged app has none of.
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = "2"
+
+[dependencies]
+# The traversal guard reads the decoded path, because Tauri's resolver decodes
+# before it looks a name up.
+percent-encoding = "2"
+# default-features off: the daemon is reached over loopback HTTP, so no TLS
+# stack, no HTTP/2 and no proxy resolution are needed.
+reqwest = { version = "0.13", default-features = false }
+serde_json = "1"
+tauri = "2"
+
+[dev-dependencies]
+# The mock runtime, which the asset tests drive. Resolver 3 keeps the feature
+# out of a build that needs no dev dependency.
+tauri = { version = "2", features = ["test"] }

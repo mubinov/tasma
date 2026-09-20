@@ -5,7 +5,9 @@ import { join, posix } from "node:path";
 import { describe, expect, it } from "vitest";
 import { binTargets, readManifest, workspaceRoot } from "../workspace.js";
 
-const script = join(workspaceRoot, "scripts", "dev-home.sh");
+const WRAPPER = "scripts/dev-home.sh";
+
+const script = join(workspaceRoot, WRAPPER);
 
 describe("the development runner", () => {
   // The dev:cli script invokes it by path, so a lost executable bit breaks the
@@ -21,6 +23,29 @@ describe("the development runner", () => {
     expect(existsSync(home)).toBe(true);
   });
 
+  /** The cargo and rustup trees the script leaves a command, one per line. */
+  function toolchainTrees(env: NodeJS.ProcessEnv): string {
+    return execFileSync(script, ["sh", "-c", 'printf "%s\n%s" "$CARGO_HOME" "$RUSTUP_HOME"'], {
+      encoding: "utf8",
+      env: { ...process.env, ...env },
+    });
+  }
+
+  // A command that compiles runs under the replaced HOME too, and cargo and
+  // rustup keep their trees under HOME: left alone they would download the whole
+  // registry into a directory the operating system clears.
+  it("keeps the cargo and rustup trees on the real home", () => {
+    const trees = toolchainTrees({ HOME: "/var/empty/real-home", CARGO_HOME: "", RUSTUP_HOME: "" });
+
+    expect(trees).toBe("/var/empty/real-home/.cargo\n/var/empty/real-home/.rustup");
+  });
+
+  it("leaves the cargo and rustup trees a caller already named", () => {
+    const trees = toolchainTrees({ CARGO_HOME: "/var/empty/cargo", RUSTUP_HOME: "/var/empty/rustup" });
+
+    expect(trees).toBe("/var/empty/cargo\n/var/empty/rustup");
+  });
+
   it("passes its arguments through unchanged, a flag included", () => {
     const passed = execFileSync(script, ["printf", "%s\n", "task", "list", "--project", "SAGA"], {
       encoding: "utf8",
@@ -29,13 +54,29 @@ describe("the development runner", () => {
     expect(passed).toBe("task\nlist\n--project\nSAGA\n");
   });
 
-  // HOME is changed for the CLI alone and never for pnpm: under a changed HOME
-  // the package manager loses its store and re-resolves the workspace, which is
-  // why the script is the last link of the chain rather than the first.
-  it("stands after pnpm in the dev:cli script", () => {
-    const devCli = readManifest(".").scripts?.["dev:cli"] ?? "";
+  // HOME is changed for the command alone and never for pnpm: under a changed
+  // HOME the package manager loses its store and re-resolves the workspace,
+  // which is why the script is the last link of the chain rather than the first.
+  it("stands after pnpm in every script that wraps a command", () => {
+    const scripts = readManifest(".").scripts ?? {};
 
-    expect(devCli).toMatch(/^pnpm\s.*\sscripts\/dev-home\.sh\s/);
+    for (const [name, command] of Object.entries(scripts).filter(([, command]) => command.includes(WRAPPER))) {
+      expect(command, `${name} must reach ${WRAPPER} after pnpm`).toMatch(/^pnpm\s.*\sscripts\/dev-home\.sh\s/);
+    }
+  });
+
+  // The two commands HOME decides the daemon for: the CLI resolves the tree
+  // from HOME itself, and the window reads $HOME/.tasma/daemon.json to find
+  // which daemon to forward to. Unwrapped, either one reaches the real tree.
+  // `dev` and `app:dev` reach a daemon as well, but through the Vite proxy,
+  // which names one fixed address — HOME decides nothing for them, so the
+  // wrapper would change nothing either.
+  it("wraps every command that resolves its daemon from HOME", () => {
+    const scripts = readManifest(".").scripts ?? {};
+
+    for (const name of ["dev:cli", "app:start"]) {
+      expect(scripts[name], `${name} must run under the development home`).toContain(WRAPPER);
+    }
   });
 
   // pnpm exports the directory it was invoked from, which is where the CLI has

@@ -28,3 +28,8 @@ id_ed25519
 # Nested npmrc files may hold auth tokens; the root one pins the registry only
 .npmrc
 !/.npmrc
+
+# Rust build output and the schemas tauri_build generates, named in full so
+# neither can hide a directory of that name elsewhere.
+apps/macos/target/
+apps/macos/gen/

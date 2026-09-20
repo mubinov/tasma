@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/macOS-schema.json",
+  "identifier": "zoom",
+  "description": "The zoom shortcuts. wry implements zoom_hotkeys_enabled on Windows alone, so on macOS Tauri injects a script that invokes plugin:webview|set_webview_zoom instead, and an invoke reaching no capability is refused before the webview sees it.",
+  "windows": ["main"],
+  "permissions": ["core:webview:allow-set-webview-zoom"]
+}
