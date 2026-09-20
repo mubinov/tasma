@@ -2,7 +2,7 @@ import { Menu } from "@base-ui/react/menu";
 import { useNavigate } from "@tanstack/react-router";
 import type { ProjectSummary } from "@tasma/protocol";
 import { useId, type ReactNode } from "react";
-import { CaretDownIcon, CheckIcon } from "../lib/icons";
+import { CaretDownIcon } from "../lib/icons";
 import {
   GROUP_CLASS,
   LABEL_CLASS,
@@ -11,6 +11,7 @@ import {
   POSITIONER_CLASS,
   TRIGGER_CLASS,
 } from "./control-classes";
+import { RadioIndicator } from "./radio-indicator";
 import { Tag } from "./tag";
 
 type ProjectSelectProps = {
@@ -63,9 +64,7 @@ export function ProjectSelect({ projects, tag }: ProjectSelectProps): ReactNode 
                   // A radio item stays open on a click by default, and the board
                   // stays mounted when the project changes.
                   <Menu.RadioItem key={project.tag} value={project.tag} closeOnClick className={MENU_RADIO_ITEM_CLASS}>
-                    <Menu.RadioItemIndicator keepMounted className="flex w-3.5 shrink-0 data-[unchecked]:invisible">
-                      <CheckIcon size={14} aria-hidden="true" />
-                    </Menu.RadioItemIndicator>
+                    <RadioIndicator />
                     <ProjectName name={project.name} tag={project.tag} />
                   </Menu.RadioItem>
                 ))}

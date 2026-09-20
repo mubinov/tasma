@@ -37,6 +37,18 @@ export const ICON_BUTTON_CLASS
   = `${CONTROL_BASE} w-8 justify-center border-line bg-surface-2 text-dim hover:border-graphic hover:text-text`;
 
 /*
+ * A value of a definition list that opens a menu. Written out rather than laid
+ * on `CONTROL_BASE`, whose `min-h-8` would make the row 32px tall, and it takes
+ * no text colour: the value keeps the one the row gives it.
+ *
+ * 24x24 in both directions: the row's line box is 20px at `text-sm`, so the
+ * height needs its own pair, and the negative margins are absorbed by the
+ * grid's `gap-y-2.5`. `min-w-6` holds the width for a one-character value.
+ */
+export const PROPERTY_BUTTON_CLASS
+  = "inline-flex max-w-full -my-0.5 -mx-2 min-h-6 min-w-6 items-center rounded-control border border-transparent px-2 text-left text-sm hover:border-line data-[popup-open]:border-graphic";
+
+/*
  * The whole border rule of an editable field, less the radius, which differs
  * per caller. The border is the only thing that says the box is editable — the
  * text in it is the reader's own data, not a label — so it takes `graphic`,

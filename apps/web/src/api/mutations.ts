@@ -12,6 +12,16 @@ type Written = {
   diagnostics: Diagnostic[];
 };
 
+/**
+ * Which screen sent the writes, which picks the muted line of the failure
+ * notice. Only a page write names a property — the row it changes, e.g.
+ * "Status", named in front of that line — so the board cannot set a field that
+ * would do nothing.
+ */
+type Sender
+  = | { place: "board"; property?: never }
+    | { place: "task page"; property?: string };
+
 export type TaskWrites = {
   /** The task the failure notice is about. The writes need not include it. */
   id: string;
@@ -19,9 +29,7 @@ export type TaskWrites = {
   writes: readonly TaskWrite[];
   /** The title of the failure notice, e.g. "PROJ-1 was not moved". */
   title: string;
-  /** Which screen sent the writes, which picks the muted line of the failure notice. */
-  place: "board" | "task page";
-};
+} & Sender;
 
 export function taskWriteKey(tag: string) {
   return [...daemonKeys.tasks(tag), "write"] as const;
@@ -43,12 +51,21 @@ export class TaskWriteError extends Error {
 }
 
 /**
- * The board writes that were queued behind a failed board write. Each was
- * computed from a board that showed the failed write, so none of them is sent.
- * A page write is computed from the text in its own editor, so it is neither
- * dropped by a failed board write nor drops one.
+ * The writes that were queued behind a failed write of the board's arrangement.
+ * Each was computed from an arrangement that showed the failed write, so none
+ * of them is sent. The editor's Save states no `order`: it stands on the text
+ * in its own editor, and is neither dropped nor drops one.
  */
 const dropped = new WeakSet<TaskWrites>();
+
+/**
+ * Whether the writes place a card. Every such write carries an `order` read
+ * from the neighbours the board showed, whichever screen sent it — the page's
+ * status pick lands the task at the top of its new column the same way.
+ */
+function placesCards({ writes }: TaskWrites): boolean {
+  return writes.some(({ change }) => typeof change.order === "number");
+}
 
 type FailureKind = "refused" | "unanswered" | "address" | "unsent";
 
@@ -120,12 +137,13 @@ export function bodyCorrection(error: unknown): string | undefined {
   return BODY_CORRECTIONS.get(cause.failure.code);
 }
 
-function failureLine({ cause, completed }: TaskWriteError, place: TaskWrites["place"]): string {
+function failureLine({ cause, completed }: TaskWriteError, { place, property }: TaskWrites): string {
   if (place === "board") {
     return (completed > 0 ? PARTIAL_FAILURE_LINES : WHOLE_FAILURE_LINES)[failureKind(cause)];
   }
 
-  const line = PAGE_FAILURE_LINES[failureKind(cause)];
+  const named = property === undefined ? "" : `${property}. `;
+  const line = `${named}${PAGE_FAILURE_LINES[failureKind(cause)]}`;
   const correction = bodyCorrection(cause);
 
   return correction === undefined ? line : `${line} ${correction}`;
@@ -194,9 +212,13 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
           });
         }
       }
-      for (const { key } of useNoticeStore.getState().notices) {
-        if (key.startsWith(FAILURE_KEY_PREFIX)) {
-          useNoticeStore.getState().closeNotice(key);
+      // A mutation carrying no write reached the daemon with nothing, so a
+      // refusal an earlier write opened still stands.
+      if (results.length > 0) {
+        for (const { key } of useNoticeStore.getState().notices) {
+          if (key.startsWith(FAILURE_KEY_PREFIX)) {
+            useNoticeStore.getState().closeNotice(key);
+          }
         }
       }
 
@@ -206,10 +228,10 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
     onError: (error, variables) => {
       // The failed mutation is still pending here, and every other pending
       // write of the project is queued behind it.
-      if (variables.place === "board") {
+      if (placesCards(variables)) {
         for (const { state } of queryClient.getMutationCache().findAll({ mutationKey: taskWriteKey(tag), status: "pending" })) {
           const queued = state.variables as TaskWrites;
-          if (queued !== variables && queued.place === "board") {
+          if (queued !== variables && placesCards(queued)) {
             dropped.add(queued);
           }
         }
@@ -219,12 +241,12 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
         return;
       }
 
-      const { id, title, place } = variables;
+      const { id, title } = variables;
       openWriteNotice({
         key: `${FAILURE_KEY_PREFIX}${id}`,
         form: "failure",
         title,
-        line: failureLine(error, place),
+        line: failureLine(error, variables),
         words: [joinFailureWords(failureWords(error.cause))],
       });
 

@@ -49,6 +49,17 @@ function pageSave(id: string, change: { title?: string; body?: string } = { titl
   return { id, writes: [{ id, change }], title: `${id} was not saved`, place: "task page" };
 }
 
+/** The status pick of a task page, which places the card at the top of its new column. */
+function pagePlace(id: string): TaskWrites {
+  return {
+    id,
+    writes: [{ id, change: { status: "Done", order: -1000 } }],
+    title: `${id} was not changed`,
+    place: "task page",
+    property: "Status",
+  };
+}
+
 /** A move of NOTE-1 that writes only the task below it. */
 const BELOW_ONLY: TaskWrites = {
   id: "NOTE-1",
@@ -247,6 +258,47 @@ describe("taskWriteOptions", () => {
     expect(writes(requests).map(({ path }) => path)).toEqual([taskPath("NOTE-1"), taskPath("NOTE-2")]);
   });
 
+  // The page's status pick reads the same board the move did, so it carries an
+  // order the failure never produced.
+  it("drops a page write that places a card behind a failed board write", async () => {
+    const first = heldBack();
+    const { observer, queryClient, client, requests } = setup({
+      [`PATCH ${taskPath("NOTE-1")}`]: first.reply,
+      [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2"),
+    });
+    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+
+    const done = [observer.mutate(moveOf("NOTE-1")), another().mutate(pagePlace("NOTE-2"))]
+      .map((sent) => sent.catch((error: unknown) => error));
+    await vi.waitFor(() => {
+      expect(writes(requests)).toHaveLength(1);
+    });
+    first.answer(REFUSAL);
+    await Promise.all(done);
+
+    expect(writes(requests).map(({ path }) => path)).toEqual([taskPath("NOTE-1")]);
+    expect(notices().map(({ key }) => key)).toEqual(["task-write-failure:NOTE-1"]);
+  });
+
+  it("drops a board write behind a failed page write that places a card", async () => {
+    const first = heldBack();
+    const { observer, queryClient, client, requests } = setup({
+      [`PATCH ${taskPath("NOTE-1")}`]: first.reply,
+      [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2"),
+    });
+    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+
+    const done = [observer.mutate(pagePlace("NOTE-1")), another().mutate(moveOf("NOTE-2"))]
+      .map((sent) => sent.catch((error: unknown) => error));
+    await vi.waitFor(() => {
+      expect(writes(requests)).toHaveLength(1);
+    });
+    first.answer(REFUSAL);
+    await Promise.all(done);
+
+    expect(writes(requests).map(({ path }) => path)).toEqual([taskPath("NOTE-1")]);
+  });
+
   it("sends the write while the browser reports offline, because the daemon is on this machine", async () => {
     const { observer, requests } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: written("NOTE-1") });
     onlineManager.setOnline(false);
@@ -416,6 +468,16 @@ describe("the failure notice", () => {
 
     expect(notices().map(({ key }) => key)).toEqual(["task-read:NOTE-9"]);
   });
+
+  it("leaves the write failure notices open when it carries no write", async () => {
+    const { observer, requests } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: REFUSAL });
+
+    await expect(observer.mutate(moveOf("NOTE-1"))).rejects.toThrow();
+    await observer.mutate({ id: "NOTE-1", writes: [], title: "NOTE-1 was not moved", place: "board" });
+
+    expect(writes(requests).map(({ path }) => path)).toEqual([taskPath("NOTE-1")]);
+    expect(notices().map(({ key }) => key)).toEqual(["task-write-failure:NOTE-1"]);
+  });
 });
 
 describe("the failure notice of a task page write", () => {
@@ -492,6 +554,44 @@ describe("the failure notice of a task page write", () => {
 
     expect(notices()).toMatchObject([
       { line: "The daemon refused the write, so nothing changed on disk. Its own words are below." },
+    ]);
+  });
+
+  it("names the property in front of the line, so the reader is told which control refused", async () => {
+    const { observer } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: REFUSAL });
+    const write: TaskWrites = {
+      id: "NOTE-1",
+      writes: [{ id: "NOTE-1", change: { status: "Gone" } }],
+      title: "NOTE-1 was not changed",
+      place: "task page",
+      property: "Status",
+    };
+
+    await expect(observer.mutate(write)).rejects.toThrow();
+
+    expect(notices()).toMatchObject([
+      {
+        title: "NOTE-1 was not changed",
+        line: "Status. The daemon refused the write, so nothing changed on disk. Its own words are below.",
+      },
+    ]);
+  });
+
+  it("leaves the Save line as it is for a write that names no property", async () => {
+    const { observer } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: REFUSAL });
+
+    await expect(observer.mutate(pageSave("NOTE-1"))).rejects.toThrow();
+
+    expect(notices()[0]?.line?.startsWith("The daemon refused")).toBe(true);
+  });
+
+  it("leaves a board line as it is", async () => {
+    const { observer } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: REFUSAL });
+
+    await expect(observer.mutate(moveOf("NOTE-1"))).rejects.toThrow();
+
+    expect(notices()).toMatchObject([
+      { line: "The daemon refused the write, and the task is back where it was. Its own words are below." },
     ]);
   });
 });

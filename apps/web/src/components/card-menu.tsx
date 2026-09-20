@@ -2,9 +2,10 @@ import { ContextMenu } from "@base-ui/react/context-menu";
 import { Menu } from "@base-ui/react/menu";
 import { useNavigate } from "@tanstack/react-router";
 import type { ComponentProps, ReactNode, Ref } from "react";
-import { CheckIcon, DotsThreeVerticalIcon } from "../lib/icons";
+import { DotsThreeVerticalIcon } from "../lib/icons";
 import { useUiStore } from "../store/ui";
 import { MENU_ITEM_CLASS, MENU_RADIO_ITEM_CLASS, POPUP_CLASS, POSITIONER_CLASS } from "./control-classes";
+import { RadioIndicator } from "./radio-indicator";
 
 export type CardMenuItemsProps = {
   /** The tag of the project the task belongs to. */
@@ -69,9 +70,7 @@ function CardMenuItems(
           // A hand-edited configuration can hold the same status twice.
           // eslint-disable-next-line @eslint-react/no-array-index-key
           <Menu.RadioItem key={index} value={candidate} closeOnClick className={MENU_RADIO_ITEM_CLASS}>
-            <Menu.RadioItemIndicator keepMounted className="flex w-3.5 shrink-0 data-[unchecked]:invisible">
-              <CheckIcon size={14} aria-hidden="true" />
-            </Menu.RadioItemIndicator>
+            <RadioIndicator />
             {candidate}
           </Menu.RadioItem>
         ))}

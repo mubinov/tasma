@@ -1,101 +1,27 @@
-import type { Comment, Diagnostic, Frontmatter, TaskEntry, Transport, TransportReply } from "@tasma/protocol";
+import type { Diagnostic, Frontmatter, TaskEntry, Transport, TransportReply } from "@tasma/protocol";
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { formatClock } from "../../src/lib/clock";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { refusalReply, renderWithRouter, stubIntersectionObserver, stubTransport, successReply } from "../helpers";
-
-const CONFIG = {
-  statuses: ["Backlog", "In Progress", "Done"],
-  default_status: "Backlog",
-  final_statuses: ["Done"],
-  priorities: ["high", "medium", "low"],
-  workflows: ["dev"],
-  instructions: [],
-};
-
-const PROJECT = { tag: "SAGA", name: "Saga", path: "/repos/saga", live: true, config: CONFIG };
-
-const WORKFLOW = {
-  name: "dev",
-  instructions: [],
-  steps: [
-    { name: "research", file: "/w/dev/research.md", owner: "agent" },
-    { name: "approve", file: "/w/dev/approve.md", owner: "human" },
-  ],
-};
-
-const TASK_PATH = "/projects/SAGA/tasks/SAGA-3";
-
-const LISTING_PATH = "/projects/SAGA/tasks";
-
-function frontmatter(fields: Partial<Frontmatter> = {}): Frontmatter {
-  return {
-    id: "SAGA-3",
-    title: "Build the parser",
-    status: "In Progress",
-    created: "2026-09-01T10:00:00Z",
-    updated: "2026-09-01T10:00:00Z",
-    next_comment_id: 1,
-    ...fields,
-  };
-}
-
-function comment(id: number, fields: Partial<Comment> = {}): Comment {
-  return { id, title: `Note ${String(id)}`, created: "2026-09-02T10:00:00Z", body: `Body of note ${String(id)}.`, ...fields };
-}
-
-type TaskParts = { fields?: Partial<Frontmatter>; body?: string; comments?: Comment[]; diagnostics?: Diagnostic[] };
-
-function task({ fields = {}, body = "", comments = [], diagnostics = [] }: TaskParts = {}): TransportReply {
-  return successReply({ frontmatter: frontmatter(fields), body, comments }, diagnostics);
-}
-
-function entry(id: string, status: string, title: string): TaskEntry {
-  return { id, path: `/repos/saga/tasks/${id}.md`, blocked: false, frontmatter: frontmatter({ id, status, title }) };
-}
-
-function listing(entries: TaskEntry[] = []): TransportReply {
-  return successReply({ entries, excluded: [] });
-}
-
-function daemon(replies: Record<string, TransportReply> = {}) {
-  return stubTransport({
-    "/projects": successReply([{ tag: "SAGA", name: "Saga", path: "/repos/saga" }]),
-    "/projects/SAGA": successReply(PROJECT),
-    "/workflows/dev": successReply(WORKFLOW),
-    [TASK_PATH]: task(),
-    [LISTING_PATH]: listing(),
-    ...replies,
-  });
-}
-
-function metaLine(): HTMLElement {
-  return screen.getByRole("heading", { level: 1 }).parentElement!.nextElementSibling as HTMLElement;
-}
-
-function sidebar(): HTMLElement {
-  return screen.getByRole("complementary", { name: "Task details" });
-}
-
-/** The value of a sidebar row. */
-function field(label: string): HTMLElement {
-  return within(sidebar()).getByText(label, { selector: "dt" }).nextElementSibling as HTMLElement;
-}
-
-function backLink(): HTMLElement {
-  return within(screen.getByRole("main")).getByRole("link", { name: "Tasks" });
-}
-
-function topBar(): HTMLElement {
-  return backLink().parentElement!;
-}
-
-function commentCard(title: string): HTMLElement {
-  return screen.getByRole("article", { name: title });
-}
+import { refusalReply, renderWithRouter, stubIntersectionObserver, successReply } from "../helpers";
+import {
+  LISTING_PATH,
+  TASK_PATH,
+  backLink,
+  comment,
+  commentCard,
+  daemon,
+  entry,
+  field,
+  frontmatter,
+  listing,
+  metaLine,
+  sidebar,
+  task,
+  topBar,
+} from "../task-screen-fixtures";
 
 /** Replaces ResizeObserver with one that reports a target only when a test asks. */
 function stubResizeObservers() {
@@ -682,8 +608,12 @@ describe("the sidebar", () => {
 
     for (const label of ["Priority", "Labels", "Workflow", "Step", "Blocked by", "Parent"]) {
       expect(field(label).textContent).toBe("None");
-      expect(field(label).firstElementChild?.className).toBe("text-dim");
+      expect(within(field(label)).getByText("None").className).toBe("text-dim");
     }
+    // Priority is a control, so its None stands inside the trigger. The task
+    // names no workflow and holds no step, so Step offers nothing and stays text.
+    expect(field("Priority").firstElementChild?.tagName).toBe("BUTTON");
+    expect(field("Step").firstElementChild?.className).toBe("text-dim");
   });
 
   it.each([
@@ -693,10 +623,11 @@ describe("the sidebar", () => {
     const { transport } = daemon({ [TASK_PATH]: task({ fields }) });
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
-    const step = field("Step");
-    expect(step.children).toHaveLength(1);
-    expect(step.firstElementChild?.textContent).toBe("review");
-    expect(step.firstElementChild?.className).toBe("font-mono text-xs text-dim");
+    const trigger = within(field("Step")).getByRole("button");
+    expect(trigger.children).toHaveLength(1);
+    expect(trigger.firstElementChild?.textContent).toBe("review");
+    expect(trigger.firstElementChild?.className).toBe("font-mono text-xs text-dim");
+    expect(field("Step").querySelector("i")).toBeNull();
   });
 
   it("writes each key of custom on its own line", async () => {

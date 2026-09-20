@@ -1,10 +1,11 @@
 import { Link } from "@tanstack/react-router";
-import type { Frontmatter } from "@tasma/protocol";
-import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { StepView } from "../lib/board";
 import { ProhibitIcon } from "../lib/icons";
 import { customLines, formatStamp, type RelationRow, type Relations } from "../lib/task-page";
+import type { TaskProperties } from "../lib/use-task-properties";
 import { LabelList } from "./label-list";
+import { PropertyMenu } from "./property-menu";
 import { StepMark, StepTrack } from "./step-view";
 import { TaskOutline, type Outline } from "./task-outline";
 
@@ -27,24 +28,31 @@ const STATE_CLASS: Record<RelationRow["state"], { row: string; status?: string }
 type TaskSidebarProps = {
   /** The tag of the project the task belongs to. */
   tag: string;
-  frontmatter: Frontmatter;
   view: StepView;
   relations: Relations;
   outline: Outline;
   /** The page's top scroll padding in px, undefined before it is measured. */
   pageScrollPadding: number | undefined;
+  /**
+   * Every value of the rows, with the pending writes laid over them, and what
+   * each editable row offers. One door to the values, so a trigger and the item
+   * its menu checks cannot disagree.
+   */
+  properties: TaskProperties;
 };
 
 function None(): ReactNode {
   return <span className="text-dim">None</span>;
 }
 
-function Field({ label, wide = false, children }: { label: string; wide?: boolean; children: ReactNode }): ReactNode {
+type FieldProps = { label: string; labelId?: string; wide?: boolean; children: ReactNode };
+
+function Field({ label, labelId, wide = false, children }: FieldProps): ReactNode {
   const spanClass = wide ? "col-span-full" : "";
 
   return (
     <>
-      <dt className={`${spanClass} text-dim`}>{label}</dt>
+      <dt id={labelId} className={`${spanClass} text-dim`}>{label}</dt>
       <dd className={`${spanClass} min-w-0 wrap-anywhere`}>{children}</dd>
     </>
   );
@@ -54,22 +62,19 @@ function Stamp({ value }: { value: string }): ReactNode {
   return <time dateTime={value} className="font-mono text-xs-plus">{formatStamp(value)}</time>;
 }
 
-function Step({ view, step }: { view: StepView; step: string | undefined }): ReactNode {
+/** The step value alone. The track stands beside it, outside the control that wraps this. */
+function StepValue({ view, step }: { view: StepView; step: string | undefined }): ReactNode {
   if (view.kind === "step") {
     return (
-      <div className="flex flex-col items-start">
-        <span className="flex items-center gap-2">
-          <StepMark view={view} />
-        </span>
-        <StepTrack owners={view.owners} current={view.current} className="mt-1.5" />
-      </div>
+      <span className="flex items-center gap-2">
+        <StepMark view={view} />
+      </span>
     );
   }
-  if (step === undefined) {
-    return <None />;
-  }
 
-  return <span className="font-mono text-xs text-dim">{step}</span>;
+  // A stale view names the step the row already holds, and a `none` view over a
+  // stored step names nothing, so the row's own value covers both.
+  return step === undefined ? <None /> : <span className="font-mono text-xs text-dim">{step}</span>;
 }
 
 function Relation({ tag, row }: { tag: string; row: RelationRow }): ReactNode {
@@ -155,11 +160,22 @@ function useOverflows(ref: RefObject<HTMLElement | null>): boolean {
 }
 
 export function TaskSidebar(props: TaskSidebarProps): ReactNode {
-  const { tag, frontmatter, view, relations, outline, pageScrollPadding } = props;
-  const { status, priority, labels = [], workflow, step, created, updated, custom } = frontmatter;
+  const { tag, view, relations, outline, pageScrollPadding, properties } = props;
+  const { status, priority, labels = [], workflow, step, created, updated, custom } = properties.frontmatter;
   const lines = custom === undefined ? [] : customLines(custom);
   const asideRef = useRef<HTMLElement>(null);
   const scrolls = useOverflows(asideRef);
+  const statusId = useId();
+  const priorityId = useId();
+  const stepId = useId();
+
+  // A control that leaves while it holds focus drops it to <body>, and the
+  // aside is focusable whether or not it scrolls.
+  function focusAside(): void {
+    asideRef.current?.focus();
+  }
+
+  const stepValue = <StepValue view={view} step={step} />;
 
   return (
     // A scroll container with no link inside is a tab stop only in some engines, so the aside is one while it
@@ -172,14 +188,48 @@ export function TaskSidebar(props: TaskSidebarProps): ReactNode {
       className="w-full border-t border-line bg-surface-2 px-6 pt-5 pb-[calc(--spacing(8)+var(--notice-stack-height,0px))] focus-visible:-outline-offset-3 lg:sticky lg:top-0 lg:h-screen lg:w-task-sidebar lg:shrink-0 lg:self-start lg:scroll-pb-(--notice-stack-height) lg:overflow-y-auto lg:border-t-0 lg:border-l"
     >
       <dl className={GROUP_CLASS}>
-        <Field label="Status">{status}</Field>
-        <Field label="Priority">{priority ?? <None />}</Field>
+        <Field label="Status" labelId={statusId}>
+          <PropertyMenu
+            labelId={statusId}
+            value={status}
+            row={properties.status}
+            clearable={false}
+            trigger={status}
+            onFocusLost={focusAside}
+          />
+        </Field>
+        <Field label="Priority" labelId={priorityId}>
+          <PropertyMenu
+            labelId={priorityId}
+            value={priority}
+            row={properties.priority}
+            clearable
+            trigger={priority ?? <None />}
+            onFocusLost={focusAside}
+          />
+        </Field>
         <Field label="Labels">{labels.length === 0 ? <None /> : <LabelList labels={labels} />}</Field>
       </dl>
       <dl className={NEXT_GROUP_CLASS}>
         <Field label="Workflow">{workflow ?? <None />}</Field>
-        <Field label="Step">
-          <Step view={view} step={step} />
+        <Field label="Step" labelId={stepId}>
+          {properties.step === null
+            ? stepValue
+            : (
+                <div className="flex flex-col items-start">
+                  <PropertyMenu
+                    labelId={stepId}
+                    value={step}
+                    row={properties.step}
+                    clearable
+                    trigger={stepValue}
+                    onFocusLost={focusAside}
+                  />
+                  {view.kind === "step" && (
+                    <StepTrack owners={view.owners} current={view.current} className="mt-1.5" />
+                  )}
+                </div>
+              )}
         </Field>
       </dl>
       <dl className={NEXT_GROUP_CLASS}>

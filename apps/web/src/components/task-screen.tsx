@@ -22,6 +22,7 @@ import { ArrowLeftIcon, PencilSimpleIcon, ProhibitIcon } from "../lib/icons";
 import { blockingRows, relationRows, type RelationRow } from "../lib/task-page";
 import { useScrolledPast } from "../lib/use-scrolled-past";
 import { useTaskEditing } from "../lib/use-task-editing";
+import { useTaskProperties } from "../lib/use-task-properties";
 import { useTopBarLengths } from "../lib/use-top-bar-lengths";
 import { warningCount } from "../lib/warning-count";
 import { noticeWords, useNotice } from "../store/notices";
@@ -219,7 +220,9 @@ export function TaskScreen(): ReactNode {
     refetchInterval: POLL_INTERVAL,
   });
   const { frontmatter, body, comments = [] } = task;
-  const { id, title, status, priority, workflow: workflowName } = frontmatter;
+  // The heading, the document title and the editor's start text read the disk
+  // values; every value a property control writes comes from the overlay below.
+  const { id, title, workflow: workflowName } = frontmatter;
   // Not under Suspense: a poll can bring a workflow name the loader did not
   // read, and a new key would suspend the page until its read lands.
   const { data: workflowRead } = useQuery({
@@ -233,8 +236,22 @@ export function TaskScreen(): ReactNode {
   const boardSearch = boardLabels === undefined ? { projects: tag } : { projects: tag, labels: boardLabels };
   const { config } = project;
   const workflow = workflowRead === null ? null : workflowRead?.data;
-  const view = stepView(frontmatter, isFinalStatus(status, config.final_statuses), workflow);
-  const relations = relationRows(frontmatter, listing.entries, config.final_statuses);
+  const properties = useTaskProperties({
+    queryClient,
+    client,
+    tag,
+    id,
+    frontmatter,
+    config,
+    entries: listing.entries,
+    workflow,
+  });
+  // The sidebar and the meta line show the same three values, so both read the
+  // frontmatter the pending writes leave.
+  const live = properties.frontmatter;
+  const { status, priority } = live;
+  const view = stepView(live, isFinalStatus(status, config.final_statuses), workflow);
+  const relations = relationRows(live, listing.entries, config.final_statuses);
   const blocking = blockingRows(relations.blockers);
   const barRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -383,11 +400,11 @@ export function TaskScreen(): ReactNode {
       </div>
       <TaskSidebar
         tag={tag}
-        frontmatter={frontmatter}
         view={view}
         relations={relations}
         outline={outline}
         pageScrollPadding={scrollPaddingTop}
+        properties={properties}
       />
       <ConfirmDialog
         open={editing.discardAsked}
