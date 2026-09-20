@@ -22,6 +22,7 @@ describe("read", () => {
 
     expect(diagnostics).toEqual([]);
     expect(workflow.name).toBe("dev");
+    expect(workflow.file).toBe(workflowFile(root, "dev"));
     expect(workflow.title).toBe("Engineering task flow");
     expect(workflow.steps.map((step) => step.name)).toEqual(["dev:research", "dev:implement", "user:review"]);
     expect(workflow.steps.map((step) => step.owner)).toEqual(["agent", "agent", "human"]);

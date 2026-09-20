@@ -184,7 +184,7 @@ export async function validateWorkflowInto(check: WriteContext): Promise<void> {
       fail("step-unknown", `the step "${step}" was stated for a task that names no workflow`, path);
     }
     if (!declaresStep(workflow, step)) {
-      fail("step-unknown", noSuchStep(workflow.name, step), workflows.pathsOf(workflow.name).file);
+      fail("step-unknown", noSuchStep(workflow.name, step), workflow.file);
     }
     return;
   }
@@ -268,7 +268,7 @@ export async function readStepInstructions(
   diagnostics: StoreDiagnostic[],
 ): Promise<InstructionDocument[]> {
   const loaded = await readDeclaredWorkflow(workflows, config.workflows, workflow, diagnostics);
-  const entry = stepEntry(loaded, step, workflows.pathsOf(workflow).file);
+  const entry = stepEntry(loaded, step);
   const documents = await readInstructions(loaded.instructions, diagnostics);
   documents.push(...(await readInstructions(config.instructions, diagnostics)));
   documents.push(await readStepDocument(entry.file));

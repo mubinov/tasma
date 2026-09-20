@@ -144,9 +144,9 @@ export function noSuchStep(workflow: string, step: string): string {
  * under has no answer, so the call is refused rather than answered with an empty
  * value, and the fault names the file that would have to declare it.
  */
-export function stepEntry(workflow: Workflow, step: string, file: string): WorkflowStep {
+export function stepEntry(workflow: Workflow, step: string): WorkflowStep {
   const entry = workflow.steps.find((declared) => declared.name === step);
-  if (entry === undefined) fail("step-unknown", noSuchStep(workflow.name, step), file);
+  if (entry === undefined) fail("step-unknown", noSuchStep(workflow.name, step), workflow.file);
   return entry;
 }
 
@@ -264,6 +264,7 @@ async function loadWorkflow(paths: WorkflowPaths, name: string): Promise<Workflo
   }
   const workflow: Workflow = {
     name,
+    file,
     title: typeof title === "string" ? title : undefined,
     steps: readSteps(content, directory, file),
     instructions: readInstructionPaths(content.instructions, directory, file),
@@ -393,7 +394,7 @@ class WorkflowStore implements Workflows {
 
   async readStep(name: string, step: string): Promise<WorkflowStepResult> {
     const { workflow, diagnostics } = await this.read(name);
-    const entry = stepEntry(workflow, step, this.pathsOf(name).file);
+    const entry = stepEntry(workflow, step);
     return { step: entry, document: await readStepDocument(entry.file), diagnostics };
   }
 }

@@ -16,6 +16,7 @@ const PROJECT = { tag: "SAGA", name: "Saga", path: "/repos/saga", live: true, co
 
 export const WORKFLOW: Workflow = {
   name: "dev",
+  file: "/w/dev/workflow.yml",
   instructions: [],
   steps: [
     { name: "research", file: "/w/dev/research.md", owner: "agent" },

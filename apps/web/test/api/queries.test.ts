@@ -175,7 +175,7 @@ it("asks for the tasks of one project, with no filter", async () => {
 });
 
 describe("workflowQuery", () => {
-  const WORKFLOW = { name: "dev", steps: [], instructions: [] };
+  const WORKFLOW = { name: "dev", file: "/w/dev/workflow.yml", steps: [], instructions: [] };
 
   function readWorkflow(transport: Transport, name: string) {
     return createAppQueryClient().query({ ...workflowQuery(createClient(transport), name), staleTime: "static" });

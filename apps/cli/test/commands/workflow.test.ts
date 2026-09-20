@@ -28,6 +28,7 @@ const READ = "GET /workflows/dev";
 /** A workflow as the route answers one, with every field this noun prints. */
 const DEV = {
   name: "dev",
+  file: "/rules/dev/workflow.yml",
   title: "Engineering task flow",
   instructions: ["/rules/task-workflow.md"],
   steps: [
@@ -35,6 +36,9 @@ const DEV = {
     { name: "user:review", file: "/rules/dev/user-review.md", owner: "human" },
   ],
 };
+
+/** The path block of that workflow, which several cases assert around. */
+const DEV_PATHS = "config        /rules/dev/workflow.yml\ninstructions  /rules/task-workflow.md\n";
 
 /** The step block of that workflow, which several cases assert around. */
 const DEV_STEPS = "dev:research  agent  /rules/dev/dev-research.md\nuser:review   human  /rules/dev/user-review.md\n";
@@ -123,11 +127,11 @@ describe("workflow list", () => {
 });
 
 describe("workflow show", () => {
-  it("prints the workflow, its documents and its steps as three blocks", async () => {
+  it("prints the workflow, the paths it stands on and its steps as three blocks", async () => {
     const { code, out, err, seen } = await runWorkflow(["show", "dev"], { [READ]: ok(DEV) });
 
     expect(code).toBe(0);
-    expect(out).toBe(`dev  Engineering task flow\n\ninstructions  /rules/task-workflow.md\n\n${DEV_STEPS}`);
+    expect(out).toBe(`dev  Engineering task flow\n\n${DEV_PATHS}\n${DEV_STEPS}`);
     expect(err).toBe("");
     expect(seen).toEqual([READ]);
   });
@@ -141,13 +145,24 @@ describe("workflow show", () => {
     expect(out).toContain("instructions  /rules/one.md\ninstructions  /rules/two.md\n");
   });
 
-  // The block is dropped whole rather than printed empty, which is what keeps a
-  // workflow that names no document from carrying a stray blank line.
-  it("leaves out the document block, and its blank line, for a workflow that names none", async () => {
+  // The config row stands on its own, so the block a workflow that names no
+  // document prints is one row rather than none.
+  it("prints the path block as the config row alone for a workflow that names no document", async () => {
     const { code, out } = await runWorkflow(["show", "dev"], { [READ]: ok({ ...DEV, instructions: [] }) });
 
     expect(code).toBe(0);
-    expect(out).toBe(`dev  Engineering task flow\n\n${DEV_STEPS}`);
+    expect(out).toBe(`dev  Engineering task flow\n\nconfig  /rules/dev/workflow.yml\n\n${DEV_STEPS}`);
+  });
+
+  // The answer is whatever the port sent, and only the two lists the blocks are
+  // built from decide whether it is a workflow, so a missing path is marked.
+  it("marks a workflow that states no file of its own", async () => {
+    const { code, out } = await runWorkflow(["show", "dev"], {
+      [READ]: ok({ name: "dev", title: "Engineering task flow", instructions: [], steps: [] }),
+    });
+
+    expect(code).toBe(0);
+    expect(out).toBe("dev  Engineering task flow\n\nconfig  -\n");
   });
 
   it("marks a workflow that states no title", async () => {
@@ -156,7 +171,7 @@ describe("workflow show", () => {
     });
 
     expect(code).toBe(0);
-    expect(out).toBe("dev  -\n\ndev:setup  agent  /s.md\n");
+    expect(out).toBe("dev  -\n\nconfig  -\n\ndev:setup  agent  /s.md\n");
   });
 
   // The order the file declares is meaningful in the format, so nothing here
@@ -185,7 +200,7 @@ describe("workflow show", () => {
     });
 
     expect(code).toBe(0);
-    expect(out).toBe("dev  Engineering task flow\n\ninstructions  /rules/task-workflow.md\n\ndev:setup  agent  /s.md\n");
+    expect(out).toBe(`dev  Engineering task flow\n\n${DEV_PATHS}\ndev:setup  agent  /s.md\n`);
   });
 
   // A step is whatever the port sent too, and one that is no object states no
@@ -196,7 +211,7 @@ describe("workflow show", () => {
     });
 
     expect(code).toBe(0);
-    expect(out).toBe("dev  -\n\n-  -  -\n-  -  -\n");
+    expect(out).toBe("dev  -\n\nconfig  -\n\n-  -  -\n-  -  -\n");
   });
 
   // The message arrives carrying the path the engine put in front of it, and

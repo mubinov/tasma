@@ -448,7 +448,7 @@ describe("the built executables", () => {
       expect(stdout).toBe("dev\n");
     });
 
-    it("prints one workflow, its documents and its steps", async () => {
+    it("prints one workflow, the paths it stands on and its steps", async () => {
       const { code, stdout, stderr } = await node(executable(CLI), ["workflow", "show", "dev"], { env: treeEnv(home) });
       const dir = workflowDirIn(home, "dev");
 
@@ -456,6 +456,7 @@ describe("the built executables", () => {
       expect(code).toBe(0);
       expect(stdout).toBe(
         "dev  Engineering task flow\n\n"
+        + `config        ${join(dir, "workflow.yml")}\n`
         + `instructions  ${join(dir, "rules.md")}\n\n`
         + `dev:implement  agent  ${join(dir, "steps", "implement.md")}\n`
         + `user:review    human  ${join(dir, "steps", "review.md")}\n`,

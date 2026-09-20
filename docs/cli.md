@@ -162,7 +162,7 @@ List the workflow names, one on each line.
 
 ### `tasma workflow show <name>`
 
-Print one workflow as blocks with an empty line between them: the name and title, one `instructions <path>` row for each instruction document, and one `<step> <owner> <file>` row for each step. The owner is `agent` or `human`. A block with no rows is left out.
+Print one workflow as three blocks with an empty line between them: the name and title; one `config <path>` row naming the file that declares the workflow, followed by one `instructions <path>` row for each instruction document; and one `<step> <owner> <file>` row for each step. The owner is `agent` or `human`. A workflow that names no instruction document still prints the `config` row.
 
 ## daemon
 

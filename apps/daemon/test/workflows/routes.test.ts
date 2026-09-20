@@ -16,6 +16,7 @@ import {
   success,
   userConfig,
   workflowDir,
+  workflowFile,
 } from "../helpers.js";
 import type { TestServer } from "../helpers.js";
 
@@ -138,6 +139,7 @@ describe("GET /workflows/{workflow}", () => {
       ok: true,
       data: {
         name: "dev",
+        file: workflowFile(root, "dev"),
         title: "Development",
         steps: [{ name: "research", file: stepFile(root, "dev", "research"), owner: "agent" }],
         instructions: [join(workflowDir(root, "dev"), "shared.md")],

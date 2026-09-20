@@ -18,7 +18,8 @@ const LIST_HELP = usageBlock("workflow list");
 
 const SHOW_HELP = usageBlock("workflow show <name>");
 
-/** What the second block carries in its first column, on every row it holds. */
+// What the second block carries in its first column, on the rows it holds.
+const CONFIG = "config";
 const INSTRUCTIONS = "instructions";
 
 /**
@@ -54,8 +55,9 @@ function stepRow(entry: unknown): string[] {
 }
 
 /**
- * One workflow as three blocks: what it calls itself, the documents that apply
- * to every step, and the steps themselves.
+ * One workflow as three blocks: what it calls itself, the paths it stands on —
+ * the file declaring it and the documents that apply to every step — and the
+ * steps themselves.
  *
  * Each block is padded over its own rows, so the columns of one do not line up
  * with another's. A block that holds no row is dropped before the join rather
@@ -63,11 +65,14 @@ function stepRow(entry: unknown): string[] {
  * it from its neighbour.
  */
 function workflowText(answer: { steps: unknown[]; instructions: unknown[] }): string {
-  const { name, title } = fieldsOf(answer);
+  const { name, title, file } = fieldsOf(answer);
 
   const blocks = [
     table([[cell(name), cell(title)]]),
-    table(answer.instructions.map((path) => [INSTRUCTIONS, cell(path)])),
+    table([
+      [CONFIG, cell(file)],
+      ...answer.instructions.map((path) => [INSTRUCTIONS, cell(path)]),
+    ]),
     table(answer.steps.map(stepRow)),
   ];
 
@@ -119,7 +124,7 @@ export const workflow = noun("workflow", "Work with workflows", [
   },
   {
     name: "show",
-    summary: "Print one workflow, its steps and its documents",
+    summary: "Print one workflow, the paths it stands on and its steps",
     usage: { help: SHOW_HELP, options: SHOW_OPTIONS },
     run: show,
   },

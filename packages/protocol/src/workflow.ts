@@ -15,6 +15,8 @@ export type WorkflowStep = {
 export type Workflow = {
   /** The name of the directory the workflow stands in. */
   name: string;
+  /** The file that declares the workflow, as a resolved absolute path. */
+  file: string;
   title?: string;
   /** The steps in the order the file declares them. */
   steps: WorkflowStep[];

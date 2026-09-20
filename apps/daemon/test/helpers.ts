@@ -153,7 +153,7 @@ export function workflowDir(root: string, name: string): string {
   return join(workflowsDir(root), name);
 }
 
-function workflowFile(root: string, name: string): string {
+export function workflowFile(root: string, name: string): string {
   return join(workflowDir(root, name), "workflow.yml");
 }
 

@@ -33,6 +33,7 @@ function entries(count: number): TaskEntry[] {
 
 const WORKFLOW: Workflow = {
   name: "dev",
+  file: "/w/dev/workflow.yml",
   instructions: [],
   steps: [{ name: "implement", file: "/w/dev/implement.md", owner: "agent" }],
 };

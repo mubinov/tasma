@@ -19,6 +19,7 @@ export const PROJECTS = [
 
 export const WORKFLOW = {
   name: "dev",
+  file: "/w/dev/workflow.yml",
   instructions: [],
   steps: [
     { name: "research", file: "/w/dev/research.md", owner: "agent" },
