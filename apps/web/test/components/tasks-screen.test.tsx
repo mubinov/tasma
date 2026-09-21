@@ -430,6 +430,16 @@ describe("moving a task from the card menu", () => {
     return useNoticeStore.getState().notices.map(({ title }) => title);
   }
 
+  /** The panel at the bottom of the notice stack, which follows <main>. */
+  function bottomNotice(): HTMLElement {
+    const panel = screen.getByRole("main").nextElementSibling?.lastElementChild;
+    if (!(panel instanceof HTMLElement)) {
+      throw new Error("No notice is open.");
+    }
+
+    return panel;
+  }
+
   beforeEach(() => {
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
   });
@@ -554,9 +564,9 @@ describe("moving a task from the card menu", () => {
     await vi.waitFor(() => {
       expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2"]);
     });
-    const alert = within(screen.getByRole("main").parentElement!).getByRole("alert");
-    expect(within(alert).getByText("SAGA-1 was not moved")).toBeTruthy();
-    expect(alert.textContent).toContain("store/status-unknown · status \"To Do\" is not one of Backlog, Done");
+    const panel = bottomNotice();
+    expect(within(panel).getByText("SAGA-1 was not moved")).toBeTruthy();
+    expect(panel.textContent).toContain("store/status-unknown · status \"To Do\" is not one of Backlog, Done");
     await vi.waitFor(() => {
       expect(document.activeElement).toBe(menuButton("Task 1"));
     });
@@ -585,14 +595,14 @@ describe("moving a task from the card menu", () => {
     await user.click(screen.getByRole("link", { name: "Task 1" }));
 
     expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-1");
-    expect(screen.getByRole("alert").textContent).toContain(`${DAEMON_URL} · HTTP 502`);
+    expect(bottomNotice().textContent).toContain(`${DAEMON_URL} · HTTP 502`);
   });
 
-  it("mounts a new alert when the same task is refused again with the same words", async () => {
+  it("mounts a new panel when the same task is refused again with the same words", async () => {
     const { transport } = daemon({ "/projects/SAGA/tasks": listing([entry(1)]), [TASK_1]: { status: 502 } });
     await renderWithRouter("/tasks?projects=SAGA", transport);
     await moveTo("Task 1", "Done");
-    const first = await screen.findByRole("alert");
+    const first = await vi.waitFor(() => bottomNotice());
     await vi.waitFor(() => {
       expect(document.activeElement).toBe(menuButton("Task 1"));
     });
@@ -600,7 +610,7 @@ describe("moving a task from the card menu", () => {
     await moveTo("Task 1", "Done");
 
     await vi.waitFor(() => {
-      expect(screen.getByRole("alert")).not.toBe(first);
+      expect(bottomNotice()).not.toBe(first);
     });
     expect(first.isConnected).toBe(false);
   });

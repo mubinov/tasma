@@ -1,8 +1,10 @@
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useRef, type ReactNode } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ConfirmDialog } from "../../src/components/confirm-dialog";
 import { NoticeStack, SpokenRegion } from "../../src/components/notice-stack";
+import type { FinalFocus } from "../../src/lib/final-focus";
 import { useNotice, useNoticeStore, type Notice, type NoticeContent } from "../../src/store/notices";
 
 const FIRST: Notice = {
@@ -22,7 +24,7 @@ const SECOND: Notice = {
 const CONTENT: NoticeContent = { form: FIRST.form, title: FIRST.title, words: FIRST.words };
 
 function stack(): HTMLElement {
-  return document.querySelector<HTMLElement>("[aria-live]")!;
+  return document.querySelector<HTMLElement>("main + div")!;
 }
 
 function stackTree(children?: ReactNode): ReactNode {
@@ -79,10 +81,6 @@ function Screen({ noticeKey, content }: { noticeKey: string; content: NoticeCont
   return null;
 }
 
-beforeEach(() => {
-  useNoticeStore.setState({ notices: [], dismissed: new Map(), spoken: [], held: [], modalDialogs: 0 });
-});
-
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -110,7 +108,7 @@ describe("the stack", () => {
     expect(panel.querySelectorAll("p")).toHaveLength(1);
   });
 
-  it("shows the failure form as an alert: the title, the muted line, the words and Dismiss", async () => {
+  it("shows the failure form with no alert role: the title, the muted line, the words and Dismiss", async () => {
     const user = userEvent.setup();
     const failure: Notice = {
       key: "task-write-failure:SAGA-55",
@@ -123,17 +121,19 @@ describe("the stack", () => {
 
     show(failure);
 
-    const alert = within(stack()).getByRole("alert");
-    const [title, line, words] = [...alert.children[1]!.children];
+    const panel = stack().firstElementChild as HTMLElement;
+    expect(panel.getAttribute("role")).toBeNull();
+    expect(within(stack()).queryByRole("alert")).toBeNull();
+    const [title, line, words] = [...panel.children[1]!.children];
     expect(title?.textContent).toBe(failure.title);
     expect(title?.className).toContain("text-signal");
     expect(line?.textContent).toBe(failure.line);
     expect(line?.className).toContain("text-muted");
     expect(words?.textContent).toBe(failure.words[0]);
     expect(words?.className).toContain("font-mono");
-    expect(within(alert).queryByRole("list")).toBeNull();
+    expect(within(panel).queryByRole("list")).toBeNull();
 
-    await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
+    await user.click(within(panel).getByRole("button", { name: "Dismiss" }));
 
     expect(openKeys()).toEqual([]);
   });
@@ -158,15 +158,20 @@ describe("the stack", () => {
     expect(titles).toEqual([FIRST.title, SECOND.title]);
   });
 
-  it("keeps a polite live region mounted while the stack is empty", () => {
+  it("is not a live region, with a notice open or none", () => {
     renderStack();
 
-    expect(stack().getAttribute("aria-live")).toBe("polite");
-    expect(stack().getAttribute("aria-relevant")).toBe("additions");
     expect(stack().children).toHaveLength(0);
+    expect(stack().hasAttribute("aria-live")).toBe(false);
+
+    show(FIRST);
+
+    expect(stack().querySelector("[aria-live]")).toBeNull();
+    expect(stack().hasAttribute("aria-live")).toBe(false);
+    expect(stack().hasAttribute("aria-relevant")).toBe(false);
   });
 
-  it("mounts a replaced notice as a new panel, so the live region announces it", () => {
+  it("mounts a replaced notice as a new panel", () => {
     renderStack();
     show(FIRST);
     const panel = stack().firstElementChild;
@@ -496,15 +501,45 @@ describe("useNotice", () => {
 });
 
 describe("the spoken region", () => {
+  /** One animation frame of the fake clock, which is what an announcement waits for. */
+  const FRAME = 16;
+
   function region(): HTMLElement {
     return document.querySelector<HTMLElement>("[aria-live].sr-only")!;
   }
 
-  function say(words: string): void {
+  function messages(): (string | null)[] {
+    return [...region().children].map(({ textContent }) => textContent);
+  }
+
+  /** Announces the words and runs the fake clock past the frame they wait for. */
+  function announce(words: string): void {
     act(() => {
-      useNoticeStore.getState().say(words);
+      useNoticeStore.getState().announce(words);
+      vi.advanceTimersByTime(FRAME);
     });
   }
+
+  function OpenDialog(): ReactNode {
+    const finalFocusRef = useRef<FinalFocus>(null);
+
+    return (
+      <ConfirmDialog
+        open
+        title="Discard your changes?"
+        description="There is no undo."
+        cancelLabel="Keep editing"
+        confirmLabel="Discard"
+        onCancel={() => {}}
+        onConfirm={() => {}}
+        finalFocus={finalFocusRef}
+      />
+    );
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("is mounted and empty before anything is said, so its first words are an addition", () => {
     render(<SpokenRegion />);
@@ -513,47 +548,58 @@ describe("the spoken region", () => {
     expect(region().children).toHaveLength(0);
   });
 
-  it("gives the same words said twice a node each, so both are announced", () => {
-    render(<SpokenRegion />);
-
-    say("Saved.");
-    say("Saved.");
-
-    expect([...region().children].map(({ textContent }) => textContent)).toEqual(["Saved.", "Saved."]);
-  });
-
-  it("drops a message three seconds after it is said", () => {
+  it("gives the same words said a frame apart a node each, so both are announced", () => {
     vi.useFakeTimers();
     render(<SpokenRegion />);
-    say("Saved.");
 
-    act(() => {
-      vi.advanceTimersByTime(3000);
-    });
+    announce("Saved.");
+    announce("Saved.");
 
-    expect(region().children).toHaveLength(0);
-    vi.useRealTimers();
+    expect(messages()).toEqual(["Saved.", "Saved."]);
   });
 
-  it("holds a message and a notice while a modal dialog is open, and lets both through when it closes", () => {
-    render(stackTree(<SpokenRegion />));
+  it("drops a message seven seconds after it lands", () => {
+    vi.useFakeTimers();
+    render(<SpokenRegion />);
+    announce("Saved.");
+
     act(() => {
-      useNoticeStore.getState().openModalDialog();
+      vi.advanceTimersByTime(6_999);
     });
 
-    say("Saved.");
+    expect(region().children).toHaveLength(1);
+
     act(() => {
-      useNoticeStore.getState().showNotice(FIRST);
+      vi.advanceTimersByTime(1);
     });
 
     expect(region().children).toHaveLength(0);
-    expect(within(stack()).queryByText(FIRST.title)).toBeNull();
+  });
 
-    act(() => {
-      useNoticeStore.getState().closeModalDialog();
+  it("says a message and a notice raised while a modal dialog is open, and stays out of what the dialog hides", async () => {
+    render(stackTree(
+      <>
+        <SpokenRegion />
+        <OpenDialog />
+      </>,
+    ));
+    await waitFor(() => {
+      expect(screen.getByRole("main", { hidden: true }).getAttribute("aria-hidden")).toBe("true");
     });
 
-    expect([...region().children].map(({ textContent }) => textContent)).toEqual(["Saved."]);
-    expect(within(stack()).getByText(FIRST.title)).not.toBeNull();
+    act(() => {
+      useNoticeStore.getState().announce("Changed on disk at 10:15. Saving overwrites that change.");
+      useNoticeStore.getState().showNotice(SECOND);
+    });
+
+    await waitFor(() => {
+      expect(messages()).toEqual([
+        "Changed on disk at 10:15. Saving overwrites that change.",
+        "1 warning about SAGA-57. step-stale · step \"dev:doing\" is not a step of dev-personal.",
+      ]);
+    });
+    expect(region().closest("[aria-hidden]")).toBeNull();
+    expect(region().closest("[inert]")).toBeNull();
+    expect(stack().closest("[aria-hidden=\"true\"]")).not.toBeNull();
   });
 });

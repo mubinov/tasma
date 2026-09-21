@@ -1,13 +1,10 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useRef, useState, type ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfirmDialog, type ConfirmDialogProps } from "../../src/components/confirm-dialog";
 import type { FinalFocus } from "../../src/lib/final-focus";
-import { useNoticeStore } from "../../src/store/notices";
-
-/** Longer than the status region's own hold, so a write past it lands at once. */
-const PAST_HOLD = 1100;
+import { stubAnimations } from "../helpers";
 
 type ConfirmProps = Partial<Omit<ConfirmDialogProps, "finalFocus">> & {
   /** False leaves the dialog out of the tree, the way a route change does while it is still open. */
@@ -101,17 +98,9 @@ function cancel(): HTMLElement {
   return within(dialog()).getByRole("button", { name: "Cancel" });
 }
 
-function statusRegion(): HTMLElement {
-  return within(dialog()).getByRole("status");
-}
-
-beforeEach(() => {
-  useNoticeStore.setState({ modalDialogs: 0 });
-});
-
 afterEach(() => {
   cleanup();
-  vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("the dialog", () => {
@@ -306,6 +295,22 @@ describe("where focus goes when it closes", () => {
     });
   });
 
+  it("returns focus in the commit that closes it, before any animation frame runs", async () => {
+    stubAnimations();
+    const { rerender } = render(<Confirm />);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(cancel());
+    });
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+
+    await act(async () => {
+      rerender(<Confirm open={false} />);
+    });
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Delete task" }));
+  });
+
   it("falls back to the element focused before it opened when the destination has left the document", async () => {
     const { rerender } = render(<DetachedDestination open={false} present />);
     const surviving = screen.getByRole("button", { name: "Still on the page" });
@@ -382,95 +387,65 @@ describe("where focus goes when it closes", () => {
   });
 });
 
-describe("the status region", () => {
-  it("is inside the popup, on screen and empty as soon as the dialog opens", () => {
-    vi.useFakeTimers();
+describe("the status line", () => {
+  function description(): HTMLElement {
+    return within(dialog()).getByText("SAGA-56 and its comments are removed from disk.");
+  }
+
+  /** The line under the description, where the caller's status shows. */
+  function statusLine(): HTMLElement {
+    return description().nextElementSibling as HTMLElement;
+  }
+
+  it("is inside the popup and on screen, and shows the status as soon as the dialog opens", () => {
     render(<Confirm status="Deleting…" />);
 
-    expect(statusRegion().textContent).toBe("");
-    expect(statusRegion().className).not.toContain("sr-only");
+    expect(dialog().contains(statusLine())).toBe(true);
+    expect(statusLine().textContent).toBe("Deleting…");
+    expect(statusLine().className).not.toContain("sr-only");
   });
 
-  it("speaks a status set in the same commit as open, after the hold", () => {
-    vi.useFakeTimers();
+  it("is plain text, not a live region", () => {
     render(<Confirm status="Deleting…" />);
-    expect(statusRegion().textContent).toBe("");
 
-    act(() => {
-      vi.advanceTimersByTime(PAST_HOLD);
-    });
-
-    expect(statusRegion().textContent).toBe("Deleting…");
+    expect(statusLine().getAttribute("role")).toBeNull();
+    expect(statusLine().hasAttribute("aria-live")).toBe(false);
+    expect(within(dialog()).queryByRole("status")).toBeNull();
+    expect(dialog().querySelector("[aria-live]")).toBeNull();
   });
 
-  it("renders the region and no words for a dialog that has nothing to say", () => {
-    vi.useFakeTimers();
+  it("renders the line, empty, for a dialog that has nothing to say", () => {
     render(<Confirm />);
 
-    act(() => {
-      vi.advanceTimersByTime(PAST_HOLD);
-    });
-
-    expect(statusRegion().textContent).toBe("");
+    expect(statusLine().textContent).toBe("");
   });
 
-  it("clears a status left from the previous opening when the dialog opens again", () => {
-    vi.useFakeTimers();
+  it("shows what the caller passes when the dialog opens again, and nothing where it passes none", () => {
     const { rerender } = render(<Confirm status="The daemon refused the write" />);
-    act(() => {
-      vi.advanceTimersByTime(PAST_HOLD);
-    });
-    expect(statusRegion().textContent).toBe("The daemon refused the write");
 
     rerender(<Confirm open={false} status="The daemon refused the write" />);
     rerender(<Confirm open status="The daemon refused the write" />);
 
-    expect(statusRegion().textContent).toBe("");
-  });
-
-  /*
-   * Two identical consecutive messages are one node and are spoken once, so the
-   * required order — the wait between two refusals — is what makes the second
-   * refusal a new node. The observable is the node's identity, since the first
-   * and third words are the same.
-   */
-  it("replaces the node for each change, so a refusal repeated after a wait is announced again", () => {
-    vi.useFakeTimers();
-    const refusal = "The daemon refused the write";
-    const { rerender } = render(<Confirm status={refusal} />);
-    act(() => {
-      vi.advanceTimersByTime(PAST_HOLD);
-    });
-    const first = statusRegion().firstElementChild;
-
-    rerender(<Confirm status="Deleting…" />);
-    const waiting = statusRegion().firstElementChild;
-    rerender(<Confirm status={refusal} />);
-    const second = statusRegion().firstElementChild;
-
-    expect([first?.textContent, waiting?.textContent, second?.textContent]).toEqual([refusal, "Deleting…", refusal]);
-    expect(new Set([first, waiting, second]).size).toBe(3);
-  });
-});
-
-describe("the count of open modal dialogs", () => {
-  it("is one while the dialog is open and none after it closes", async () => {
-    const { rerender } = render(<Confirm />);
-    expect(useNoticeStore.getState().modalDialogs).toBe(1);
+    expect(statusLine().textContent).toBe("The daemon refused the write");
 
     rerender(<Confirm open={false} />);
+    rerender(<Confirm open />);
 
-    await waitFor(() => {
-      expect(useNoticeStore.getState().modalDialogs).toBe(0);
-    });
+    expect(statusLine().textContent).toBe("");
   });
 
-  it("is none after the dialog is unmounted while still open", () => {
-    const { rerender } = render(<Confirm />);
-    expect(useNoticeStore.getState().modalDialogs).toBe(1);
+  it("follows the description in the dialog's description while it has text, and leaves it while it has none", () => {
+    const { rerender } = render(<Confirm status="Deleting…" />);
 
-    rerender(<Confirm mounted={false} />);
+    expect(dialog().getAttribute("aria-describedby")).toBe(`${description().id} ${statusLine().id}`);
+    expect(statusLine().id).not.toBe("");
 
-    expect(useNoticeStore.getState().modalDialogs).toBe(0);
+    rerender(<Confirm status="" />);
+
+    expect(dialog().getAttribute("aria-describedby")).toBe(description().id);
+
+    rerender(<Confirm />);
+
+    expect(dialog().getAttribute("aria-describedby")).toBe(description().id);
   });
 });

@@ -933,8 +933,9 @@ describe("the warnings of the task read", () => {
   const BLOCKER: Diagnostic = { code: "blocked-by-unresolved", message: "SAGA-9 names no task", path: "/p/SAGA-3.md" };
   const STALE: Diagnostic = { code: "stale-next-comment-id", message: "next_comment_id is below 4", path: "/p/SAGA-3.md", line: 4 };
 
+  /** The titles on screen, in the notice stack that follows <main>. */
   function notices(): HTMLElement[] {
-    return screen.queryAllByText(/warnings? about SAGA-/);
+    return within(screen.getByRole("main").nextElementSibling as HTMLElement).queryAllByText(/warnings? about SAGA-/);
   }
 
   it("opens one warning notice, which a poll with the same warnings does not open again", async () => {

@@ -21,25 +21,20 @@ export type OpenNotice = Notice & {
   serial: number;
 };
 
-/** One thing the application said, a node of its own so equal words said twice are announced twice. */
-export type SpokenMessage = { serial: number; words: string };
-
-/**
- * What a modal dialog holds back, in the order it was raised. A message carries
- * a key only where its raiser may need to withdraw it: words held behind a
- * dialog outlive the screen state that raised them.
- */
-type Held = { key: string | undefined } & (
-  | { kind: "notice"; notice: Notice }
-  | { kind: "message"; words: string }
-);
+/** One announcement, a node of its own in the spoken region, so the same words raised a frame apart are heard twice. */
+export type Announcement = {
+  serial: number;
+  words: string;
+  /** The timestamp of the animation frame it landed in. */
+  frame: number;
+};
 
 /**
  * How long a message stays in the spoken region, so no stale words are met
  * later. Long enough for a reader that resolves the region's text only when the
  * message reaches its queue, behind whatever it is already speaking.
  */
-const SPOKEN_LIFETIME = 3000;
+const SPOKEN_LIFETIME = 7000;
 
 type NoticeState = {
   /** The newest last. */
@@ -47,24 +42,18 @@ type NoticeState = {
   /** Per key, the content of the notice the reader dismissed last. */
   dismissed: ReadonlyMap<string, NoticeContent>;
   /** What the spoken region holds, the newest last. */
-  spoken: readonly SpokenMessage[];
-  /**
-   * Open modal dialogs. It lives beside the notices because a notice raised
-   * while one is up is unreachable, not merely covered: Base UI puts
-   * `aria-hidden` on everything outside the popup. A count rather than a flag,
-   * since dialogs nest and a flag owned by two breaks on the first close.
-   */
-  modalDialogs: number;
-  /** Raised while a dialog is open, opened in this order when the last one closes. */
-  held: readonly Held[];
+  announced: readonly Announcement[];
+  /** Opens or replaces the notice under its key, and announces it. */
   showNotice: (notice: Notice) => void;
   dismissNotice: (key: string) => void;
   closeNotice: (key: string) => void;
-  say: (words: string, key?: string) => void;
-  /** Drops a keyed message a dialog still holds. Words already spoken stand. */
-  unsay: (key: string) => void;
-  openModalDialog: () => void;
-  closeModalDialog: () => void;
+  /**
+   * Raises the words one animation frame after the call: a live message and a
+   * focus move in the same commit compete, and the live message loses.
+   * Identical words raised inside one frame are one announcement, so an effect
+   * that StrictMode runs twice says its words once.
+   */
+  announce: (words: string) => void;
 };
 
 function noticeSignature({ form, title, line, words }: NoticeContent): string {
@@ -75,8 +64,11 @@ function sameContent(left: NoticeContent, right: NoticeContent): boolean {
   return noticeSignature(left) === noticeSignature(right);
 }
 
-function without(held: readonly Held[], kind: Held["kind"], key: string): readonly Held[] {
-  return held.filter((item) => item.kind !== kind || item.key !== key);
+/** What the panel says, each part closed as a sentence so a reader pauses between them. */
+function noticeText({ title, line, words }: NoticeContent): string {
+  return [title, ...(line === undefined ? [] : [line]), ...words]
+    .map((part) => (/[.!?…]$/u.test(part) ? part : `${part}.`))
+    .join(" ");
 }
 
 let lastSerial = 0;
@@ -85,104 +77,56 @@ let lastSerial = 0;
 export const useNoticeStore = create<NoticeState>((set, get) => ({
   notices: [],
   dismissed: new Map(),
-  spoken: [],
-  modalDialogs: 0,
-  held: [],
+  announced: [],
   showNotice: (notice) => {
-    if (get().modalDialogs > 0) {
-      set((state) => ({
-        held: [...without(state.held, "notice", notice.key), { kind: "notice", key: notice.key, notice }],
-      }));
+    const { notices, dismissed } = get();
+    const standing = notices.find(({ key }) => key === notice.key) ?? dismissed.get(notice.key);
+    if (standing !== undefined && sameContent(standing, notice)) {
       return;
     }
 
-    set((state) => {
-      const open = state.notices.find(({ key }) => key === notice.key);
-      if (open !== undefined) {
-        return sameContent(open, notice)
-          ? state
-          : { notices: [...state.notices.filter((item) => item !== open), { ...notice, serial: ++lastSerial }] };
-      }
-
-      const dismissed = state.dismissed.get(notice.key);
-      if (dismissed !== undefined && sameContent(dismissed, notice)) {
-        return state;
-      }
-
-      return { notices: [...state.notices, { ...notice, serial: ++lastSerial }] };
-    });
+    set((state) => ({
+      notices: [...state.notices.filter(({ key }) => key !== notice.key), { ...notice, serial: ++lastSerial }],
+    }));
+    get().announce(noticeText(notice));
   },
   dismissNotice: (key) => {
     set((state) => {
-      const held = without(state.held, "notice", key);
       const open = state.notices.find((notice) => notice.key === key);
       if (open === undefined) {
-        return held.length === state.held.length ? state : { held };
+        return state;
       }
 
       const { form, title, line, words } = open;
       return {
         notices: state.notices.filter((notice) => notice !== open),
         dismissed: new Map(state.dismissed).set(key, { form, title, line, words }),
-        held,
       };
     });
   },
   closeNotice: (key) => {
     set((state) => {
-      const held = without(state.held, "notice", key);
-      const known = state.dismissed.has(key) || state.notices.some((notice) => notice.key === key);
-      if (!known) {
-        return held.length === state.held.length ? state : { held };
+      if (!state.dismissed.has(key) && !state.notices.some((notice) => notice.key === key)) {
+        return state;
       }
 
       const dismissed = new Map(state.dismissed);
       dismissed.delete(key);
-      return { notices: state.notices.filter((notice) => notice.key !== key), dismissed, held };
+      return { notices: state.notices.filter((notice) => notice.key !== key), dismissed };
     });
   },
-  say: (words, key) => {
-    if (get().modalDialogs > 0) {
-      set((state) => ({
-        held: [
-          ...(key === undefined ? state.held : without(state.held, "message", key)),
-          { kind: "message", key, words },
-        ],
-      }));
-      return;
-    }
-
-    const serial = ++lastSerial;
-    set((state) => ({ spoken: [...state.spoken, { serial, words }] }));
-    setTimeout(() => {
-      set((state) => ({ spoken: state.spoken.filter((message) => message.serial !== serial) }));
-    }, SPOKEN_LIFETIME);
-  },
-  unsay: (key) => {
-    set((state) => {
-      const held = without(state.held, "message", key);
-
-      return held.length === state.held.length ? state : { held };
-    });
-  },
-  openModalDialog: () => {
-    set((state) => ({ modalDialogs: state.modalDialogs + 1 }));
-  },
-  closeModalDialog: () => {
-    const state = get();
-    // Floored: one unmatched close would otherwise leave the count negative,
-    // which reads as "no dialog is open" for the rest of the session.
-    const modalDialogs = Math.max(0, state.modalDialogs - 1);
-    const released = modalDialogs === 0 ? state.held : [];
-    set({ modalDialogs, held: modalDialogs === 0 ? [] : state.held });
-
-    for (const item of released) {
-      if (item.kind === "notice") {
-        get().showNotice(item.notice);
-      } else {
-        get().say(item.words);
+  announce: (words) => {
+    requestAnimationFrame((frame) => {
+      if (get().announced.some((message) => message.frame === frame && message.words === words)) {
+        return;
       }
-    }
+
+      const serial = ++lastSerial;
+      set((state) => ({ announced: [...state.announced, { serial, words, frame }] }));
+      setTimeout(() => {
+        set((state) => ({ announced: state.announced.filter((message) => message.serial !== serial) }));
+      }, SPOKEN_LIFETIME);
+    });
   },
 }));
 
@@ -216,23 +160,4 @@ export function useNotice(key: string, content: NoticeContent | null): void {
     },
     [key],
   );
-}
-
-/**
- * Keeps the count of open modal dialogs in step with what a dialog renders. The
- * cleanup counts out a dialog unmounted while still open as well as one that
- * closes.
- */
-export function useModalDialog(open: boolean): void {
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    useNoticeStore.getState().openModalDialog();
-
-    return () => {
-      useNoticeStore.getState().closeModalDialog();
-    };
-  }, [open]);
 }

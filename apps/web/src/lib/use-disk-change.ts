@@ -1,10 +1,7 @@
-import { useEffect, useEffectEvent, useLayoutEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { useNoticeStore } from "../store/notices";
 import { formatMinutes } from "./task-page";
 import { changedOnDisk, type Draft } from "./text-draft";
-
-/** The line is one per page, so its spoken message needs no id of the task in it. */
-const SPOKEN_KEY = "disk-change";
 
 export type DiskChangeOptions = {
   /** The text the editor opened with. */
@@ -34,55 +31,36 @@ export type DiskChange = {
  * and a refused write brings back the same line, neither re-timed nor said a
  * second time.
  *
- * The time is adjusted during render rather than in an effect: an effect would
- * draw the line for one commit with the time of the read that found it, and
- * then again with the time of a later one.
+ * The held state is adjusted during render rather than in an effect: an effect
+ * would draw the line for one commit with the time of the read that found it,
+ * and then again with the time of a later one. The effect only announces, in
+ * the commit where the line first shows for the change.
  */
 export function useDiskChange({ start, draft, disk, saving, updated }: DiskChangeOptions): DiskChange {
   const differs = draft !== null && changedOnDisk({ start, draft, disk });
   const showing = differs && !saving;
-  const [held, setHeld] = useState<{ differs: boolean; at: string | null; announced: boolean }>({
+  const [held, setHeld] = useState<{ differs: boolean; at: string | null; shown: boolean }>({
     differs: false,
     at: null,
-    announced: false,
+    shown: false,
   });
 
   if (held.differs !== differs) {
-    setHeld({ differs, at: differs ? (held.at ?? updated) : null, announced: false });
+    setHeld({ differs, at: differs ? (held.at ?? updated) : null, shown: false });
+  } else if (showing && !held.shown) {
+    setHeld({ ...held, shown: true });
   }
 
   const at = formatMinutes(held.at ?? updated);
   const announce = useEffectEvent(() => {
-    useNoticeStore.getState().say(`Changed on disk at ${at}. Saving overwrites that change.`, SPOKEN_KEY);
-    setHeld((current) => ({ ...current, announced: true }));
+    useNoticeStore.getState().announce(`Changed on disk at ${at}. Saving overwrites that change.`);
   });
 
-  // One frame after the commit that draws the line: a live message and a focus
-  // announcement in the same commit compete, and the live one loses.
   useEffect(() => {
-    if (!showing || held.announced) {
-      return;
-    }
-
-    const frame = requestAnimationFrame(() => {
+    if (held.shown) {
       announce();
-    });
-
-    return () => {
-      cancelAnimationFrame(frame);
-    };
-  }, [showing, held.announced]);
-
-  // Words a dialog still holds describe a line that is no longer on the page.
-  // The layout phase is what makes the withdrawal reach them: a dialog releases
-  // what it holds from the cleanup of a passive effect, and React runs every
-  // passive cleanup of a commit before any passive effect of it, so a
-  // withdrawal raised there would always arrive after the words were spoken.
-  useLayoutEffect(() => {
-    if (!showing) {
-      useNoticeStore.getState().unsay(SPOKEN_KEY);
     }
-  }, [showing]);
+  }, [held.shown]);
 
   return { showing, at };
 }

@@ -1,10 +1,11 @@
 import type { Comment, Diagnostic, Frontmatter, SerializeErrorCode, TaskEntry, TransportReply } from "@tasma/protocol";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { heldBack, refusalReply, renderWithRouter, stubTransport, successReply } from "../helpers";
+import { heldBack, refusalReply, renderWithRouter, stubAnimations, stubTransport, successReply } from "../helpers";
+import { frame } from "../setup/notice-store";
 
 const CONFIG = {
   statuses: ["Backlog", "In Progress", "Done"],
@@ -97,8 +98,8 @@ function patches(requests: readonly { method: string; path: string; body?: unkno
   return requests.filter(({ method }) => method === "PATCH").map(({ path, body }) => ({ path, body }));
 }
 
-function spoken(): string[] {
-  return useNoticeStore.getState().spoken.map(({ words }) => words);
+function announced(): string[] {
+  return useNoticeStore.getState().announced.map(({ words }) => words);
 }
 
 /** Opens the editor from the page's own Edit control. */
@@ -109,12 +110,7 @@ async function openEditor(user: ReturnType<typeof userEvent.setup>) {
   });
 }
 
-beforeEach(async () => {
-  // The page speaks one frame after a focus move, so a frame the test before
-  // left pending would land in this one's spoken region.
-  await new Promise((resolve) => {
-    requestAnimationFrame(resolve);
-  });
+beforeEach(() => {
   window.localStorage.clear();
   useUiStore.setState({
     lastTasksProject: null,
@@ -123,7 +119,6 @@ beforeEach(async () => {
     revealedColumns: new Set(),
     editRequest: null,
   });
-  useNoticeStore.setState({ notices: [], dismissed: new Map(), spoken: [], held: [], modalDialogs: 0 });
   document.title = "tasma";
 });
 
@@ -251,7 +246,7 @@ describe("Save", () => {
     await user.click(control("Save"));
 
     await waitFor(() => {
-      expect(spoken()).toEqual(["Saving…", "Saved."]);
+      expect(announced()).toEqual(["Saving…", "Saved."]);
     });
   });
 
@@ -282,7 +277,8 @@ describe("Save", () => {
     expect(titleInput().getAttribute("data-invalid")).not.toBeNull();
     expect(description(titleInput())).toBe("A task needs a title.");
     // The caret arrived from the Save control, and the move reads the correction out.
-    expect(spoken()).toEqual([]);
+    await frame();
+    expect(announced()).toEqual([]);
 
     await user.type(titleInput(), "Named again");
 
@@ -303,7 +299,7 @@ describe("Save", () => {
     expect(document.activeElement).toBe(titleInput());
     // A description is not read again for a field that already holds the caret.
     await waitFor(() => {
-      expect(spoken()).toContain("A task needs a title.");
+      expect(announced()).toContain("A task needs a title.");
     });
   });
 
@@ -590,7 +586,7 @@ describe("Changed on disk", () => {
     expect(line()?.textContent).toContain(`Changed on disk at ${at}, since you began.`);
     expect(line()?.textContent).toContain("Saving overwrites that change.");
     await waitFor(() => {
-      expect(spoken()).toEqual([`Changed on disk at ${at}. Saving overwrites that change.`]);
+      expect(announced()).toEqual([`Changed on disk at ${at}. Saving overwrites that change.`]);
     });
 
     read.replies[TASK_PATH] = task({ fields: { title: "Renamed twice", updated: "2026-09-01T12:30:00Z" } });
@@ -604,9 +600,10 @@ describe("Changed on disk", () => {
 
     read.replies[TASK_PATH] = task({ fields: { updated: "2026-09-01T11:20:00Z" } });
     await poll();
+    await frame();
 
     expect(line()).toBeNull();
-    expect(spoken()).toEqual([]);
+    expect(announced()).toEqual([]);
   });
 
   it("shows nothing where the disk already holds the text in the editor", async () => {
@@ -667,7 +664,7 @@ describe("Changed on disk", () => {
     expect(document.activeElement).toBe(titleInput());
   });
 
-  it("says nothing after Discard for a change the dialog held back", async () => {
+  it("says the change while the discard dialog is open, and nothing more after Discard", async () => {
     const { user, read } = await openWithPolling();
     await user.type(titleInput(), " II");
     await user.click(control("Cancel"));
@@ -675,18 +672,20 @@ describe("Changed on disk", () => {
     read.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" } });
     await poll();
 
+    const at = new Date("2026-09-01T11:20:00Z").toTimeString().slice(0, 5);
     await waitFor(() => {
-      expect(useNoticeStore.getState().held).toHaveLength(1);
+      expect(announced()).toEqual([`Changed on disk at ${at}. Saving overwrites that change.`]);
     });
-
     const dialog = screen.getByRole("alertdialog", { name: "Discard your changes?" });
+
     await user.click(within(dialog).getByRole("button", { name: "Discard" }));
 
     await waitFor(() => {
       expect(screen.queryByRole("alertdialog")).toBeNull();
     });
+    await frame();
     expect(line()).toBeNull();
-    expect(spoken()).toEqual([]);
+    expect(announced()).toEqual([`Changed on disk at ${at}. Saving overwrites that change.`]);
   });
 
   it("replaces the text from Discard and reload, and moves focus to the title input", async () => {
@@ -827,7 +826,7 @@ describe("the discard dialog", () => {
     });
   });
 
-  it("keeps the page when Keep editing answers a route change", async () => {
+  it("keeps the page when Keep editing answers a route change, and asks again at the next one", async () => {
     const user = userEvent.setup();
     const router = await renderWithRouter(PAGE, daemon().transport);
     await openEditor(user);
@@ -844,6 +843,13 @@ describe("the discard dialog", () => {
     });
     expect(router.state.location.pathname).toBe(PAGE);
     expect(bodyInput().value).toBe(`${BODY}More.`);
+
+    await act(async () => {
+      await user.click(within(screen.getByRole("main")).getByRole("link", { name: "Tasks" }));
+    });
+
+    expect(dialog()).not.toBeNull();
+    expect(router.state.location.pathname).toBe(PAGE);
   });
 
   it("lets the route change run when the Save it waited for succeeds", async () => {
@@ -877,8 +883,7 @@ describe("the discard dialog", () => {
   });
 
   it("answers Discard with nothing while a Save runs, and names the wait inside the dialog", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    const user = userEvent.setup();
     const write = heldBack();
     const read = daemon();
     read.replies[`PATCH ${TASK_PATH}`] = write.reply;
@@ -891,12 +896,9 @@ describe("the discard dialog", () => {
     await act(async () => {
       await user.click(within(screen.getByRole("main")).getByRole("link", { name: "Tasks" }));
     });
-    // The dialog holds its status region back from its first write.
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_100);
-    });
 
-    expect(within(dialog()).getByRole("status").textContent).toBe("Saving…");
+    expect(within(dialog()).getByText("Saving…")).not.toBeNull();
+    expect(description(dialog())).toBe("The title and the body you edited are not saved. There is no undo. Saving…");
 
     await user.click(within(dialog()).getByRole("button", { name: "Discard" }));
 
@@ -913,7 +915,8 @@ describe("the discard dialog", () => {
     });
   });
 
-  it("closes on a refused Save, drops the route change, and opens the notice after it has gone", async () => {
+  it("closes on a refused Save, drops the route change, and opens the notice and says it once, after focus returns", async () => {
+    stubAnimations();
     const user = userEvent.setup();
     const write = heldBack();
     const read = daemon();
@@ -924,12 +927,27 @@ describe("the discard dialog", () => {
     await user.click(bodyInput());
     await user.keyboard("More.");
     await user.click(control("Save"));
+    const tasksLink = within(screen.getByRole("main")).getByRole("link", { name: "Tasks" });
     await act(async () => {
-      await user.click(within(screen.getByRole("main")).getByRole("link", { name: "Tasks" }));
+      await user.click(tasksLink);
     });
 
-    expect(dialog()).not.toBeNull();
+    await waitFor(() => {
+      expect(document.activeElement).toBe(within(dialog()).getByRole("button", { name: "Keep editing" }));
+    });
     expect(useNoticeStore.getState().notices).toEqual([]);
+
+    let focusedWhenSaid: Element | null = null;
+    const unsubscribe = useNoticeStore.subscribe(({ announced: messages }) => {
+      if (focusedWhenSaid === null && messages.some(({ words }) => words.startsWith("SAGA-3 was not saved."))) {
+        focusedWhenSaid = document.activeElement;
+      }
+    });
+    onTestFinished(unsubscribe);
+    // The earliest a browser runs a frame: the task after the one the write fails in.
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => {
+      callback(performance.now());
+    }, 0));
 
     await act(async () => {
       write.answer(refusalReply(422, { kind: "store", code: "task-not-found", message: "SAGA-3 is gone" }));
@@ -943,6 +961,9 @@ describe("the discard dialog", () => {
     await waitFor(() => {
       expect(useNoticeStore.getState().notices.map(({ title }) => title)).toEqual(["SAGA-3 was not saved"]);
     });
+    await frame();
+    expect(announced().filter((words) => words.startsWith("SAGA-3 was not saved."))).toHaveLength(1);
+    expect(focusedWhenSaid).toBe(tasksLink);
   });
 });
 

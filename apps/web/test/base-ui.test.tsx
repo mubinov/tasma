@@ -1,3 +1,4 @@
+import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Popover } from "@base-ui/react/popover";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -57,4 +58,36 @@ it("returns focus to the trigger when the popup closes", async () => {
     expect(screen.queryByText("Popover content")).toBeNull();
   });
   expect(document.activeElement).toBe(trigger);
+});
+
+/*
+ * The application's spoken region is heard while a modal dialog is open only
+ * because Base UI leaves an element carrying `aria-live`, and its ancestors,
+ * out of what it hides behind the popup. An upgrade that drops the exemption
+ * fails here rather than shipping silence.
+ */
+it("leaves an aria-live element outside a modal dialog neither hidden nor inert", async () => {
+  render(
+    <div>
+      <nav>Sidebar</nav>
+      <main>Content</main>
+      <div aria-live="polite" aria-relevant="additions" className="sr-only" />
+      <AlertDialog.Root open>
+        <AlertDialog.Portal>
+          <AlertDialog.Popup>
+            <AlertDialog.Title>Discard your changes?</AlertDialog.Title>
+            <AlertDialog.Close>Keep editing</AlertDialog.Close>
+          </AlertDialog.Popup>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+    </div>,
+  );
+
+  await waitFor(() => {
+    expect(screen.getByRole("main", { hidden: true }).getAttribute("aria-hidden")).toBe("true");
+  });
+  expect(screen.getByRole("navigation", { hidden: true }).getAttribute("aria-hidden")).toBe("true");
+  const region = document.querySelector("[aria-live]")!;
+  expect(region.closest("[aria-hidden]")).toBeNull();
+  expect(region.closest("[inert]")).toBeNull();
 });

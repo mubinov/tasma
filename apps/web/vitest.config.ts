@@ -13,7 +13,7 @@ export default mergeConfig(
   defineConfig({
     test: {
       environment: "jsdom",
-      setupFiles: ["../../test/setup/home.ts"],
+      setupFiles: ["../../test/setup/home.ts", "./test/setup/notice-store.ts"],
     },
   }),
 );

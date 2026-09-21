@@ -9,6 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
+import { flushSync } from "react-dom";
 import { bodyCorrection, taskWriteOptions } from "../api/mutations";
 import type { FinalFocus } from "./final-focus";
 import { useNoticeStore } from "../store/notices";
@@ -101,6 +102,8 @@ export function useTaskEditing(
   // The resolver is new on every render, and an answer that lands after the
   // render that started it needs the live one.
   const blockerRef = useRef(blocker);
+  // The blocker reports an answer only a render later; the dialog closes on the answer itself.
+  const [answeredBlock, setAnsweredBlock] = useState<typeof blocker | null>(null);
 
   /** The text on disk becomes the draft. The caller moves the caret. */
   function startEditing(): void {
@@ -144,6 +147,7 @@ export function useTaskEditing(
     // Base UI then falls back to the element that had focus when it opened.
     discardFocusRef.current = null;
     setCancelAsked(false);
+    setAnsweredBlock(blockerRef.current);
     blockerRef.current.reset?.();
   }
 
@@ -173,13 +177,6 @@ export function useTaskEditing(
     closeToReading();
   }
 
-  /** One frame after the focus move that goes with it: the two compete in one commit, and speech loses. */
-  function sayNextFrame(words: string): void {
-    requestAnimationFrame(() => {
-      useNoticeStore.getState().say(words);
-    });
-  }
-
   async function runSave(): Promise<void> {
     if (draft === null || saving) {
       return;
@@ -192,7 +189,7 @@ export function useTaskEditing(
       setTitleError(BLANK_TITLE);
       titleRef.current?.focus();
       if (inTitle) {
-        sayNextFrame(BLANK_TITLE);
+        useNoticeStore.getState().announce(BLANK_TITLE);
       }
       return;
     }
@@ -213,7 +210,7 @@ export function useTaskEditing(
     // The wait shows in the Save label alone, which a reader is not told about:
     // a ⌘↩ save keeps the caret in a field, and a name change on a control that
     // does not hold focus is not announced.
-    sayNextFrame("Saving…");
+    useNoticeStore.getState().announce("Saving…");
     try {
       await write({
         id,
@@ -222,13 +219,18 @@ export function useTaskEditing(
         place: "task page",
       });
     } catch (error) {
-      setBodyError(bodyCorrection(error));
-      keepEditing();
+      // The failure notice is announced a frame from now. A dialog open over
+      // the write closes in this commit, so the focus it returns lands first.
+      // eslint-disable-next-line @eslint-react/dom-no-flush-sync -- the close must commit before the next frame
+      flushSync(() => {
+        setBodyError(bodyCorrection(error));
+        keepEditing();
+      });
       return;
     }
 
     closeToReading();
-    sayNextFrame("Saved.");
+    useNoticeStore.getState().announce("Saved.");
   }
 
   function save(): void {
@@ -306,7 +308,7 @@ export function useTaskEditing(
     titleError,
     bodyError,
     diskChange,
-    discardAsked: cancelAsked || blocker.status === "blocked",
+    discardAsked: cancelAsked || (blocker.status === "blocked" && blocker !== answeredBlock),
     discardFocusRef,
     editRef,
     cancelRef,

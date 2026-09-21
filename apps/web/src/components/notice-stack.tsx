@@ -9,9 +9,8 @@ import { useNoticeStore, type OpenNotice } from "../store/notices";
 const STACK_HEIGHT_PROPERTY = "--notice-stack-height";
 
 /**
- * The open notices at the window's bottom right, the newest at the bottom. The
- * live region stays mounted while it is empty: a region inserted together with
- * its first notice is not announced.
+ * The open notices at the window's bottom right, the newest at the bottom. Not a
+ * live region: the store announces a notice when it opens.
  */
 export function NoticeStack(): ReactNode {
   const notices = useNoticeStore(useShallow((state) => state.notices));
@@ -83,13 +82,9 @@ export function NoticeStack(): ReactNode {
   return (
     <div
       ref={stackRef}
-      aria-live="polite"
-      aria-relevant="additions"
       className="pointer-events-none fixed right-4 bottom-8 z-(--layer-notice) -m-8 -mr-4 flex max-h-screen w-[calc(100%+1rem)] max-w-[488px] flex-col gap-2 overflow-y-auto p-8 pr-4 sm:right-10 sm:-mr-8 sm:max-w-[504px] sm:pr-8 [html:has(&)]:scroll-pb-(--notice-stack-height)"
     >
       {notices.map((notice) => (
-        // Each opening mounts a new panel: a text change in place, or no change
-        // at all, is not an addition to the live region and is not announced.
         <NoticePanel
           key={notice.serial}
           notice={notice}
@@ -108,13 +103,17 @@ export function NoticeStack(): ReactNode {
  * arrives with its first words is not announced. Polite, so it never takes the
  * caret; each message is a node of its own, so the same words said twice are
  * two additions and are announced twice.
+ *
+ * Base UI exempts an element carrying `aria-live` from the `aria-hidden` and
+ * `inert` a modal dialog puts on the page behind it, so the region is heard
+ * while a dialog is open. `role="status"` alone does not earn the exemption.
  */
 export function SpokenRegion(): ReactNode {
-  const spoken = useNoticeStore(useShallow((state) => state.spoken));
+  const announced = useNoticeStore(useShallow((state) => state.announced));
 
   return (
     <div aria-live="polite" aria-relevant="additions" className="sr-only">
-      {spoken.map(({ serial, words }) => <p key={serial}>{words}</p>)}
+      {announced.map(({ serial, words }) => <p key={serial}>{words}</p>)}
     </div>
   );
 }
@@ -135,7 +134,6 @@ function NoticePanel({ notice, onFocusLost }: NoticePanelProps): ReactNode {
   return (
     <div
       ref={panelRef}
-      role={notice.form === "failure" ? "alert" : undefined}
       className="pointer-events-auto flex w-full animate-enter gap-3 rounded-card border border-line bg-surface px-4 py-3 shadow-float"
     >
       <WarningIcon size={20} aria-hidden="true" className="mt-px shrink-0 text-signal" />

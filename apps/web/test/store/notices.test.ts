@@ -16,12 +16,23 @@ const SECOND: Notice = {
   words: ["step-stale · step \"dev:doing\" is not a step of dev-personal"],
 };
 
+/** One animation frame of the fake clock, which is what an announcement waits for. */
+const FRAME = 16;
+
 function openKeys(): string[] {
   return useNoticeStore.getState().notices.map(({ key }) => key);
 }
 
+function announced(): string[] {
+  return useNoticeStore.getState().announced.map(({ words }) => words);
+}
+
 beforeEach(() => {
-  useNoticeStore.setState({ notices: [], dismissed: new Map(), modalDialogs: 0, spoken: [], held: [] });
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("showNotice", () => {
@@ -168,28 +179,6 @@ describe("closeNotice", () => {
   });
 });
 
-describe("the count of open modal dialogs", () => {
-  it("starts at zero", () => {
-    expect(useNoticeStore.getState().modalDialogs).toBe(0);
-  });
-
-  it("counts each open dialog, so a nested pair leaves one behind when the inner closes", () => {
-    useNoticeStore.getState().openModalDialog();
-    useNoticeStore.getState().openModalDialog();
-    expect(useNoticeStore.getState().modalDialogs).toBe(2);
-
-    useNoticeStore.getState().closeModalDialog();
-
-    expect(useNoticeStore.getState().modalDialogs).toBe(1);
-  });
-
-  it("floors at zero, so an unmatched close cannot leave the count negative", () => {
-    useNoticeStore.getState().closeModalDialog();
-
-    expect(useNoticeStore.getState().modalDialogs).toBe(0);
-  });
-});
-
 describe("noticeWords", () => {
   it("gives code · message for each diagnostic and leaves out the path and the line", () => {
     const diagnostics: Diagnostic[] = [
@@ -231,150 +220,153 @@ describe("the muted line", () => {
   });
 });
 
-describe("say", () => {
-  afterEach(() => {
-    vi.useRealTimers();
+describe("announce", () => {
+  it("raises the words one frame after the call", () => {
+    useNoticeStore.getState().announce("Saved.");
+
+    expect(announced()).toEqual([]);
+
+    vi.advanceTimersByTime(FRAME);
+
+    expect(announced()).toEqual(["Saved."]);
   });
 
-  it("adds a message node of its own for each call, so the same words said twice are two nodes", () => {
-    useNoticeStore.getState().say("Saved.");
-    useNoticeStore.getState().say("Saved.");
+  it("adds a message node of its own for each call a frame apart, so the same words said twice are two nodes", () => {
+    useNoticeStore.getState().announce("Saved.");
+    vi.advanceTimersByTime(FRAME);
+    useNoticeStore.getState().announce("Saved.");
+    vi.advanceTimersByTime(FRAME);
 
-    const spoken = useNoticeStore.getState().spoken;
-    expect(spoken.map(({ words }) => words)).toEqual(["Saved.", "Saved."]);
-    expect(spoken[0]!.serial).not.toBe(spoken[1]!.serial);
+    const messages = useNoticeStore.getState().announced;
+    expect(messages.map(({ words }) => words)).toEqual(["Saved.", "Saved."]);
+    expect(messages[0]!.serial).not.toBe(messages[1]!.serial);
   });
 
-  it("clears a message three seconds after it is said, and leaves a later one standing", () => {
-    vi.useFakeTimers();
-    useNoticeStore.getState().say("Saved.");
-    vi.advanceTimersByTime(1_200);
-    useNoticeStore.getState().say("Changed on disk at 10:15. Saving overwrites that change.");
+  it("keeps identical words raised inside one frame as one node", () => {
+    useNoticeStore.getState().announce("Saved.");
+    vi.advanceTimersByTime(FRAME / 2);
+    useNoticeStore.getState().announce("Saved.");
 
-    vi.advanceTimersByTime(1_800);
+    vi.advanceTimersByTime(FRAME);
 
-    expect(useNoticeStore.getState().spoken.map(({ words }) => words))
-      .toEqual(["Changed on disk at 10:15. Saving overwrites that change."]);
+    expect(announced()).toEqual(["Saved."]);
+  });
 
-    vi.advanceTimersByTime(1_200);
+  it("keeps two different messages raised in one frame, in the order they were raised", () => {
+    useNoticeStore.getState().announce("Saving…");
+    useNoticeStore.getState().announce("Saved.");
+    useNoticeStore.getState().announce("Saving…");
 
-    expect(useNoticeStore.getState().spoken).toEqual([]);
+    vi.advanceTimersByTime(FRAME);
+
+    expect(announced()).toEqual(["Saving…", "Saved."]);
+  });
+
+  it("clears a message seven seconds after it is raised, and leaves a later one standing", () => {
+    useNoticeStore.getState().announce("Saved.");
+    vi.advanceTimersByTime(FRAME);
+    vi.advanceTimersByTime(3_000);
+    useNoticeStore.getState().announce("Changed on disk at 10:15. Saving overwrites that change.");
+    vi.advanceTimersByTime(3_999);
+
+    expect(announced()).toEqual(["Saved.", "Changed on disk at 10:15. Saving overwrites that change."]);
+
+    vi.advanceTimersByTime(1);
+
+    expect(announced()).toEqual(["Changed on disk at 10:15. Saving overwrites that change."]);
+
+    vi.advanceTimersByTime(7_000);
+
+    expect(announced()).toEqual([]);
   });
 });
 
-describe("what a modal dialog holds back", () => {
-  it("holds a message and says it when the dialog closes", () => {
-    useNoticeStore.getState().openModalDialog();
-    useNoticeStore.getState().say("Saved.");
-    expect(useNoticeStore.getState().spoken).toEqual([]);
+describe("what a notice announces", () => {
+  const FAILURE: Notice = {
+    key: "task-write-failure:SAGA-56",
+    form: "failure",
+    title: "SAGA-56 was not moved",
+    line: "The daemon refused the write, and the task is back where it was. Its own words are below.",
+    words: ["store/status-unknown · status \"Gone\" is not configured", "label-unknown · label \"x\" is not configured."],
+  };
 
-    useNoticeStore.getState().closeModalDialog();
+  it("says the title, the muted line and the words once, a frame after the notice opens", () => {
+    useNoticeStore.getState().showNotice(FAILURE);
 
-    expect(useNoticeStore.getState().spoken.map(({ words }) => words)).toEqual(["Saved."]);
+    expect(announced()).toEqual([]);
+
+    vi.advanceTimersByTime(FRAME);
+
+    expect(announced()).toEqual([
+      "SAGA-56 was not moved. "
+      + "The daemon refused the write, and the task is back where it was. Its own words are below. "
+      + "store/status-unknown · status \"Gone\" is not configured. "
+      + "label-unknown · label \"x\" is not configured.",
+    ]);
   });
 
-  it("holds a notice and opens it when the dialog closes", () => {
-    useNoticeStore.getState().openModalDialog();
+  it("says the title and the words of a notice with no muted line", () => {
     useNoticeStore.getState().showNotice(FIRST);
-    expect(openKeys()).toEqual([]);
+    vi.advanceTimersByTime(FRAME);
 
-    useNoticeStore.getState().closeModalDialog();
-
-    expect(openKeys()).toEqual([FIRST.key]);
+    expect(announced()).toEqual(["1 warning about SAGA-56. label-case-converted · label \"Web\" was converted to \"web\"."]);
   });
 
-  it("keeps holding while an outer dialog is still open", () => {
-    useNoticeStore.getState().openModalDialog();
-    useNoticeStore.getState().openModalDialog();
+  it("says a replaced notice again", () => {
     useNoticeStore.getState().showNotice(FIRST);
+    vi.advanceTimersByTime(FRAME);
 
-    useNoticeStore.getState().closeModalDialog();
+    useNoticeStore.getState().showNotice({ ...FIRST, title: "2 warnings about SAGA-56" });
+    vi.advanceTimersByTime(FRAME);
 
-    expect(openKeys()).toEqual([]);
+    expect(announced()).toEqual([
+      "1 warning about SAGA-56. label-case-converted · label \"Web\" was converted to \"web\".",
+      "2 warnings about SAGA-56. label-case-converted · label \"Web\" was converted to \"web\".",
+    ]);
   });
 
-  it("holds one notice per key, the last content of that key", () => {
-    const changed: Notice = { ...FIRST, title: "2 warnings about SAGA-56" };
-    useNoticeStore.getState().openModalDialog();
+  it("says nothing for content equal to the open notice", () => {
     useNoticeStore.getState().showNotice(FIRST);
-    useNoticeStore.getState().showNotice(changed);
+    vi.advanceTimersByTime(FRAME);
 
-    useNoticeStore.getState().closeModalDialog();
+    useNoticeStore.getState().showNotice({ ...FIRST, words: [...FIRST.words] });
+    vi.advanceTimersByTime(FRAME);
 
-    expect(useNoticeStore.getState().notices).toMatchObject([changed]);
+    expect(announced()).toHaveLength(1);
   });
 
-  it("opens what it held in the order it was raised", () => {
-    useNoticeStore.getState().openModalDialog();
+  it("says nothing for content equal to what the reader dismissed", () => {
     useNoticeStore.getState().showNotice(FIRST);
-    useNoticeStore.getState().say("Saved.");
+    useNoticeStore.getState().dismissNotice(FIRST.key);
+    vi.advanceTimersByTime(FRAME);
+
+    useNoticeStore.getState().showNotice({ ...FIRST, words: [...FIRST.words] });
+    vi.advanceTimersByTime(FRAME);
+
+    expect(announced()).toHaveLength(1);
+  });
+
+  it("says nothing when a notice is dismissed or closed", () => {
+    useNoticeStore.getState().showNotice(FIRST);
     useNoticeStore.getState().showNotice(SECOND);
-
-    useNoticeStore.getState().closeModalDialog();
-
-    expect(openKeys()).toEqual([FIRST.key, SECOND.key]);
-    expect(useNoticeStore.getState().spoken.map(({ words }) => words)).toEqual(["Saved."]);
-  });
-
-  it("drops a held notice when its key is closed, so an answered refusal never opens", () => {
-    useNoticeStore.getState().openModalDialog();
-    useNoticeStore.getState().showNotice(FIRST);
-
-    useNoticeStore.getState().closeNotice(FIRST.key);
-    useNoticeStore.getState().closeModalDialog();
-
-    expect(openKeys()).toEqual([]);
-  });
-
-  it("drops a held notice when its key is dismissed", () => {
-    useNoticeStore.getState().openModalDialog();
-    useNoticeStore.getState().showNotice(FIRST);
+    vi.advanceTimersByTime(FRAME);
 
     useNoticeStore.getState().dismissNotice(FIRST.key);
-    useNoticeStore.getState().closeModalDialog();
-
-    expect(openKeys()).toEqual([]);
-  });
-
-  it("changes nothing where a closed key holds neither an open nor a held notice", () => {
-    useNoticeStore.getState().openModalDialog();
-    useNoticeStore.getState().showNotice(FIRST);
-    const before = useNoticeStore.getState();
-
     useNoticeStore.getState().closeNotice(SECOND.key);
+    vi.advanceTimersByTime(FRAME);
 
-    expect(useNoticeStore.getState()).toBe(before);
+    expect(announced()).toHaveLength(2);
   });
 
-  it("holds one message per key, the last words under that key", () => {
-    useNoticeStore.getState().openModalDialog();
-    useNoticeStore.getState().say("Changed on disk at 10:15. Saving overwrites that change.", "disk-change");
-    useNoticeStore.getState().say("Changed on disk at 11:20. Saving overwrites that change.", "disk-change");
+  it("says a notice and a message raised in one commit in the order they were raised", () => {
+    useNoticeStore.getState().announce("Saving…");
+    useNoticeStore.getState().showNotice(FIRST);
 
-    useNoticeStore.getState().closeModalDialog();
+    vi.advanceTimersByTime(FRAME);
 
-    expect(useNoticeStore.getState().spoken.map(({ words }) => words))
-      .toEqual(["Changed on disk at 11:20. Saving overwrites that change."]);
-  });
-
-  it("drops a held message its raiser withdrew, so words for a line that has gone are never said", () => {
-    useNoticeStore.getState().openModalDialog();
-    useNoticeStore.getState().say("Changed on disk at 10:15. Saving overwrites that change.", "disk-change");
-    useNoticeStore.getState().say("Saved.");
-
-    useNoticeStore.getState().unsay("disk-change");
-    useNoticeStore.getState().closeModalDialog();
-
-    expect(useNoticeStore.getState().spoken.map(({ words }) => words)).toEqual(["Saved."]);
-  });
-
-  it("changes nothing where a withdrawn key holds no message", () => {
-    useNoticeStore.getState().openModalDialog();
-    useNoticeStore.getState().say("Saved.");
-    const before = useNoticeStore.getState();
-
-    useNoticeStore.getState().unsay("disk-change");
-
-    expect(useNoticeStore.getState()).toBe(before);
+    expect(announced()).toEqual([
+      "Saving…",
+      "1 warning about SAGA-56. label-case-converted · label \"Web\" was converted to \"web\".",
+    ]);
   });
 });

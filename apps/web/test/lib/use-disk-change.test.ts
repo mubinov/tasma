@@ -1,8 +1,9 @@
-import { act, cleanup, renderHook } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { cleanup, renderHook } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
 import type { Draft } from "../../src/lib/text-draft";
 import { useDiskChange, type DiskChangeOptions } from "../../src/lib/use-disk-change";
 import { useNoticeStore } from "../../src/store/notices";
+import { frame } from "../setup/notice-store";
 
 const START: Draft = { title: "Build the parser", body: "First line.\n" };
 
@@ -26,19 +27,6 @@ function mount(initial: Partial<DiskChangeOptions> = {}) {
 
   return renderHook((options: DiskChangeOptions) => useDiskChange(options), { initialProps: props });
 }
-
-/** The frame the announcement waits for. */
-async function frame(): Promise<void> {
-  await act(async () => {
-    await new Promise((resolve) => {
-      requestAnimationFrame(resolve);
-    });
-  });
-}
-
-beforeEach(() => {
-  useNoticeStore.setState({ notices: [], dismissed: new Map(), spoken: [], held: [], modalDialogs: 0 });
-});
 
 afterEach(() => {
   cleanup();
@@ -116,30 +104,13 @@ it("says the line one frame after it appears, and says nothing more for a later 
   rerender(changed);
   await frame();
 
-  expect(useNoticeStore.getState().spoken.map(({ words }) => words))
+  expect(useNoticeStore.getState().announced.map(({ words }) => words))
     .toEqual([`Changed on disk at ${minutes(FIRST)}. Saving overwrites that change.`]);
 
   rerender({ ...changed, disk: { ...START, title: "Renamed twice" }, updated: LATER });
   await frame();
 
-  expect(useNoticeStore.getState().spoken).toHaveLength(1);
-});
-
-it("says nothing for a line that goes before its frame runs", async () => {
-  const { rerender } = mount();
-  const changed: DiskChangeOptions = {
-    start: START,
-    draft: { ...START },
-    disk: { ...START, title: "Renamed" },
-    saving: false,
-    updated: FIRST,
-  };
-
-  rerender(changed);
-  rerender({ ...changed, disk: { ...START } });
-  await frame();
-
-  expect(useNoticeStore.getState().spoken).toEqual([]);
+  expect(useNoticeStore.getState().announced).toHaveLength(1);
 });
 
 it("keeps the time and says nothing more when a refused save brings the same line back", async () => {
@@ -160,31 +131,15 @@ it("keeps the time and says nothing more when a refused save brings the same lin
   await frame();
 
   expect(result.current).toEqual({ showing: true, at: minutes(FIRST) });
-  expect(useNoticeStore.getState().spoken).toHaveLength(1);
+  expect(useNoticeStore.getState().announced).toHaveLength(1);
 });
 
-it("withdraws the words a dialog holds when the line goes before the dialog closes", async () => {
-  const { rerender } = mount();
-  const changed: DiskChangeOptions = {
-    start: START,
-    draft: { ...START },
-    disk: { ...START, title: "Renamed" },
-    saving: false,
-    updated: FIRST,
-  };
-
-  act(() => {
-    useNoticeStore.getState().openModalDialog();
+it("says the line once where StrictMode runs its effect twice on mount", async () => {
+  renderHook((options: DiskChangeOptions) => useDiskChange(options), {
+    initialProps: { start: START, draft: { ...START }, disk: { ...START, title: "Renamed" }, saving: false, updated: FIRST },
+    reactStrictMode: true,
   });
-  rerender(changed);
   await frame();
 
-  expect(useNoticeStore.getState().held).toHaveLength(1);
-
-  rerender({ ...changed, disk: { ...START } });
-  act(() => {
-    useNoticeStore.getState().closeModalDialog();
-  });
-
-  expect(useNoticeStore.getState().spoken).toEqual([]);
+  expect(useNoticeStore.getState().announced).toHaveLength(1);
 });

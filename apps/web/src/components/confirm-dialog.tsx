@@ -1,8 +1,7 @@
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Button } from "@base-ui/react/button";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useId, useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import type { FinalFocus } from "../lib/final-focus";
-import { useModalDialog } from "../store/notices";
 import {
   BUTTON_CLASS,
   BUTTON_FILLED_CLASS,
@@ -13,9 +12,6 @@ import {
   DIALOG_STATUS_CLASS,
   DIALOG_VIEWPORT_CLASS,
 } from "./control-classes";
-
-/** How long the status region is held back from its first write, counted from the popup's mount. */
-const STATUS_HOLD = 1000;
 
 /**
  * Empties focus while the dialog opens, and hands back the element it took it
@@ -50,45 +46,6 @@ function useFocusEmptiedWhileOpening(open: boolean): RefObject<HTMLElement | nul
   return openerRef;
 }
 
-type DialogStatusProps = { status: string | undefined };
-
-/**
- * The dialog's own spoken line. It mounts with the popup and stays mounted and
- * empty until the hold elapses: a live region written into in the same commit
- * it arrives in announces nothing. Writes after the first land at once, so the
- * hold is a gate and not a debounce, and a status that changes more than once
- * inside it resolves to the latest value.
- *
- * The words key the message node inside the region and never the region
- * itself, which would remount it and defeat both rules: changed words are a new
- * node, and so a new addition to speak, while two identical consecutive values
- * are one node and are spoken once. The caller separates a repeated message by
- * passing an empty status between.
- */
-function DialogStatus({ status }: DialogStatusProps): ReactNode {
-  const [held, setHeld] = useState(true);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setHeld(false);
-    }, STATUS_HOLD);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, []);
-
-  const words = held ? "" : (status ?? "");
-
-  // On screen rather than sr-only: one node serves both audiences, so a sighted
-  // reader gets the reason a refused write left the dialog open.
-  return (
-    <div role="status" className={DIALOG_STATUS_CLASS}>
-      <span key={words}>{words}</span>
-    </div>
-  );
-}
-
 export type ConfirmDialogProps = {
   open: boolean;
   title: string;
@@ -116,8 +73,9 @@ export type ConfirmDialogProps = {
    */
   finalFocus: RefObject<FinalFocus>;
   /**
-   * Spoken inside the dialog: the wait, then a refusal. A caller that keeps the
-   * dialog open across a write must pass both — the failure mode is silence.
+   * Visible text under the description, e.g. the wait for a write, and part of
+   * the dialog's accessible description, so it is read when the dialog is
+   * entered. The dialog announces nothing: the caller announces.
    */
   status?: string;
 };
@@ -125,8 +83,7 @@ export type ConfirmDialogProps = {
 /**
  * The confirmation dialog. `AlertDialog` hard-codes modal, the alertdialog role
  * and "an outside press never dismisses", so none of the three can be set
- * wrong, and Base UI hides everything outside the popup — which is why the
- * status region sits inside it.
+ * wrong.
  */
 export function ConfirmDialog({
   open,
@@ -140,11 +97,23 @@ export function ConfirmDialog({
   status,
 }: ConfirmDialogProps): ReactNode {
   const cancelRef = useRef<HTMLButtonElement>(null);
-  useModalDialog(open);
+  const actionsRef = useRef<AlertDialog.Root.Actions>(null);
+  const descriptionId = useId();
+  const statusId = useId();
   const openerRef = useFocusEmptiedWhileOpening(open);
+
+  // Base UI unmounts a closed popup, and returns focus, only an animation frame
+  // later. The panel has no exit animation, so it unmounts in the commit that
+  // closes it, and focus lands before words announced with the close.
+  useLayoutEffect(() => {
+    if (!open) {
+      actionsRef.current?.unmount();
+    }
+  }, [open]);
 
   return (
     <AlertDialog.Root
+      actionsRef={actionsRef}
       open={open}
       onOpenChange={(next) => {
         if (!next) {
@@ -177,14 +146,19 @@ export function ConfirmDialog({
 
               return opener?.isConnected === true ? opener : true;
             }}
+            // A value here replaces the description id Base UI sets rather than
+            // joining it, so both ids are named, the description first.
+            aria-describedby={status === undefined || status === "" ? descriptionId : `${descriptionId} ${statusId}`}
             className={DIALOG_PANEL_CLASS}
           >
             {/* The class every h2 of the application already takes. */}
             <AlertDialog.Title className="font-chrome text-lg font-semibold">
               {title}
             </AlertDialog.Title>
-            <AlertDialog.Description className={DIALOG_BODY_CLASS}>{description}</AlertDialog.Description>
-            <DialogStatus status={status} />
+            <AlertDialog.Description id={descriptionId} className={DIALOG_BODY_CLASS}>
+              {description}
+            </AlertDialog.Description>
+            <div id={statusId} className={DIALOG_STATUS_CLASS}>{status}</div>
             <div className={DIALOG_ACTIONS_CLASS}>
               <AlertDialog.Close ref={cancelRef} className={BUTTON_CLASS}>
                 {cancelLabel}

@@ -17,7 +17,7 @@ import {
 } from "@tasma/protocol";
 import { act, render } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { vi } from "vitest";
+import { onTestFinished, vi } from "vitest";
 import { createAppQueryClient } from "../src/api/client";
 import { createAppRouter, type RouterContext } from "../src/routes";
 
@@ -63,6 +63,18 @@ export function stubReducedMotion(reduce: boolean) {
     media,
     matches: reduce && media === "(prefers-reduced-motion: reduce)",
   }));
+}
+
+/**
+ * Gives elements the `getAnimations` jsdom lacks, for the rest of the test.
+ * Without it Base UI unmounts a closed popup at once; with it, as in a browser,
+ * only after an animation frame.
+ */
+export function stubAnimations() {
+  Object.defineProperty(Element.prototype, "getAnimations", { configurable: true, value: () => [] });
+  onTestFinished(() => {
+    Reflect.deleteProperty(Element.prototype, "getAnimations");
+  });
 }
 
 /** What a stub observer reports for a target: its box, and whether it meets the root. */
