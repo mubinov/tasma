@@ -10,7 +10,12 @@
 //! written as a configuration key instead is read by nothing.
 
 mod daemon;
+mod log;
 mod protocol;
+mod record;
+mod supervisor;
+#[cfg(test)]
+mod testing;
 
 use std::sync::Arc;
 
@@ -116,6 +121,7 @@ fn background(theme: Option<Theme>) -> Color {
 
 fn main() {
     let daemon = Arc::new(daemon::Daemon::new());
+    let startup = Arc::clone(&daemon);
 
     tauri::Builder::default()
         // Asynchronous, so a daemon call never holds the main thread.
@@ -127,7 +133,14 @@ fn main() {
                 responder.respond(protocol::serve(&app, &daemon, request).await);
             });
         })
-        .setup(|app| {
+        .setup(move |app| {
+            // On the runtime rather than here, so a spawn never holds the
+            // window back. It leaves the daemon warm before the board's first
+            // request, and the forward covers the case where it did not.
+            tauri::async_runtime::spawn(async move {
+                let _ = startup.ensure_serving().await;
+            });
+
             let url = window_url(app);
             let dev_server = match &url {
                 WebviewUrl::External(url) => Some(url.clone()),

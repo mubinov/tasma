@@ -18,7 +18,7 @@ import { daemonAnswers, daemonUrl, readRecord, recordPath } from "./record.js";
 export const OUTPUT_FILE = "tasma-daemon.out";
 
 /** How long a start waits for a daemon to answer before it gives up on it. */
-const START_BUDGET_MS = 10_000;
+export const START_BUDGET_MS = 10_000;
 
 /** How often a wait looks again. Shared with the wait `daemon stop` runs. */
 export const TICK_MS = 100;

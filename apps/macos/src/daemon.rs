@@ -1,10 +1,9 @@
-//! Where the daemon listens, and the forward to it.
+//! The forward to the daemon.
 //!
 //! The shell reads a port and writes nothing. Every write goes to the daemon,
 //! and the tree written is the one the daemon's own `HOME` resolved.
 
-use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
@@ -13,18 +12,8 @@ use tauri::http::header::{
 };
 use tauri::http::{HeaderValue, Method, Request, Response, StatusCode};
 
-/// Where a daemon listens when its record names no port. It is the port the
-/// daemon binds and the CLI dials, held to `@tasma/protocol` by a repo test.
-const DEFAULT_PORT: u16 = 8278;
-
-/// The tree the engine stores everything under, and the record a running daemon
-/// writes into its root. Held to their TypeScript originals by the same test.
-const TREE: &str = ".tasma";
-const RECORD: &str = "daemon.json";
-
-/// How much of the record is read. A record is a few dozen bytes, and the file
-/// stands in a directory any process of the account can write.
-const RECORD_LIMIT: u64 = 4096;
+use crate::record::{DEFAULT_PORT, daemon_url, read_port, record_path};
+use crate::supervisor::Supervisor;
 
 /// How long a forward waits. The daemon is a local process and answers at once;
 /// a listener that accepts and never answers would otherwise hold the call for
@@ -75,52 +64,11 @@ struct Forward {
     body: Vec<u8>,
 }
 
-/// What the record states, or the default for every way it states nothing:
-/// not JSON, not an object, or a `port` that is not a port a daemon listens on.
-///
-/// `pid` is ignored. It names a process to signal, and this shell signals none.
-fn port_in(text: &str) -> u16 {
-    serde_json::from_str::<serde_json::Value>(text)
-        .ok()
-        .as_ref()
-        .and_then(|record| record.get("port"))
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|port| u16::try_from(port).ok())
-        .filter(|port| *port != 0)
-        .unwrap_or(DEFAULT_PORT)
-}
-
-/// The record of the tree under a home directory.
-fn record_path(home: &Path) -> PathBuf {
-    home.join(TREE).join(RECORD)
-}
-
-/// The text under the name, or an empty string where the name holds no record
-/// to read: absent, unreadable, or longer than a record can be.
-fn read_record(path: &Path) -> String {
-    let Ok(file) = std::fs::File::open(path) else {
-        return String::new();
-    };
-
-    let mut text = String::new();
-    // One byte past the ceiling, so a read that fills the buffer states a file
-    // longer than a record can be whatever it holds.
-    match file.take(RECORD_LIMIT + 1).read_to_string(&mut text) {
-        Ok(read) if read as u64 <= RECORD_LIMIT => text,
-        _ => String::new(),
-    }
-}
-
-/// The port the record under a name states.
-fn read_port(path: &Path) -> u16 {
-    port_in(&read_record(path))
-}
-
 /// The outgoing request for one incoming one: the method, the path, the media
 /// type and the body, and nothing else the incoming request carried.
 fn forward_of(port: u16, target: &str, request: &Request<Vec<u8>>) -> Forward {
     Forward {
-        url: format!("http://127.0.0.1:{port}{target}"),
+        url: format!("{}{target}", daemon_url(port)),
         method: request.method().clone(),
         media_type: request.headers().get(CONTENT_TYPE).cloned(),
         body: request.body().clone(),
@@ -166,32 +114,40 @@ pub struct Daemon {
     port: AtomicU16,
     client: reqwest::Client,
     reply_limit: usize,
+    supervisor: Supervisor,
 }
 
 impl Daemon {
-    /// The daemon of the tree under the current home directory.
+    /// The daemon of the tree under the current home directory, kept serving by
+    /// a supervisor over the same tree.
     ///
     /// A home directory the environment names none of leaves no record to read,
     /// and the default port stands.
     pub fn new() -> Self {
-        Self::at(std::env::home_dir().map(|home| record_path(&home)))
+        let home = std::env::home_dir();
+
+        Self::with_supervisor(
+            home.as_deref().map(record_path),
+            Supervisor::new(home.as_deref()),
+            TIMEOUT,
+            REPLY_LIMIT,
+        )
     }
 
-    /// The daemon of the tree a given record names. The port is held in memory,
-    /// so a healthy daemon costs no file read per request.
-    fn at(record: Option<PathBuf>) -> Self {
-        Self::with_limits(record, TIMEOUT, REPLY_LIMIT)
-    }
-
-    /// The same, with the wait and the ceiling a forward holds the listener it
-    /// dials to.
-    fn with_limits(record: Option<PathBuf>, timeout: Duration, reply_limit: usize) -> Self {
+    /// The same, with the supervisor, the wait and the ceiling all named.
+    fn with_supervisor(
+        record: Option<PathBuf>,
+        supervisor: Supervisor,
+        timeout: Duration,
+        reply_limit: usize,
+    ) -> Self {
         let port = record.as_deref().map_or(DEFAULT_PORT, read_port);
 
         Self {
             record,
             port: AtomicU16::new(port),
             reply_limit,
+            supervisor,
             client: reqwest::Client::builder()
                 .no_proxy()
                 .timeout(timeout)
@@ -202,6 +158,20 @@ impl Daemon {
                 .build()
                 .expect("a client with no TLS and no proxy is always buildable"),
         }
+    }
+
+    /// The daemon of the tree a given record names, supervised by nothing. For
+    /// the tests, which drive listeners of their own and start no process.
+    #[cfg(test)]
+    fn at(record: Option<PathBuf>) -> Self {
+        Self::limited(record, TIMEOUT, REPLY_LIMIT)
+    }
+
+    /// The same, with the wait and the ceiling a forward holds the listener it
+    /// dials to.
+    #[cfg(test)]
+    fn limited(record: Option<PathBuf>, timeout: Duration, reply_limit: usize) -> Self {
+        Self::with_supervisor(record, Supervisor::inert(), timeout, reply_limit)
     }
 
     /// The port last read from the record.
@@ -217,26 +187,52 @@ impl Daemon {
         port
     }
 
+    /// Makes sure a daemon is serving this tree, and keeps the port one answers
+    /// on. Called once at startup, so the daemon is warm before the board's
+    /// first request, and again by a forward that could not connect.
+    pub async fn ensure_serving(&self) -> Option<u16> {
+        let port = self.supervisor.ensure_serving().await?;
+        self.port.store(port, Ordering::Relaxed);
+
+        Some(port)
+    }
+
     /// The daemon's answer to one request: its status, the headers it set and
     /// its bytes, untouched. The daemon's body is authoritative and its status
     /// advisory, so neither is read here.
     pub async fn forward(&self, target: &str, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
-        let port = self.port();
+        let mut port = self.port();
+        // Only a failure to connect is retried: it is the one fault that proves
+        // the request never reached the daemon, so replaying a write cannot
+        // carry it out twice.
+        let mut error = match self.send(port, target, request).await {
+            Ok(reply) => return reply,
+            Err(error) => error,
+        };
 
-        match self.send(port, target, request).await {
-            Ok(reply) => reply,
-            // Only a failure to connect is retried: it is the one fault that
-            // proves the request never reached the daemon, so replaying a write
-            // cannot carry it out twice.
-            Err(error) if error.is_connect() => {
-                let port = self.reread();
-
-                self.send(port, target, request)
-                    .await
-                    .unwrap_or_else(|error| bad_gateway(port, &fault_of(&error)))
-            }
-            Err(error) => bad_gateway(port, &fault_of(&error)),
+        // The record first, which names a daemon restarted on another port.
+        if error.is_connect() {
+            port = self.reread();
+            error = match self.send(port, target, request).await {
+                Ok(reply) => return reply,
+                Err(error) => error,
+            };
         }
+
+        // Then the supervisor, which starts one where none is serving at all,
+        // so a cold start recovers the request in flight rather than showing
+        // the failure screen and waiting for Retry.
+        if error.is_connect()
+            && let Some(serving) = self.ensure_serving().await
+        {
+            port = serving;
+            error = match self.send(port, target, request).await {
+                Ok(reply) => return reply,
+                Err(error) => error,
+            };
+        }
+
+        bad_gateway(port, &fault_of(&error))
     }
 
     async fn send(
@@ -294,43 +290,8 @@ impl Daemon {
 #[cfg(test)]
 pub(crate) mod fixtures {
     use super::*;
-
-    /// One directory for every record a test writes. It is left in place: the
-    /// tests run in parallel, so a removal would race another test's write, and
-    /// the files are a few dozen bytes under the temp directory.
-    const DIRECTORY: &str = "tasma-macos-tests";
-
-    /// A file under the shared directory, named for what writes it.
-    pub(crate) fn temp_file(name: &str) -> PathBuf {
-        let directory = std::env::temp_dir().join(DIRECTORY);
-        std::fs::create_dir_all(&directory).unwrap();
-        directory.join(name)
-    }
-
-    /// A record naming a port, written where a test can point a `Daemon` at it.
-    ///
-    /// The file is named for the test, never for the port: the kernel hands the
-    /// same port number out again once a listener releases it, and the tests run
-    /// in parallel, so two of them would otherwise share one file and the one
-    /// that rewrites its record would have the other put the old port back.
-    pub(crate) fn record_naming(test: &str, port: u16) -> PathBuf {
-        let path = temp_file(&format!("daemon-{test}.json"));
-        write_record(&path, port);
-        path
-    }
-
-    /// The record a test points a `Daemon` at, as a running daemon writes it.
-    pub(crate) fn write_record(path: &Path, port: u16) {
-        std::fs::write(path, format!(r#"{{"port":{port},"pid":1}}"#)).unwrap();
-    }
-
-    /// A port bound long enough to be sure nothing else holds it, then given up.
-    pub(crate) fn dead_port() -> u16 {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-        port
-    }
+    use crate::record::fixtures::record_naming;
+    use crate::testing::dead_port;
 
     /// A daemon whose record names a port nothing listens on.
     pub(crate) fn daemon_on_a_dead_port(test: &str) -> Daemon {
@@ -340,73 +301,15 @@ pub(crate) mod fixtures {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Read as _;
+
     use super::fixtures::*;
     use super::*;
-
-    #[test]
-    fn a_record_states_its_port() {
-        assert_eq!(port_in(r#"{"port":9001,"pid":42}"#), 9001);
-    }
-
-    #[test]
-    fn a_record_that_is_not_json_states_no_port() {
-        assert_eq!(port_in("not json at all"), DEFAULT_PORT);
-    }
-
-    #[test]
-    fn an_empty_record_states_no_port() {
-        assert_eq!(port_in(""), DEFAULT_PORT);
-    }
-
-    #[test]
-    fn a_record_that_is_not_an_object_states_no_port() {
-        assert_eq!(port_in("[9001]"), DEFAULT_PORT);
-    }
-
-    #[test]
-    fn a_record_without_a_port_states_none() {
-        assert_eq!(port_in(r#"{"pid":42}"#), DEFAULT_PORT);
-    }
-
-    #[test]
-    fn a_port_that_is_not_a_port_states_none() {
-        assert_eq!(port_in(r#"{"port":"9001"}"#), DEFAULT_PORT);
-        assert_eq!(port_in(r#"{"port":65536}"#), DEFAULT_PORT);
-        assert_eq!(port_in(r#"{"port":-1}"#), DEFAULT_PORT);
-        assert_eq!(port_in(r#"{"port":8278.5}"#), DEFAULT_PORT);
-        // Zero is a port to bind, never a port a daemon is found on.
-        assert_eq!(port_in(r#"{"port":0}"#), DEFAULT_PORT);
-    }
-
-    #[test]
-    fn an_absent_record_states_no_port() {
-        assert_eq!(
-            read_port(Path::new("/nonexistent/.tasma/daemon.json")),
-            DEFAULT_PORT
-        );
-    }
-
-    #[test]
-    fn a_directory_in_place_of_a_record_states_no_port() {
-        assert_eq!(read_port(Path::new("/tmp")), DEFAULT_PORT);
-    }
-
-    #[test]
-    fn a_record_longer_than_a_record_can_be_states_no_port() {
-        let path = temp_file("longer-than-a-record.json");
-        let padding = " ".repeat(RECORD_LIMIT as usize);
-        std::fs::write(&path, format!(r#"{{"port":9001,"pid":42}}{padding}"#)).unwrap();
-
-        assert_eq!(read_port(&path), DEFAULT_PORT);
-    }
-
-    #[test]
-    fn a_record_stands_in_the_root_of_the_tree() {
-        assert_eq!(
-            record_path(Path::new("/tmp/home")),
-            PathBuf::from("/tmp/home/.tasma/daemon.json"),
-        );
-    }
+    use crate::record::fixtures::{record_naming, write_record};
+    use crate::supervisor::fixtures::{
+        a_daemon_serving_nothing_else, answering, health, supervising_a_stub,
+    };
+    use crate::testing::dead_port;
 
     #[test]
     fn a_forward_carries_the_method_the_path_the_media_type_and_the_body() {
@@ -644,7 +547,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let held = std::thread::spawn(move || listener.accept().unwrap());
 
-        let daemon = Daemon::with_limits(
+        let daemon = Daemon::limited(
             Some(record_naming("no-answer", port)),
             Duration::from_millis(250),
             REPLY_LIMIT,
@@ -677,6 +580,31 @@ mod tests {
                 .starts_with("POST /health ")
         );
         assert_eq!(daemon.port(), port);
+    }
+
+    #[test]
+    fn a_forward_that_reaches_no_daemon_has_one_started_and_is_sent_again() {
+        let port = answering(health());
+        let (supervisor, record) = supervising_a_stub("a-cold-start", port);
+        let daemon = Daemon::with_supervisor(Some(record), supervisor, TIMEOUT, REPLY_LIMIT);
+
+        let answer = tauri::async_runtime::block_on(daemon.forward("/health", &write("/health")));
+
+        assert_eq!(answer.status(), StatusCode::OK);
+        assert_eq!(daemon.port(), port);
+    }
+
+    #[test]
+    fn a_daemon_that_was_started_and_still_cannot_answer_is_a_bad_gateway() {
+        let port = a_daemon_serving_nothing_else();
+        let (supervisor, record) = supervising_a_stub("a-started-daemon-that-breaks", port);
+        let daemon = Daemon::with_supervisor(Some(record), supervisor, TIMEOUT, REPLY_LIMIT);
+
+        let answer =
+            tauri::async_runtime::block_on(daemon.forward("/projects", &write("/projects")));
+
+        assert_eq!(answer.status(), StatusCode::BAD_GATEWAY);
+        assert!(answer.body().is_empty());
     }
 
     #[test]
@@ -714,7 +642,7 @@ mod tests {
     fn an_answer_past_the_ceiling_is_a_bad_gateway() {
         let (port, _seen) =
             listen("HTTP/1.1 200 OK\r\ncontent-length: 20\r\n\r\n01234567890123456789");
-        let daemon = Daemon::with_limits(Some(record_naming("past-the-ceiling", port)), TIMEOUT, 8);
+        let daemon = Daemon::limited(Some(record_naming("past-the-ceiling", port)), TIMEOUT, 8);
 
         let answer =
             tauri::async_runtime::block_on(daemon.forward("/projects", &write("/projects")));
@@ -733,8 +661,8 @@ mod tests {
 
         // The listener reads the request to its own timeout before it answers,
         // so only the call that must not be answered takes the short wait.
-        let waits = Daemon::with_limits(None, Duration::from_millis(250), REPLY_LIMIT);
-        let answers = Daemon::with_limits(None, TIMEOUT, REPLY_LIMIT);
+        let waits = Daemon::limited(None, Duration::from_millis(250), REPLY_LIMIT);
+        let answers = Daemon::limited(None, TIMEOUT, REPLY_LIMIT);
 
         let named = fault(&answers, dead_port());
         assert!(named.starts_with("nothing is listening"), "{named}");
@@ -760,7 +688,7 @@ mod tests {
     fn an_answer_at_the_ceiling_is_read_whole() {
         let (port, _seen) =
             listen("HTTP/1.1 200 OK\r\ncontent-length: 20\r\n\r\n01234567890123456789");
-        let daemon = Daemon::with_limits(Some(record_naming("at-the-ceiling", port)), TIMEOUT, 20);
+        let daemon = Daemon::limited(Some(record_naming("at-the-ceiling", port)), TIMEOUT, 20);
 
         let answer =
             tauri::async_runtime::block_on(daemon.forward("/projects", &write("/projects")));

@@ -36,7 +36,7 @@ export const PROBE_TIMEOUT_MS = 1000;
  * budget alone would let whatever holds the recorded port send for the whole of
  * it.
  */
-const PROBE_BODY_LIMIT = 64 * 1024;
+export const PROBE_BODY_LIMIT = 64 * 1024;
 
 const HIGHEST_PORT = 65535;
 

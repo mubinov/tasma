@@ -24,6 +24,10 @@ custom-protocol = ["tauri/custom-protocol"]
 tauri-build = "2"
 
 [dependencies]
+# `setsid`, the walk that opens the log's directory one component at a time, and
+# the session id a test reads back. The standard library exposes none of the
+# three.
+libc = "0.2"
 # The traversal guard reads the decoded path, because Tauri's resolver decodes
 # before it looks a name up.
 percent-encoding = "2"
@@ -32,6 +36,10 @@ percent-encoding = "2"
 reqwest = { version = "0.13", default-features = false }
 serde_json = "1"
 tauri = "2"
+# The tick the readiness wait holds on. Tauri's own runtime is tokio, and it
+# enables no timer of its own, so the feature is named here rather than left to
+# whatever another dependency happens to turn on.
+tokio = { version = "1", default-features = false, features = ["time"] }
 
 [dev-dependencies]
 # The mock runtime, which the asset tests drive. Resolver 3 keeps the feature

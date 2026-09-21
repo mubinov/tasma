@@ -68,9 +68,9 @@ describe("the development runner", () => {
   // The two commands HOME decides the daemon for: the CLI resolves the tree
   // from HOME itself, and the window reads $HOME/.tasma/daemon.json to find
   // which daemon to forward to. Unwrapped, either one reaches the real tree.
-  // `dev` and `app:dev` reach a daemon as well, but through the Vite proxy,
-  // which names one fixed address — HOME decides nothing for them, so the
-  // wrapper would change nothing either.
+  // `app:dev` builds and runs the crate too, and it does reach the real tree:
+  // the wrapper has to follow pnpm in the chain, which the test above holds,
+  // and `app:dev` begins with a script of its own. Use `app:start` instead.
   it("wraps every command that resolves its daemon from HOME", () => {
     const scripts = readManifest(".").scripts ?? {};
 

@@ -33,3 +33,7 @@ id_ed25519
 # neither can hide a directory of that name elsewhere.
 apps/macos/target/
 apps/macos/gen/
+
+# The compiled daemon the application ships beside its own executable, built by
+# scripts/daemon-binary.sh and 64 MB per architecture.
+apps/macos/binaries/

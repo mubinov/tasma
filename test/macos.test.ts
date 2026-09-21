@@ -1,9 +1,11 @@
-import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { expandRoot } from "@tasma/engine";
-import { DAEMON_RECORD_FILE, DEFAULT_DAEMON_PORT } from "@tasma/protocol";
+import { DAEMON_NAME, DAEMON_RECORD_FILE, DEFAULT_DAEMON_PORT } from "@tasma/protocol";
 import { resolveConfig } from "vite";
 import { describe, expect, it } from "vitest";
+import { PROBE_BODY_LIMIT, PROBE_TIMEOUT_MS } from "../apps/cli/src/daemon/record.js";
+import { START_BUDGET_MS, TICK_MS } from "../apps/cli/src/daemon/start.js";
 import { DAEMON_PATH_PREFIX } from "../apps/web/src/api/paths.js";
 import { readManifest, workspaceRoot } from "../workspace.js";
 
@@ -32,23 +34,54 @@ function rustConstant(file: string, name: string): string {
   return stated.trim().replaceAll('"', "");
 }
 
+/** What a `Duration` the crate states comes to in milliseconds. */
+function rustDuration(file: string, name: string): number {
+  const stated = rustConstant(file, name);
+  const [, unit, amount] = /^Duration::from_(secs|millis)\((\d+)\)$/.exec(stated) ?? [];
+
+  if (amount === undefined) {
+    throw new Error(`apps/macos/src/${file} states ${name} as ${stated}, which is no plain Duration`);
+  }
+
+  return unit === "secs" ? Number(amount) * 1000 : Number(amount);
+}
+
+/** What a size the crate states comes to, written there as a product of literals. */
+function rustSize(file: string, name: string): number {
+  const factors = rustConstant(file, name)
+    .split("*")
+    .map((factor) => Number(factor.trim()));
+
+  if (factors.some(Number.isNaN)) {
+    throw new Error(`apps/macos/src/${file} states ${name} as no product of literals`);
+  }
+
+  return factors.reduce((product, factor) => product * factor, 1);
+}
+
 const config = JSON.parse(readFileSync(join(CRATE, "tauri.conf.json"), "utf8")) as {
   build: { devUrl: string };
+  bundle: { externalBin: string[] };
 };
+
+/** The script that compiles the daemon into the executable the app ships. */
+const DAEMON_BINARY_SCRIPT = "scripts/daemon-binary.sh";
+
+const daemonBinaryScript = readFileSync(join(workspaceRoot, DAEMON_BINARY_SCRIPT), "utf8");
 
 describe("the macOS shell", () => {
   it("dials the port the daemon binds", () => {
-    expect(rustConstant("daemon.rs", "DEFAULT_PORT")).toBe(String(DEFAULT_DAEMON_PORT));
+    expect(rustConstant("record.rs", "DEFAULT_PORT")).toBe(String(DEFAULT_DAEMON_PORT));
   });
 
   it("reads the record the daemon writes", () => {
-    expect(rustConstant("daemon.rs", "RECORD")).toBe(DAEMON_RECORD_FILE);
+    expect(rustConstant("record.rs", "RECORD")).toBe(DAEMON_RECORD_FILE);
   });
 
   // The engine's own root rather than a name repeated here: the tree the shell
   // looks in has to be the tree the daemon wrote its record into.
   it("looks in the tree the engine stores under", () => {
-    expect(rustConstant("daemon.rs", "TREE")).toBe(basename(expandRoot()));
+    expect(rustConstant("record.rs", "TREE")).toBe(basename(expandRoot()));
   });
 
   it("forwards the prefix the renderer writes", () => {
@@ -107,5 +140,67 @@ describe("the macOS commands", () => {
   it("build the bundle themselves rather than through the Tauri CLI", () => {
     expect(scripts["app:start"]).toContain("--filter @tasma/web build");
     expect(scripts["app:start"]).toContain("cargo run");
+  });
+
+  // tauri_build refuses a declared external binary that is absent, so without
+  // the compiled daemon the crate does not build at all — `cargo test` included.
+  // Before, not merely inside: the script placed after cargo or the Tauri CLI
+  // would run once the build it feeds has already failed.
+  it("compile the daemon before anything that builds the crate", () => {
+    for (const name of ["app:dev", "app:start", "app:test"]) {
+      const command = scripts[name] ?? "";
+      const builds = /\b(?:cargo|tauri)\b/.exec(command)?.index ?? -1;
+
+      expect(command, `${name} must compile the daemon`).toContain(DAEMON_BINARY_SCRIPT);
+      expect(builds, `${name} must build the crate`).toBeGreaterThan(-1);
+      expect(command.indexOf(DAEMON_BINARY_SCRIPT), `${name} must compile the daemon first`).toBeLessThan(builds);
+    }
+  });
+});
+
+describe("the daemon the app ships", () => {
+  const name = rustConstant("supervisor.rs", "DAEMON_EXECUTABLE");
+
+  // Tauri appends the target triple to what the configuration names and strips
+  // it again when it places the file, so the name is spelled in three places
+  // and a mismatch bundles cleanly and then finds no daemon at runtime.
+  it("carries one name through the build, the bundle and the supervisor", () => {
+    expect(config.bundle.externalBin).toContain(`binaries/${name}`);
+    expect(daemonBinaryScript).toContain(`${CRATE_DIRECTORY}/binaries/${name}-$triple`);
+  });
+
+  it("is told from anything else holding the port by the name it answers with", () => {
+    expect(rustConstant("supervisor.rs", "HEALTH_NAME")).toBe(DAEMON_NAME);
+  });
+
+  // The supervisor waits on a daemon the way `tasma daemon start` does, and
+  // restates each budget as a literal of its own.
+  it("is probed and waited for on the budgets the CLI holds", () => {
+    expect(rustDuration("supervisor.rs", "PROBE_TIMEOUT")).toBe(PROBE_TIMEOUT_MS);
+    expect(rustSize("supervisor.rs", "PROBE_LIMIT")).toBe(PROBE_BODY_LIMIT);
+    expect(rustDuration("supervisor.rs", "READY_BUDGET")).toBe(START_BUDGET_MS);
+    expect(rustDuration("supervisor.rs", "TICK")).toBe(TICK_MS);
+  });
+
+  // The script's own header holds why.
+  it("compiles to a scratch file that differs from the output by directory alone", () => {
+    const shellVariable = (variable: string) => {
+      const [, stated] = new RegExp(String.raw`^${variable}="([^"]+)"$`, "m").exec(daemonBinaryScript) ?? [];
+
+      if (stated === undefined) {
+        throw new Error(`${DAEMON_BINARY_SCRIPT} states no ${variable}`);
+      }
+
+      return stated;
+    };
+    const [out, scratch] = [shellVariable("out"), shellVariable("scratch")];
+
+    expect(basename(scratch), "the scratch file must share the output's name").toBe(basename(out));
+    expect(dirname(scratch)).not.toBe(dirname(out));
+  });
+
+  // The repository invokes its scripts by path, never through an interpreter.
+  it("is compiled by a script that is executable", () => {
+    expect(statSync(join(workspaceRoot, DAEMON_BINARY_SCRIPT)).mode & 0o111).toBeGreaterThan(0);
   });
 });

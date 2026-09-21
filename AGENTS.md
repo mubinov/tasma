@@ -27,9 +27,11 @@
   `pnpm app:start` do. A temporary `HOME` of your own is equally fine; the real
   home directory is forbidden. The web application reads no tree — run it with
   `pnpm dev`.
-- Start the daemon under that same `HOME` before the app. A shell that finds no
-  record falls back to the default port, where a daemon on the real home is
-  listening.
+- Under a development `HOME`, give the tree a daemon record of its own before
+  running the app: start a daemon there, or set `TASMA_DAEMON_PORT` and write
+  the record naming that port. A tree with no record falls back to the default
+  port, where the daemon on the real home answers, and the app stands down to
+  it and serves the real tree.
 - Tests, fixtures, examples, docs and comments hold invented data only. Never
   use the tag, a task id, the name or the path of a real project, or the name
   of a real person. This project is no exception: no `TASM` or `TASM-<n>`, and
@@ -44,6 +46,18 @@ Rules in this chapter are for the `apps/macos` shell alone.
 - The crate is deliberately not a pnpm workspace package. When
   `test/workspace.test.ts` fails naming `apps/macos`, delete the `package.json`
   someone added — never add the scripts the failure asks for.
+- **bun is a build requirement of the crate, as Rust is.** `tauri_build` refuses
+  a declared external binary that is absent, so with no compiled daemon the
+  crate does not compile at all — `cargo test` included. `app:dev`, `app:start`
+  and `app:test` each run `scripts/daemon-binary.sh` first; a bare `cargo`
+  command does not.
+- Never run `scripts/daemon-binary.sh` through `scripts/dev-home.sh`. Its header
+  holds why.
+- The script's scratch file differs from the output by directory alone. Never
+  give it a name of its own; `test/macos.test.ts` pins this and the script's
+  header holds why.
+- `pnpm app:dev` runs under the real home and starts a daemon on the real tree.
+  Use `pnpm app:start`, which is wrapped.
 - Every run that serves the built bundle passes `--features custom-protocol`,
   and `app:test` never does: the feature embeds `apps/web/dist`, which no clone
   carries.
