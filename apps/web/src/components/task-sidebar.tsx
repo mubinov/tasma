@@ -4,10 +4,12 @@ import type { StepView } from "../lib/board";
 import { ProhibitIcon } from "../lib/icons";
 import { customLines, formatStamp, type RelationRow, type Relations } from "../lib/task-page";
 import type { TaskProperties } from "../lib/use-task-properties";
-import { LabelList } from "./label-list";
+import { PENCIL_BUTTON_CLASS } from "./control-classes";
+import { LabelPicker } from "./label-picker";
 import { PropertyMenu } from "./property-menu";
 import { StepMark, StepTrack } from "./step-view";
 import { TaskOutline, type Outline } from "./task-outline";
+import { TaskPicker } from "./task-picker";
 
 const GROUP_CLASS = "grid grid-cols-[5.25rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 text-sm";
 
@@ -18,6 +20,16 @@ const ROW_CLASS = "flex items-start gap-x-2";
 const TEXT_CLASS = "min-w-0 flex-1";
 
 const ID_CLASS = "font-mono text-xs-plus leading-5";
+
+/** A relation row: the pencil keeps its place at the top right, whatever the list holds. */
+const RELATION_DD_CLASS = "group flex items-start gap-2";
+
+/*
+ * First in the DOM and last on screen, so Tab reaches it before the links of a
+ * long list. Base UI marks the trigger itself while its popup is open, and the
+ * popup renders through a portal, where focus leaves the row.
+ */
+const REVEALED_PENCIL_CLASS = `${PENCIL_BUTTON_CLASS} order-last opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 data-[popup-open]:opacity-100`;
 
 const STATE_CLASS: Record<RelationRow["state"], { row: string; status?: string }> = {
   blocking: { row: "text-text", status: "text-signal" },
@@ -45,15 +57,22 @@ function None(): ReactNode {
   return <span className="text-dim">None</span>;
 }
 
-type FieldProps = { label: string; labelId?: string; wide?: boolean; children: ReactNode };
+type FieldProps = {
+  label: string;
+  labelId?: string;
+  wide?: boolean;
+  /** Added to the value's own classes. */
+  ddClass?: string;
+  children: ReactNode;
+};
 
-function Field({ label, labelId, wide = false, children }: FieldProps): ReactNode {
+function Field({ label, labelId, wide = false, ddClass = "", children }: FieldProps): ReactNode {
   const spanClass = wide ? "col-span-full" : "";
 
   return (
     <>
       <dt id={labelId} className={`${spanClass} text-dim`}>{label}</dt>
-      <dd className={`${spanClass} min-w-0 wrap-anywhere`}>{children}</dd>
+      <dd className={`${spanClass} min-w-0 wrap-anywhere ${ddClass}`}>{children}</dd>
     </>
   );
 }
@@ -161,13 +180,17 @@ function useOverflows(ref: RefObject<HTMLElement | null>): boolean {
 
 export function TaskSidebar(props: TaskSidebarProps): ReactNode {
   const { tag, view, relations, outline, pageScrollPadding, properties } = props;
-  const { status, priority, labels = [], workflow, step, created, updated, custom } = properties.frontmatter;
+  const { id, status, priority, labels = [], workflow, step, created, updated, custom } = properties.frontmatter;
+  const { blocked_by: blockedBy = [], parent } = properties.frontmatter;
   const lines = custom === undefined ? [] : customLines(custom);
   const asideRef = useRef<HTMLElement>(null);
   const scrolls = useOverflows(asideRef);
   const statusId = useId();
   const priorityId = useId();
+  const labelsId = useId();
   const stepId = useId();
+  const blockedById = useId();
+  const parentId = useId();
 
   // A control that leaves while it holds focus drops it to <body>, and the
   // aside is focusable whether or not it scrolls.
@@ -208,7 +231,9 @@ export function TaskSidebar(props: TaskSidebarProps): ReactNode {
             onFocusLost={focusAside}
           />
         </Field>
-        <Field label="Labels">{labels.length === 0 ? <None /> : <LabelList labels={labels} />}</Field>
+        <Field label="Labels" labelId={labelsId}>
+          <LabelPicker labelId={labelsId} entries={properties.entries} labels={labels} row={properties.labels} />
+        </Field>
       </dl>
       <dl className={NEXT_GROUP_CLASS}>
         <Field label="Workflow">{workflow ?? <None />}</Field>
@@ -233,11 +258,33 @@ export function TaskSidebar(props: TaskSidebarProps): ReactNode {
         </Field>
       </dl>
       <dl className={NEXT_GROUP_CLASS}>
-        <Field label="Blocked by" wide>
-          <RelationList tag={tag} rows={relations.blockers} />
+        <Field label="Blocked by" labelId={blockedById} wide ddClass={RELATION_DD_CLASS}>
+          <TaskPicker
+            multiple
+            labelId={blockedById}
+            className={REVEALED_PENCIL_CLASS}
+            entries={properties.entries}
+            id={id}
+            value={blockedBy}
+            row={properties.blockedBy}
+          />
+          <div className="min-w-0 flex-1">
+            <RelationList tag={tag} rows={relations.blockers} />
+          </div>
         </Field>
-        <Field label="Parent" wide>
-          <RelationList tag={tag} rows={relations.parent === null ? [] : [relations.parent]} />
+        <Field label="Parent" labelId={parentId} wide ddClass={RELATION_DD_CLASS}>
+          <TaskPicker
+            multiple={false}
+            labelId={parentId}
+            className={REVEALED_PENCIL_CLASS}
+            entries={properties.entries}
+            id={id}
+            value={parent}
+            row={properties.parent}
+          />
+          <div className="min-w-0 flex-1">
+            <RelationList tag={tag} rows={relations.parent === null ? [] : [relations.parent]} />
+          </div>
         </Field>
       </dl>
       <dl className={NEXT_GROUP_CLASS}>

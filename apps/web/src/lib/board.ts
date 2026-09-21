@@ -16,7 +16,7 @@ export type StepView
     | { kind: "step"; name: string; owner: StepOwner; current: number; owners: StepOwner[] };
 
 /** The listing index guarantees every id is `PROJ-N`. */
-function idNumber(id: string): number {
+export function idNumber(id: string): number {
   return Number(id.slice(id.lastIndexOf("-") + 1));
 }
 

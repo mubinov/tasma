@@ -49,6 +49,14 @@ export const PROPERTY_BUTTON_CLASS
   = "inline-flex max-w-full -my-0.5 -mx-2 min-h-6 min-w-6 items-center rounded-control border border-transparent px-2 text-left text-sm hover:border-line data-[popup-open]:border-graphic";
 
 /*
+ * The icon control that edits a value beside it. Written out for the reason
+ * `PROPERTY_BUTTON_CLASS` is, and 24x24 on a 20px line box the same way. A
+ * control using it carries a text accessible name and an aria-hidden icon.
+ */
+export const PENCIL_BUTTON_CLASS
+  = "inline-flex size-6 -my-0.5 shrink-0 items-center justify-center rounded-control border border-transparent text-dim hover:border-line hover:text-text data-[popup-open]:border-graphic data-[popup-open]:text-text";
+
+/*
  * The whole border rule of an editable field, less the radius, which differs
  * per caller. The border is the only thing that says the box is editable — the
  * text in it is the reader's own data, not a label — so it takes `graphic`,

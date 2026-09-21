@@ -514,9 +514,8 @@ describe("the sidebar", () => {
 
     expect(field("Status").textContent).toBe("In Progress");
     expect(field("Priority").textContent).toBe("high");
-    const labels = within(field("Labels")).getAllByRole("listitem");
-    expect(labels.map((label) => label.textContent)).toEqual(["web", "infra"]);
-    expect(labels[0]?.className).toContain("text-muted");
+    expect(field("Labels").textContent).toBe("web, infra");
+    expect(within(field("Labels")).getByText("web").parentElement?.className).toContain("text-muted");
     expect(field("Workflow").textContent).toBe("dev");
     expect(field("Step").textContent).toBe("research, step 1 of 2, an agent's step");
     expect(field("Step").querySelectorAll("i")).toHaveLength(2);
@@ -607,8 +606,14 @@ describe("the sidebar", () => {
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
     for (const label of ["Priority", "Labels", "Workflow", "Step", "Blocked by", "Parent"]) {
-      expect(field(label).textContent).toBe("None");
       expect(within(field(label)).getByText("None").className).toBe("text-dim");
+    }
+    for (const label of ["Priority", "Labels", "Workflow", "Step"]) {
+      expect(field(label).textContent).toBe("None");
+    }
+    // The pencil stands first in a relation row, and the list after it.
+    for (const label of ["Blocked by", "Parent"]) {
+      expect(field(label).lastElementChild?.textContent).toBe("None");
     }
     // Priority is a control, so its None stands inside the trigger. The task
     // names no workflow and holds no step, so Step offers nothing and stays text.

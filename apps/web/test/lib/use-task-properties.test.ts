@@ -108,3 +108,40 @@ describe("the Status row", () => {
     expect(writes()).toEqual([]);
   });
 });
+
+describe("the picker rows", () => {
+  it.each([
+    { row: "labels", next: ["web", "Infra"], body: { labels: ["web", "Infra"] } },
+    { row: "labels", next: [], body: { labels: null } },
+    { row: "blockedBy", next: ["NOTE-1"], body: { blocked_by: ["NOTE-1"] } },
+    { row: "blockedBy", next: [], body: { blocked_by: null } },
+  ] as const)("sends $body for a $row pick of $next", async ({ row, next, body }) => {
+    const { result, pick, writes } = renderProperties();
+
+    await pick(() => {
+      result.current[row].onPick(next);
+    });
+
+    expect(writes()).toEqual([body]);
+  });
+
+  it.each([
+    { value: "NOTE-1", body: { parent: "NOTE-1" } },
+    { value: null, body: { parent: null } },
+  ])("sends $body for a parent pick of $value", async ({ value, body }) => {
+    const { result, pick, writes } = renderProperties();
+
+    await pick(() => {
+      result.current.parent.onPick(value);
+    });
+
+    expect(writes()).toEqual([body]);
+  });
+
+  it("hands the pickers the listing it was given", () => {
+    const entries: TaskEntry[] = [{ id: "NOTE-1", path: "/n/NOTE-1.md", frontmatter: frontmatter(), blocked: false }];
+    const { result } = renderProperties(entries);
+
+    expect(result.current.entries).toBe(entries);
+  });
+});

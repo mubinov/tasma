@@ -1,4 +1,4 @@
-import type { Frontmatter } from "@tasma/protocol";
+import type { Frontmatter, TaskEntry } from "@tasma/protocol";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { TaskSidebar } from "../../src/components/task-sidebar";
 import { isFinalStatus, stepView } from "../../src/lib/board";
 import { relationRows } from "../../src/lib/task-page";
-import { stepChoices, type PropertyChoice, type PropertyRow } from "../../src/lib/task-properties";
+import { stepChoices, type PickerRow, type PropertyChoice, type PropertyRow } from "../../src/lib/task-properties";
 import type { TaskProperties } from "../../src/lib/use-task-properties";
 import { WORKFLOW, field, frontmatter, sidebar } from "../task-screen-fixtures";
 
@@ -20,15 +20,22 @@ function row(names: readonly string[], extra: Partial<PropertyRow> = {}): Proper
   return { choices, match: "without case", busy: false, onPick: () => {}, ...extra };
 }
 
+function pickerRow<Value>(extra: Partial<PickerRow<Value>> = {}): PickerRow<Value> {
+  return { busy: false, onPick: () => {}, ...extra };
+}
+
 type SidebarProps = {
   fields?: Partial<Frontmatter>;
   /** `undefined` leaves the Step row a control over the workflow's steps. */
   step?: PropertyRow | null;
   status?: Partial<PropertyRow>;
   priority?: Partial<PropertyRow>;
+  labels?: Partial<PickerRow<readonly string[]>>;
+  entries?: TaskEntry[];
 };
 
-function Sidebar({ fields = {}, step, status = {}, priority = {} }: SidebarProps): ReactNode {
+function Sidebar(props: SidebarProps): ReactNode {
+  const { fields = {}, step, status = {}, priority = {}, labels = {}, entries = [] } = props;
   const values = frontmatter(fields);
   const view = stepView(values, isFinalStatus(values.status, ["Done"]), WORKFLOW);
   const properties: TaskProperties = {
@@ -38,13 +45,17 @@ function Sidebar({ fields = {}, step, status = {}, priority = {} }: SidebarProps
     step: step === undefined
       ? row(stepChoices(WORKFLOW).map((choice) => choice.value), { match: "exact" })
       : step,
+    entries,
+    labels: pickerRow(labels),
+    blockedBy: pickerRow(),
+    parent: pickerRow(),
   };
 
   return (
     <TaskSidebar
       tag="SAGA"
       view={view}
-      relations={relationRows(values, [], ["Done"])}
+      relations={relationRows(values, entries, ["Done"])}
       outline={{ headings: [], comments: [] }}
       pageScrollPadding={undefined}
       properties={properties}
@@ -67,14 +78,16 @@ afterEach(() => {
 });
 
 describe("the rows", () => {
-  it("makes Status, Priority and Step controls and leaves every other row text", () => {
+  it("makes Status, Priority and Step menus, Labels a picker, and leaves the other rows text", () => {
     renderSidebar({ fields: { priority: "high", labels: ["web"], workflow: "dev", step: "research" } });
 
     expect(control("Status").textContent).toBe("In Progress");
     expect(control("Priority").textContent).toBe("high");
     expect(within(control("Step")).getByText("research")).toBeTruthy();
-    for (const label of ["Labels", "Workflow", "Blocked by", "Parent", "Created", "Updated"]) {
+    expect(within(field("Labels")).getByRole("combobox").textContent).toBe("web");
+    for (const label of ["Workflow", "Created", "Updated"]) {
       expect(within(field(label)).queryByRole("button")).toBeNull();
+      expect(within(field(label)).queryByRole("combobox")).toBeNull();
     }
   });
 
@@ -201,5 +214,72 @@ describe("a control that leaves the page", () => {
     await waitFor(() => {
       expect(document.activeElement).toBe(control("Status"));
     });
+  });
+});
+
+describe("the Labels row", () => {
+  function labels(): HTMLElement {
+    return within(field("Labels")).getByRole("combobox");
+  }
+
+  // The separators are the ones a screen reader hears between the labels; the
+  // rows would run together without them.
+  it("is named by the row and the labels, with a separator between them", () => {
+    renderSidebar({ fields: { labels: ["web", "sidebar"] } });
+
+    expect(screen.getByRole("combobox", { name: "Labels web, sidebar" })).toBe(labels());
+    expect(within(labels()).queryByRole("list")).toBeNull();
+  });
+
+  it("reads None, in dim, inside the control when the task carries no label", () => {
+    renderSidebar();
+
+    expect(screen.getByRole("combobox", { name: "Labels None" })).toBe(labels());
+    expect(within(labels()).getByText("None").className).toBe("text-dim");
+  });
+
+  it("shows the wait after the labels, in its own name", () => {
+    renderSidebar({ fields: { labels: ["web"] }, labels: { busy: true } });
+
+    expect(labels().textContent).toBe("web…");
+    expect(screen.getByRole("combobox", { name: "Labels web…" })).toBe(labels());
+    expect(labels().hasAttribute("disabled")).toBe(false);
+  });
+});
+
+describe("the relation rows", () => {
+  function pencil(label: string): HTMLElement {
+    return within(field(label)).getByRole("combobox");
+  }
+
+  it("carries a pencil named by Edit and the row", () => {
+    renderSidebar();
+
+    expect(screen.getByRole("combobox", { name: "Edit Blocked by" })).toBe(pencil("Blocked by"));
+    expect(screen.getByRole("combobox", { name: "Edit Parent" })).toBe(pencil("Parent"));
+  });
+
+  // The reveal on hover and focus is a CSS rule; what jsdom can hold is that the
+  // pencil is in the tab order and named whatever the pointer does.
+  it("keeps each pencil in the tab order at all times", () => {
+    renderSidebar();
+
+    for (const label of ["Blocked by", "Parent"]) {
+      expect(pencil(label).tabIndex).toBe(0);
+      expect(pencil(label).classList.contains("opacity-0")).toBe(true);
+      expect(pencil(label).classList.contains("group-focus-within:opacity-100")).toBe(true);
+      expect(pencil(label).classList.contains("data-[popup-open]:opacity-100")).toBe(true);
+      expect(field(label).classList.contains("group")).toBe(true);
+    }
+  });
+
+  it("puts the pencil before the relation list in the DOM and after it on screen", () => {
+    renderSidebar({ fields: { blocked_by: ["SAGA-8"], parent: "SAGA-9" } });
+
+    for (const label of ["Blocked by", "Parent"]) {
+      expect(field(label).firstElementChild).toBe(pencil(label));
+      expect(pencil(label).classList.contains("order-last")).toBe(true);
+      expect(field(label).lastElementChild?.textContent).toContain("[Not found]");
+    }
   });
 });

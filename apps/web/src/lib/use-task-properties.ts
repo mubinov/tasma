@@ -8,6 +8,7 @@ import {
   priorityChoices,
   statusChoices,
   stepChoices,
+  type PickerRow,
   type PropertyRow,
 } from "./task-properties";
 
@@ -33,6 +34,11 @@ export type TaskProperties = {
   priority: PropertyRow;
   /** `null` while the page knows no step to offer and the task holds none. */
   step: PropertyRow | null;
+  /** Every task of the project, which the pickers offer. */
+  entries: readonly TaskEntry[];
+  labels: PickerRow<readonly string[]>;
+  blockedBy: PickerRow<readonly string[]>;
+  parent: PickerRow<string | null>;
 };
 
 /**
@@ -56,6 +62,11 @@ export function useTaskProperties(options: TaskPropertiesOptions): TaskPropertie
 
   function send(change: TaskInput, property: string): void {
     sendWrites([{ id, change }], property);
+  }
+
+  /** An empty list is sent as `null`, which removes the key rather than leaving an empty list in the file. */
+  function sendList(key: "labels" | "blocked_by", next: readonly string[], property: string): void {
+    send({ [key]: next.length === 0 ? null : [...next] }, property);
   }
 
   /** The status write is the card menu's "Move to": the task lands at the top of its new column. */
@@ -105,5 +116,24 @@ export function useTaskProperties(options: TaskPropertiesOptions): TaskPropertie
             send({ step: value }, "Step");
           },
         },
+    entries,
+    labels: {
+      busy: busy("labels"),
+      onPick: (next) => {
+        sendList("labels", next, "Labels");
+      },
+    },
+    blockedBy: {
+      busy: busy("blocked_by"),
+      onPick: (next) => {
+        sendList("blocked_by", next, "Blocked by");
+      },
+    },
+    parent: {
+      busy: busy("parent"),
+      onPick: (value) => {
+        send({ parent: value }, "Parent");
+      },
+    },
   };
 }
