@@ -29,6 +29,7 @@
   --color-running: var(--palette-running);
   --color-graphic: var(--palette-graphic);
   --color-line: var(--palette-line);
+  --color-focus: var(--palette-focus);
   --color-scrim: var(--palette-scrim);
 
   /* Three families, three jobs: chrome, prose, and literal machine data. */
@@ -132,6 +133,8 @@
   --palette-running: light-dark(#136b41, #5fc98a);
   --palette-graphic: light-dark(#808791, #666e7a);
   --palette-line: light-dark(#e2e4e8, #343a43);
+  /* Focus alone: never hover, selection, a link or a state. */
+  --palette-focus: light-dark(#2563eb, #6ea8fe);
 
   /*
    * One value for both themes: it drops the page behind to about 42% of its

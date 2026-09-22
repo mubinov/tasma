@@ -7,7 +7,7 @@ import { FIELD_BORDER_CLASS, POPUP_CLASS, POSITIONER_CLASS } from "./control-cla
 // The input keeps DOM focus, so the ring marks the highlighted item; it is
 // inset because the scrolling list clips outside it.
 export const PICKER_ITEM_CLASS
-  = "flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-sm text-text hover:bg-surface-2 data-[highlighted]:bg-surface-2 data-[highlighted]:outline-3 data-[highlighted]:-outline-offset-3 data-[highlighted]:outline-graphic";
+  = "flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-sm text-text hover:bg-surface-2 data-[highlighted]:bg-surface-2 data-[highlighted]:outline-2 data-[highlighted]:-outline-offset-2 data-[highlighted]:outline-focus";
 
 /**
  * The check of an item. It keeps its width while unchecked, so the items stand

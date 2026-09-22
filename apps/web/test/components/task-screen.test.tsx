@@ -567,7 +567,7 @@ describe("the sidebar", () => {
     const aside = sidebar();
     expect(observed).toEqual([aside, ...aside.children]);
     expect(aside.tabIndex).toBe(-1);
-    expect(aside.classList.contains("focus-visible:-outline-offset-3")).toBe(true);
+    expect(aside.classList.contains("focus-visible:-outline-offset-2")).toBe(true);
 
     Object.defineProperty(aside, "clientHeight", { configurable: true, value: 600 });
     Object.defineProperty(aside, "scrollHeight", { configurable: true, value: 601 });

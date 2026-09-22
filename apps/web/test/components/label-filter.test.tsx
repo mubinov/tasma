@@ -2,6 +2,7 @@ import type { Frontmatter, TaskEntry } from "@tasma/protocol";
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { PICKER_ITEM_CLASS } from "../../src/components/property-picker";
 import { useUiStore } from "../../src/store/ui";
 import { renderWithRouter, stubTransport, successReply } from "../helpers";
 
@@ -137,15 +138,21 @@ it("selects nothing on a press on the trigger, a drag to a label and a release",
   expect(screen.getByRole("listbox")).toBe(listbox);
 });
 
-it("marks a hovered option by its background and a highlighted option by the ring", async () => {
+it("marks a hovered option by its background and a highlighted option by the ring the pickers draw", async () => {
   const user = userEvent.setup();
   await renderBoard("");
   const listbox = await open(user);
 
   const [option] = within(listbox).getAllByRole("option");
   expect([...option!.classList]).toEqual(
-    expect.arrayContaining(["hover:bg-surface-2", "data-[highlighted]:outline-3", "data-[highlighted]:outline-graphic"]),
+    expect.arrayContaining([
+      "hover:bg-surface-2",
+      "data-[highlighted]:outline-2",
+      "data-[highlighted]:-outline-offset-2",
+      "data-[highlighted]:outline-focus",
+    ]),
   );
+  expect(option!.className).toBe(PICKER_ITEM_CLASS);
 });
 
 it("lists and reads a label repeated in the address once", async () => {

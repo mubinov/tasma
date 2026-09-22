@@ -26,6 +26,9 @@ const READABILITY_CONTRACT: readonly { role: string; minimum: number }[] = [
   // it sits in and invisible, so the mark carries the state and holds 3:1 on
   // every surface it can sit on.
   { role: "graphic", minimum: 3 },
+  // The focus ring is 2px, and an indicator thinner than 3px is held at 4.5:1
+  // rather than the 3:1 that 1.4.11 asks of a thicker one.
+  { role: "focus", minimum: 4.5 },
 ];
 
 const ROLES = [...SURFACES, ...READABILITY_CONTRACT.map(({ role }) => role), "line"];

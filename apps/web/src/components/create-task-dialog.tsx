@@ -248,22 +248,26 @@ export function CreateTaskDialog({
             >
               <div className="mt-4 grid grid-cols-[84px_minmax(0,1fr)] items-center gap-x-3 gap-y-2.5 text-sm">
                 <Field.Root name="title" invalid={titleError !== undefined} className="contents">
-                  <Field.Label className={ROW_LABEL_CLASS}>Title</Field.Label>
-                  <Field.Control
-                    ref={titleRef}
-                    // Required to a screen reader alone: the native attribute
-                    // would put the browser's own bubble in place of the line.
-                    aria-required="true"
-                    placeholder="Required"
-                    value={draft.title}
-                    onValueChange={(title) => {
-                      change({ title });
-                    }}
-                    className={TITLE_CLASS}
-                  />
-                  {titleError !== undefined && (
-                    <Field.Error match className={`col-start-2 ${FIELD_ERROR_CLASS}`}>{titleError}</Field.Error>
-                  )}
+                  {/* The label is held level with the input, as the Body label is:
+                      centred on the cell it would sit between input and error. */}
+                  <Field.Label className={`${ROW_LABEL_CLASS} self-start pt-1.5`}>Title</Field.Label>
+                  <div>
+                    <Field.Control
+                      ref={titleRef}
+                      // Required to a screen reader alone: the native attribute
+                      // would put the browser's own bubble in place of the line.
+                      aria-required="true"
+                      placeholder="Required"
+                      value={draft.title}
+                      onValueChange={(title) => {
+                        change({ title });
+                      }}
+                      className={TITLE_CLASS}
+                    />
+                    {titleError !== undefined && (
+                      <Field.Error match className={FIELD_ERROR_CLASS}>{titleError}</Field.Error>
+                    )}
+                  </div>
                 </Field.Root>
                 <span id={statusId} className={ROW_LABEL_CLASS}>Status</span>
                 <PropertyMenu

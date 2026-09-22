@@ -187,6 +187,16 @@ describe("the dialog", () => {
     ]);
   });
 
+  it("marks focus on Title by its border, never by a ring", async () => {
+    const user = userEvent.setup();
+    setup();
+    await openFromPlus(user);
+
+    expect([...titleInput().classList]).toEqual(
+      expect.arrayContaining(["focus-visible:outline-hidden", "not-data-invalid:focus:border-focus"]),
+    );
+  });
+
   // jsdom lacks Chrome's `aria-hidden` rule, so the mechanism is pinned: focus is on nothing before any await.
   it("leaves no element outside the panel focused in the commit that opens it", () => {
     setup();
@@ -271,6 +281,21 @@ describe("a blank title", () => {
     expect(document.activeElement).toBe(titleInput());
     expect(announced()).toEqual(["A task needs a title."]);
     expect(creates(requests)).toEqual([]);
+  });
+
+  it("puts the error under Title alone, with the label level with the input", async () => {
+    const user = userEvent.setup();
+    setup();
+    await openFromPlus(user);
+
+    await user.keyboard("{Enter}");
+    await frame();
+
+    const error = screen.getByText("A task needs a title.");
+    const label = screen.getByText("Title");
+    expect(error.parentElement).toBe(titleInput().parentElement);
+    expect(label.parentElement).not.toBe(titleInput().parentElement);
+    expect(label.classList.contains("self-start")).toBe(true);
   });
 
   it("counts a title of spaces as blank, and clears the error once the title holds text", async () => {

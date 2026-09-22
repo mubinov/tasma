@@ -208,7 +208,7 @@ export function TaskSidebar(props: TaskSidebarProps): ReactNode {
       ref={asideRef}
       tabIndex={scrolls ? 0 : -1}
       aria-label="Task details"
-      className="w-full border-t border-line bg-surface-2 px-6 pt-5 pb-[calc(--spacing(8)+var(--notice-stack-height,0px))] focus-visible:-outline-offset-3 lg:sticky lg:top-0 lg:h-screen lg:w-task-sidebar lg:shrink-0 lg:self-start lg:scroll-pb-(--notice-stack-height) lg:overflow-y-auto lg:border-t-0 lg:border-l"
+      className="w-full border-t border-line bg-surface-2 px-6 pt-5 pb-[calc(--spacing(8)+var(--notice-stack-height,0px))] focus-visible:-outline-offset-2 lg:sticky lg:top-0 lg:h-screen lg:w-task-sidebar lg:shrink-0 lg:self-start lg:scroll-pb-(--notice-stack-height) lg:overflow-y-auto lg:border-t-0 lg:border-l"
     >
       <dl className={GROUP_CLASS}>
         <Field label="Status" labelId={statusId}>

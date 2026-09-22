@@ -116,8 +116,9 @@ it("marks a hovered item by its background, and a highlighted item by the ring u
   expect([...item!.classList]).toEqual(
     expect.arrayContaining([
       "hover:bg-surface-2",
-      "data-[highlighted]:outline-3",
-      "data-[highlighted]:outline-graphic",
+      "data-[highlighted]:outline-2",
+      "data-[highlighted]:-outline-offset-2",
+      "data-[highlighted]:outline-focus",
       "data-[highlighted]:active:outline-hidden",
     ]),
   );

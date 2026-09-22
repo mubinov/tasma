@@ -15,7 +15,7 @@ export const POPUP_CLASS = "rounded-card border border-line bg-surface p-1.5 sha
 // an item, so the ring is never a hover mark. A mouse press focuses and
 // highlights the item, so the ring is hidden while the button is held.
 export const MENU_ITEM_CLASS
-  = "flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-sm text-text hover:bg-surface-2 data-[highlighted]:bg-surface-2 data-[highlighted]:outline-3 data-[highlighted]:outline-offset-2 data-[highlighted]:outline-graphic data-[highlighted]:active:outline-hidden";
+  = "flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-sm text-text hover:bg-surface-2 data-[highlighted]:bg-surface-2 data-[highlighted]:outline-2 data-[highlighted]:-outline-offset-2 data-[highlighted]:outline-focus data-[highlighted]:active:outline-hidden";
 
 export const MENU_RADIO_ITEM_CLASS = `${MENU_ITEM_CLASS} data-[checked]:text-dim`;
 
@@ -73,8 +73,15 @@ export const PENCIL_BUTTON_CLASS
  * `line` would hold 1.27:1 against the field's own fill. A field marked as not
  * valid takes `signal` instead, and the two rules are mutually exclusive, so
  * the precedence is in the selector rather than in the generated sheet's order.
+ *
+ * A text field matches `:focus-visible` on every focus, a click included, so it
+ * draws no ring and its border takes `focus` instead; `signal` keeps precedence,
+ * so a field with an error stays amber while it has focus. The caret is then the
+ * only focus cue that does not depend on colour, so no field using this may hide
+ * or recolour it.
  */
-export const FIELD_BORDER_CLASS = "border not-data-invalid:border-graphic data-invalid:border-signal";
+export const FIELD_BORDER_CLASS
+  = "border focus-visible:outline-hidden not-data-invalid:border-graphic not-data-invalid:focus:border-focus data-invalid:border-signal";
 
 // The margin is the caller's: an appended `mt-0` could not cancel one here.
 // `flex-wrap` is here because the hint's row reflows at 320 CSS px.

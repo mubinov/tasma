@@ -82,6 +82,7 @@ Rules in this chapter are for the `apps/web` application alone.
 - Style from theme tokens. Never hardcode a colour.
 - No colour below `--color-dim`. Hierarchy comes from size, weight, position.
 - `--color-signal` means "needs a human". `--color-running` means "an agent is working now".
+- `--color-focus` marks focus and nothing else.
 - Tell control states apart by a mark that keeps 3:1, never by two surfaces alone. Pointer hover may use a surface alone.
 - The page's one `<h1>` opens the main content. Nothing before `<main>` is a heading.
 - Call `useDocumentTitle` in every screen.

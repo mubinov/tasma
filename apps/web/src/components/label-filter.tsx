@@ -5,6 +5,7 @@ import { useId, type ReactNode } from "react";
 import { joinList, labelChoices } from "../lib/board";
 import { CaretDownIcon, CheckIcon, MagnifyingGlassIcon } from "../lib/icons";
 import { GROUP_CLASS, LABEL_CLASS, POPUP_CLASS, POSITIONER_CLASS, TRIGGER_CLASS } from "./control-classes";
+import { PICKER_ITEM_CLASS } from "./property-picker";
 
 type LabelFilterProps = {
   entries: readonly TaskEntry[];
@@ -77,13 +78,7 @@ export function LabelFilter({ entries, selected }: LabelFilterProps): ReactNode 
               </Combobox.Empty>
               <Combobox.List aria-labelledby={labelId} className="max-h-72 overflow-y-auto">
                 {(label: string) => (
-                  // The input keeps DOM focus, so the ring marks the highlighted
-                  // item; it is inset because the scrolling list clips outside it.
-                  <Combobox.Item
-                    key={label}
-                    value={label}
-                    className="flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-sm text-text hover:bg-surface-2 data-[highlighted]:bg-surface-2 data-[highlighted]:outline-3 data-[highlighted]:-outline-offset-3 data-[highlighted]:outline-graphic"
-                  >
+                  <Combobox.Item key={label} value={label} className={PICKER_ITEM_CLASS}>
                     <Combobox.ItemIndicator
                       keepMounted
                       className={({ selected: checked }) => `flex w-3.5 shrink-0 ${checked ? "" : "invisible"}`}
