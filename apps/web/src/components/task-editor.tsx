@@ -4,8 +4,8 @@ import { useId, type KeyboardEventHandler, type ReactNode, type Ref, type RefObj
 import { WarningIcon } from "../lib/icons";
 import type { Draft } from "../lib/text-draft";
 import { useFocusLost } from "../lib/use-focus-lost";
-import { FIELD_BORDER_CLASS, FIELD_ERROR_CLASS, FIELD_KBD_CLASS } from "./control-classes";
-import { MarkdownEditor, MarkdownEditorHint } from "./markdown-editor";
+import { FIELD_BORDER_CLASS, FIELD_ERROR_CLASS } from "./control-classes";
+import { KeyHint, MarkdownEditor, MarkdownEditorHint } from "./markdown-editor";
 
 /** The title input carries the type of the heading it stands in for. */
 const TITLE_CLASS
@@ -48,28 +48,6 @@ export function ChangedOnDisk({ at, lineRef, onReload, onKeyDown, onFocusLost }:
         Discard and reload
       </Button>
     </p>
-  );
-}
-
-type KeyHintProps = {
-  /** The mark on the key, which a screen reader is not given. */
-  mark: string;
-  /** The same key in words, for a reader that speaks neither ⌘ nor ↩. */
-  spoken: string;
-  children: ReactNode;
-};
-
-function KeyHint({ mark, spoken, children }: KeyHintProps): ReactNode {
-  return (
-    <span className="inline-flex items-center gap-1">
-      <kbd className={FIELD_KBD_CLASS}>
-        <span aria-hidden="true">{mark}</span>
-        <span className="sr-only">{spoken}</span>
-      </kbd>
-      {/* The space separates the words in speech; flex drops it from the layout. */}
-      {" "}
-      {children}
-    </span>
   );
 }
 

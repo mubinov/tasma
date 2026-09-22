@@ -64,11 +64,14 @@ function sameContent(left: NoticeContent, right: NoticeContent): boolean {
   return noticeSignature(left) === noticeSignature(right);
 }
 
-/** What the panel says, each part closed as a sentence so a reader pauses between them. */
+/** The parts as one spoken line, each closed as a sentence so a reader pauses between them. */
+export function asSentences(parts: readonly string[]): string {
+  return parts.map((part) => (/[.!?…]$/u.test(part) ? part : `${part}.`)).join(" ");
+}
+
+/** What the panel says. */
 function noticeText({ title, line, words }: NoticeContent): string {
-  return [title, ...(line === undefined ? [] : [line]), ...words]
-    .map((part) => (/[.!?…]$/u.test(part) ? part : `${part}.`))
-    .join(" ");
+  return asSentences([title, ...(line === undefined ? [] : [line]), ...words]);
 }
 
 let lastSerial = 0;

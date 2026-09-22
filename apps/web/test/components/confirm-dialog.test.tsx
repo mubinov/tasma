@@ -240,6 +240,24 @@ describe("the exits", () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
+  it("closes nothing on the repeats of an Esc held since before it opened", async () => {
+    const onCancel = vi.fn();
+    render(<Confirm onCancel={onCancel} />);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(cancel());
+    });
+
+    fireEvent.keyDown(cancel(), { key: "Escape", repeat: true });
+    fireEvent.keyDown(cancel(), { key: "Escape", repeat: true });
+
+    expect(screen.queryByRole("alertdialog")).not.toBeNull();
+    expect(onCancel).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(cancel(), { key: "Escape" });
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   /** Pins the modal rule the component relies on rather than sets. */
   it("closes nothing and calls nothing on a press outside the panel", async () => {
     const user = userEvent.setup();

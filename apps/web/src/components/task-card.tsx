@@ -24,12 +24,18 @@ type TaskCardProps = {
   onMoveDown?: () => void;
   /** Called before the card opens its task in this tab. */
   onOpen: () => void;
-  /** The menu button takes focus once the card has rendered, and `onMenuFocused` is called. */
-  focusMenu: boolean;
-  onMenuFocused: () => void;
+  /** The part that takes focus once the card has rendered, after which `onFocused` is called. */
+  focusPart: CardPart | null;
+  onFocused: () => void;
   /** Every press on the card, whether or not it becomes a drag. */
   onPress: (event: PointerEvent<HTMLElement>) => void;
 };
+
+/** A part of the card the board can hand focus to: the menu button after a move, the title link after a create. */
+export type CardPart = "menu" | "title";
+
+/** The card that takes focus once it renders, and the part of it that does. */
+export type CardFocus = { id: string; part: CardPart };
 
 /** What the card's state adds to its border and its opacity. */
 function stateClass({ dragging, pending }: { dragging: boolean; pending: boolean }): string {
@@ -55,27 +61,28 @@ export function TaskCard({
   onMoveUp,
   onMoveDown,
   onOpen,
-  focusMenu,
-  onMenuFocused,
+  focusPart,
+  onFocused,
   onPress,
 }: TaskCardProps): ReactNode {
   const { id, frontmatter: { title, status } } = entry;
   const navigate = useNavigate();
   const cardRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const titleRef = useRef<HTMLAnchorElement>(null);
   const titleId = useId();
 
-  const takeFocus = useEffectEvent(() => {
+  const takeFocus = useEffectEvent((part: CardPart) => {
     cardRef.current?.scrollIntoView({ block: "nearest" });
-    menuButtonRef.current?.focus();
-    onMenuFocused();
+    (part === "menu" ? menuButtonRef : titleRef).current?.focus();
+    onFocused();
   });
 
   useEffect(() => {
-    if (focusMenu) {
-      takeFocus();
+    if (focusPart !== null) {
+      takeFocus(focusPart);
     }
-  }, [focusMenu]);
+  }, [focusPart]);
 
   const menu = { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen };
 
@@ -103,6 +110,7 @@ export function TaskCard({
           // A link is draggable of itself, and that native drag would run
           // against the card's own.
           <Link
+            ref={titleRef}
             id={titleId}
             to="/tasks/$project/$task"
             params={{ project: tag, task: id }}

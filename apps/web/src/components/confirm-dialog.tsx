@@ -2,6 +2,7 @@ import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Button } from "@base-ui/react/button";
 import { useId, useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import type { FinalFocus } from "../lib/final-focus";
+import { useFocusEmptiedWhileOpening } from "../lib/use-focus-emptied-while-opening";
 import {
   BUTTON_CLASS,
   BUTTON_FILLED_CLASS,
@@ -12,39 +13,6 @@ import {
   DIALOG_STATUS_CLASS,
   DIALOG_VIEWPORT_CLASS,
 } from "./control-classes";
-
-/**
- * Empties focus while the dialog opens, and hands back the element it took it
- * from.
- *
- * Chrome refuses `aria-hidden` on an element a focused descendant sits under,
- * and does not re-evaluate once focus leaves — so a dialog opened by a pointer
- * click would leave the container of the clicked control readable by a screen
- * reader for the life of that dialog. Base UI hides the outside elements from a
- * passive effect and moves focus into the popup a frame later, which leaves
- * this layout effect the one place between them.
- *
- * Base UI records its own return destination only once the popup registers its
- * element, a commit after this one, so by then focus is already on nothing.
- * The element handed back is therefore the only fallback the dialog has.
- */
-function useFocusEmptiedWhileOpening(open: boolean): RefObject<HTMLElement | null> {
-  const openerRef = useRef<HTMLElement | null>(null);
-
-  useLayoutEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const focused = document.activeElement;
-    const opener = focused instanceof HTMLElement && focused !== document.body ? focused : null;
-
-    openerRef.current = opener;
-    opener?.blur();
-  }, [open]);
-
-  return openerRef;
-}
 
 export type ConfirmDialogProps = {
   open: boolean;
@@ -57,7 +25,7 @@ export type ConfirmDialogProps = {
   cancelLabel?: string;
   /** Also where a wait shows: "Deleting…", never `disabled`. */
   confirmLabel: string;
-  /** Runs for every way the dialog closes itself, which is Esc and Cancel. */
+  /** Runs for every way the dialog closes itself, which is Esc and Cancel. The repeats of a held Esc close nothing. */
   onCancel: () => void;
   /**
    * Closes nothing: only the caller knows when a write it starts is done. It
@@ -115,8 +83,11 @@ export function ConfirmDialog({
     <AlertDialog.Root
       actionsRef={actionsRef}
       open={open}
-      onOpenChange={(next) => {
-        if (!next) {
+      onOpenChange={(next, details) => {
+        // A repeat comes from an Esc held since before the dialog opened, so it answers nothing here.
+        if (details.reason === "escape-key" && details.event.repeat) {
+          details.cancel();
+        } else if (!next) {
           onCancel();
         }
       }}

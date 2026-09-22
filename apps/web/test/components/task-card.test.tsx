@@ -3,15 +3,15 @@ import { act, cleanup, fireEvent, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import type { PointerEvent } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TaskCard } from "../../src/components/task-card";
+import { TaskCard, type CardPart } from "../../src/components/task-card";
 import type { StepView } from "../../src/lib/board";
 import { entry } from "../card-fixture";
 import { renderBesideTaskRoute } from "../helpers";
 
 type CardState = {
   pending?: boolean;
-  focusMenu?: boolean;
-  onMenuFocused?: () => void;
+  focusPart?: CardPart | null;
+  onFocused?: () => void;
   onOpen?: () => void;
   dragging?: boolean;
   onPress?: (event: PointerEvent<HTMLElement>) => void;
@@ -23,8 +23,8 @@ async function renderCard(
   top = false,
   {
     pending = false,
-    focusMenu = false,
-    onMenuFocused = () => {},
+    focusPart = null,
+    onFocused = () => {},
     onOpen = () => {},
     dragging = false,
     onPress = () => {},
@@ -43,8 +43,8 @@ async function renderCard(
       dragging={dragging}
       onMove={() => {}}
       onOpen={onOpen}
-      focusMenu={focusMenu}
-      onMenuFocused={onMenuFocused}
+      focusPart={focusPart}
+      onFocused={onFocused}
       onPress={onPress}
     />,
   );
@@ -330,31 +330,43 @@ describe("a card a pending write changes", () => {
   });
 });
 
-describe("focus after a move", () => {
+describe("focus the board hands the card", () => {
   afterEach(() => {
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   });
 
-  it("scrolls the card into view, focuses its menu button and reports it", async () => {
+  it("scrolls the card into view, focuses its menu button after a move and reports it", async () => {
     const scrollIntoView = vi.fn();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
-    const onMenuFocused = vi.fn();
+    const onFocused = vi.fn();
 
-    const { card } = await renderCard(entry(), { kind: "none" }, false, { focusMenu: true, onMenuFocused });
+    const { card } = await renderCard(entry(), { kind: "none" }, false, { focusPart: "menu", onFocused });
 
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Task menu" }));
     expect(scrollIntoView.mock.contexts).toEqual([card]);
     expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
-    expect(onMenuFocused).toHaveBeenCalledOnce();
+    expect(onFocused).toHaveBeenCalledOnce();
   });
 
-  it("leaves focus alone while no move asks for it", async () => {
-    const onMenuFocused = vi.fn();
+  it("scrolls the card into view, focuses its title link after a create and reports it", async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+    const onFocused = vi.fn();
 
-    await renderCard(entry(), { kind: "none" }, false, { onMenuFocused });
+    const { card } = await renderCard(entry(), { kind: "none" }, false, { focusPart: "title", onFocused });
+
+    expect(document.activeElement).toBe(screen.getByRole("link", { name: "Build the parser" }));
+    expect(scrollIntoView.mock.contexts).toEqual([card]);
+    expect(onFocused).toHaveBeenCalledOnce();
+  });
+
+  it("leaves focus alone while the board asks for none", async () => {
+    const onFocused = vi.fn();
+
+    await renderCard(entry(), { kind: "none" }, false, { onFocused });
 
     expect(document.activeElement).toBe(document.body);
-    expect(onMenuFocused).not.toHaveBeenCalled();
+    expect(onFocused).not.toHaveBeenCalled();
   });
 });
 

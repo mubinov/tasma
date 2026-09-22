@@ -2,6 +2,7 @@ import { MutationObserver, onlineManager, QueryClientProvider, QueryObserver, ty
 import {
   createClient,
   ProtocolError,
+  TransportError,
   type Client,
   type Diagnostic,
   type SerializeErrorCode,
@@ -13,7 +14,17 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAppQueryClient } from "../../../src/api/client";
-import { TaskWriteError, taskWriteKey, taskWriteOptions, usePendingTaskWrites, type TaskWrites } from "../../../src/api/mutations";
+import {
+  createRefusal,
+  openCreateWarnings,
+  taskCreateOptions,
+  TaskWriteError,
+  taskWriteKey,
+  taskWriteOptions,
+  usePendingTaskWrites,
+  type TaskWrites,
+} from "../../../src/api/mutations";
+import { WriteError } from "../../../src/api/mutations/notices";
 import { projectQuery, taskQuery, tasksQuery } from "../../../src/api/queries";
 import { DAEMON_URL } from "../../../src/api/transport";
 import { useNoticeStore } from "../../../src/store/notices";
@@ -802,5 +813,204 @@ describe("usePendingTaskWrites", () => {
       other.answer(successReply({ id: "ELSE-1" }));
       await Promise.all(done);
     });
+  });
+});
+
+describe("taskCreateOptions", () => {
+  const CREATE = `POST ${LISTING}`;
+  const INPUT = { title: "Draw the map", status: "To Do", labels: ["web"] };
+  const FRESH: Diagnostic = { code: "label-case-converted", message: "label \"Web\" was converted to \"web\"" };
+
+  function createSetup(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
+    const context = setup(replies);
+    const { queryClient, client } = context;
+    const creator = new MutationObserver(queryClient, taskCreateOptions(queryClient, client, TAG));
+
+    return { ...context, creator };
+  }
+
+  function creates(requests: readonly TransportRequest[]): TransportRequest[] {
+    return requests.filter(({ method }) => method === "POST");
+  }
+
+  it("sends one POST with the input, and resolves with the id, the stored status and the diagnostics", async () => {
+    const { creator, requests } = createSetup({ [CREATE]: successReply({ id: "NOTE-7", status: "To Do" }, [FRESH]) });
+
+    const created = await creator.mutate({ input: INPUT });
+
+    expect(creates(requests)).toEqual([{ method: "POST", path: LISTING, body: INPUT }]);
+    expect(created).toEqual({ id: "NOTE-7", status: "To Do", diagnostics: [FRESH] });
+  });
+
+  it("takes the status of the input when the receipt names none", async () => {
+    const { creator } = createSetup({ [CREATE]: successReply({ id: "NOTE-7" }) });
+
+    await expect(creator.mutate({ input: INPUT })).resolves.toEqual({ id: "NOTE-7", status: "To Do", diagnostics: [] });
+  });
+
+  it("stays pending after the answer until the listing is read again", async () => {
+    const listing = heldBack();
+    const { creator, replies, queryClient, client } = createSetup({ [CREATE]: successReply({ id: "NOTE-7", status: "To Do" }) });
+    const stop = watchListing(queryClient, client);
+    await queryClient.query(tasksQuery(client, TAG));
+    replies[LISTING] = listing.reply;
+
+    const done = creator.mutate({ input: INPUT });
+    await vi.waitFor(() => {
+      expect(queryClient.getQueryState(tasksQuery(client, TAG).queryKey)?.fetchStatus).toBe("fetching");
+    });
+
+    expect(creator.getCurrentResult().status).toBe("pending");
+
+    listing.answer(successReply({ entries: [], excluded: [] }));
+    await done;
+
+    expect(creator.getCurrentResult().status).toBe("success");
+    stop();
+  });
+
+  it("closes every write failure notice on success, leaves other notices open, and opens no warning notice", async () => {
+    const { observer, creator } = createSetup({
+      [`PATCH ${taskPath("NOTE-1")}`]: REFUSAL,
+      [CREATE]: successReply({ id: "NOTE-7", status: "To Do" }, [FRESH]),
+    });
+    useNoticeStore.getState().showNotice({ key: "task-read:NOTE-9", form: "warning", title: "1 warning about NOTE-9", words: ["a"] });
+    await expect(observer.mutate(moveOf("NOTE-1"))).rejects.toThrow();
+
+    await creator.mutate({ input: INPUT });
+
+    expect(notices().map(({ key }) => key)).toEqual(["task-read:NOTE-9"]);
+  });
+
+  it("rejects a refusal with the shared write error, opens no notice, and still reads the listing again", async () => {
+    const { creator, queryClient, client, requests } = createSetup({ [CREATE]: REFUSAL });
+    const stop = watchListing(queryClient, client);
+    await queryClient.query(tasksQuery(client, TAG));
+    requests.length = 0;
+
+    const error = await creator.mutate({ input: INPUT }).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(WriteError);
+    expect((error as WriteError).cause).toBeInstanceOf(ProtocolError);
+    expect(notices()).toEqual([]);
+    await vi.waitFor(() => {
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([CREATE, `GET ${LISTING}`]);
+    });
+    stop();
+  });
+
+  it("does not try a create again", async () => {
+    const { creator, requests } = createSetup({ [CREATE]: { status: 502 } });
+
+    await expect(creator.mutate({ input: INPUT })).rejects.toThrow();
+
+    expect(creates(requests)).toHaveLength(1);
+  });
+
+  it("waits for a write in flight in the same project", async () => {
+    const first = heldBack();
+    const { observer, creator, requests } = createSetup({
+      [`PATCH ${taskPath("NOTE-1")}`]: first.reply,
+      [CREATE]: successReply({ id: "NOTE-7", status: "To Do" }),
+    });
+
+    const done = [observer.mutate(moveOf("NOTE-1")), creator.mutate({ input: INPUT })];
+    await vi.waitFor(() => {
+      expect(requests.filter(({ method }) => method !== "GET")).toHaveLength(1);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(creates(requests)).toEqual([]);
+
+    first.answer(written("NOTE-1"));
+    await Promise.all(done);
+
+    expect(requests.filter(({ method }) => method !== "GET").map(({ method }) => method)).toEqual(["PATCH", "POST"]);
+  });
+
+  it("is keyed under the tasks of its project, apart from the writes the board lays over its cards", async () => {
+    const held = heldBack();
+    const { queryClient, client } = createSetup({ [CREATE]: held.reply });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+    const { result } = renderHook(() => usePendingTaskWrites(TAG), { wrapper });
+    const options = taskCreateOptions(queryClient, client, TAG);
+    let done: Promise<unknown> = Promise.resolve();
+
+    await act(async () => {
+      done = new MutationObserver(queryClient, options).mutate({ input: INPUT });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(options.mutationKey).toEqual(["daemon", "projects", TAG, "tasks", "create"]);
+    expect(result.current.writes).toEqual([]);
+    expect([...result.current.movedIds]).toEqual([]);
+
+    await act(async () => {
+      held.answer(successReply({ id: "NOTE-7", status: "To Do" }));
+      await done;
+    });
+  });
+});
+
+describe("openCreateWarnings", () => {
+  const KNOWN: Diagnostic = { code: "config-key-unknown", message: "unknown key: colour" };
+  const FRESH: Diagnostic = { code: "label-case-converted", message: "label \"Web\" was converted to \"web\"" };
+
+  it("opens the warning notice under the new id for the diagnostics the board does not show", () => {
+    openCreateWarnings({ id: "NOTE-7", status: "To Do", diagnostics: [KNOWN, FRESH] }, [KNOWN]);
+
+    expect(notices()).toMatchObject([
+      {
+        key: "task-write-warnings:NOTE-7",
+        form: "warning",
+        title: "1 warning about NOTE-7",
+        words: [`${FRESH.code} · ${FRESH.message}`],
+      },
+    ]);
+  });
+
+  it("opens nothing when the board already shows every diagnostic, or there is none", () => {
+    openCreateWarnings({ id: "NOTE-7", status: "To Do", diagnostics: [KNOWN] }, [KNOWN]);
+    openCreateWarnings({ id: "NOTE-8", status: "To Do", diagnostics: [] }, []);
+
+    expect(notices()).toEqual([]);
+  });
+});
+
+describe("createRefusal", () => {
+  const CASES: { kind: string; cause: unknown; line: string; words: string }[] = [
+    {
+      kind: "a refusal",
+      cause: new ProtocolError({ kind: "store", code: "status-unknown", message: "status \"Gone\" is not configured" }, 422),
+      line: "The daemon refused the write, so no task was created. Its own words are below.",
+      words: "store/status-unknown · status \"Gone\" is not configured",
+    },
+    {
+      kind: "no answer",
+      cause: new TransportError("connection refused"),
+      line: "No daemon answered, so no task was created.",
+      words: DAEMON_URL,
+    },
+    {
+      kind: "an answer that is not the daemon's",
+      cause: new TransportError(`POST ${LISTING} answered with no envelope`, 502),
+      line: "The daemon did not answer through the address below. Start the daemon there if it is not running.",
+      words: `${DAEMON_URL} · HTTP 502 · POST ${LISTING} answered with no envelope`,
+    },
+    {
+      kind: "a create that could not start",
+      cause: new Error("the path parameter cannot be empty"),
+      line: "The create did not start, so no task was created.",
+      words: "the path parameter cannot be empty",
+    },
+  ];
+
+  it.each(CASES)("names what happened for $kind, from the write error", ({ cause, line, words }) => {
+    expect(createRefusal(new WriteError(cause))).toEqual({ line, words });
+  });
+
+  it.each(CASES)("names what happened for $kind, from the bare cause", ({ cause, line, words }) => {
+    expect(createRefusal(cause)).toEqual({ line, words });
   });
 });

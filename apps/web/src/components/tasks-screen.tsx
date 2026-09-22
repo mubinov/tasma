@@ -1,8 +1,9 @@
 import { useMutation, useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, Link, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import type { Workflow } from "@tasma/protocol";
-import { useDeferredValue, useEffect, useLayoutEffect, useState, type ReactNode } from "react";
-import { taskWriteOptions, usePendingTaskWrites } from "../api/mutations";
+import { useDeferredValue, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
+import { openCreateWarnings, taskWriteOptions, usePendingTaskWrites, type Created } from "../api/mutations";
 import { usePollNotice } from "../api/poll-notice";
 import { POLL_INTERVAL, projectQuery, projectsQuery, tasksQuery, workflowQuery } from "../api/queries";
 import {
@@ -10,6 +11,7 @@ import {
   boardWarnings,
   buildColumns,
   cardPlace,
+  createdTarget,
   distinctLabels,
   isTopPriority,
   moveTarget,
@@ -22,11 +24,15 @@ import { formatClock } from "../lib/clock";
 import { useDocumentTitle } from "../lib/document-title";
 import type { DropPlace } from "../lib/drag-place";
 import { fullIndex, placeWrites } from "../lib/order";
+import { PlusIcon } from "../lib/icons";
 import { useCardDrag, type BoardSnapshot } from "../lib/use-card-drag";
 import { warningCount } from "../lib/warning-count";
 import { NAVIGATION_BY_PATH } from "../navigation";
+import { useNoticeStore } from "../store/notices";
 import { useUiStore } from "../store/ui";
 import { BoardColumn } from "./board-column";
+import { BUTTON_CLASS } from "./control-classes";
+import { CreateTaskDialog } from "./create-task-dialog";
 import { Diagnostics } from "./diagnostics";
 import { DraggedCard } from "./dragged-card";
 import { RouteFailure } from "./error-boundary";
@@ -34,6 +40,7 @@ import { LabelFilter } from "./label-filter";
 import { LiveNotice } from "./live-notice";
 import { ProjectSelect } from "./project-select";
 import { ScreenHeading } from "./screen-heading";
+import type { CardFocus } from "./task-card";
 
 // The route is reached by id rather than imported: the tree in routes.tsx names
 // this component, so importing the route back would close a cycle.
@@ -140,7 +147,11 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
   const setBoardReturn = useUiStore((state) => state.setBoardReturn);
   const { mutateAsync: write } = useMutation(taskWriteOptions(queryClient, client, tag));
   const pending = usePendingTaskWrites(tag);
-  const [focusId, setFocusId] = useState<string | null>(null);
+  const [focusCard, setFocusCard] = useState<CardFocus | null>(null);
+  const [focusColumn, setFocusColumn] = useState<number | null>(null);
+  // The opener is kept, not read from focus: WebKit focuses no button on a pointer press.
+  const [creating, setCreating] = useState<{ status: string; opener: HTMLElement } | null>(null);
+  const newTaskRef = useRef<HTMLButtonElement>(null);
   const names = workflowNames(listing.entries);
   // Not under Suspense: a poll can bring a name the loader did not read, and a
   // new key would suspend the whole board until its read lands.
@@ -187,10 +198,42 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
    * its new place, and at its old place again after a refusal.
    */
   function moveFromMenu(id: string, writes: TaskWrite[]): void {
-    setFocusId(id);
+    setFocusCard({ id, part: "menu" });
     sendMove(id, writes, () => {
-      setFocusId(id);
+      setFocusCard({ id, part: "menu" });
     });
+  }
+
+  /**
+   * The mutation resolves once the query cache holds the new task, but the
+   * query tells its observers later, not in this call, so the target is read
+   * from the cache rather than from this render.
+   */
+  function created(result: Created): void {
+    const { data: read, diagnostics } = queryClient.getQueryData(tasksQuery(client, tag).queryKey)!;
+    const target = createdTarget(config, read.entries, selected, result.id, result.status);
+
+    // Inside a promise continuation these would commit after the notice store's
+    // update, and the warning notice would show for a frame under the scrim.
+    // eslint-disable-next-line @eslint-react/dom-no-flush-sync -- the dialog closes before any notice opens
+    flushSync(() => {
+      setCreating(null);
+      if (target.kind === "card") {
+        setFocusCard({ id: result.id, part: "title" });
+      } else {
+        setFocusColumn(target.column);
+      }
+    });
+
+    useNoticeStore.getState().announce(
+      target.kind === "column" && target.hidden
+        ? `${result.id} was created. The label filter hides it.`
+        : `${result.id} was created.`,
+    );
+    openCreateWarnings(result, boardWarnings(
+      queryClient.getQueryData(projectQuery(client, tag).queryKey)!.diagnostics,
+      diagnostics,
+    ));
   }
 
   function recordReturn(id: string): void {
@@ -239,6 +282,17 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
         <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-x-5 gap-y-3">
           <ProjectSelect projects={projects} tag={tag} />
           <LabelFilter entries={listing.entries} selected={selected} />
+          <button
+            ref={newTaskRef}
+            type="button"
+            onClick={(event) => {
+              setCreating({ status: config.default_status, opener: event.currentTarget });
+            }}
+            className={`ml-1 ${BUTTON_CLASS}`}
+          >
+            <PlusIcon size={14} aria-hidden="true" />
+            New task
+          </button>
         </div>
       </div>
 
@@ -284,9 +338,16 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
               moveBy(index, id, by);
             }}
             onOpen={recordReturn}
-            focusId={focusId}
-            onMenuFocused={() => {
-              setFocusId(null);
+            focusCard={focusCard}
+            onCardFocused={() => {
+              setFocusCard(null);
+            }}
+            focusHeading={focusColumn === index}
+            onHeaderFocused={() => {
+              setFocusColumn(null);
+            }}
+            onCreate={(status, opener) => {
+              setCreating({ status, opener });
             }}
             draggingId={drag?.taskId ?? null}
             slot={drag?.place?.column === index
@@ -306,6 +367,22 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
         />
       )}
       <BoardPollNotice tag={tag} />
+      {creating !== null && (
+        <CreateTaskDialog
+          queryClient={queryClient}
+          client={client}
+          tag={tag}
+          config={config}
+          entries={listing.entries}
+          status={creating.status}
+          opener={creating.opener}
+          newTaskRef={newTaskRef}
+          onClose={() => {
+            setCreating(null);
+          }}
+          onCreated={created}
+        />
+      )}
     </>
   );
 }

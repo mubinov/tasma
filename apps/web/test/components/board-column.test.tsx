@@ -57,8 +57,11 @@ async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnPr
       onMove={() => {}}
       onMoveBy={() => {}}
       onOpen={() => {}}
-      focusId={null}
-      onMenuFocused={() => {}}
+      focusCard={null}
+      onCardFocused={() => {}}
+      focusHeading={false}
+      onHeaderFocused={() => {}}
+      onCreate={() => {}}
       draggingId={null}
       onPress={() => {}}
       {...props}
@@ -289,7 +292,7 @@ describe("Show all on a final column of more than 50 cards, scrolled down to it"
   });
 });
 
-describe("a focus id under and above the cap", () => {
+describe("a focus card under and above the cap", () => {
   beforeEach(() => {
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
   });
@@ -299,21 +302,84 @@ describe("a focus id under and above the cap", () => {
   });
 
   it("opens Show all, and focus goes to the card's menu button, not to the first revealed row", async () => {
-    const onMenuFocused = vi.fn();
+    const onCardFocused = vi.fn();
 
-    await renderColumn({ final: true, matching: entries(25), total: 25 }, { focusId: "SAGA-23", onMenuFocused });
+    await renderColumn(
+      { final: true, matching: entries(25), total: 25 },
+      { focusCard: { id: "SAGA-23", part: "menu" }, onCardFocused },
+    );
 
     expect(cardTitles()).toHaveLength(25);
     expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
     expect(document.activeElement).toBe(menuButton("Task 23"));
-    expect(onMenuFocused).toHaveBeenCalledOnce();
+    expect(onCardFocused).toHaveBeenCalledOnce();
   });
 
-  it("keeps the column folded for a focus id above the cap", async () => {
-    await renderColumn({ final: true, matching: entries(25), total: 25 }, { focusId: "SAGA-20" });
+  it("opens Show all for a card bound for its title link, and focuses the link", async () => {
+    await renderColumn({ final: true, matching: entries(25), total: 25 }, { focusCard: { id: "SAGA-24", part: "title" } });
+
+    expect(cardTitles()).toHaveLength(25);
+    expect(document.activeElement).toBe(screen.getByRole("link", { name: "Task 24" }));
+  });
+
+  it("keeps the column folded for a focus card above the cap", async () => {
+    await renderColumn({ final: true, matching: entries(25), total: 25 }, { focusCard: { id: "SAGA-20", part: "menu" } });
 
     expect(cardTitles()).toHaveLength(20);
     expect(document.activeElement).toBe(menuButton("Task 20"));
+  });
+});
+
+describe("focus on the heading", () => {
+  it("moves to the heading when the board asks, and reports it", async () => {
+    const onHeaderFocused = vi.fn();
+
+    await renderColumn({ matching: entries(2), total: 2 }, { focusHeading: true, onHeaderFocused });
+
+    expect(document.activeElement).toBe(screen.getByRole("heading", { level: 2, name: "In Progress" }));
+    expect(onHeaderFocused).toHaveBeenCalledOnce();
+  });
+
+  it("stays where it is while the board asks for none", async () => {
+    const onHeaderFocused = vi.fn();
+
+    await renderColumn({ matching: entries(2), total: 2 }, { onHeaderFocused });
+
+    expect(document.activeElement).toBe(document.body);
+    expect(onHeaderFocused).not.toHaveBeenCalled();
+  });
+});
+
+describe("the plus in the header", () => {
+  function plus(): HTMLElement {
+    return screen.getByRole("button", { name: "New task in In Progress" });
+  }
+
+  it("follows the count, and hands the column's status and itself to the board", async () => {
+    const onCreate = vi.fn();
+    const user = userEvent.setup();
+    await renderColumn({ matching: entries(2), total: 2 }, { onCreate });
+
+    await user.click(plus());
+
+    expect(screen.getByRole("heading", { level: 2 }).nextElementSibling?.nextElementSibling).toBe(plus());
+    expect(onCreate).toHaveBeenCalledExactlyOnceWith("In Progress", plus());
+  });
+
+  it("shows only while the pointer is over the column or focus is inside it, and stays in the tab order", async () => {
+    await renderColumn({ matching: [], total: 0, final: true, status: "Done" });
+    const button = screen.getByRole("button", { name: "New task in Done" });
+    const classes = (button.getAttribute("class") ?? "").split(" ");
+
+    expect(screen.getByRole("region", { name: "Done" }).className).toContain("group/column");
+    expect(classes).toEqual(expect.arrayContaining([
+      "opacity-0",
+      "group-hover/column:opacity-100",
+      "group-focus-within/column:opacity-100",
+      "transition-opacity",
+    ]));
+    expect(button.tabIndex).toBe(0);
+    expect(button.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
   });
 });
 

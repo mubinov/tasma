@@ -282,6 +282,39 @@ export function moveTarget(
   };
 }
 
+export type CreatedTarget = { kind: "card" } | { kind: "column"; column: number; hidden: boolean };
+
+/**
+ * Where focus goes after a create: the new card while the board shows it, else
+ * the heading of the column that holds it. The listing decides the column, as
+ * the daemon can correct the case of a status. A task the listing does not hold
+ * goes to the column of the status the receipt names, else to the first column.
+ */
+export function createdTarget(
+  config: Pick<Config, "statuses" | "final_statuses">,
+  entries: readonly TaskEntry[],
+  labels: readonly string[],
+  id: string,
+  status: string,
+): CreatedTarget {
+  if (cardPlace(buildColumns(config, entries, labels), id) !== null) {
+    return { kind: "card" };
+  }
+
+  const place = cardPlace(buildColumns(config, entries, []), id);
+  if (place !== null) {
+    return { kind: "column", column: place.column, hidden: true };
+  }
+
+  const key = status.toLowerCase();
+
+  return {
+    kind: "column",
+    column: Math.max(config.statuses.findIndex((candidate) => candidate.toLowerCase() === key), 0),
+    hidden: false,
+  };
+}
+
 /** Where a card stands on the board: its column, and its place in that column's visible list. */
 export function cardPlace(
   columns: readonly ColumnData[],

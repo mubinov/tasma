@@ -2,6 +2,7 @@ import { hashKey, mutationOptions, useMutationState, type QueryClient } from "@t
 import { type Client, type Diagnostic } from "@tasma/protocol";
 import { boardWarnings, type PendingWrite, type TaskWrite } from "../../lib/board";
 import { failureWords, joinFailureWords } from "../../lib/failure-words";
+import type { CreateInput } from "../../lib/task-draft";
 import { warningCount } from "../../lib/warning-count";
 import { noticeWords, useNoticeStore } from "../../store/notices";
 import { daemonKeys, projectQuery, taskQuery, tasksQuery } from "../queries";
@@ -43,6 +44,11 @@ export type TaskWrites = {
 
 export function taskWriteKey(tag: string) {
   return [...daemonKeys.tasks(tag), "write"] as const;
+}
+
+/** The one queue of a project's writes, so a create waits for a move or an edit in flight. */
+function taskWriteScope(tag: string) {
+  return { id: `task-write:${tag}` };
 }
 
 /** A write of `TaskWrites` failed. `completed` is the count of the writes before it that succeeded. */
@@ -114,6 +120,25 @@ function failureLine({ cause, completed }: TaskWriteError, { place, property }: 
   return correction === undefined ? line : `${line} ${correction}`;
 }
 
+function openWarnings(id: string, fresh: readonly Diagnostic[]): void {
+  if (fresh.length > 0) {
+    openWriteNotice({
+      key: `${WARNING_KEY_PREFIX}${id}`,
+      form: "warning",
+      title: `${warningCount(fresh.length)} about ${id}`,
+      words: noticeWords(fresh),
+    });
+  }
+}
+
+function closeFailureNotices(): void {
+  for (const { key } of useNoticeStore.getState().notices) {
+    if (key.startsWith(FAILURE_KEY_PREFIX)) {
+      useNoticeStore.getState().closeNotice(key);
+    }
+  }
+}
+
 /**
  * Every write to the tasks of one project, in one queue per project. The board
  * shows a write from the variables of the pending mutation, so the query cache
@@ -142,7 +167,7 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
     },
     // A write whose answer is lost may have been carried out.
     retry: 0,
-    scope: { id: `task-write:${tag}` },
+    scope: taskWriteScope(tag),
     onSuccess: (results) => {
       const board = boardWarnings(
         queryClient.getQueryData(projectQuery(client, tag).queryKey)?.diagnostics ?? [],
@@ -158,25 +183,13 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
           ...board,
           ...(queryClient.getQueryData(taskQuery(client, tag, id).queryKey)?.diagnostics ?? []),
         ];
-        const fresh = freshDiagnostics(diagnostics, known);
 
-        if (fresh.length > 0) {
-          openWriteNotice({
-            key: `${WARNING_KEY_PREFIX}${id}`,
-            form: "warning",
-            title: `${warningCount(fresh.length)} about ${id}`,
-            words: noticeWords(fresh),
-          });
-        }
+        openWarnings(id, freshDiagnostics(diagnostics, known));
       }
       // A mutation carrying no write reached the daemon with nothing, so a
       // refusal an earlier write opened still stands.
       if (results.length > 0) {
-        for (const { key } of useNoticeStore.getState().notices) {
-          if (key.startsWith(FAILURE_KEY_PREFIX)) {
-            useNoticeStore.getState().closeNotice(key);
-          }
-        }
+        closeFailureNotices();
       }
 
       // Returned, so the write stays pending until the listing shows it.
@@ -212,6 +225,65 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
       void queryClient.invalidateQueries({ queryKey: daemonKeys.tasks(tag) });
     },
   });
+}
+
+/** The receipt of a create. */
+export type Created = { id: string; status: string; diagnostics: Diagnostic[] };
+
+export type CreateTask = { input: CreateInput };
+
+/** A create is one write, and nothing was created on any path. */
+const CREATE_FAILURE_LINES: Record<FailureKind, string> = {
+  refused: "The daemon refused the write, so no task was created. Its own words are below.",
+  unanswered: "No daemon answered, so no task was created.",
+  address: "The daemon did not answer through the address below. Start the daemon there if it is not running.",
+  unsent: "The create did not start, so no task was created.",
+};
+
+/**
+ * What the create dialog shows for a failed create. It takes the error a create
+ * rejects with as readily as its cause.
+ */
+export function createRefusal(error: unknown): { line: string; words: string } {
+  const cause = error instanceof WriteError ? error.cause : error;
+
+  return { line: CREATE_FAILURE_LINES[failureKind(cause)], words: joinFailureWords(failureWords(cause)) };
+}
+
+/**
+ * The create of a task, in the queue of the project's other writes. It opens no
+ * notice: the dialog shows a refusal, and the board opens the warnings once the
+ * dialog has closed, where no scrim covers them.
+ */
+export function taskCreateOptions(queryClient: QueryClient, client: Client, tag: string) {
+  return mutationOptions<Created, WriteError, CreateTask>({
+    mutationKey: [...daemonKeys.tasks(tag), "create"],
+    mutationFn: async ({ input }) => {
+      try {
+        const { data, diagnostics } = await client.createTask(tag, input);
+
+        return { id: data.id, status: data.status ?? input.status, diagnostics };
+      } catch (cause) {
+        throw new WriteError(cause);
+      }
+    },
+    retry: 0,
+    scope: taskWriteScope(tag),
+    onSuccess: () => {
+      closeFailureNotices();
+
+      // Returned, so the create stays pending until the listing holds the task.
+      return queryClient.invalidateQueries({ queryKey: daemonKeys.tasks(tag) });
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: daemonKeys.tasks(tag) });
+    },
+  });
+}
+
+/** Opens the warning notice of a create, for the diagnostics the board does not already show. */
+export function openCreateWarnings(created: Created, known: readonly Diagnostic[]): void {
+  openWarnings(created.id, freshDiagnostics(created.diagnostics, known));
 }
 
 /** The pending and queued task writes of a project. */

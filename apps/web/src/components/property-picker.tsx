@@ -229,6 +229,9 @@ export function PropertyPicker<Item>(props: PropertyPickerProps<Item>): ReactNod
             {/* Mounted with the popup, so a change of its text is announced. */}
             <Combobox.Status className="sr-only">{status}</Combobox.Status>
             {empty !== undefined && <div className="px-2 py-1.5 text-sm text-dim">{empty}</div>}
+            {/* Mounted and empty: a list with no rows lets Escape reach the popup's parent unless the part is
+                mounted. `Combobox.Status` already speaks the empty text, so the part is no live region. */}
+            <Combobox.Empty role="presentation" aria-live="off" />
             <Combobox.List aria-labelledby={labelId} className="max-h-72 overflow-y-auto">
               {(item: Item, index: number) => children(item, index)}
             </Combobox.List>

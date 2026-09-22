@@ -1,6 +1,6 @@
 import { Field } from "@base-ui/react/field";
 import type { ReactNode, Ref } from "react";
-import { FIELD_BORDER_CLASS, FIELD_ERROR_CLASS, FIELD_HINT_CLASS } from "./control-classes";
+import { FIELD_BORDER_CLASS, FIELD_ERROR_CLASS, FIELD_HINT_CLASS, FIELD_KBD_CLASS } from "./control-classes";
 
 /*
  * `field-sizing-content` is how the field grows with its text, which is why it
@@ -107,5 +107,28 @@ export function MarkdownEditorHint({ children, className }: MarkdownEditorHintPr
     <Field.Description className={`${FIELD_HINT_CLASS} ${className ?? ""}`}>
       {children}
     </Field.Description>
+  );
+}
+
+export type KeyHintProps = {
+  /** The mark on the key, which a screen reader is not given. */
+  mark: string;
+  /** The same key in words, for a reader that speaks neither ⌘ nor ↩. */
+  spoken: string;
+  children: ReactNode;
+};
+
+/** One key and what it does, as a part of `MarkdownEditorHint`. */
+export function KeyHint({ mark, spoken, children }: KeyHintProps): ReactNode {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <kbd className={FIELD_KBD_CLASS}>
+        <span aria-hidden="true">{mark}</span>
+        <span className="sr-only">{spoken}</span>
+      </kbd>
+      {/* The space separates the words in speech; flex drops it from the layout. */}
+      {" "}
+      {children}
+    </span>
   );
 }

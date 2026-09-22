@@ -14,10 +14,8 @@ import { bodyCorrection, taskWriteOptions } from "../api/mutations";
 import type { FinalFocus } from "./final-focus";
 import { useNoticeStore } from "../store/notices";
 import { useUiStore, type EditRequest } from "../store/ui";
-import { hasUnsavedText, isBlankTitle, savesNothing, type Draft } from "./text-draft";
+import { BLANK_TITLE, hasUnsavedText, isBlankTitle, savesNothing, type Draft } from "./text-draft";
 import { useDiskChange, type DiskChange } from "./use-disk-change";
-
-const BLANK_TITLE = "A task needs a title.";
 
 export type TaskEditingOptions = {
   queryClient: QueryClient;

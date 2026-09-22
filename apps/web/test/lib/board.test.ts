@@ -6,6 +6,7 @@ import {
   type CardClick,
   buildColumns,
   cardPlace,
+  createdTarget,
   distinctLabels,
   isFinalStatus,
   isTopPriority,
@@ -524,5 +525,35 @@ describe("moveTarget", () => {
     expect(ids(unfiltered)).toEqual(["T-1", "T-2", "T-3"]);
     expect(ids(visible)).toEqual(["T-1", "T-2", "T-3"]);
     expect(card.id).toBe("T-4");
+  });
+});
+
+describe("createdTarget", () => {
+  const LISTING = [
+    entry("P-1"),
+    entry("P-2", { status: "to do", labels: ["web"] }),
+    entry("P-3", { status: "Gone" }),
+    entry("P-4", { status: "Done" }),
+  ];
+
+  it("is the card when the board shows it", () => {
+    expect(createdTarget(CONFIG, LISTING, [], "P-2", "to do")).toEqual({ kind: "card" });
+    expect(createdTarget(CONFIG, LISTING, ["WEB"], "P-2", "to do")).toEqual({ kind: "card" });
+  });
+
+  it("is the heading of the column that holds the card when the label filter hides it", () => {
+    expect(createdTarget(CONFIG, LISTING, ["web"], "P-4", "Done")).toEqual({ kind: "column", column: 2, hidden: true });
+  });
+
+  it("takes the column from the listing, not from the status the receipt names", () => {
+    expect(createdTarget(CONFIG, LISTING, ["web"], "P-3", "Done")).toEqual({ kind: "column", column: 0, hidden: true });
+  });
+
+  it("is the heading of the column of the receipt's status, without case, when the listing holds no such task", () => {
+    expect(createdTarget(CONFIG, LISTING, [], "P-9", "done")).toEqual({ kind: "column", column: 2, hidden: false });
+  });
+
+  it("is the heading of the first column when no column names the receipt's status either", () => {
+    expect(createdTarget(CONFIG, LISTING, [], "P-9", "Gone")).toEqual({ kind: "column", column: 0, hidden: false });
   });
 });

@@ -6,7 +6,8 @@ import {
   MENU_RADIO_ITEM_CLASS,
   POPUP_CLASS,
   POSITIONER_CLASS,
-  PROPERTY_BUTTON_CLASS,
+  PROPERTY_TRIGGER_CLASS,
+  type PropertyLook,
 } from "./control-classes";
 import { RadioIndicator } from "./radio-indicator";
 
@@ -22,10 +23,11 @@ export type PropertyMenuProps = {
    * the empty string, which calls back with null.
    */
   clearable: boolean;
-  /** The trigger's content: text, or StepMark for Step. */
+  /** The trigger's content: text, or StepMark for Step. A `field` look takes the caret here too. */
   trigger: ReactNode;
   /** Called when the control leaves the page while it, or its open menu, holds focus. */
   onFocusLost: () => void;
+  look?: PropertyLook;
 };
 
 /**
@@ -41,7 +43,7 @@ export type PropertyMenuProps = {
  * settles, which is the opposite of announcing the wait.
  */
 export function PropertyMenu(props: PropertyMenuProps): ReactNode {
-  const { labelId, value, row, clearable, trigger, onFocusLost } = props;
+  const { labelId, value, row, clearable, trigger, onFocusLost, look = "row" } = props;
   const { choices, match, busy, onPick } = row;
   const triggerId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -56,7 +58,7 @@ export function PropertyMenu(props: PropertyMenuProps): ReactNode {
         ref={triggerRef}
         id={triggerId}
         aria-labelledby={`${labelId} ${triggerId}`}
-        className={PROPERTY_BUTTON_CLASS}
+        className={PROPERTY_TRIGGER_CLASS[look]}
       >
         {trigger}
         {/* The wait shows in the label, never in `disabled`. */}

@@ -1,8 +1,10 @@
+import { Dialog } from "@base-ui/react/dialog";
 import type { TaskEntry } from "@tasma/protocol";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactNode } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { FIELD_TRIGGER_CLASS, PROPERTY_BUTTON_CLASS, type PropertyLook } from "../../src/components/control-classes";
 import { LabelPicker } from "../../src/components/label-picker";
 import { frontmatter } from "../task-screen-fixtures";
 
@@ -18,10 +20,11 @@ type HarnessProps = {
   entries?: readonly TaskEntry[];
   initial?: readonly string[];
   picks: (readonly string[])[];
+  look?: PropertyLook;
 };
 
 /** The page's part: the labels a pick sends become the task's labels at once, as the overlay makes them. */
-function Harness({ entries = ENTRIES, initial = [], picks }: HarnessProps): ReactNode {
+function Harness({ entries = ENTRIES, initial = [], picks, look }: HarnessProps): ReactNode {
   const [labels, setLabels] = useState(initial);
 
   return (
@@ -32,6 +35,7 @@ function Harness({ entries = ENTRIES, initial = [], picks }: HarnessProps): Reac
           labelId={LABEL_ID}
           entries={entries}
           labels={labels}
+          look={look}
           row={{
             busy: false,
             onPick: (next) => {
@@ -502,5 +506,83 @@ describe("a check", () => {
     });
     await open(user);
     expect(options()).toEqual([["zeta", "1", false]]);
+  });
+});
+
+describe("the look", () => {
+  it("keeps the property button class and no caret by default", () => {
+    renderPicker();
+
+    expect(trigger().className).toBe(PROPERTY_BUTTON_CLASS);
+    expect(trigger().querySelector("svg")).toBeNull();
+  });
+
+  it("takes the field class for a form row, and ends with a caret after its value", () => {
+    renderPicker({ look: "field", initial: ["web"] });
+
+    expect(trigger().className).toBe(FIELD_TRIGGER_CLASS);
+    const caret = trigger().lastElementChild;
+    expect(caret?.tagName.toLowerCase()).toBe("svg");
+    expect(caret?.getAttribute("aria-hidden")).toBe("true");
+    expect(trigger().textContent).toBe("web");
+  });
+});
+
+describe("Escape in a list with no row", () => {
+  function renderInDialog(entries: readonly TaskEntry[]) {
+    const onOpenChange = vi.fn();
+    render(
+      <Dialog.Root open onOpenChange={onOpenChange}>
+        <Dialog.Portal>
+          <Dialog.Popup>
+            <Dialog.Title>Parent</Dialog.Title>
+            <Harness entries={entries} picks={[]} />
+          </Dialog.Popup>
+        </Dialog.Portal>
+      </Dialog.Root>,
+    );
+
+    return onOpenChange;
+  }
+
+  it("closes the picker alone when no label matches the text typed", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = renderInDialog(ENTRIES);
+    await open(user);
+    await user.type(input(), "-");
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(screen.queryByRole("listbox")).toBeNull();
+    });
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("closes the picker alone when the project has no labels", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = renderInDialog([entry("P-1", [])]);
+    await open(user);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(input());
+    });
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(screen.queryByRole("listbox")).toBeNull();
+    });
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("speaks the empty text through the one status region, and leaves the empty part silent", async () => {
+    const user = userEvent.setup();
+    renderPicker({ entries: [entry("P-1", [])] });
+    await open(user);
+
+    const live = [...document.querySelectorAll('[role="status"], [aria-live="polite"], [aria-live="assertive"]')];
+    expect(live.filter((region) => region.textContent.includes("No labels in this project"))).toHaveLength(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(document.querySelector('[role="presentation"][aria-live="off"]')?.textContent).toBe("");
   });
 });

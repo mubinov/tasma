@@ -12,7 +12,8 @@ import {
   type LabelItem,
   type PickerRow,
 } from "../lib/task-properties";
-import { FIELD_ERROR_CLASS, FIELD_HINT_CLASS, PROPERTY_BUTTON_CLASS } from "./control-classes";
+import { CaretDownIcon } from "../lib/icons";
+import { FIELD_ERROR_CLASS, FIELD_HINT_CLASS, PROPERTY_TRIGGER_CLASS, type PropertyLook } from "./control-classes";
 import { LabelList, LabelMark } from "./label-list";
 import { PICKER_ITEM_CLASS, PickerCheck, PropertyPicker } from "./property-picker";
 
@@ -24,6 +25,8 @@ type LabelPickerProps = {
   /** The labels of the task, with the pending writes laid over them. */
   labels: readonly string[];
   row: PickerRow<readonly string[]>;
+  /** A `field` look ends the trigger with a caret. */
+  look?: PropertyLook;
 };
 
 function labelCount(count: number): string {
@@ -81,7 +84,7 @@ function labelStatus({ correction, added, addName, empty, matchCount }: StatusFa
  * it: shown checked and not interactive, named by a line, and left out of each
  * list a pick sends.
  */
-export function LabelPicker({ labelId, entries, labels, row }: LabelPickerProps): ReactNode {
+export function LabelPicker({ labelId, entries, labels, row, look = "row" }: LabelPickerProps): ReactNode {
   const valueId = useId();
   const hintId = useId();
   const errorId = useId();
@@ -99,14 +102,17 @@ export function LabelPicker({ labelId, entries, labels, row }: LabelPickerProps)
       multiple
       labelId={labelId}
       trigger={{
-        className: PROPERTY_BUTTON_CLASS,
+        className: PROPERTY_TRIGGER_CLASS[look],
         labelledBy: `${labelId} ${valueId}`,
         content: (
-          <span id={valueId} className="inline-flex min-w-0 flex-wrap items-center">
-            {labels.length === 0 ? <span className="text-dim">None</span> : <LabelList labels={labels} phrasing />}
-            {/* The wait shows in the label, never in `disabled`. */}
-            {row.busy && "…"}
-          </span>
+          <>
+            <span id={valueId} className="inline-flex min-w-0 flex-wrap items-center">
+              {labels.length === 0 ? <span className="text-dim">None</span> : <LabelList labels={labels} phrasing />}
+              {/* The wait shows in the label, never in `disabled`. */}
+              {row.busy && "…"}
+            </span>
+            {look === "field" && <CaretDownIcon size={14} aria-hidden="true" className="shrink-0 text-dim" />}
+          </>
         ),
       }}
       placeholder="Filter or add a label"

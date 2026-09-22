@@ -5,6 +5,10 @@ export const LABEL_CLASS = "text-xs-plus text-dim";
 export const TRIGGER_CLASS
   = "inline-flex min-h-8 min-w-0 max-w-full items-center gap-1.5 rounded-control border border-line bg-surface py-1 pr-2 pl-2.5 text-left text-sm text-text hover:border-graphic";
 
+/** `TRIGGER_CLASS` as a form row's value: full width, the value at the left and the caret at the right. */
+export const FIELD_TRIGGER_CLASS
+  = "flex min-h-8 w-full min-w-0 items-center justify-between gap-1.5 rounded-control border border-line bg-surface py-1 pr-2 pl-2.5 text-left text-sm text-text hover:border-graphic data-[popup-open]:border-graphic";
+
 export const POPUP_CLASS = "rounded-card border border-line bg-surface p-1.5 shadow-float";
 
 // For a menu root with `highlightItemOnHover={false}`: hover does not highlight
@@ -47,6 +51,11 @@ export const ICON_BUTTON_CLASS
  */
 export const PROPERTY_BUTTON_CLASS
   = "inline-flex max-w-full -my-0.5 -mx-2 min-h-6 min-w-6 items-center rounded-control border border-transparent px-2 text-left text-sm hover:border-line data-[popup-open]:border-graphic";
+
+/** The trigger of a property control: `row` as the value of a definition list, `field` as the value of a form row. */
+export const PROPERTY_TRIGGER_CLASS = { row: PROPERTY_BUTTON_CLASS, field: FIELD_TRIGGER_CLASS } as const;
+
+export type PropertyLook = keyof typeof PROPERTY_TRIGGER_CLASS;
 
 /*
  * The icon control that edits a value beside it. Written out for the reason
@@ -97,5 +106,9 @@ export const DIALOG_VIEWPORT_CLASS
  */
 export const DIALOG_PANEL_CLASS
   = "my-auto w-full max-w-[420px] rounded-panel border border-line bg-surface px-6 pt-5 pb-6 shadow-float";
+
+// Its own constant: an appended `max-w-*` would not override the first one.
+export const DIALOG_PANEL_WIDE_CLASS
+  = "my-auto w-full max-w-[560px] rounded-panel border border-line bg-surface px-6 pt-5 pb-6 shadow-float";
 
 export const DIALOG_ACTIONS_CLASS = "mt-5 flex justify-end gap-2";

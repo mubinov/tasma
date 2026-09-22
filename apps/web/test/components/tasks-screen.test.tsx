@@ -1151,3 +1151,201 @@ describe("the board a card was opened from", () => {
     expect(useUiStore.getState().boardRestorePending).toBe(false);
   });
 });
+
+describe("creating a task", () => {
+  const CREATE = "POST /projects/SAGA/tasks";
+
+  function announced(): string[] {
+    return useNoticeStore.getState().announced.map(({ words }) => words);
+  }
+
+  function newTask(): HTMLElement {
+    return screen.getByRole("button", { name: "New task" });
+  }
+
+  function dialog(): HTMLElement {
+    return screen.getByRole("dialog", { name: "New task" });
+  }
+
+  function titleLink(title: string): HTMLElement {
+    return screen.getByRole("link", { name: title });
+  }
+
+  /** Opens the dialog from the control, types the title and presses Create. */
+  async function create(user: ReturnType<typeof userEvent.setup>, opener: HTMLElement, title: string) {
+    await user.click(opener);
+    const input = await screen.findByRole("textbox", { name: "Title" });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(input);
+    });
+    await user.keyboard(title);
+    await user.click(within(dialog()).getByRole("button", { name: "Create" }));
+  }
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  });
+
+  it("offers New task after the Labels control, which opens the dialog on the project's default status", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon({
+      "/projects/SAGA": project("SAGA", { config: { ...CONFIG, default_status: "To Do" } }),
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    const labels = screen.getByRole("combobox", { name: "Labels Any" }).parentElement!;
+    expect(labels.nextElementSibling).toBe(newTask());
+    expect(newTask().className).toContain("ml-1");
+    expect(newTask().querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect(newTask().hasAttribute("aria-label")).toBe(false);
+
+    await user.click(newTask());
+
+    expect(within(dialog()).getByRole("button", { name: "Status To Do" })).toBeTruthy();
+  });
+
+  it("offers a plus in every column, final columns included, which opens the dialog on that column's status", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon();
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    for (const status of CONFIG.statuses) {
+      expect(within(column(status)).getByRole("button", { name: `New task in ${status}` })).toBeTruthy();
+    }
+
+    await user.click(within(column("Done")).getByRole("button", { name: "New task in Done" }));
+
+    expect(within(dialog()).getByRole("button", { name: "Status Done" })).toBeTruthy();
+  });
+
+  it("closes on success, shows the card in its column, focuses its title link and says it was created", async () => {
+    const user = userEvent.setup();
+    const { transport, replies, requests } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1)]),
+      [CREATE]: successReply({ id: "SAGA-7", status: "To Do" }),
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+    replies["/projects/SAGA/tasks"] = listing([entry(1), entry(7, { status: "To Do" })]);
+
+    await create(user, within(column("To Do")).getByRole("button", { name: "New task in To Do" }), "Task 7");
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(titleLink("Task 7"));
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(titlesIn("To Do")).toEqual(["Task 7"]);
+    expect(requests.filter(({ method }) => method === "POST")).toEqual([
+      { method: "POST", path: "/projects/SAGA/tasks", body: { title: "Task 7", status: "To Do" } },
+    ]);
+    await waitFor(() => {
+      expect(announced()).toEqual(["Creating…", "SAGA-7 was created."]);
+    });
+  });
+
+  it("opens the warning notice of new diagnostics after the dialog has closed, and says it after the created line", async () => {
+    const user = userEvent.setup();
+    const shown: Diagnostic = { code: "config-key-unknown", message: "unknown key: colour", path: "/p/config.yml" };
+    const fresh: Diagnostic = { code: "label-case-converted", message: "label \"Web\" was converted to \"web\"" };
+    const { transport, replies } = daemon({
+      "/projects/SAGA": successReply({ ...PROJECTS[0], live: true, config: CONFIG }, [shown]),
+      [CREATE]: successReply({ id: "SAGA-7", status: "Backlog" }, [shown, fresh]),
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+    replies["/projects/SAGA/tasks"] = listing([entry(7)]);
+    const dialogOpenAtNotice: boolean[] = [];
+    const stop = useNoticeStore.subscribe((state, previous) => {
+      if (state.notices.length > previous.notices.length) {
+        dialogOpenAtNotice.push(screen.queryByRole("dialog") !== null);
+      }
+    });
+
+    await create(user, newTask(), "Task 7");
+
+    await waitFor(() => {
+      expect(useNoticeStore.getState().notices.map(({ title }) => title)).toEqual(["1 warning about SAGA-7"]);
+    });
+    stop();
+    expect(dialogOpenAtNotice).toEqual([false]);
+    expect(useNoticeStore.getState().notices[0]?.words).toEqual(["label-case-converted · label \"Web\" was converted to \"web\""]);
+    await waitFor(() => {
+      expect(announced().slice(1)).toEqual([
+        "SAGA-7 was created.",
+        "1 warning about SAGA-7. label-case-converted · label \"Web\" was converted to \"web\".",
+      ]);
+    });
+  });
+
+  it("focuses the heading of the column when the label filter hides the new card, and says so", async () => {
+    const user = userEvent.setup();
+    const { transport, replies } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1, { labels: ["web"] })]),
+      [CREATE]: successReply({ id: "SAGA-7", status: "In Progress" }),
+    });
+    await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+    replies["/projects/SAGA/tasks"] = listing([entry(1, { labels: ["web"] }), entry(7, { status: "in progress" })]);
+
+    await create(user, within(column("In Progress")).getByRole("button", { name: "New task in In Progress" }), "Task 7");
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(within(column("In Progress")).getByRole("heading", { level: 2 }));
+    });
+    expect(countOf("In Progress")).toBe("0 of 1");
+    await waitFor(() => {
+      expect(announced()).toContain("SAGA-7 was created. The label filter hides it.");
+    });
+  });
+
+  it("focuses the heading of the receipt's column when the listing does not hold the new task", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon({ [CREATE]: successReply({ id: "SAGA-7", status: "done" }) });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    await create(user, newTask(), "Task 7");
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(within(column("Done")).getByRole("heading", { level: 2 }));
+    });
+    await waitFor(() => {
+      expect(announced()).toContain("SAGA-7 was created.");
+    });
+  });
+
+  it("opens the cap of a final column when the new card lands past its 20th card", async () => {
+    const user = userEvent.setup();
+    const done = Array.from({ length: 25 }, (_, index) => entry(index + 1, { status: "Done", order: (index + 1) * 1000 }));
+    const { transport, replies } = daemon({
+      "/projects/SAGA/tasks": listing(done),
+      [CREATE]: successReply({ id: "SAGA-30", status: "Done" }),
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+    expect(titlesIn("Done")).toHaveLength(20);
+    replies["/projects/SAGA/tasks"] = listing([...done, entry(30, { status: "Done", order: 30_000 })]);
+
+    await create(user, within(column("Done")).getByRole("button", { name: "New task in Done" }), "Task 30");
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(titleLink("Task 30"));
+    });
+    expect(titlesIn("Done")).toHaveLength(26);
+    expect(within(column("Done")).queryByRole("button", { name: "Show all" })).toBeNull();
+  });
+
+  it("returns focus to New task when the dialog is cancelled", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon();
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+    await user.click(newTask());
+    await screen.findByRole("dialog");
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => {
+      expect(document.activeElement).toBe(newTask());
+    });
+  });
+});

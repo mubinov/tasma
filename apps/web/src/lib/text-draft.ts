@@ -25,6 +25,9 @@ export function savesNothing(start: Draft, draft: Draft, hasComments: boolean): 
     || (hasComments && start.body.endsWith("\n") && draft.body === start.body.slice(0, -1));
 }
 
+/** The correction for a title `isBlankTitle` refuses. */
+export const BLANK_TITLE = "A task needs a title.";
+
 export function isBlankTitle(title: string): boolean {
   return title.trim() === "";
 }

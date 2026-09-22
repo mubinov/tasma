@@ -1,10 +1,20 @@
 import type { TaskEntry, Workflow } from "@tasma/protocol";
-import { useEffectEvent, useId, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 import { flushSync } from "react-dom";
 import { isTopPriority, stepView, type ColumnData } from "../lib/board";
 import { CARD_GAP, DRAG_ATTRIBUTE } from "../lib/drag-place";
+import { PlusIcon } from "../lib/icons";
 import { revealedColumnKey, useUiStore } from "../store/ui";
-import { TaskCard } from "./task-card";
+import { TaskCard, type CardFocus } from "./task-card";
 import { PageVirtualList } from "./virtual-list";
 
 type BoardColumnProps = {
@@ -29,9 +39,14 @@ type BoardColumnProps = {
   onMoveBy: (id: string, by: -1 | 1) => void;
   /** Called before the card opens its task in this tab. */
   onOpen: (id: string) => void;
-  /** The task whose menu button takes focus once its card renders. */
-  focusId: string | null;
-  onMenuFocused: () => void;
+  /** The card that takes focus once it renders. */
+  focusCard: CardFocus | null;
+  onCardFocused: () => void;
+  /** The heading takes focus, after which `onHeaderFocused` is called. */
+  focusHeading: boolean;
+  onHeaderFocused: () => void;
+  /** Opens the create dialog on this column's status. `opener` is the control pressed. */
+  onCreate: (status: string, opener: HTMLElement) => void;
   /** The task a drag carries, whose card stays in place at the origin. */
   draggingId: string | null;
   /** The slot a drag shows here: its index in the visible list without the dragged card. */
@@ -99,13 +114,17 @@ export function BoardColumn({
   onMove,
   onMoveBy,
   onOpen,
-  focusId,
-  onMenuFocused,
+  focusCard,
+  onCardFocused,
+  focusHeading,
+  onHeaderFocused,
+  onCreate,
   draggingId,
   slot,
   onPress,
 }: BoardColumnProps): ReactNode {
   const { status, final, matching, total } = column;
+  const focusId = focusCard?.id ?? null;
   const headingId = useId();
   const sectionRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -144,6 +163,17 @@ export function BoardColumn({
       openKeepingFocus();
     }
   }, [hiddenByCap]);
+
+  const takeHeadingFocus = useEffectEvent(() => {
+    headingRef.current?.focus();
+    onHeaderFocused();
+  });
+
+  useEffect(() => {
+    if (focusHeading) {
+      takeHeadingFocus();
+    }
+  }, [focusHeading]);
 
   function openMovingFocus(): void {
     // The revealed cards have to be in the DOM, and placed by a virtual list,
@@ -190,8 +220,8 @@ export function BoardColumn({
         onPress={(event) => {
           onPress(event, entry.id);
         }}
-        focusMenu={entry.id === focusId}
-        onMenuFocused={onMenuFocused}
+        focusPart={focusCard?.id === entry.id ? focusCard.part : null}
+        onFocused={onCardFocused}
       />
     );
   }
@@ -247,7 +277,7 @@ export function BoardColumn({
       ref={sectionRef}
       {...{ [DRAG_ATTRIBUTE.column]: place }}
       aria-labelledby={headingId}
-      className="min-w-60 flex-1"
+      className="group/column min-w-60 flex-1"
     >
       {/* The page's scroll padding keeps a focus scroll's target and its ring clear of the header. */}
       <div className="sticky top-0 z-(--layer-column-header) -mt-3 flex items-baseline gap-2 bg-bg py-3 [html:has(&)]:scroll-pt-13">
@@ -257,6 +287,18 @@ export function BoardColumn({
         <span className="text-xs-plus text-dim">
           {filtered ? `${String(matching.length)} of ${String(total)}` : total}
         </span>
+        {/* 20px, under the 24px target size: no other control stands within 24px of it. It stays in the tab
+            order, and focus on it is focus inside the column, which shows it. */}
+        <button
+          type="button"
+          aria-label={`New task in ${status}`}
+          onClick={(event) => {
+            onCreate(status, event.currentTarget);
+          }}
+          className="ml-auto flex size-5 items-center justify-center self-center rounded-[4px] text-dim opacity-0 transition-opacity duration-(--duration-fast) ease-standard group-focus-within/column:opacity-100 group-hover/column:opacity-100 hover:bg-surface-2 hover:text-text"
+        >
+          <PlusIcon size={14} aria-hidden="true" />
+        </button>
       </div>
       {cardList()}
       {capped && (

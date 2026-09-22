@@ -2,7 +2,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PROPERTY_BUTTON_CLASS } from "../../src/components/control-classes";
+import { FIELD_TRIGGER_CLASS, PROPERTY_BUTTON_CLASS } from "../../src/components/control-classes";
 import { PropertyMenu, type PropertyMenuProps } from "../../src/components/property-menu";
 import type { PropertyRow } from "../../src/lib/task-properties";
 
@@ -79,6 +79,22 @@ describe("the trigger", () => {
 
     expect(screen.getByRole("button", { name: "Status In Progress" })).toBe(trigger());
     expect(trigger().className).toBe(PROPERTY_BUTTON_CLASS);
+  });
+
+  it("takes the field class for a form row, and shows the content the caller gives it, caret included", () => {
+    renderRow({
+      look: "field",
+      trigger: (
+        <>
+          <span>In Progress</span>
+          <svg aria-hidden="true" data-caret="" />
+        </>
+      ),
+    });
+
+    expect(trigger().className).toBe(FIELD_TRIGGER_CLASS);
+    expect(screen.getByRole("button", { name: "Status In Progress" })).toBe(trigger());
+    expect(trigger().lastElementChild?.hasAttribute("data-caret")).toBe(true);
   });
 
   it("shows the wait as an ellipsis in its own name rather than as disabled", () => {

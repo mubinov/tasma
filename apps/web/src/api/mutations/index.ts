@@ -1,3 +1,11 @@
 export { bodyCorrection } from "./notices";
-export { TaskWriteError, taskWriteKey, taskWriteOptions, usePendingTaskWrites } from "./tasks";
-export type { PendingTaskWrites, TaskWrites } from "./tasks";
+export {
+  createRefusal,
+  openCreateWarnings,
+  taskCreateOptions,
+  TaskWriteError,
+  taskWriteKey,
+  taskWriteOptions,
+  usePendingTaskWrites,
+} from "./tasks";
+export type { Created, PendingTaskWrites, TaskWrites } from "./tasks";
