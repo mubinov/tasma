@@ -24,9 +24,10 @@ custom-protocol = ["tauri/custom-protocol"]
 tauri-build = "2"
 
 [dependencies]
-# `setsid`, the walk that opens the log's directory one component at a time, and
-# the session id a test reads back. The standard library exposes none of the
-# three.
+# `setsid`, the walk that opens the log's directory one component at a time, the
+# open flags that refuse a link or a pipe at the window record, and the session
+# id and the named pipe that tests make. The standard library exposes none of
+# them.
 libc = "0.2"
 # The traversal guard reads the decoded path, because Tauri's resolver decodes
 # before it looks a name up.
@@ -34,6 +35,7 @@ percent-encoding = "2"
 # default-features off: the daemon is reached over loopback HTTP, so no TLS
 # stack, no HTTP/2 and no proxy resolution are needed.
 reqwest = { version = "0.13", default-features = false }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = "2"
 # The tick the readiness wait holds on. Tauri's own runtime is tokio, and it

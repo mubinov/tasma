@@ -3052,6 +3052,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "reqwest",
+ "serde",
  "serde_json",
  "tauri",
  "tauri-build",

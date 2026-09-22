@@ -10,6 +10,7 @@
 //! written as a configuration key instead is read by nothing.
 
 mod daemon;
+mod geometry;
 mod log;
 mod protocol;
 mod record;
@@ -17,10 +18,13 @@ mod supervisor;
 #[cfg(test)]
 mod testing;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Instant;
 
 use tauri::utils::config::Color;
-use tauri::{Theme, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{
+    LogicalSize, Manager as _, RunEvent, Theme, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+};
 
 /// The window's own origin.
 ///
@@ -58,6 +62,10 @@ const DARK_BACKGROUND: Color = Color(0x16, 0x18, 0x1c, 0xff);
 /// point; two zoom steps on the default size reach the same region.
 const MIN_WIDTH: f64 = 880.0;
 const MIN_HEIGHT: f64 = 600.0;
+const MINIMUM: LogicalSize<f64> = LogicalSize::new(MIN_WIDTH, MIN_HEIGHT);
+
+/// The size a first launch opens at.
+const DEFAULT_SIZE: LogicalSize<f64> = LogicalSize::new(1280.0, 800.0);
 
 /// The document on the window's own origin.
 fn document() -> WebviewUrl {
@@ -122,6 +130,10 @@ fn background(theme: Option<Theme>) -> Color {
 fn main() {
     let daemon = Arc::new(daemon::Daemon::new());
     let startup = Arc::clone(&daemon);
+    // The last windowed geometry: the close button destroys the window before
+    // the application exits, and a zoomed window measures nothing.
+    let remembered: Arc<Mutex<geometry::Tracker>> = Arc::default();
+    let tracked = Arc::clone(&remembered);
 
     tauri::Builder::default()
         // Asynchronous, so a daemon call never holds the main thread.
@@ -147,11 +159,20 @@ fn main() {
                 _ => None,
             };
 
-            let window = WebviewWindowBuilder::new(app, WINDOW, url)
+            let work_areas = geometry::work_areas(app.handle())?;
+            let opening = (!work_areas.is_empty()).then(|| match geometry::load(app.handle()) {
+                Some(saved) => geometry::placement(saved, &work_areas, MINIMUM),
+                None => geometry::default_placement(
+                    DEFAULT_SIZE,
+                    geometry::FIRST_RUN_CHROME,
+                    &work_areas,
+                    MINIMUM,
+                ),
+            });
+
+            let builder = WebviewWindowBuilder::new(app, WINDOW, url)
                 .title("Tasma")
-                .inner_size(1280.0, 800.0)
                 .min_inner_size(MIN_WIDTH, MIN_HEIGHT)
-                .center()
                 .zoom_hotkeys_enabled(ZOOM_HOTKEYS)
                 // Tauri does not copy `document.title` into the native title
                 // bar, so every screen would otherwise sit under a fixed name.
@@ -162,26 +183,66 @@ fn main() {
                 // Shown below, once it carries the background colour. The
                 // appearance can only be read from a window, and a window shown
                 // before it carries the colour is the white frame this avoids.
-                .visible(false)
-                .build()?;
+                .visible(false);
+            let window = match opening {
+                Some(frame) => builder
+                    .inner_size(frame.width, frame.height)
+                    .position(frame.x, frame.y),
+                // No display is reported, so there is no work area to place in.
+                None => builder
+                    .inner_size(DEFAULT_SIZE.width, DEFAULT_SIZE.height)
+                    .center(),
+            }
+            .build()?;
 
             window.set_background_color(Some(background(window.theme().ok())))?;
-            // The frame is the shell's own surface, so no token the document
-            // carries follows a later change of appearance for it.
             window.on_window_event({
                 let window = window.clone();
-                move |event| {
-                    if let WindowEvent::ThemeChanged(theme) = event {
+                move |event| match event {
+                    // The frame is the shell's own surface, so no token the
+                    // document carries follows a later change of appearance
+                    // for it.
+                    WindowEvent::ThemeChanged(theme) => {
                         let _ = window.set_background_color(Some(background(Some(*theme))));
                     }
+                    WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+                        tracked
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .report(geometry::of(&window), Instant::now());
+                    }
+                    WindowEvent::CloseRequested { .. } => {
+                        tracked
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .finish(geometry::of(&window), Instant::now());
+                    }
+                    _ => {}
                 }
             });
             window.show()?;
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("the window could not be opened");
+        .build(tauri::generate_context!())
+        .expect("the window could not be opened")
+        .run(move |app, event| {
+            if let RunEvent::Exit = event {
+                let live = app
+                    .get_webview_window(WINDOW)
+                    .and_then(|window| geometry::of(&window));
+                let frame = remembered
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .finish(live, Instant::now());
+
+                if let Some(frame) = frame
+                    && let Err(error) = geometry::save(app, frame)
+                {
+                    eprintln!("tasma: the window geometry could not be saved: {error}");
+                }
+            }
+        });
 }
 
 #[cfg(test)]
