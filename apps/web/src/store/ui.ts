@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { create } from "zustand";
 
 export const THEME_PREFERENCES = ["system", "light", "dark"] as const;
@@ -103,6 +104,20 @@ type UiState = {
   requestEdit: (tag: string, id: string) => void;
   /** Reads the request and clears it, so one request opens one editor. */
   takeEditRequest: () => EditRequest | null;
+  /**
+   * Open modal dialogs. An editor whose write lands behind one moves no focus:
+   * the caret would leave the dialog for the page under it. A count rather than
+   * a flag, since a page can hold several dialogs and a flag owned by two
+   * breaks on the first close.
+   */
+  modalDialogs: number;
+  openModalDialog: () => void;
+  closeModalDialog: () => void;
+  /** The last focus move a write gave up because a modal dialog stood open. */
+  droppedFocus: (() => void) | null;
+  dropFocus: (move: () => void) => void;
+  /** Reads the dropped move and clears it, so one move runs once. */
+  takeDroppedFocus: () => (() => void) | null;
 };
 
 export type EditRequest = { tag: string; id: string };
@@ -151,7 +166,43 @@ export const useUiStore = create<UiState>((set, get) => ({
 
     return request;
   },
+  modalDialogs: 0,
+  openModalDialog: () => {
+    set((state) => ({ modalDialogs: state.modalDialogs + 1 }));
+  },
+  closeModalDialog: () => {
+    // Floored: one unmatched close would otherwise leave the count negative,
+    // which reads as "no dialog is open" for the rest of the session.
+    set((state) => ({ modalDialogs: Math.max(0, state.modalDialogs - 1) }));
+  },
+  droppedFocus: null,
+  dropFocus: (move) => {
+    set({ droppedFocus: move });
+  },
+  takeDroppedFocus: () => {
+    const move = get().droppedFocus;
+    if (move !== null) {
+      set({ droppedFocus: null });
+    }
+
+    return move;
+  },
 }));
+
+/** Counts a dialog while it is open. */
+export function useModalDialog(open: boolean): void {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    useUiStore.getState().openModalDialog();
+
+    return () => {
+      useUiStore.getState().closeModalDialog();
+    };
+  }, [open]);
+}
 
 export type HydratedUi = {
   themePreference: ThemePreference;

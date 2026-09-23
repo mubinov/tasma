@@ -104,3 +104,13 @@ export function topBar(): HTMLElement {
 export function commentCard(title: string): HTMLElement {
   return screen.getByRole("article", { name: title });
 }
+
+/** The fold control of a comment card, which the menu button stands beside. */
+export function caret(title: string): HTMLElement {
+  return within(commentCard(title)).getByRole("button", { name: /^Comment #\d+ text$/ });
+}
+
+/** Absent for a comment with no body, which draws no panel to fold. */
+export function noCaret(title: string): HTMLElement | null {
+  return within(commentCard(title)).queryByRole("button", { name: /^Comment #\d+ text$/ });
+}

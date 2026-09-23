@@ -99,12 +99,14 @@ export type MarkdownEditorHintProps = {
   children: ReactNode;
   /** Appended to the hint class, never substituted for it. */
   className?: string;
+  /** For a caller that describes a second field with the same hint, which `Field.Root` cannot reach. */
+  id?: string;
 };
 
 /** The hint a caller composes its footer from, so the hint is tied to the field wherever it sits. */
-export function MarkdownEditorHint({ children, className }: MarkdownEditorHintProps): ReactNode {
+export function MarkdownEditorHint({ children, className, id }: MarkdownEditorHintProps): ReactNode {
   return (
-    <Field.Description className={`${FIELD_HINT_CLASS} ${className ?? ""}`}>
+    <Field.Description id={id} className={`${FIELD_HINT_CLASS} ${className ?? ""}`}>
       {children}
     </Field.Description>
   );

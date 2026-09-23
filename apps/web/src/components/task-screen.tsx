@@ -1,7 +1,7 @@
 import { Button } from "@base-ui/react/button";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
-import type { Comment, Task } from "@tasma/protocol";
+import type { Task } from "@tasma/protocol";
 import {
   Fragment,
   useId,
@@ -18,23 +18,27 @@ import { POLL_INTERVAL, projectQuery, taskQuery, tasksQuery, workflowQuery } fro
 import { isFinalStatus, isTopPriority, stepView } from "../lib/board";
 import { formatClock } from "../lib/clock";
 import { useDocumentTitle } from "../lib/document-title";
-import { ArrowLeftIcon, PencilSimpleIcon, ProhibitIcon } from "../lib/icons";
+import { ArrowLeftIcon, PencilSimpleIcon, PlusIcon, ProhibitIcon } from "../lib/icons";
 import { blockingRows, relationRows, type RelationRow } from "../lib/task-page";
+import { useCommentList } from "../lib/use-comment-list";
 import { useScrolledPast } from "../lib/use-scrolled-past";
 import { useTaskEditing } from "../lib/use-task-editing";
 import { useTaskProperties } from "../lib/use-task-properties";
 import { useTopBarLengths } from "../lib/use-top-bar-lengths";
+import { useUnsavedGuard } from "../lib/use-unsaved-guard";
 import { warningCount } from "../lib/warning-count";
 import { noticeWords, useNotice } from "../store/notices";
 import { useUiStore } from "../store/ui";
 import { CommentCard } from "./comment-card";
+import { EditingComment } from "./comment-editor";
 import { ConfirmDialog } from "./confirm-dialog";
 import { BUTTON_CLASS, BUTTON_FILLED_CLASS, BUTTON_QUIET_CLASS } from "./control-classes";
 import { Markdown } from "./markdown";
 import { ScreenHeading } from "./screen-heading";
 import { ScrollToTop } from "./scroll-to-top";
 import { StepMark } from "./step-view";
-import { ChangedOnDisk, TaskEditor } from "./task-editor";
+import { ChangedOnDisk } from "./changed-on-disk";
+import { TaskEditor } from "./task-editor";
 import type { Outline } from "./task-outline";
 import { TaskSidebar } from "./task-sidebar";
 
@@ -81,24 +85,53 @@ function useOutline(
 }
 
 type CommentsProps = {
-  comments: readonly Comment[];
+  /** The comments the file holds, which a card detached from the list is not one of. */
+  count: number;
   listRef: RefObject<HTMLOListElement | null>;
+  headingRef: RefObject<HTMLHeadingElement | null>;
+  addButtonRef: RefObject<HTMLButtonElement | null>;
+  /** The add form stands in place of the Add comment button. */
+  adding: boolean;
+  onAdd: () => void;
+  /** The cards, in file order. */
+  children: ReactNode;
+  addForm: ReactNode;
 };
 
-function Comments({ comments, listRef }: CommentsProps): ReactNode {
+/**
+ * Always rendered, so Add comment is reachable on a task with no comment. The
+ * heading takes the caret, because the focus lists after a delete end on it
+ * where every card and the form have gone.
+ */
+function Comments({
+  count,
+  listRef,
+  headingRef,
+  addButtonRef,
+  adding,
+  onAdd,
+  children,
+  addForm,
+}: CommentsProps): ReactNode {
   const headingId = useId();
 
   return (
     <section aria-labelledby={headingId} className="mt-10 max-w-2xl">
       {/* The space separates the words in speech; flex drops it from the layout. */}
-      <h2 id={headingId} className="flex items-baseline font-chrome text-lg font-semibold">
+      <h2 ref={headingRef} id={headingId} tabIndex={-1} className="flex items-baseline font-chrome text-lg font-semibold">
         Comments
         {" "}
-        <span className="ml-1.5 text-xs-plus font-normal text-dim">{comments.length}</span>
+        <span className="ml-1.5 text-xs-plus font-normal text-dim">{count}</span>
       </h2>
-      <ol ref={listRef}>
-        {comments.map((comment) => <CommentCard key={comment.id} comment={comment} />)}
-      </ol>
+      <ol ref={listRef}>{children}</ol>
+      {adding
+        ? <div data-add-form="">{addForm}</div>
+        : (
+            <Button ref={addButtonRef} type="button" onClick={onAdd} className={`mt-3 ${BUTTON_CLASS}`}>
+              <PlusIcon size={14} aria-hidden="true" />
+              Add comment
+            </Button>
+          )}
     </section>
   );
 }
@@ -256,8 +289,8 @@ export function TaskScreen(): ReactNode {
   const barRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const commentsRef = useRef<HTMLOListElement>(null);
   const formId = useId();
+  const guard = useUnsavedGuard();
   const editing = useTaskEditing({
     queryClient,
     client,
@@ -265,15 +298,17 @@ export function TaskScreen(): ReactNode {
     id,
     disk: { title, body },
     updated: frontmatter.updated,
-    hasComments: comments.length > 0,
+    lineEndRestored: comments.length > 0,
+    guard,
   });
+  const list = useCommentList(comments);
   const { draft, diskChange } = editing;
   // The bar's scroll check and the scroll-to-top control read the same row: the
   // heading while the page reads, the title input while it is edited.
   const scrolledRef = draft === null ? headingRef : editing.titleRef;
   const { barHeight, scrollPaddingTop } = useTopBarLengths(barRef);
   const scrolled = useScrolledPast(scrolledRef, barHeight);
-  const outline = useOutline(bodyRef, commentsRef, task, draft !== null);
+  const outline = useOutline(bodyRef, list.listRef, task, draft !== null);
 
   useDocumentTitle(`${id} ${title}`);
   useNotice(
@@ -371,6 +406,7 @@ export function TaskScreen(): ReactNode {
                   <ScreenHeading ref={headingRef} className="sr-only">{title}</ScreenHeading>
                   {diskChange.showing && (
                     <ChangedOnDisk
+                      subject={{ kind: "task" }}
                       at={diskChange.at}
                       lineRef={editing.diskLineRef}
                       onReload={editing.reload}
@@ -394,7 +430,58 @@ export function TaskScreen(): ReactNode {
                 </div>
               )}
 
-          {comments.length > 0 && <Comments comments={comments} listRef={commentsRef} />}
+          <Comments
+            count={comments.length}
+            listRef={list.listRef}
+            headingRef={list.headingRef}
+            addButtonRef={list.addButtonRef}
+            adding={list.adding}
+            onAdd={list.openAddForm}
+            addForm={(
+              <EditingComment
+                options={{
+                  queryClient,
+                  client,
+                  tag,
+                  taskId: id,
+                  subject: { kind: "new" },
+                  disk: null,
+                  // The form shows no disk line, having no comment to compare with.
+                  updated: frontmatter.updated,
+                  // A new comment is appended last, so no line end is written back.
+                  lineEndRestored: false,
+                  guard,
+                  onClose: list.closeAddForm,
+                }}
+                heading="New comment"
+              />
+            )}
+          >
+            {list.rows.map(({ comment, onDisk, editing: open, lineEndRestored }, place) => (
+              <CommentCard
+                key={comment.id}
+                comment={comment}
+                queryClient={queryClient}
+                client={client}
+                tag={tag}
+                taskId={id}
+                taskUpdated={frontmatter.updated}
+                lineEndRestored={lineEndRestored}
+                editing={open}
+                removed={!onDisk}
+                guard={guard}
+                onEdit={() => {
+                  list.openEditor(place);
+                }}
+                onCloseEditor={(close) => {
+                  list.closeEditor(place, close);
+                }}
+                onDeleted={() => {
+                  list.deleted(place);
+                }}
+              />
+            ))}
+          </Comments>
         </div>
         <ScrollToTop scrolled={scrolled} headingRef={scrolledRef} />
       </div>
@@ -406,6 +493,7 @@ export function TaskScreen(): ReactNode {
         pageScrollPadding={scrollPaddingTop}
         properties={properties}
       />
+      {/* Cancel asks about one editor, so it keeps the editor's own dialog. */}
       <ConfirmDialog
         open={editing.discardAsked}
         title="Discard your changes?"
@@ -416,6 +504,18 @@ export function TaskScreen(): ReactNode {
         onConfirm={editing.discard}
         finalFocus={editing.discardFocusRef}
         status={editing.saving ? "Saving…" : undefined}
+      />
+      {/* Leaving the page asks about every editor at once, so it is one dialog. */}
+      <ConfirmDialog
+        open={guard.asked}
+        title="Discard your changes?"
+        description={guard.description}
+        cancelLabel="Keep editing"
+        confirmLabel="Discard"
+        onCancel={guard.keepEditing}
+        onConfirm={guard.discard}
+        finalFocus={guard.finalFocusRef}
+        status={guard.status}
       />
       <TaskPollNotice tag={tag} id={taskId} />
     </div>

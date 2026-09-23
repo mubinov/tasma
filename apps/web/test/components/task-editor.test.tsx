@@ -586,7 +586,7 @@ describe("Changed on disk", () => {
     expect(line()?.textContent).toContain(`Changed on disk at ${at}, since you began.`);
     expect(line()?.textContent).toContain("Saving overwrites that change.");
     await waitFor(() => {
-      expect(announced()).toEqual([`Changed on disk at ${at}. Saving overwrites that change.`]);
+      expect(announced()).toEqual([`The task text changed on disk at ${at}. Saving overwrites that change.`]);
     });
 
     read.replies[TASK_PATH] = task({ fields: { title: "Renamed twice", updated: "2026-09-01T12:30:00Z" } });
@@ -674,7 +674,7 @@ describe("Changed on disk", () => {
 
     const at = new Date("2026-09-01T11:20:00Z").toTimeString().slice(0, 5);
     await waitFor(() => {
-      expect(announced()).toEqual([`Changed on disk at ${at}. Saving overwrites that change.`]);
+      expect(announced()).toEqual([`The task text changed on disk at ${at}. Saving overwrites that change.`]);
     });
     const dialog = screen.getByRole("alertdialog", { name: "Discard your changes?" });
 
@@ -685,7 +685,7 @@ describe("Changed on disk", () => {
     });
     await frame();
     expect(line()).toBeNull();
-    expect(announced()).toEqual([`Changed on disk at ${at}. Saving overwrites that change.`]);
+    expect(announced()).toEqual([`The task text changed on disk at ${at}. Saving overwrites that change.`]);
   });
 
   it("replaces the text from Discard and reload, and moves focus to the title input", async () => {
@@ -898,7 +898,7 @@ describe("the discard dialog", () => {
     });
 
     expect(within(dialog()).getByText("Saving…")).not.toBeNull();
-    expect(description(dialog())).toBe("The title and the body you edited are not saved. There is no undo. Saving…");
+    expect(description(dialog())).toBe("The task text is not saved. There is no undo. Saving…");
 
     await user.click(within(dialog()).getByRole("button", { name: "Discard" }));
 

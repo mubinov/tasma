@@ -3,6 +3,7 @@ import { Button } from "@base-ui/react/button";
 import { useId, useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import type { FinalFocus } from "../lib/final-focus";
 import { useFocusEmptiedWhileOpening } from "../lib/use-focus-emptied-while-opening";
+import { useModalDialog } from "../store/ui";
 import {
   BUTTON_CLASS,
   BUTTON_FILLED_CLASS,
@@ -69,6 +70,7 @@ export function ConfirmDialog({
   const descriptionId = useId();
   const statusId = useId();
   const openerRef = useFocusEmptiedWhileOpening(open);
+  useModalDialog(open);
 
   // Base UI unmounts a closed popup, and returns focus, only an animation frame
   // later. The panel has no exit animation, so it unmounts in the commit that

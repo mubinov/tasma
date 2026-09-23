@@ -57,6 +57,18 @@ describe("savesNothing", () => {
   it("does not hold where the title changed as well", () => {
     expect(savesNothing(START, { title: "Build the lexer", body: "First line." }, true)).toBe(false);
   });
+
+  describe("read as \"another comment follows this one\"", () => {
+    it("holds for a following comment's body without its last line end", () => {
+      expect(savesNothing(START, { ...START, body: "First line." }, true)).toBe(true);
+    });
+
+    it("does not hold for the last comment's body with a line end the start body has not", () => {
+      const start: Draft = { title: START.title, body: "First line." };
+
+      expect(savesNothing(start, { ...start, body: "First line.\n" }, false)).toBe(false);
+    });
+  });
 });
 
 describe("isBlankTitle", () => {

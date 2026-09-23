@@ -1,18 +1,19 @@
-import { hashKey, mutationOptions, useMutationState, type QueryClient } from "@tanstack/react-query";
+import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { type Client, type Diagnostic } from "@tasma/protocol";
 import { boardWarnings, type PendingWrite, type TaskWrite } from "../../lib/board";
-import { failureWords, joinFailureWords } from "../../lib/failure-words";
 import type { CreateInput } from "../../lib/task-draft";
-import { warningCount } from "../../lib/warning-count";
-import { noticeWords, useNoticeStore } from "../../store/notices";
+import { useNoticeStore } from "../../store/notices";
 import { daemonKeys, projectQuery, taskQuery, tasksQuery } from "../queries";
 import {
-  bodyCorrection,
   failureKind,
+  failureLine,
   FAILURE_KEY_PREFIX,
   freshDiagnostics,
+  openWarnings,
   openWriteNotice,
-  WARNING_KEY_PREFIX,
+  refusalWords,
+  taskWriteScope,
+  usePendingVariables,
   WriteError,
   type FailureKind,
 } from "./notices";
@@ -46,11 +47,6 @@ export function taskWriteKey(tag: string) {
   return [...daemonKeys.tasks(tag), "write"] as const;
 }
 
-/** The one queue of a project's writes, so a create waits for a move or an edit in flight. */
-function taskWriteScope(tag: string) {
-  return { id: `task-write:${tag}` };
-}
-
 /** A write of `TaskWrites` failed. `completed` is the count of the writes before it that succeeded. */
 export class TaskWriteError extends WriteError {
   readonly completed: number;
@@ -77,58 +73,6 @@ const dropped = new WeakSet<TaskWrites>();
  */
 function placesCards({ writes }: TaskWrites): boolean {
   return writes.some(({ change }) => typeof change.order === "number");
-}
-
-/** Nothing was written. */
-const WHOLE_FAILURE_LINES: Record<FailureKind, string> = {
-  refused: "The daemon refused the write, and the task is back where it was. Its own words are below.",
-  unanswered: "No daemon answered, so nothing was written.",
-  address: "The daemon did not answer through the address below. Start the daemon there if it is not running. "
-    + "The board shows the task where the daemon holds it after the next read.",
-  unsent: "The write did not start, and the task is back where it was.",
-};
-
-/** A write before the failed one succeeded. */
-const PARTIAL_FAILURE_LINES: Record<FailureKind, string> = {
-  refused: "The daemon refused a write, and the move did not complete. The board shows what the daemon holds. "
-    + "Its own words are below.",
-  unanswered: "The daemon stopped answering, and the move did not complete. "
-    + "The board shows what the daemon holds after the next read.",
-  address: "The daemon did not answer through the address below, and the move did not complete. "
-    + "Start the daemon there if it is not running. The board shows what the daemon holds after the next read.",
-  unsent: "A write did not start, and the move did not complete. The board shows what the daemon holds.",
-};
-
-/** A page write is one write, so it has no partial form. */
-const PAGE_FAILURE_LINES: Record<FailureKind, string> = {
-  refused: "The daemon refused the write, so nothing changed on disk. Its own words are below.",
-  unanswered: "No daemon answered, so nothing was written.",
-  address: "The daemon did not answer through the address below. Start the daemon there if it is not running. "
-    + "The page shows the task as the daemon holds it after the next read.",
-  unsent: "The write did not start, so nothing changed on disk.",
-};
-
-function failureLine({ cause, completed }: TaskWriteError, { place, property }: TaskWrites): string {
-  if (place === "board") {
-    return (completed > 0 ? PARTIAL_FAILURE_LINES : WHOLE_FAILURE_LINES)[failureKind(cause)];
-  }
-
-  const named = property === undefined ? "" : `${property}. `;
-  const line = `${named}${PAGE_FAILURE_LINES[failureKind(cause)]}`;
-  const correction = bodyCorrection(cause);
-
-  return correction === undefined ? line : `${line} ${correction}`;
-}
-
-function openWarnings(id: string, fresh: readonly Diagnostic[]): void {
-  if (fresh.length > 0) {
-    openWriteNotice({
-      key: `${WARNING_KEY_PREFIX}${id}`,
-      form: "warning",
-      title: `${warningCount(fresh.length)} about ${id}`,
-      words: noticeWords(fresh),
-    });
-  }
 }
 
 function closeFailureNotices(): void {
@@ -211,13 +155,13 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
         return;
       }
 
-      const { id, title } = variables;
+      const { id, title, place, property } = variables;
       openWriteNotice({
         key: `${FAILURE_KEY_PREFIX}${id}`,
         form: "failure",
         title,
-        line: failureLine(error, variables),
-        words: [joinFailureWords(failureWords(error.cause))],
+        line: failureLine({ cause: error.cause, place, completed: error.completed, property }),
+        words: [refusalWords(error)],
       });
 
       // Not returned, so the card goes back at once. A write whose answer could
@@ -247,7 +191,7 @@ const CREATE_FAILURE_LINES: Record<FailureKind, string> = {
 export function createRefusal(error: unknown): { line: string; words: string } {
   const cause = error instanceof WriteError ? error.cause : error;
 
-  return { line: CREATE_FAILURE_LINES[failureKind(cause)], words: joinFailureWords(failureWords(cause)) };
+  return { line: CREATE_FAILURE_LINES[failureKind(cause)], words: refusalWords(cause) };
 }
 
 /**
@@ -295,22 +239,7 @@ export type PendingTaskWrites = {
 };
 
 export function usePendingTaskWrites(tag: string): PendingTaskWrites {
-  // The filter holds no tag: `useMutationState` reads a changed filter only at
-  // the next mutation event, so the project is picked during render.
-  const pending = useMutationState({
-    filters: { mutationKey: daemonKeys.projects(), status: "pending" },
-    select: ({ options: { mutationKey }, state: { variables, submittedAt } }) => ({
-      mutationKey,
-      variables,
-      submittedAt,
-    }),
-  });
-  const key = hashKey(taskWriteKey(tag));
-  const mine = pending
-    // A mutation matches a key filter only when it has a key.
-    .filter(({ mutationKey }) => hashKey(mutationKey!) === key)
-    // A pending mutation always holds the variables it was started with.
-    .map(({ variables, submittedAt }) => ({ variables: variables as TaskWrites, submittedAt }));
+  const mine = usePendingVariables<TaskWrites>(taskWriteKey(tag));
 
   return {
     writes: mine.flatMap(({ variables, submittedAt }) =>

@@ -11,22 +11,27 @@ export function hasUnsavedText(start: Draft, draft: Draft): boolean {
 }
 
 /**
- * Whether a Save would leave the file as it is. Where a comment follows the
- * body, the daemon writes the body's last line end back, so a body that is the
- * start body without that line end writes nothing. The reverse is a change: a
- * line end the start body has not is text the daemon keeps.
+ * Whether a Save would leave the file as it is. `lineEndRestored` says the
+ * serializer writes the body's last line end back, because another piece
+ * follows the body — a comment after the task body, a later comment after this
+ * one — so a body that is the start body without that line end writes nothing.
+ * The reverse is a change: a line end the start body has not is text the daemon
+ * keeps.
  */
-export function savesNothing(start: Draft, draft: Draft, hasComments: boolean): boolean {
+export function savesNothing(start: Draft, draft: Draft, lineEndRestored: boolean): boolean {
   if (draft.title !== start.title) {
     return false;
   }
 
   return draft.body === start.body
-    || (hasComments && start.body.endsWith("\n") && draft.body === start.body.slice(0, -1));
+    || (lineEndRestored && start.body.endsWith("\n") && draft.body === start.body.slice(0, -1));
 }
 
-/** The correction for a title `isBlankTitle` refuses. */
+/** The correction for a task title `isBlankTitle` refuses. */
 export const BLANK_TITLE = "A task needs a title.";
+
+/** The same for a comment's title, which is required where its body is not. */
+export const BLANK_COMMENT_TITLE = "A comment needs a title.";
 
 export function isBlankTitle(title: string): boolean {
   return title.trim() === "";

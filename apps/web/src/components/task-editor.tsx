@@ -1,55 +1,12 @@
-import { Button } from "@base-ui/react/button";
 import { Field } from "@base-ui/react/field";
-import { useId, type KeyboardEventHandler, type ReactNode, type Ref, type RefObject } from "react";
-import { WarningIcon } from "../lib/icons";
+import type { KeyboardEventHandler, ReactNode, Ref } from "react";
 import type { Draft } from "../lib/text-draft";
-import { useFocusLost } from "../lib/use-focus-lost";
 import { FIELD_BORDER_CLASS, FIELD_ERROR_CLASS } from "./control-classes";
 import { KeyHint, MarkdownEditor, MarkdownEditorHint } from "./markdown-editor";
 
 /** The title input carries the type of the heading it stands in for. */
 const TITLE_CLASS
   = `mt-1 w-full max-w-2xl rounded-control bg-surface px-3 py-1.5 font-chrome text-xl font-semibold text-text ${FIELD_BORDER_CLASS}`;
-
-export type ChangedOnDiskProps = {
-  /** `HH:MM` of the read that first differed. */
-  at: string;
-  lineRef: RefObject<HTMLParagraphElement | null>;
-  /** Writes nothing: the fields and the start text both become the text on disk. */
-  onReload: () => void;
-  onKeyDown: KeyboardEventHandler;
-  /** The line leaves while it holds the caret, which a read that ends the difference does. */
-  onFocusLost: () => void;
-};
-
-/**
- * Plain text rather than a live region of its own: the shell's spoken region
- * carries the announcement, and a region that arrives together with its words
- * is not announced.
- */
-export function ChangedOnDisk({ at, lineRef, onReload, onKeyDown, onFocusLost }: ChangedOnDiskProps): ReactNode {
-  const wordsId = useId();
-  useFocusLost(lineRef, onFocusLost);
-
-  return (
-    <p ref={lineRef} onKeyDown={onKeyDown} className="mb-4 flex max-w-2xl flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">
-      <WarningIcon size={16} aria-hidden="true" className="shrink-0 text-signal" />
-      <span id={wordsId}>
-        <span className="text-signal">{`Changed on disk at ${at}, since you began.`}</span>
-        {" "}
-        <span className="text-muted">Saving overwrites that change.</span>
-      </span>
-      <Button
-        type="button"
-        aria-describedby={wordsId}
-        onClick={onReload}
-        className="text-text underline underline-offset-2"
-      >
-        Discard and reload
-      </Button>
-    </p>
-  );
-}
 
 export type TaskEditorProps = {
   /** Ties the Save control of the top bar to this form. */

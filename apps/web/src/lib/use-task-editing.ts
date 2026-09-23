@@ -1,21 +1,21 @@
 import { useMutation, type QueryClient } from "@tanstack/react-query";
-import { useBlocker } from "@tanstack/react-router";
 import type { Client } from "@tasma/protocol";
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type RefObject,
-} from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import { bodyCorrection, taskWriteOptions } from "../api/mutations";
-import type { FinalFocus } from "./final-focus";
 import { useNoticeStore } from "../store/notices";
 import { useUiStore, type EditRequest } from "../store/ui";
+import { editorKeyDown } from "./editor-key-down";
+import type { FinalFocus } from "./final-focus";
 import { BLANK_TITLE, hasUnsavedText, isBlankTitle, savesNothing, type Draft } from "./text-draft";
+import type { EditorSubject } from "./editor-subject";
+import { savedWords, savingWords } from "./unsaved-words";
 import { useDiskChange, type DiskChange } from "./use-disk-change";
+import { usePendingFocus } from "./use-pending-focus";
+import { useUnsavedEntry, type UnsavedGuard } from "./use-unsaved-guard";
+
+/** The task text is one of the editors the page can hold open at once. */
+const SUBJECT: EditorSubject = { kind: "task" };
 
 export type TaskEditingOptions = {
   queryClient: QueryClient;
@@ -28,7 +28,9 @@ export type TaskEditingOptions = {
   /** The `updated` of that read. */
   updated: string;
   /** The daemon writes the body's last line end back where a comment follows it. */
-  hasComments: boolean;
+  lineEndRestored: boolean;
+  /** The page's one guard on leaving with unsaved text, shared with every comment editor. */
+  guard: UnsavedGuard;
 };
 
 export type TaskEditing = {
@@ -41,7 +43,7 @@ export type TaskEditing = {
   /** Marks the body editor not valid and names the correction under it. */
   bodyError: string | undefined;
   diskChange: DiskChange;
-  /** Whether the discard dialog is up, for Cancel and for a held route change alike. */
+  /** Whether this editor's own discard dialog is up, which Cancel opens. */
   discardAsked: boolean;
   discardFocusRef: RefObject<FinalFocus>;
   editRef: RefObject<HTMLButtonElement | null>;
@@ -65,13 +67,13 @@ export type TaskEditing = {
 };
 
 /**
- * The editing state of the task page: the draft, the write, the guard on
- * leaving with unsaved text, the discard dialog and the focus each way out
- * lands on. The screen renders from what this returns and holds no state of the
- * editor itself.
+ * The editing state of the task page's title and body: the draft, the write,
+ * the discard dialog and the focus each way out lands on. The screen renders
+ * from what this returns and holds no state of the editor itself. Leaving the
+ * page is the guard's question, not this editor's.
  */
 export function useTaskEditing(
-  { queryClient, client, tag, id, disk, updated, hasComments }: TaskEditingOptions,
+  { queryClient, client, tag, id, disk, updated, lineEndRestored, guard }: TaskEditingOptions,
 ): TaskEditing {
   const editRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -80,7 +82,7 @@ export function useTaskEditing(
   const formRef = useRef<HTMLFormElement>(null);
   const diskLineRef = useRef<HTMLParagraphElement>(null);
   const discardFocusRef = useRef<FinalFocus>(null);
-  const pendingFocusRef = useRef<"title" | "edit" | null>(null);
+  const focusLater = usePendingFocus();
   const { mutateAsync: write, isPending: saving } = useMutation(taskWriteOptions(queryClient, client, tag));
   const [draft, setDraft] = useState<Draft | null>(null);
   const [start, setStart] = useState<Draft>({ title: "", body: "" });
@@ -90,18 +92,7 @@ export function useTaskEditing(
   const editRequest = useUiStore((state) => state.editRequest);
   const [answered, setAnswered] = useState<EditRequest | null>(null);
   const unsaved = draft !== null && hasUnsavedText(start, draft);
-  const diskChange = useDiskChange({ start, draft, disk, saving, updated });
-  const blocker = useBlocker({
-    shouldBlockFn: () => true,
-    enableBeforeUnload: true,
-    disabled: !unsaved,
-    withResolver: true,
-  });
-  // The resolver is new on every render, and an answer that lands after the
-  // render that started it needs the live one.
-  const blockerRef = useRef(blocker);
-  // The blocker reports an answer only a render later; the dialog closes on the answer itself.
-  const [answeredBlock, setAnsweredBlock] = useState<typeof blocker | null>(null);
+  const diskChange = useDiskChange({ subject: SUBJECT, start, draft, disk, saving, updated });
 
   /** The text on disk becomes the draft. The caller moves the caret. */
   function startEditing(): void {
@@ -113,7 +104,9 @@ export function useTaskEditing(
 
   function openEditor(): void {
     startEditing();
-    pendingFocusRef.current = "title";
+    focusLater(() => {
+      titleRef.current?.focus();
+    });
   }
 
   /** Drops the text and closes both the editor and the dialog that asks about it. */
@@ -124,29 +117,18 @@ export function useTaskEditing(
     setBodyError(undefined);
   }
 
-  /**
-   * Cancel and a complete Save both return the page to reading. A route change
-   * held behind the dialog runs instead of the focus move: the text is no
-   * longer unsaved, so the question the dialog asks has no answer left.
-   */
-  function closeToReading(): void {
+  /** Cancel and a complete Save both return the page to reading. */
+  function closeToReading(afterWrite = false): void {
     stopEditing();
-
-    if (blockerRef.current.status === "blocked") {
-      discardFocusRef.current = "keep";
-      blockerRef.current.proceed?.();
-      return;
-    }
-
-    pendingFocusRef.current = "edit";
+    focusLater(() => {
+      editRef.current?.focus();
+    }, afterWrite);
   }
 
   function keepEditing(): void {
     // Base UI then falls back to the element that had focus when it opened.
     discardFocusRef.current = null;
     setCancelAsked(false);
-    setAnsweredBlock(blockerRef.current);
-    blockerRef.current.reset?.();
   }
 
   function cancel(): void {
@@ -162,15 +144,11 @@ export function useTaskEditing(
     closeToReading();
   }
 
+  // No write can be in flight here: Cancel and Esc are the only ways in and both
+  // are refused while one runs, and the dialog is modal over the form and the bar.
   function discard(): void {
-    // The write is about to land the very text this would drop, so Discard
-    // waits for it as Cancel does. The dialog names the wait.
-    if (saving) {
-      return;
-    }
-
-    // Base UI's own destination is the control that opened the dialog, which on
-    // a route change leaves with the screen; the page moves the caret itself.
+    // Base UI's own destination is the control that opened the dialog, which
+    // this path removes with the editor; the page moves the caret itself.
     discardFocusRef.current = "keep";
     closeToReading();
   }
@@ -193,7 +171,7 @@ export function useTaskEditing(
     }
     // A Save that restores the text the editor opened with is what the line on
     // screen promises, so the disk change takes the write past this return.
-    if (!diskChange.showing && savesNothing(start, draft, hasComments)) {
+    if (!diskChange.showing && savesNothing(start, draft, lineEndRestored)) {
       closeToReading();
       return;
     }
@@ -208,7 +186,7 @@ export function useTaskEditing(
     // The wait shows in the Save label alone, which a reader is not told about:
     // a ⌘↩ save keeps the caret in a field, and a name change on a control that
     // does not hold focus is not announced.
-    useNoticeStore.getState().announce("Saving…");
+    useNoticeStore.getState().announce(savingWords(SUBJECT));
     try {
       await write({
         id,
@@ -223,12 +201,16 @@ export function useTaskEditing(
       flushSync(() => {
         setBodyError(bodyCorrection(error));
         keepEditing();
+        // The editor still holds its text, so the question the page dialog asks
+        // has no answer left.
+        guard.keepEditing();
       });
       return;
     }
 
-    closeToReading();
-    useNoticeStore.getState().announce("Saved.");
+    guard.landed(SUBJECT);
+    closeToReading(true);
+    useNoticeStore.getState().announce(savedWords(SUBJECT));
   }
 
   function save(): void {
@@ -257,18 +239,7 @@ export function useTaskEditing(
   }
 
   function onKeyDown(event: ReactKeyboardEvent): void {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      // React flushes a discrete key synchronously, so the dialog this opens
-      // mounts and attaches its dismissal listener above the React root while
-      // the same keypress is still propagating there. Left to travel, that
-      // keypress closes the dialog it has just opened.
-      event.nativeEvent.stopPropagation();
-      cancel();
-    } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-      event.preventDefault();
-      formRef.current?.requestSubmit();
-    }
+    editorKeyDown(event, cancel, formRef);
   }
 
   // Read during render rather than in an effect, so the first paint of the page
@@ -279,6 +250,8 @@ export function useTaskEditing(
     startEditing();
   }
 
+  useUnsavedEntry(guard, SUBJECT, unsaved ? { removed: false, saving } : null);
+
   useEffect(() => {
     if (answered !== null) {
       useUiStore.getState().takeEditRequest();
@@ -286,27 +259,13 @@ export function useTaskEditing(
     }
   }, [answered]);
 
-  useEffect(() => {
-    blockerRef.current = blocker;
-  });
-
-  useLayoutEffect(() => {
-    const target = pendingFocusRef.current;
-    if (target === null) {
-      return;
-    }
-
-    pendingFocusRef.current = null;
-    (target === "title" ? titleRef.current : editRef.current)?.focus();
-  });
-
   return {
     draft,
     saving,
     titleError,
     bodyError,
     diskChange,
-    discardAsked: cancelAsked || (blocker.status === "blocked" && blocker !== answeredBlock),
+    discardAsked: cancelAsked,
     discardFocusRef,
     editRef,
     cancelRef,

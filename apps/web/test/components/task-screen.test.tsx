@@ -10,6 +10,7 @@ import {
   LISTING_PATH,
   TASK_PATH,
   backLink,
+  caret,
   comment,
   commentCard,
   daemon,
@@ -18,6 +19,7 @@ import {
   frontmatter,
   listing,
   metaLine,
+  noCaret,
   sidebar,
   task,
   topBar,
@@ -190,20 +192,21 @@ describe("the page", () => {
     expect(screen.getByText("Read the file.")).toBeTruthy();
   });
 
-  it("renders nothing after the meta line for a body of spaces and no comment", async () => {
+  it("renders no body for a body of spaces, and the empty comment section after the meta line", async () => {
     const { transport } = daemon({ [TASK_PATH]: task({ body: "  \n\n " }) });
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
-    expect(metaLine().nextElementSibling).toBeNull();
-    expect(screen.queryByRole("region", { name: /Comments/ })).toBeNull();
+    expect(metaLine().nextElementSibling).toBe(screen.getByRole("region", { name: "Comments 0" }));
   });
 
-  it("renders no comment section for a read that carries no comments", async () => {
+  it("renders the comment section for a read that carries no comments, so Add comment is reachable", async () => {
     const { transport } = daemon({ [TASK_PATH]: successReply({ frontmatter: frontmatter(), body: "Text." }) });
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
     expect(screen.getByText("Text.")).toBeTruthy();
-    expect(screen.queryByRole("region", { name: /Comments/ })).toBeNull();
+    const section = screen.getByRole("region", { name: "Comments 0" });
+    expect(within(section).queryAllByRole("listitem")).toEqual([]);
+    expect(within(section).getByRole("button", { name: "Add comment" })).toBeTruthy();
   });
 });
 
@@ -243,11 +246,11 @@ describe("the comments", () => {
     const { transport } = daemon({ [TASK_PATH]: task({ comments: COMMENTS }) });
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
-    const open = within(commentCard("Note 1")).getByRole("button", { name: "Comment text" });
+    const open = caret("Note 1");
     expect(open.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText("Body of note 1.")).toBeTruthy();
 
-    const folded = within(commentCard("Note 2")).getByRole("button", { name: "Comment text" });
+    const folded = caret("Note 2");
     expect(folded.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText("Folded")).toBeNull();
 
@@ -264,7 +267,7 @@ describe("the comments", () => {
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
     const card = commentCard("Marker only");
-    expect(within(card).queryByRole("button")).toBeNull();
+    expect(noCaret("Marker only")).toBeNull();
     expect([...card.children].map((child) => child.tagName)).toEqual(["SPAN", "DIV"]);
   });
 
@@ -881,9 +884,9 @@ describe("polling", () => {
     replies[TASK_PATH] = task({ comments: [comment(1), comment(2, { collapsed: true })] });
     await poll();
 
-    expect(within(commentCard("Note 1")).getByRole("button").getAttribute("aria-expanded")).toBe("true");
+    expect(caret("Note 1").getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText("Body of note 1.")).toBeTruthy();
-    expect(within(commentCard("Note 2")).getByRole("button").getAttribute("aria-expanded")).toBe("false");
+    expect(caret("Note 2").getAttribute("aria-expanded")).toBe("false");
   });
 
   it("gives an open comment whose text a poll removes the closed header", async () => {
@@ -897,7 +900,7 @@ describe("polling", () => {
     const card = commentCard("Note 1");
     expect(card.hasAttribute("data-open")).toBe(false);
     expect(card.hasAttribute("data-closed")).toBe(true);
-    expect(within(card).queryByRole("button")).toBeNull();
+    expect(noCaret("Note 1")).toBeNull();
   });
 
   it("drops a blocker from the blocked summary once a poll of the listing finds it resolved", async () => {
@@ -977,7 +980,7 @@ describe("the warnings of the task read", () => {
       "/projects/SAGA/tasks/SAGA-4": task({ fields: { id: "SAGA-4", title: "Write the docs" }, comments: [comment(1)] }),
     });
     const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
-    expect(within(commentCard("Note 1")).getByRole("button").getAttribute("aria-expanded")).toBe("false");
+    expect(caret("Note 1").getAttribute("aria-expanded")).toBe("false");
     expect(notices()).toHaveLength(1);
 
     await act(async () => {
@@ -985,7 +988,7 @@ describe("the warnings of the task read", () => {
     });
 
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Write the docs");
-    expect(within(commentCard("Note 1")).getByRole("button").getAttribute("aria-expanded")).toBe("true");
+    expect(caret("Note 1").getAttribute("aria-expanded")).toBe("true");
     expect(notices()).toEqual([]);
   });
 });

@@ -2,8 +2,16 @@ import { useEffect, useEffectEvent, useState } from "react";
 import { useNoticeStore } from "../store/notices";
 import { formatMinutes } from "./task-page";
 import { changedOnDisk, type Draft } from "./text-draft";
+import type { EditorSubject } from "./editor-subject";
+import { subjectWords } from "./unsaved-words";
 
 export type DiskChangeOptions = {
+  /**
+   * Which editor the line belongs to. The page can draw one per comment beside
+   * the task text's own, so the words name their subject: two cards raising the
+   * line together would otherwise speak the same sentence twice.
+   */
+  subject: EditorSubject;
   /** The text the editor opened with. */
   start: Draft;
   /** The text it holds now, `null` while the page is in reading. */
@@ -36,7 +44,7 @@ export type DiskChange = {
  * and then again with the time of a later one. The effect only announces, in
  * the commit where the line first shows for the change.
  */
-export function useDiskChange({ start, draft, disk, saving, updated }: DiskChangeOptions): DiskChange {
+export function useDiskChange({ subject, start, draft, disk, saving, updated }: DiskChangeOptions): DiskChange {
   const differs = draft !== null && changedOnDisk({ start, draft, disk });
   const showing = differs && !saving;
   const [held, setHeld] = useState<{ differs: boolean; at: string | null; shown: boolean }>({
@@ -53,7 +61,8 @@ export function useDiskChange({ start, draft, disk, saving, updated }: DiskChang
 
   const at = formatMinutes(held.at ?? updated);
   const announce = useEffectEvent(() => {
-    useNoticeStore.getState().announce(`Changed on disk at ${at}. Saving overwrites that change.`);
+    useNoticeStore.getState()
+      .announce(`${subjectWords(subject)} changed on disk at ${at}. Saving overwrites that change.`);
   });
 
   useEffect(() => {

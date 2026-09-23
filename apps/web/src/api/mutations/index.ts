@@ -1,4 +1,12 @@
-export { bodyCorrection } from "./notices";
+export {
+  commentFailureKey,
+  commentFailureTitle,
+  commentWriteKey,
+  commentWriteOptions,
+  usePendingCollapsed,
+} from "./comments";
+export type { CommentWrite } from "./comments";
+export { bodyCorrection, refusalWords, titleCorrection, WriteError } from "./notices";
 export {
   createRefusal,
   openCreateWarnings,
