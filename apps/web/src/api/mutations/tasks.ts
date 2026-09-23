@@ -1,5 +1,5 @@
-import { mutationOptions, type QueryClient } from "@tanstack/react-query";
-import { type Client, type Diagnostic } from "@tasma/protocol";
+import { hashKey, mutationOptions, type QueryClient } from "@tanstack/react-query";
+import { ProtocolError, type Client, type Diagnostic } from "@tasma/protocol";
 import { boardWarnings, type PendingWrite, type TaskWrite } from "../../lib/board";
 import type { CreateInput } from "../../lib/task-draft";
 import { useNoticeStore } from "../../store/notices";
@@ -75,6 +75,20 @@ function placesCards({ writes }: TaskWrites): boolean {
   return writes.some(({ change }) => typeof change.order === "number");
 }
 
+/**
+ * Drops every pending write of the project that places a card, but `failed`.
+ * Called while the failed mutation is still pending, so the others are all
+ * queued behind it.
+ */
+function dropQueuedPlacements(queryClient: QueryClient, tag: string, failed?: TaskWrites): void {
+  for (const { state } of queryClient.getMutationCache().findAll({ mutationKey: taskWriteKey(tag), status: "pending" })) {
+    const queued = state.variables as TaskWrites;
+    if (queued !== failed && placesCards(queued)) {
+      dropped.add(queued);
+    }
+  }
+}
+
 function closeFailureNotices(): void {
   for (const { key } of useNoticeStore.getState().notices) {
     if (key.startsWith(FAILURE_KEY_PREFIX)) {
@@ -140,15 +154,8 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
       return queryClient.invalidateQueries({ queryKey: daemonKeys.tasks(tag) });
     },
     onError: (error, variables) => {
-      // The failed mutation is still pending here, and every other pending
-      // write of the project is queued behind it.
       if (placesCards(variables)) {
-        for (const { state } of queryClient.getMutationCache().findAll({ mutationKey: taskWriteKey(tag), status: "pending" })) {
-          const queued = state.variables as TaskWrites;
-          if (queued !== variables && placesCards(queued)) {
-            dropped.add(queued);
-          }
-        }
+        dropQueuedPlacements(queryClient, tag, variables);
       }
       // A dropped write opens no notice, so the notice of the failure that dropped it stays.
       if (dropped.has(variables)) {
@@ -228,6 +235,95 @@ export function taskCreateOptions(queryClient: QueryClient, client: Client, tag:
 /** Opens the warning notice of a create, for the diagnostics the board does not already show. */
 export function openCreateWarnings(created: Created, known: readonly Diagnostic[]): void {
   openWarnings(created.id, freshDiagnostics(created.diagnostics, known));
+}
+
+export type DeleteTask = { id: string };
+
+function taskDeleteKey(tag: string) {
+  return [...daemonKeys.tasks(tag), "delete"] as const;
+}
+
+/** A delete is one request, so it has no partial form. */
+const DELETE_FAILURE_LINES: Record<FailureKind, string> = {
+  refused: "The daemon refused the delete, so the task is still there. Its own words are below.",
+  unanswered: "No daemon answered, so nothing was deleted.",
+  address: "The daemon did not answer through the address below. Start the daemon there if it is not running. "
+    + "The task is shown again after the next read.",
+  unsent: "The delete did not start, so the task is still there.",
+};
+
+/** The task is gone already, removed by another client while the board was stale. */
+function isNotFound(cause: unknown): boolean {
+  return cause instanceof ProtocolError && cause.failure.kind === "store" && cause.failure.code === "task-not-found";
+}
+
+/**
+ * The delete of a task, in the queue of the project's other writes. The board
+ * hides the card from the pending variables.
+ */
+export function taskDeleteOptions(queryClient: QueryClient, client: Client, tag: string) {
+  return mutationOptions<Written, WriteError, DeleteTask>({
+    mutationKey: taskDeleteKey(tag),
+    mutationFn: async ({ id }) => {
+      try {
+        const { diagnostics } = await client.deleteTask(tag, id);
+
+        return { id, diagnostics };
+      } catch (cause) {
+        if (isNotFound(cause)) {
+          return { id, diagnostics: [] };
+        }
+        throw new WriteError(cause);
+      }
+    },
+    // A delete whose answer is lost may have been carried out.
+    retry: 0,
+    scope: taskWriteScope(tag),
+    onSuccess: ({ id, diagnostics }) => {
+      // No task page of the deleted task is left to show its own warnings.
+      const known = boardWarnings(
+        queryClient.getQueryData(projectQuery(client, tag).queryKey)?.diagnostics ?? [],
+        queryClient.getQueryData(tasksQuery(client, tag).queryKey)?.diagnostics ?? [],
+      );
+      const deleted = daemonKeys.task(tag, id);
+      const deletedHash = hashKey(deleted);
+
+      openWarnings(id, freshDiagnostics(diagnostics, known));
+      // A mounted page can still observe the task until its route change lands,
+      // and a removed entry under it would suspend and read a task that is gone.
+      // An entry left in place is served by the static read of Back.
+      queryClient.removeQueries({ queryKey: deleted, type: "inactive" });
+      // Only this task's notice: a refused move of another task still stands.
+      useNoticeStore.getState().closeNotice(`${FAILURE_KEY_PREFIX}${id}`);
+      useNoticeStore.getState().announce(`${id} was deleted.`);
+
+      // Every other task, because the delete clears its id from the tasks that
+      // name it. Returned, so the delete stays pending until the listing drops the card.
+      return queryClient.invalidateQueries({
+        queryKey: daemonKeys.tasks(tag),
+        predicate: ({ queryHash }) => queryHash !== deletedHash,
+      });
+    },
+    onError: (error, { id }) => {
+      // The board placed them in a column that did not show the card.
+      dropQueuedPlacements(queryClient, tag);
+      openWriteNotice({
+        key: `${FAILURE_KEY_PREFIX}${id}`,
+        form: "failure",
+        title: `${id} was not deleted`,
+        line: DELETE_FAILURE_LINES[failureKind(error.cause)],
+        words: [refusalWords(error)],
+      });
+
+      // Not returned, so the card comes back at once.
+      void queryClient.invalidateQueries({ queryKey: daemonKeys.tasks(tag) });
+    },
+  });
+}
+
+/** The ids of the tasks of a project with a delete pending or queued. */
+export function usePendingTaskDeletes(tag: string): Set<string> {
+  return new Set(usePendingVariables<DeleteTask>(taskDeleteKey(tag)).map(({ variables }) => variables.id));
 }
 
 /** The pending and queued task writes of a project. */

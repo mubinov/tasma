@@ -39,6 +39,8 @@ type BoardColumnProps = {
   onMoveBy: (id: string, by: -1 | 1) => void;
   /** Called before the card opens its task in this tab. */
   onOpen: (id: string) => void;
+  /** Asks to delete the task. */
+  onDelete: (id: string) => void;
   /** The card that takes focus once it renders. */
   focusCard: CardFocus | null;
   onCardFocused: () => void;
@@ -114,6 +116,7 @@ export function BoardColumn({
   onMove,
   onMoveBy,
   onOpen,
+  onDelete,
   focusCard,
   onCardFocused,
   focusHeading,
@@ -217,6 +220,7 @@ export function BoardColumn({
         onOpen={() => {
           onOpen(entry.id);
         }}
+        onDelete={onDelete}
         onPress={(event) => {
           onPress(event, entry.id);
         }}

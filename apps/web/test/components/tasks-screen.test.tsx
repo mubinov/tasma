@@ -1349,3 +1349,261 @@ describe("creating a task", () => {
     });
   });
 });
+
+describe("deleting a task", () => {
+  const DELETE_2 = "DELETE /projects/SAGA/tasks/SAGA-2";
+
+  function card(title: string): HTMLElement {
+    return screen.getByText(title).closest<HTMLElement>("[data-task-id]")!;
+  }
+
+  function menuButton(title: string): HTMLElement {
+    return within(card(title)).getByRole("button", { name: "Task menu" });
+  }
+
+  function announced(): string[] {
+    return useNoticeStore.getState().announced.map(({ words }) => words);
+  }
+
+  function deletes(requests: readonly { method: string }[]): number {
+    return requests.filter(({ method }) => method === "DELETE").length;
+  }
+
+  /** Opens the card's menu and chooses Delete, which opens the dialog. */
+  async function askDelete(user: ReturnType<typeof userEvent.setup>, title: string): Promise<HTMLElement> {
+    await user.click(menuButton(title));
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /^Delete / }));
+
+    return screen.findByRole("alertdialog");
+  }
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  });
+
+  it("asks with the id in the title and the task's title in the sentence, starting on Cancel", async () => {
+    const user = userEvent.setup();
+    const { transport, requests } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1), entry(2, { title: "Say \"hello\"" })]),
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    const dialog = await askDelete(user, "Say \"hello\"");
+
+    expect(within(dialog).getByRole("heading", { name: "Delete SAGA-2?" })).toBeTruthy();
+    expect(dialog.textContent).toContain("“Say \"hello\"” will be removed from disk. There is no undo.");
+    await waitFor(() => {
+      expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
+    });
+    expect(within(dialog).getByRole("button", { name: "Delete" })).toBeTruthy();
+    expect(deletes(requests)).toBe(0);
+  });
+
+  it("closes at once on Delete, hides the card, drops the count and focuses the next card's menu button", async () => {
+    const user = userEvent.setup();
+    const write = heldBack();
+    const { transport, requests, replies } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1), entry(2), entry(3)]),
+      [DELETE_2]: write.reply,
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    const dialog = await askDelete(user, "Task 2");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => {
+      expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 3"]);
+    });
+    expect(countOf("Backlog")).toBe("2");
+    await waitFor(() => {
+      expect(document.activeElement).toBe(menuButton("Task 3"));
+    });
+    expect(deletes(requests)).toBe(1);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(announced()).not.toContain("SAGA-2 was deleted.");
+
+    replies["/projects/SAGA/tasks"] = listing([entry(1), entry(3)]);
+    await act(async () => {
+      write.answer(successReply({ id: "SAGA-2" }));
+    });
+
+    await waitFor(() => {
+      expect(announced()).toContain("SAGA-2 was deleted.");
+    });
+    expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 3"]);
+    expect(useNoticeStore.getState().notices).toEqual([]);
+    expect(document.activeElement).toBe(menuButton("Task 3"));
+  });
+
+  it("focuses the next card the label filter shows, past a card it hides", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon({
+      "/projects/SAGA/tasks": listing([
+        entry(1, { labels: ["web"] }),
+        entry(2, { labels: ["docs"] }),
+        entry(3, { labels: ["web"] }),
+      ]),
+      "DELETE /projects/SAGA/tasks/SAGA-1": heldBack().reply,
+    });
+    await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+
+    const dialog = await askDelete(user, "Task 1");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(menuButton("Task 3"));
+    });
+  });
+
+  it("focuses the column's heading after the last card of the column", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1), entry(2, { status: "To Do" })]),
+      [DELETE_2]: heldBack().reply,
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    const dialog = await askDelete(user, "Task 2");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(within(column("To Do")).getByRole("heading", { level: 2 }));
+    });
+    expect(titlesIn("To Do")).toEqual([]);
+    expect(countOf("To Do")).toBe("0");
+  });
+
+  it("brings the card back after a refusal and opens the notice, leaving focus on the next card", async () => {
+    const user = userEvent.setup();
+    const write = heldBack();
+    const { transport } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1), entry(2), entry(3)]),
+      [DELETE_2]: write.reply,
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    const dialog = await askDelete(user, "Task 2");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => {
+      expect(document.activeElement).toBe(menuButton("Task 3"));
+    });
+
+    await act(async () => {
+      write.answer(refusalReply(409, { kind: "store", code: "snapshot-lost", message: "the index lost its snapshot" }));
+    });
+
+    await waitFor(() => {
+      expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2", "Task 3"]);
+    });
+    expect(countOf("Backlog")).toBe("3");
+    expect(useNoticeStore.getState().notices).toMatchObject([
+      {
+        key: "task-write-failure:SAGA-2",
+        form: "failure",
+        title: "SAGA-2 was not deleted",
+        line: "The daemon refused the delete, so the task is still there. Its own words are below.",
+        words: ["store/snapshot-lost · the index lost its snapshot"],
+      },
+    ]);
+    await waitFor(() => {
+      expect(announced().some((words) => words.startsWith("SAGA-2 was not deleted."))).toBe(true);
+    });
+    expect(document.activeElement).toBe(menuButton("Task 3"));
+    expect(announced()).not.toContain("SAGA-2 was deleted.");
+  });
+
+  it.each([
+    { how: "Cancel", close: (user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement) =>
+      user.click(within(dialog).getByRole("button", { name: "Cancel" })) },
+    { how: "Esc", close: (user: ReturnType<typeof userEvent.setup>) => user.keyboard("{Escape}") },
+  ])("deletes nothing on $how, and returns focus to the card's menu button", async ({ close }) => {
+    const user = userEvent.setup();
+    const { transport, requests } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1), entry(2)]),
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    const dialog = await askDelete(user, "Task 1");
+    await waitFor(() => {
+      expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
+    });
+    await close(user, dialog);
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => {
+      expect(document.activeElement).toBe(menuButton("Task 1"));
+    });
+    expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2"]);
+    expect(deletes(requests)).toBe(0);
+  });
+
+  it("still sends the delete of a card a poll removed while the dialog was open, and focuses its column's heading", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+    const { transport, requests, replies } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1), entry(2), entry(3)]),
+      [DELETE_2]: refusalReply(404, { kind: "store", code: "task-not-found", message: "no task SAGA-2" }),
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+    const dialog = await askDelete(user, "Task 2");
+
+    replies["/projects/SAGA/tasks"] = listing([entry(1), entry(3)]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_010);
+    });
+    expect(screen.queryByText("Task 2")).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await vi.waitFor(() => {
+      expect(deletes(requests)).toBe(1);
+    });
+    await vi.waitFor(() => {
+      expect(announced()).toContain("SAGA-2 was deleted.");
+    });
+    expect(useNoticeStore.getState().notices).toEqual([]);
+    expect(document.activeElement).toBe(within(column("Backlog")).getByRole("heading", { level: 2 }));
+  });
+
+  it("leaves the card out of the label filter and the empty state while the delete is pending", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon({
+      "/projects/SAGA/tasks": listing([entry(2, { labels: ["web"] })]),
+      [DELETE_2]: heldBack().reply,
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    await user.click(within(await askDelete(user, "Task 2")).getByRole("button", { name: "Delete" }));
+
+    expect(await screen.findByText("No tasks in Saga yet.")).toBeTruthy();
+    await user.click(screen.getByRole("combobox", { name: "Labels Any" }));
+    expect(within(await screen.findByRole("listbox")).queryByRole("option", { name: /web/ })).toBeNull();
+  });
+
+  it("returns focus to the menu button after a Cancel that follows a delete", async () => {
+    const user = userEvent.setup();
+    const { transport, replies } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1), entry(2), entry(3)]),
+      "DELETE /projects/SAGA/tasks/SAGA-1": successReply({ id: "SAGA-1" }),
+    });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+    replies["/projects/SAGA/tasks"] = listing([entry(2), entry(3)]);
+
+    await user.click(within(await askDelete(user, "Task 1")).getByRole("button", { name: "Delete" }));
+    await waitFor(() => {
+      expect(announced()).toContain("SAGA-1 was deleted.");
+    });
+    await askDelete(user, "Task 3");
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => {
+      expect(document.activeElement).toBe(menuButton("Task 3"));
+    });
+  });
+});

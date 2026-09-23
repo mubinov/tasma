@@ -9,10 +9,10 @@ import { renderBesideTaskRoute } from "../helpers";
 
 const STATUSES = ["Backlog", "In Progress", "Done"];
 
-type CardProps = Pick<CardMenuItemsProps, "status" | "onMove" | "onMoveUp" | "onMoveDown" | "onOpen">;
+type CardProps = Pick<CardMenuItemsProps, "status" | "onMove" | "onMoveUp" | "onMoveDown" | "onOpen" | "onDelete">;
 
-function Card({ status, onMove, onMoveUp, onMoveDown, onOpen }: CardProps): ReactNode {
-  const menu = { tag: "SAGA", id: "SAGA-7", status, statuses: STATUSES, onMove, onMoveUp, onMoveDown, onOpen };
+function Card({ status, onMove, onMoveUp, onMoveDown, onOpen, onDelete }: CardProps): ReactNode {
+  const menu = { tag: "SAGA", id: "SAGA-7", status, statuses: STATUSES, onMove, onMoveUp, onMoveDown, onOpen, onDelete };
 
   return (
     <CardContextMenu menu={menu} data-testid="card">
@@ -26,7 +26,9 @@ async function renderMenu(status = "In Progress", handlers: Partial<Omit<CardPro
   // The router scrolls on navigation, which jsdom does not implement.
   vi.stubGlobal("scrollTo", () => {});
 
-  return renderBesideTaskRoute(<Card status={status} onMove={() => {}} onOpen={() => {}} {...handlers} />);
+  return renderBesideTaskRoute(
+    <Card status={status} onMove={() => {}} onOpen={() => {}} onDelete={() => {}} {...handlers} />,
+  );
 }
 
 async function openFromButton() {
@@ -62,6 +64,24 @@ describe("the items", () => {
     expect(separator?.getAttribute("role")).toBe("separator");
     expect(group).toBe(within(menu).getByRole("group", { name: "Move to" }));
     expect(statusItems(menu).map((item) => item.textContent)).toEqual(STATUSES);
+  });
+
+  it("end with a second separator and Delete, after the Move to group", async () => {
+    await renderMenu();
+    const { menu } = await openFromButton();
+
+    const [separator, remove] = [...menu.children].slice(-2);
+    expect(separator?.getAttribute("role")).toBe("separator");
+    expect(remove?.getAttribute("role")).toBe("menuitem");
+    expect(remove?.textContent).toBe("Delete");
+    expect(remove?.className).toBe(MENU_ITEM_CLASS);
+  });
+
+  it("name the task in the Delete item, beginning with its visible label", async () => {
+    await renderMenu();
+    const { menu } = await openFromButton();
+
+    expect(within(menu).getByRole("menuitem", { name: "Delete SAGA-7" }).textContent).toBe("Delete");
   });
 
   it("check and dim the status the task has, ignoring case", async () => {
@@ -153,6 +173,21 @@ describe("choosing an item", () => {
     expect(onOpen).toHaveBeenCalledOnce();
     expect(useUiStore.getState().takeEditRequest()).toEqual({ tag: "SAGA", id: "SAGA-7" });
   });
+
+  it("asks to delete the task from Delete, with its id, and closes the menu", async () => {
+    const onDelete = vi.fn();
+    const onMove = vi.fn();
+    await renderMenu("In Progress", { onDelete, onMove });
+    const { user, menu } = await openFromButton();
+
+    await user.click(within(menu).getByRole("menuitem", { name: "Delete SAGA-7" }));
+
+    expect(onDelete.mock.calls).toEqual([["SAGA-7"]]);
+    expect(onMove).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+  });
 });
 
 describe("Move up and Move down", () => {
@@ -177,7 +212,7 @@ describe("Move up and Move down", () => {
     await renderMenu("In Progress", places);
     const { menu } = await openFromButton();
 
-    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open task", "Edit", ...items]);
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open task", "Edit", ...items, "Delete"]);
   });
 
   it.each(["Move up", "Move down"])("%s calls its handler alone, and closes the menu", async (name) => {
@@ -204,8 +239,19 @@ describe("right click", () => {
     fireEvent.contextMenu(screen.getByText("Draft the schema"), { clientX: 40, clientY: 20 });
 
     const menu = await screen.findByRole("menu");
-    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open task", "Edit"]);
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open task", "Edit", "Delete"]);
     expect(statusItems(menu).map((item) => item.textContent)).toEqual(STATUSES);
+  });
+
+  it("asks to delete the task from Delete on the card, with its id", async () => {
+    const onDelete = vi.fn();
+    await renderMenu("In Progress", { onDelete });
+    const user = userEvent.setup();
+
+    fireEvent.contextMenu(screen.getByText("Draft the schema"), { clientX: 40, clientY: 20 });
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Delete SAGA-7" }));
+
+    expect(onDelete.mock.calls).toEqual([["SAGA-7"]]);
   });
 
   it("opens nothing from inside the menu of the button, which renders outside the card", async () => {

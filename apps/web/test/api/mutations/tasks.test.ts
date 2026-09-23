@@ -18,9 +18,11 @@ import {
   createRefusal,
   openCreateWarnings,
   taskCreateOptions,
+  taskDeleteOptions,
   TaskWriteError,
   taskWriteKey,
   taskWriteOptions,
+  usePendingTaskDeletes,
   usePendingTaskWrites,
   type TaskWrites,
 } from "../../../src/api/mutations";
@@ -97,6 +99,11 @@ function watchListing(queryClient: QueryClient, client: Client): () => void {
 
 function writes(requests: readonly TransportRequest[]): TransportRequest[] {
   return requests.filter(({ method }) => method === "PATCH");
+}
+
+/** The paths the requests read, which a DELETE of the same task is not one of. */
+function reads(requests: readonly TransportRequest[]): string[] {
+  return requests.filter(({ method }) => method === "GET").map(({ path }) => path);
 }
 
 function notices() {
@@ -1012,5 +1019,349 @@ describe("createRefusal", () => {
 
   it.each(CASES)("names what happened for $kind, from the bare cause", ({ cause, line, words }) => {
     expect(createRefusal(cause)).toEqual({ line, words });
+  });
+});
+
+describe("taskDeleteOptions", () => {
+  const DELETE_1 = `DELETE ${taskPath("NOTE-1")}`;
+  const NOT_REMOVED: Diagnostic = { code: "reference-not-removed", message: "NOTE-4 still names NOTE-1" };
+  const KNOWN: Diagnostic = { code: "config-key-unknown", message: "unknown key: colour" };
+  const EMPTY_LISTING = successReply({ entries: [], excluded: [] });
+
+  function deleteSetup(replies: Record<string, TransportReply | Promise<TransportReply>> = {}, transport?: Transport) {
+    const context = setup(replies, transport);
+    const { queryClient, client } = context;
+    const deleter = new MutationObserver(queryClient, taskDeleteOptions(queryClient, client, TAG));
+
+    return { ...context, deleter };
+  }
+
+  function deletes(requests: readonly TransportRequest[]): TransportRequest[] {
+    return requests.filter(({ method }) => method === "DELETE");
+  }
+
+  function announced(): string[] {
+    return useNoticeStore.getState().announced.map(({ words }) => words);
+  }
+
+  /** Waits past the animation frame an announcement lands in. */
+  async function nextFrame(): Promise<void> {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  }
+
+  it("sends one DELETE of the task, and resolves with the id and the diagnostics", async () => {
+    const { deleter, requests } = deleteSetup({ [DELETE_1]: written("NOTE-1", [NOT_REMOVED]) });
+
+    const result = await deleter.mutate({ id: "NOTE-1" });
+
+    expect(deletes(requests)).toEqual([{ method: "DELETE", path: taskPath("NOTE-1") }]);
+    expect(result).toEqual({ id: "NOTE-1", diagnostics: [NOT_REMOVED] });
+  });
+
+  it("does not try a delete again", async () => {
+    const { deleter, requests } = deleteSetup({ [DELETE_1]: { status: 502 } });
+
+    await expect(deleter.mutate({ id: "NOTE-1" })).rejects.toBeInstanceOf(WriteError);
+
+    expect(deletes(requests)).toHaveLength(1);
+  });
+
+  it("waits for a move in flight in the same project", async () => {
+    const first = heldBack();
+    const { observer, deleter, requests } = deleteSetup({
+      [`PATCH ${taskPath("NOTE-1")}`]: first.reply,
+      [DELETE_1]: written("NOTE-1"),
+    });
+
+    const done = [observer.mutate(moveOf("NOTE-1")), deleter.mutate({ id: "NOTE-1" })];
+    await vi.waitFor(() => {
+      expect(requests.filter(({ method }) => method !== "GET")).toHaveLength(1);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(deletes(requests)).toEqual([]);
+
+    first.answer(written("NOTE-1"));
+    await Promise.all(done);
+
+    expect(requests.filter(({ method }) => method !== "GET").map(({ method }) => method)).toEqual(["PATCH", "DELETE"]);
+  });
+
+  it("drops the writes that place a card queued behind a refused delete, and keeps its notice", async () => {
+    const first = heldBack();
+    const { observer, deleter, queryClient, client, requests } = deleteSetup({
+      [DELETE_1]: first.reply,
+      [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2"),
+      [`PATCH ${taskPath("NOTE-3")}`]: written("NOTE-3"),
+    });
+
+    const done = [
+      deleter.mutate({ id: "NOTE-1" }),
+      observer.mutate(moveOf("NOTE-2")),
+      new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG)).mutate(pagePlace("NOTE-3")),
+    ].map((sent) => sent.catch((error: unknown) => error));
+    await vi.waitFor(() => {
+      expect(deletes(requests)).toHaveLength(1);
+    });
+    first.answer(REFUSAL);
+    await Promise.all(done);
+
+    expect(writes(requests)).toEqual([]);
+    expect(notices().map(({ key, title }) => [key, title])).toEqual([["task-write-failure:NOTE-1", "NOTE-1 was not deleted"]]);
+  });
+
+  it("sends a page save queued behind a refused delete", async () => {
+    const first = heldBack();
+    const { observer, deleter, requests } = deleteSetup({
+      [DELETE_1]: first.reply,
+      [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2"),
+    });
+
+    const done = [deleter.mutate({ id: "NOTE-1" }), observer.mutate(pageSave("NOTE-2"))]
+      .map((sent) => sent.catch((error: unknown) => error));
+    await vi.waitFor(() => {
+      expect(deletes(requests)).toHaveLength(1);
+    });
+    first.answer(REFUSAL);
+    await Promise.all(done);
+
+    expect(writes(requests).map(({ path }) => path)).toEqual([taskPath("NOTE-2")]);
+  });
+
+  it("stays pending after the answer until the listing is read again", async () => {
+    const listing = heldBack();
+    const { deleter, replies, queryClient, client } = deleteSetup({ [DELETE_1]: written("NOTE-1") });
+    const stop = watchListing(queryClient, client);
+    await queryClient.query(tasksQuery(client, TAG));
+    replies[LISTING] = listing.reply;
+
+    const done = deleter.mutate({ id: "NOTE-1" });
+    await vi.waitFor(() => {
+      expect(queryClient.getQueryState(tasksQuery(client, TAG).queryKey)?.fetchStatus).toBe("fetching");
+    });
+
+    expect(deleter.getCurrentResult().status).toBe("pending");
+
+    listing.answer(EMPTY_LISTING);
+    await done;
+
+    expect(deleter.getCurrentResult().status).toBe("success");
+    stop();
+  });
+
+  it("closes the failure notice of the deleted task alone, and says the task was deleted", async () => {
+    const { deleter } = deleteSetup({ [DELETE_1]: written("NOTE-1") });
+    for (const id of ["NOTE-1", "NOTE-2"]) {
+      useNoticeStore.getState().showNotice({ key: `task-write-failure:${id}`, form: "failure", title: `${id} was not moved`, words: ["a"] });
+    }
+
+    await deleter.mutate({ id: "NOTE-1" });
+    await nextFrame();
+
+    expect(notices().map(({ key }) => key)).toEqual(["task-write-failure:NOTE-2"]);
+    expect(announced()).toContain("NOTE-1 was deleted.");
+  });
+
+  it("opens the warning notice for the diagnostics the board does not already show", async () => {
+    const { deleter, queryClient, client } = deleteSetup({
+      [`/projects/${TAG}`]: successReply({ tag: TAG }, [KNOWN]),
+      [DELETE_1]: written("NOTE-1", [KNOWN, NOT_REMOVED]),
+    });
+    await queryClient.query(projectQuery(client, TAG));
+
+    await deleter.mutate({ id: "NOTE-1" });
+
+    expect(notices()).toMatchObject([
+      {
+        key: "task-write-warnings:NOTE-1",
+        form: "warning",
+        title: "1 warning about NOTE-1",
+        words: [`${NOT_REMOVED.code} · ${NOT_REMOVED.message}`],
+      },
+    ]);
+  });
+
+  it("opens no warning notice when the board already shows every diagnostic", async () => {
+    const { deleter, queryClient, client } = deleteSetup({
+      [LISTING]: successReply({ entries: [], excluded: [] }, [NOT_REMOVED]),
+      [DELETE_1]: written("NOTE-1", [NOT_REMOVED]),
+    });
+    await queryClient.query(tasksQuery(client, TAG));
+
+    await deleter.mutate({ id: "NOTE-1" });
+
+    expect(notices()).toEqual([]);
+  });
+
+  it("lands a refusal that the task is not found as a success: no notice, and the listing is read again", async () => {
+    const { deleter, queryClient, client, requests } = deleteSetup({
+      [DELETE_1]: refusalReply(404, { kind: "store", code: "task-not-found", message: "no task NOTE-1" }),
+    });
+    const stop = watchListing(queryClient, client);
+    await queryClient.query(tasksQuery(client, TAG));
+    requests.length = 0;
+
+    await expect(deleter.mutate({ id: "NOTE-1" })).resolves.toEqual({ id: "NOTE-1", diagnostics: [] });
+
+    expect(notices()).toEqual([]);
+    expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([DELETE_1, `GET ${LISTING}`]);
+    stop();
+  });
+
+  const FAILURES: { kind: string; reply: TransportReply | null; id?: string; line: string; words: string }[] = [
+    {
+      kind: "a refusal",
+      reply: refusalReply(409, { kind: "store", code: "snapshot-lost", message: "the index lost its snapshot" }),
+      line: "The daemon refused the delete, so the task is still there. Its own words are below.",
+      words: "store/snapshot-lost · the index lost its snapshot",
+    },
+    { kind: "no answer", reply: null, line: "No daemon answered, so nothing was deleted.", words: DAEMON_URL },
+    {
+      kind: "an answer that is not the daemon's",
+      reply: { status: 502 },
+      line: "The daemon did not answer through the address below. Start the daemon there if it is not running. "
+        + "The task is shown again after the next read.",
+      words: `${DAEMON_URL} · HTTP 502 · DELETE ${taskPath("NOTE-1")} answered with no envelope`,
+    },
+    {
+      kind: "a delete that could not start",
+      reply: null,
+      id: "..",
+      line: "The delete did not start, so the task is still there.",
+      words: "/projects/{project}/tasks/{id} cannot take \"..\" as the path parameter \"id\": it is not one path component",
+    },
+  ];
+
+  it.each(FAILURES)("opens the failure notice of the task for $kind, and says nothing was deleted", async ({
+    reply,
+    id = "NOTE-1",
+    line,
+    words,
+  }) => {
+    const { transport: answering } = stubTransport(reply === null ? {} : { [`DELETE ${taskPath(id)}`]: reply });
+    const { deleter } = deleteSetup({}, (request) =>
+      reply === null && request.path === taskPath(id) ? Promise.reject(new Error("connection refused")) : answering(request));
+
+    await expect(deleter.mutate({ id })).rejects.toBeInstanceOf(WriteError);
+    await nextFrame();
+
+    expect(notices()).toMatchObject([
+      { key: `task-write-failure:${id}`, form: "failure", title: `${id} was not deleted`, line, words: [words] },
+    ]);
+    expect(announced()).not.toContain(`${id} was deleted.`);
+  });
+
+  it("reads the listing and the task page again at once after a refusal", async () => {
+    const { deleter, queryClient, client, requests } = deleteSetup({
+      [DELETE_1]: REFUSAL,
+      [taskPath("NOTE-1")]: successReply({ id: "NOTE-1" }),
+    });
+    const stopListing = watchListing(queryClient, client);
+    const stopTask = new QueryObserver(queryClient, taskQuery(client, TAG, "NOTE-1")).subscribe(() => {});
+    await vi.waitFor(() => {
+      expect(queryClient.getQueryState(tasksQuery(client, TAG).queryKey)?.status).toBe("success");
+      expect(queryClient.getQueryState(taskQuery(client, TAG, "NOTE-1").queryKey)?.status).toBe("success");
+    });
+    requests.length = 0;
+
+    await expect(deleter.mutate({ id: "NOTE-1" })).rejects.toThrow();
+
+    await vi.waitFor(() => {
+      expect(requests.map(({ method, path }) => `${method} ${path}`).toSorted())
+        .toEqual([DELETE_1, `GET ${LISTING}`, `GET ${taskPath("NOTE-1")}`].toSorted());
+    });
+    stopListing();
+    stopTask();
+  });
+
+  describe("the task reads it leaves in the cache", () => {
+    function cacheSetup() {
+      const context = deleteSetup({
+        [DELETE_1]: written("NOTE-1"),
+        [taskPath("NOTE-1")]: successReply({ id: "NOTE-1" }),
+        [taskPath("NOTE-2")]: successReply({ id: "NOTE-2" }),
+      });
+      const { queryClient, client } = context;
+
+      async function readBoth(): Promise<void> {
+        await queryClient.query(taskQuery(client, TAG, "NOTE-1"));
+        await queryClient.query(taskQuery(client, TAG, "NOTE-2"));
+        context.requests.length = 0;
+      }
+
+      return { ...context, readBoth };
+    }
+
+    it("never reads the deleted task again, and keeps its entry while a page observes it", async () => {
+      const { deleter, queryClient, client, requests, readBoth } = cacheSetup();
+      const stop = new QueryObserver(queryClient, taskQuery(client, TAG, "NOTE-1")).subscribe(() => {});
+      await readBoth();
+
+      await deleter.mutate({ id: "NOTE-1" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(reads(requests)).not.toContain(taskPath("NOTE-1"));
+      expect(queryClient.getQueryData(taskQuery(client, TAG, "NOTE-1").queryKey)?.data).toEqual({ id: "NOTE-1" });
+      stop();
+    });
+
+    it("removes the deleted task's entry when nothing observes it", async () => {
+      const { deleter, queryClient, client, requests, readBoth } = cacheSetup();
+      await readBoth();
+
+      await deleter.mutate({ id: "NOTE-1" });
+
+      expect(reads(requests)).not.toContain(taskPath("NOTE-1"));
+      expect(queryClient.getQueryState(taskQuery(client, TAG, "NOTE-1").queryKey)).toBeUndefined();
+    });
+
+    it("reads another task of the project again, which the delete may have rewritten", async () => {
+      const { deleter, queryClient, client, requests, readBoth } = cacheSetup();
+      const stop = new QueryObserver(queryClient, taskQuery(client, TAG, "NOTE-2")).subscribe(() => {});
+      await readBoth();
+
+      await deleter.mutate({ id: "NOTE-1" });
+
+      expect(reads(requests)).toContain(taskPath("NOTE-2"));
+      stop();
+    });
+  });
+
+  it("is keyed under the tasks of its project, apart from the writes the board lays over its cards", async () => {
+    const held = heldBack();
+    const other = heldBack();
+    const { queryClient, client } = deleteSetup({
+      [DELETE_1]: held.reply,
+      "DELETE /projects/ELSE/tasks/ELSE-1": other.reply,
+    });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+    const { result } = renderHook(
+      () => ({ deletes: usePendingTaskDeletes(TAG), writes: usePendingTaskWrites(TAG) }),
+      { wrapper },
+    );
+    const options = taskDeleteOptions(queryClient, client, TAG);
+    let done: Promise<unknown>[] = [];
+
+    await act(async () => {
+      done = [
+        new MutationObserver(queryClient, options).mutate({ id: "NOTE-1" }),
+        new MutationObserver(queryClient, taskDeleteOptions(queryClient, client, "ELSE")).mutate({ id: "ELSE-1" }),
+      ];
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(options.mutationKey).toEqual(["daemon", "projects", TAG, "tasks", "delete"]);
+    expect([...result.current.deletes]).toEqual(["NOTE-1"]);
+    expect(result.current.writes.writes).toEqual([]);
+
+    await act(async () => {
+      held.answer(written("NOTE-1"));
+      other.answer(successReply({ id: "ELSE-1" }));
+      await Promise.all(done);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect([...result.current.deletes]).toEqual([]);
   });
 });

@@ -2,6 +2,7 @@ import type { Diagnostic, Frontmatter, TaskEntry, Transport, TransportReply } fr
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ICON_BUTTON_CLASS } from "../../src/components/control-classes";
 import { formatClock } from "../../src/lib/clock";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
@@ -1133,5 +1134,119 @@ describe("the notice for failed polls", () => {
     await user.click(backLink());
 
     expect(useNoticeStore.getState().notices.filter(({ key }) => key === "task-poll:SAGA-3")).toEqual([]);
+  });
+});
+
+describe("deleting the task", () => {
+  const DELETE = `DELETE ${TASK_PATH}`;
+
+  function overflow(): HTMLElement {
+    return within(topBar()).getByRole("button", { name: "Task menu" });
+  }
+
+  async function askDelete(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+    await user.click(overflow());
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Delete task" }));
+
+    return screen.findByRole("alertdialog");
+  }
+
+  function deletes(requests: readonly { method: string }[]): number {
+    return requests.filter(({ method }) => method === "DELETE").length;
+  }
+
+  it("offers a Task menu after Edit in the bar, holding Delete task alone", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon();
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    const edit = within(topBar()).getByRole("button", { name: "Edit" });
+    expect(edit.nextElementSibling).toBe(overflow());
+    expect(overflow().className).toBe(ICON_BUTTON_CLASS);
+    expect(overflow().querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+
+    await user.click(overflow());
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Delete task"]);
+    expect(within(menu).getByRole("menuitem").querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("offers no Task menu while the text editor is open", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon();
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    await user.click(within(topBar()).getByRole("button", { name: "Edit" }));
+
+    expect(within(topBar()).queryByRole("button", { name: "Task menu" })).toBeNull();
+  });
+
+  it("asks with the id in the title and the task's title in the sentence", async () => {
+    const user = userEvent.setup();
+    const { transport, requests } = daemon();
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    const dialog = await askDelete(user);
+
+    expect(within(dialog).getByRole("heading", { name: "Delete SAGA-3?" })).toBeTruthy();
+    expect(dialog.textContent).toContain("“Build the parser” will be removed from disk. There is no undo.");
+    expect(deletes(requests)).toBe(0);
+  });
+
+  it("closes, replaces the page with the board of the reader's labels and sends the delete", async () => {
+    const user = userEvent.setup();
+    useUiStore.setState({
+      boardReturn: { projects: "SAGA", labels: "web", scrollX: 0, scrollY: 0, taskId: "SAGA-3" },
+    });
+    const { transport, requests } = daemon({ [DELETE]: successReply({ id: "SAGA-3" }) });
+    const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    const entries = router.history.length;
+
+    await user.click(within(await askDelete(user)).getByRole("button", { name: "Delete" }));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await vi.waitFor(() => {
+      expect(router.state.location.pathname).toBe("/tasks");
+    });
+    expect(router.state.location.search).toEqual({ projects: "SAGA", labels: "web" });
+    expect(router.history.length).toBe(entries);
+    await vi.waitFor(() => {
+      expect(deletes(requests)).toBe(1);
+    });
+  });
+
+  it("leaves without asking about a comment draft, which goes with the task", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon({ [DELETE]: successReply({ id: "SAGA-3" }) });
+    const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    await user.click(screen.getByRole("button", { name: "Add comment" }));
+    await user.keyboard("Draft");
+
+    await user.click(within(await askDelete(user)).getByRole("button", { name: "Delete" }));
+
+    await vi.waitFor(() => {
+      expect(router.state.location.pathname).toBe("/tasks");
+    });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it.each([
+    { how: "Cancel", close: (user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement) =>
+      user.click(within(dialog).getByRole("button", { name: "Cancel" })) },
+    { how: "Esc", close: (user: ReturnType<typeof userEvent.setup>) => user.keyboard("{Escape}") },
+  ])("deletes nothing on $how, and returns focus to the Task menu", async ({ close }) => {
+    const user = userEvent.setup();
+    const { transport, requests } = daemon();
+    const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    const dialog = await askDelete(user);
+    await close(user, dialog);
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(overflow());
+    });
+    expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-3");
+    expect(deletes(requests)).toBe(0);
   });
 });

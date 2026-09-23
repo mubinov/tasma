@@ -23,11 +23,13 @@ export type CardMenuItemsProps = {
   onMoveDown?: () => void;
   /** Called before the card opens its task in this tab. */
   onOpen: () => void;
+  /** Asks to delete the task. */
+  onDelete: (id: string) => void;
 };
 
 /** The items of both card menus. */
 function CardMenuItems(
-  { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen }: CardMenuItemsProps,
+  { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen, onDelete }: CardMenuItemsProps,
 ): ReactNode {
   const navigate = useNavigate();
   const requestEdit = useUiStore((state) => state.requestEdit);
@@ -87,6 +89,18 @@ function CardMenuItems(
           </Menu.Item>
         )}
       </Menu.RadioGroup>
+      <Menu.Separator className="my-1.5 h-px bg-line" />
+      {/* The popup takes its name from the trigger, so the item names the task itself. */}
+      <Menu.Item
+        aria-label={`Delete ${id}`}
+        onClick={() => {
+          onDelete(id);
+        }}
+        className={MENU_ITEM_CLASS}
+      >
+        <span className="w-3.5 shrink-0" />
+        Delete
+      </Menu.Item>
     </>
   );
 }

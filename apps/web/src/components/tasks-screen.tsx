@@ -3,7 +3,14 @@ import { getRouteApi, Link, useRouter, type ErrorComponentProps } from "@tanstac
 import type { Workflow } from "@tasma/protocol";
 import { useDeferredValue, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
-import { openCreateWarnings, taskWriteOptions, usePendingTaskWrites, type Created } from "../api/mutations";
+import {
+  openCreateWarnings,
+  taskDeleteOptions,
+  taskWriteOptions,
+  usePendingTaskDeletes,
+  usePendingTaskWrites,
+  type Created,
+} from "../api/mutations";
 import { usePollNotice } from "../api/poll-notice";
 import { POLL_INTERVAL, projectQuery, projectsQuery, tasksQuery, workflowQuery } from "../api/queries";
 import {
@@ -21,8 +28,10 @@ import {
   type TaskWrite,
 } from "../lib/board";
 import { formatClock } from "../lib/clock";
+import { deleteTaskWords } from "../lib/delete-words";
 import { useDocumentTitle } from "../lib/document-title";
 import type { DropPlace } from "../lib/drag-place";
+import type { FinalFocus } from "../lib/final-focus";
 import { fullIndex, placeWrites } from "../lib/order";
 import { PlusIcon } from "../lib/icons";
 import { useCardDrag, type BoardSnapshot } from "../lib/use-card-drag";
@@ -31,6 +40,7 @@ import { NAVIGATION_BY_PATH } from "../navigation";
 import { useNoticeStore } from "../store/notices";
 import { useUiStore } from "../store/ui";
 import { BoardColumn } from "./board-column";
+import { ConfirmDialog } from "./confirm-dialog";
 import { BUTTON_CLASS } from "./control-classes";
 import { CreateTaskDialog } from "./create-task-dialog";
 import { Diagnostics } from "./diagnostics";
@@ -132,6 +142,13 @@ function useBoardReturn(tag: string, labels: string | undefined): void {
   }, [boardReturn, pending, tag, labels, router, endBoardRestore]);
 }
 
+/**
+ * The task the delete dialog asks about, kept after the close so the closing
+ * dialog keeps its words. `column` is where the card stood when the dialog
+ * opened, for a card a poll removes while it is open.
+ */
+type DeleteAsk = { id: string; title: string; column: number; open: boolean };
+
 function Board({ tag, labels }: { tag: string; labels: string | undefined }): ReactNode {
   const { client, queryClient } = route.useRouteContext();
   const { data: { data: projects } } = useSuspenseQuery(projectsQuery(client));
@@ -147,12 +164,17 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
   const setBoardReturn = useUiStore((state) => state.setBoardReturn);
   const { mutateAsync: write } = useMutation(taskWriteOptions(queryClient, client, tag));
   const pending = usePendingTaskWrites(tag);
+  const { mutate: sendDelete } = useMutation(taskDeleteOptions(queryClient, client, tag));
+  const deletingIds = usePendingTaskDeletes(tag);
+  const [deleteAsk, setDeleteAsk] = useState<DeleteAsk | null>(null);
+  const deleteFocusRef = useRef<FinalFocus>(null);
   const [focusCard, setFocusCard] = useState<CardFocus | null>(null);
   const [focusColumn, setFocusColumn] = useState<number | null>(null);
   // The opener is kept, not read from focus: WebKit focuses no button on a pointer press.
   const [creating, setCreating] = useState<{ status: string; opener: HTMLElement } | null>(null);
   const newTaskRef = useRef<HTMLButtonElement>(null);
-  const names = workflowNames(listing.entries);
+  const listed = listing.entries.filter(({ id }) => !deletingIds.has(id));
+  const names = workflowNames(listed);
   // Not under Suspense: a poll can bring a name the loader did not read, and a
   // new key would suspend the whole board until its read lands.
   const workflowReads = useQueries({ queries: names.map((name) => workflowQuery(client, name)) });
@@ -173,7 +195,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
       return [workflowName, read === null ? null : read?.data];
     }),
   );
-  const liveEntries = applyPending(listing.entries, pending.writes);
+  const liveEntries = applyPending(listed, pending.writes);
   const liveBoard: BoardSnapshot = {
     entries: liveEntries,
     columns: buildColumns(config, liveEntries, deferredSelected),
@@ -263,6 +285,33 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
     moveFromMenu(id, placeWrites(unfiltered, card, fullIndex(unfiltered, visible, at + by)));
   }
 
+  function askDelete(id: string): void {
+    // Asked from a card, which the board renders in these columns.
+    const { entry: { frontmatter: { title: taskTitle } }, column } = cardPlace(columns, id)!;
+
+    setDeleteAsk({ id, title: taskTitle, column, open: true });
+  }
+
+  /**
+   * The dialog closes as the write starts, so a refusal opens the floating
+   * notice. Focus moves to the card after the deleted one as the column shows
+   * it, or to the column's heading where none follows.
+   */
+  function confirmDelete(ask: DeleteAsk): void {
+    const { id } = ask;
+    const place = cardPlace(columns, id);
+    const next = place === null ? undefined : columns[place.column]!.matching[place.index + 1];
+
+    deleteFocusRef.current = "keep";
+    setDeleteAsk({ ...ask, open: false });
+    if (next !== undefined) {
+      setFocusCard({ id: next.id, part: "menu" });
+    } else {
+      setFocusColumn(place?.column ?? ask.column);
+    }
+    sendDelete({ id });
+  }
+
   /**
    * A drop reads the board the drag started on, never the live one: a poll can
    * have moved the card since. It moves no focus.
@@ -281,7 +330,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
         <ScreenHeading>{TITLE}</ScreenHeading>
         <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-x-5 gap-y-3">
           <ProjectSelect projects={projects} tag={tag} />
-          <LabelFilter entries={listing.entries} selected={selected} />
+          <LabelFilter entries={listed} selected={selected} />
           <button
             ref={newTaskRef}
             type="button"
@@ -311,8 +360,8 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
         subject="this project"
         className={live ? "mt-4" : "mt-3"}
       />
-      {listing.entries.length === 0 && <p className={EMPTY_CLASS}>{`No tasks in ${title} yet.`}</p>}
-      {listing.entries.length > 0 && filtered && matching === 0 && (
+      {listed.length === 0 && <p className={EMPTY_CLASS}>{`No tasks in ${title} yet.`}</p>}
+      {listed.length > 0 && filtered && matching === 0 && (
         <p className={EMPTY_CLASS}>{`No task in ${title} carries any of the selected labels.`}</p>
       )}
 
@@ -338,6 +387,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
               moveBy(index, id, by);
             }}
             onOpen={recordReturn}
+            onDelete={askDelete}
             focusCard={focusCard}
             onCardFocused={() => {
               setFocusCard(null);
@@ -373,7 +423,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
           client={client}
           tag={tag}
           config={config}
-          entries={listing.entries}
+          entries={listed}
           status={creating.status}
           opener={creating.opener}
           newTaskRef={newTaskRef}
@@ -381,6 +431,22 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
             setCreating(null);
           }}
           onCreated={created}
+        />
+      )}
+      {deleteAsk !== null && (
+        <ConfirmDialog
+          open={deleteAsk.open}
+          {...deleteTaskWords(deleteAsk.id, deleteAsk.title)}
+          confirmLabel="Delete"
+          onCancel={() => {
+            // Base UI returns focus to the menu button the dialog opened from.
+            deleteFocusRef.current = null;
+            setDeleteAsk({ ...deleteAsk, open: false });
+          }}
+          onConfirm={() => {
+            confirmDelete(deleteAsk);
+          }}
+          finalFocus={deleteFocusRef}
         />
       )}
     </>

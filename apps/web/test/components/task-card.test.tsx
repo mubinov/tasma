@@ -13,6 +13,7 @@ type CardState = {
   focusPart?: CardPart | null;
   onFocused?: () => void;
   onOpen?: () => void;
+  onDelete?: (id: string) => void;
   dragging?: boolean;
   onPress?: (event: PointerEvent<HTMLElement>) => void;
 };
@@ -26,6 +27,7 @@ async function renderCard(
     focusPart = null,
     onFocused = () => {},
     onOpen = () => {},
+    onDelete = () => {},
     dragging = false,
     onPress = () => {},
   }: CardState = {},
@@ -43,6 +45,7 @@ async function renderCard(
       dragging={dragging}
       onMove={() => {}}
       onOpen={onOpen}
+      onDelete={onDelete}
       focusPart={focusPart}
       onFocused={onFocused}
       onPress={onPress}
@@ -309,6 +312,17 @@ describe("the menu button", () => {
         "data-[popup-open]:opacity-100",
       ]),
     );
+  });
+
+  it("asks to delete the card's task from Delete", async () => {
+    const onDelete = vi.fn();
+    const user = userEvent.setup();
+    await renderCard(entry(), { kind: "none" }, false, { onDelete });
+
+    await user.click(screen.getByRole("button", { name: "Task menu" }));
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Delete SAGA-7" }));
+
+    expect(onDelete.mock.calls).toEqual([["SAGA-7"]]);
   });
 });
 

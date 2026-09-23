@@ -57,6 +57,7 @@ async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnPr
       onMove={() => {}}
       onMoveBy={() => {}}
       onOpen={() => {}}
+      onDelete={() => {}}
       focusCard={null}
       onCardFocused={() => {}}
       focusHeading={false}
@@ -416,6 +417,19 @@ describe("Move up and Move down", () => {
     await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name }));
 
     expect(onMoveBy.mock.calls).toEqual([["SAGA-2", by]]);
+  });
+});
+
+describe("Delete", () => {
+  it("asks to delete the task of the card it is chosen on", async () => {
+    const onDelete = vi.fn();
+    const user = userEvent.setup();
+    await renderColumn({ matching: entries(3), total: 3 }, { onDelete });
+
+    await user.click(menuButton("Task 2"));
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Delete SAGA-2" }));
+
+    expect(onDelete.mock.calls).toEqual([["SAGA-2"]]);
   });
 });
 

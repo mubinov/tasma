@@ -1,5 +1,6 @@
 import { Button } from "@base-ui/react/button";
-import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import { Menu } from "@base-ui/react/menu";
+import { useMutation, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
 import type { Task } from "@tasma/protocol";
 import {
@@ -13,12 +14,22 @@ import {
   type Ref,
   type RefObject,
 } from "react";
+import { taskDeleteOptions } from "../api/mutations";
 import { usePollNotice } from "../api/poll-notice";
 import { POLL_INTERVAL, projectQuery, taskQuery, tasksQuery, workflowQuery } from "../api/queries";
 import { isFinalStatus, isTopPriority, stepView } from "../lib/board";
 import { formatClock } from "../lib/clock";
+import { deleteTaskWords } from "../lib/delete-words";
 import { useDocumentTitle } from "../lib/document-title";
-import { ArrowLeftIcon, PencilSimpleIcon, PlusIcon, ProhibitIcon } from "../lib/icons";
+import type { FinalFocus } from "../lib/final-focus";
+import {
+  ArrowLeftIcon,
+  DotsThreeVerticalIcon,
+  PencilSimpleIcon,
+  PlusIcon,
+  ProhibitIcon,
+  TrashIcon,
+} from "../lib/icons";
 import { blockingRows, relationRows, type RelationRow } from "../lib/task-page";
 import { useCommentList } from "../lib/use-comment-list";
 import { useScrolledPast } from "../lib/use-scrolled-past";
@@ -32,7 +43,15 @@ import { useUiStore } from "../store/ui";
 import { CommentCard } from "./comment-card";
 import { EditingComment } from "./comment-editor";
 import { ConfirmDialog } from "./confirm-dialog";
-import { BUTTON_CLASS, BUTTON_FILLED_CLASS, BUTTON_QUIET_CLASS } from "./control-classes";
+import {
+  BUTTON_CLASS,
+  BUTTON_FILLED_CLASS,
+  BUTTON_QUIET_CLASS,
+  ICON_BUTTON_CLASS,
+  MENU_ITEM_CLASS,
+  POPUP_CLASS,
+  POSITIONER_CLASS,
+} from "./control-classes";
 import { Markdown } from "./markdown";
 import { ScreenHeading } from "./screen-heading";
 import { ScrollToTop } from "./scroll-to-top";
@@ -167,14 +186,31 @@ function BlockedSummary({ tag, blocking }: { tag: string; blocking: readonly Rel
   );
 }
 
-type ReadingControlsProps = { buttonRef: Ref<HTMLButtonElement>; onEdit: () => void };
+type ReadingControlsProps = { buttonRef: Ref<HTMLButtonElement>; onEdit: () => void; onDelete: () => void };
 
-function ReadingControls({ buttonRef, onEdit }: ReadingControlsProps): ReactNode {
+function ReadingControls({ buttonRef, onEdit, onDelete }: ReadingControlsProps): ReactNode {
   return (
-    <Button ref={buttonRef} type="button" onClick={onEdit} className={BUTTON_CLASS}>
-      <PencilSimpleIcon size={14} aria-hidden="true" />
-      Edit
-    </Button>
+    <>
+      <Button ref={buttonRef} type="button" onClick={onEdit} className={BUTTON_CLASS}>
+        <PencilSimpleIcon size={14} aria-hidden="true" />
+        Edit
+      </Button>
+      <Menu.Root highlightItemOnHover={false}>
+        <Menu.Trigger aria-label="Task menu" className={ICON_BUTTON_CLASS}>
+          <DotsThreeVerticalIcon size={16} aria-hidden="true" />
+        </Menu.Trigger>
+        <Menu.Portal>
+          <Menu.Positioner align="end" sideOffset={4} className={POSITIONER_CLASS}>
+            <Menu.Popup className={`min-w-52 ${POPUP_CLASS}`}>
+              <Menu.Item onClick={onDelete} className={MENU_ITEM_CLASS}>
+                <TrashIcon size={14} aria-hidden="true" />
+                Delete task
+              </Menu.Item>
+            </Menu.Popup>
+          </Menu.Positioner>
+        </Menu.Portal>
+      </Menu.Root>
+    </>
   );
 }
 
@@ -309,6 +345,22 @@ export function TaskScreen(): ReactNode {
   const { barHeight, scrollPaddingTop } = useTopBarLengths(barRef);
   const scrolled = useScrolledPast(scrolledRef, barHeight);
   const outline = useOutline(bodyRef, list.listRef, task, draft !== null);
+  const navigate = route.useNavigate();
+  const { mutate: sendDelete } = useMutation(taskDeleteOptions(queryClient, client, tag));
+  const [deleteAsked, setDeleteAsked] = useState(false);
+  const deleteFocusRef = useRef<FinalFocus>(null);
+
+  /**
+   * Closes the dialog, leaves for the board and starts the write, in that
+   * order. The route change moves focus, and the comment drafts of the page go
+   * with the task, so they ask nothing.
+   */
+  function confirmDelete(): void {
+    deleteFocusRef.current = "keep";
+    setDeleteAsked(false);
+    void navigate({ to: "/tasks", search: boardSearch, replace: true, ignoreBlocker: true });
+    sendDelete({ id });
+  }
 
   useDocumentTitle(`${id} ${title}`);
   useNotice(
@@ -366,7 +418,15 @@ export function TaskScreen(): ReactNode {
           </span>
           <div className="ml-auto flex shrink-0 items-center gap-2">
             {draft === null
-              ? <ReadingControls buttonRef={editing.editRef} onEdit={editing.openEditor} />
+              ? (
+                  <ReadingControls
+                    buttonRef={editing.editRef}
+                    onEdit={editing.openEditor}
+                    onDelete={() => {
+                      setDeleteAsked(true);
+                    }}
+                  />
+                )
               : (
                   <EditControls
                     formId={formId}
@@ -516,6 +576,18 @@ export function TaskScreen(): ReactNode {
         onConfirm={guard.discard}
         finalFocus={guard.finalFocusRef}
         status={guard.status}
+      />
+      <ConfirmDialog
+        open={deleteAsked}
+        {...deleteTaskWords(id, title)}
+        confirmLabel="Delete"
+        onCancel={() => {
+          // Base UI returns focus to the menu button the dialog opened from.
+          deleteFocusRef.current = null;
+          setDeleteAsked(false);
+        }}
+        onConfirm={confirmDelete}
+        finalFocus={deleteFocusRef}
       />
       <TaskPollNotice tag={tag} id={taskId} />
     </div>

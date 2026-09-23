@@ -24,6 +24,7 @@ type TaskCardProps = {
   onMoveDown?: () => void;
   /** Called before the card opens its task in this tab. */
   onOpen: () => void;
+  onDelete: (id: string) => void;
   /** The part that takes focus once the card has rendered, after which `onFocused` is called. */
   focusPart: CardPart | null;
   onFocused: () => void;
@@ -61,6 +62,7 @@ export function TaskCard({
   onMoveUp,
   onMoveDown,
   onOpen,
+  onDelete,
   focusPart,
   onFocused,
   onPress,
@@ -84,7 +86,7 @@ export function TaskCard({
     }
   }, [focusPart]);
 
-  const menu = { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen };
+  const menu = { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen, onDelete };
 
   return (
     // The title link is the keyboard path, so the card itself is no control.

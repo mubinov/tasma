@@ -17,6 +17,7 @@ import { PlusIcon } from "@phosphor-icons/react/Plus";
 import { ProhibitIcon } from "@phosphor-icons/react/Prohibit";
 import { SidebarSimpleIcon } from "@phosphor-icons/react/SidebarSimple";
 import { SunIcon } from "@phosphor-icons/react/Sun";
+import { TrashIcon } from "@phosphor-icons/react/Trash";
 import { WarningIcon } from "@phosphor-icons/react/Warning";
 import { XIcon } from "@phosphor-icons/react/X";
 
@@ -40,6 +41,7 @@ export {
   ProhibitIcon,
   SidebarSimpleIcon,
   SunIcon,
+  TrashIcon,
   WarningIcon,
   XIcon,
 };
