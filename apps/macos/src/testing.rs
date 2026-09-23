@@ -4,8 +4,8 @@
 //! different things to write, and a directory to write them in is the same
 //! need in all three.
 
-use std::os::unix::fs::MetadataExt as _;
-use std::path::PathBuf;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+use std::path::{Path, PathBuf};
 
 /// One directory for every file a test writes. It is left in place: the tests
 /// run in parallel, so a removal would race another test's write, and the files
@@ -55,6 +55,14 @@ pub(crate) fn directory(test: &str) -> PathBuf {
     std::fs::create_dir(&path).unwrap();
 
     path
+}
+
+/// A shell script at `path` that runs `body`, for a test to spawn.
+pub(crate) fn script_file(path: &Path, body: &str) -> PathBuf {
+    std::fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    path.to_path_buf()
 }
 
 /// A port bound long enough to be sure nothing else holds it, then given up.

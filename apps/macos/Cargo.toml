@@ -31,6 +31,33 @@ tauri-build = { version = "2", features = [] }
 # id and the named pipe that tests make. The standard library exposes none of
 # them.
 libc = "0.2"
+# The alerts, the AppleScript that asks for administrator rights, the move to
+# the Trash and the defaults Uninstall clears. The versions Tauri already
+# resolves, so no second copy is built.
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "NSAlert",
+  "NSApplication",
+  "NSButton",
+  "NSControl",
+  "NSResponder",
+  "NSView",
+  "NSWindow",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "NSAppleEventDescriptor",
+  "NSAppleScript",
+  "NSDictionary",
+  "NSError",
+  "NSFileManager",
+  "NSObject",
+  "NSString",
+  "NSURL",
+  "NSUserDefaults",
+  "NSValue",
+] }
 # The traversal guard reads the decoded path, because Tauri's resolver decodes
 # before it looks a name up.
 percent-encoding = "2"

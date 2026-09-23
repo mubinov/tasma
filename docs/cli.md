@@ -6,6 +6,11 @@ tasma keeps its data in one directory, `$HOME/.tasma`: the projects, their tasks
 
 Global options go before `<group>`. `tasma <group> --help` lists the commands of a group. `tasma <group> <command> --help` lists the options of a command.
 
+## Installing the command
+
+- The macOS app links `/usr/local/bin/tasma` to the CLI inside the app. It does this at launch, and from Tasma › Install Command Line Tool…. macOS asks for an administrator password once.
+- Tasma › Uninstall Tasma… removes the command, stops the daemon, deletes the app's files and moves the app to the Trash. It keeps `~/.tasma`.
+
 ## Global options
 
 | Option | Meaning |

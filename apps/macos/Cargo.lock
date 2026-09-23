@@ -3050,6 +3050,9 @@ name = "tasma-macos"
 version = "0.0.0"
 dependencies = [
  "libc",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "percent-encoding",
  "reqwest",
  "serde",

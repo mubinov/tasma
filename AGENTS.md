@@ -74,7 +74,8 @@ Rules in this chapter are for the `apps/macos` shell alone.
   `/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u <bundle>`.
 - The window is built in Rust. `app.windows` in `tauri.conf.json` is empty, and
   a window property written there is read by nothing.
-- Never set a menu of our own and never call `enable_macos_default_menu(false)`.
+- The menu is the default menu plus the two items in the Tasma menu. Never
+  remove a default item and never call `enable_macos_default_menu(false)`.
   Copy, paste and select-all reach the webview only through the default menu.
 - The first zoom keypress of a session logs one policy violation and one console
   warning. Never widen `apps/web`'s `connect-src` to silence it.

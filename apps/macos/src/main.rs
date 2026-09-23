@@ -9,16 +9,23 @@
 //! `app.windows` empty every property below is a builder call. A property
 //! written as a configuration key instead is read by nothing.
 
+mod alert;
+mod command;
 mod daemon;
 mod deeplink;
+mod elevate;
 mod geometry;
 mod log;
+mod menu;
 mod protocol;
 mod record;
 mod supervisor;
 #[cfg(test)]
 mod testing;
+mod uninstall;
 
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
@@ -179,9 +186,70 @@ fn open_links(app: &AppHandle, delivery: &Mutex<deeplink::Delivery>, urls: &[Url
     let _ = window.set_focus();
 }
 
+/// Links the command when this copy runs from an Applications folder and the
+/// link is missing or stale. Only the password dialog appears; any other end
+/// is one line in the log.
+async fn check_the_command() {
+    let Some(executable) = command::installed_executable(command::account_home().as_deref()) else {
+        return;
+    };
+
+    let problem = match elevate::ensure_link(Path::new(command::LINK), executable).await {
+        elevate::Linked::Already
+        | elevate::Linked::Now
+        | elevate::Linked::Cancelled
+        | elevate::Linked::Busy => return,
+        elevate::Linked::NotOurs => format!("{} does not belong to Tasma", command::LINK),
+        elevate::Linked::Failed(line) => line,
+    };
+
+    let file = log::open(std::env::home_dir().as_deref()).ok();
+    log::note(
+        file.as_ref(),
+        &format!(
+            "the tasma command was not installed: {}",
+            log::quoted(&problem)
+        ),
+    );
+}
+
+/// Whether an exit is held: closing the window during Uninstall must not end
+/// the sequence. Only `app.exit` carries a code.
+fn holds_exit(uninstalling: bool, code: Option<i32>) -> bool {
+    uninstalling && code.is_none()
+}
+
+/// The frame to save as the application exits. None during Uninstall, which
+/// has deleted the folder it would be written to.
+fn exit_frame(
+    uninstalling: bool,
+    remembered: &Mutex<geometry::Tracker>,
+    live: Option<geometry::Frame>,
+) -> Option<geometry::Frame> {
+    if uninstalling {
+        return None;
+    }
+
+    remembered
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .finish(live, Instant::now())
+}
+
 fn main() {
+    // Before Tauri and before any link is read: the process is a child the
+    // application started for a step that needs administrator rights.
+    if let Some(step) = elevate::requested(std::env::args_os().nth(1).as_deref()) {
+        std::process::exit(elevate::run(step));
+    }
+
     let daemon = Arc::new(daemon::Daemon::new());
     let startup = Arc::clone(&daemon);
+    let uninstalling = Arc::new(AtomicBool::new(false));
+    let shell = menu::Shell {
+        daemon: Arc::clone(&daemon),
+        uninstalling: Arc::clone(&uninstalling),
+    };
     // The last windowed geometry: the close button destroys the window before
     // the application exits, and a zoomed window measures nothing.
     let remembered: Arc<Mutex<geometry::Tracker>> = Arc::default();
@@ -190,6 +258,8 @@ fn main() {
     let loading = Arc::clone(&delivery);
 
     tauri::Builder::default()
+        .manage(shell)
+        .on_menu_event(|app, event| menu::dispatch(app, event.id()))
         // Asynchronous, so a daemon call never holds the main thread.
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |context, request, responder| {
             let app = context.app_handle().clone();
@@ -200,6 +270,8 @@ fn main() {
             });
         })
         .setup(move |app| {
+            menu::build(app.handle())?;
+
             // On the runtime rather than here, so a spawn never holds the
             // window back. It leaves the daemon warm before the board's first
             // request, and the forward covers the case where it did not.
@@ -291,20 +363,27 @@ fn main() {
             });
             window.show()?;
 
+            tauri::async_runtime::spawn(check_the_command());
+
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("the window could not be opened")
         .run(move |app, event| match event {
+            // Its handler can write a log line, which would make the log
+            // folder again after Uninstall deleted it.
+            RunEvent::Opened { .. } if uninstalling.load(Ordering::SeqCst) => {}
             RunEvent::Opened { urls } => open_links(app, &delivery, &urls),
+            RunEvent::ExitRequested { code, api, .. }
+                if holds_exit(uninstalling.load(Ordering::SeqCst), code) =>
+            {
+                api.prevent_exit();
+            }
             RunEvent::Exit => {
                 let live = app
                     .get_webview_window(WINDOW)
                     .and_then(|window| geometry::of(&window));
-                let frame = remembered
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .finish(live, Instant::now());
+                let frame = exit_frame(uninstalling.load(Ordering::SeqCst), &remembered, live);
 
                 if let Some(frame) = frame
                     && let Err(error) = geometry::save(app, frame)
@@ -393,6 +472,29 @@ mod tests {
     #[test]
     fn the_zoom_shortcuts_are_granted_the_command_they_invoke() {
         assert_eq!(ZOOM_HOTKEYS, zoom_is_granted());
+    }
+
+    #[test]
+    fn uninstall_holds_every_exit_but_its_own() {
+        assert!(holds_exit(true, None));
+        assert!(!holds_exit(true, Some(0)));
+        assert!(!holds_exit(false, None));
+        assert!(!holds_exit(false, Some(0)));
+    }
+
+    #[test]
+    fn the_geometry_is_not_saved_during_uninstall() {
+        let frame = geometry::Frame {
+            x: 10.0,
+            y: 20.0,
+            width: 900.0,
+            height: 700.0,
+            chrome: 0.0,
+        };
+        let remembered = Mutex::new(geometry::Tracker::default());
+
+        assert_eq!(exit_frame(true, &remembered, Some(frame)), None);
+        assert_eq!(exit_frame(false, &remembered, Some(frame)), Some(frame));
     }
 
     fn url(text: &str) -> Url {

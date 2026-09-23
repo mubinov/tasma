@@ -197,6 +197,11 @@ impl Daemon {
         Some(port)
     }
 
+    /// Stops supervising. From then on no daemon is started for this window.
+    pub async fn retire(&self) {
+        self.supervisor.retire().await;
+    }
+
     /// The daemon's answer to one request: its status, the headers it set and
     /// its bytes, untouched. The daemon's body is authoritative and its status
     /// advisory, so neither is read here.
@@ -605,6 +610,18 @@ mod tests {
 
         assert_eq!(answer.status(), StatusCode::BAD_GATEWAY);
         assert!(answer.body().is_empty());
+    }
+
+    #[test]
+    fn a_retired_daemon_starts_none_for_a_forward() {
+        let port = answering(health());
+        let (supervisor, record) = supervising_a_stub("a-retired-forward", port);
+        let daemon = Daemon::with_supervisor(Some(record), supervisor, TIMEOUT, REPLY_LIMIT);
+
+        tauri::async_runtime::block_on(daemon.retire());
+        let answer = tauri::async_runtime::block_on(daemon.forward("/health", &write("/health")));
+
+        assert_eq!(answer.status(), StatusCode::BAD_GATEWAY);
     }
 
     #[test]

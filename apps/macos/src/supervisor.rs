@@ -12,12 +12,13 @@
 //! read no further.
 //!
 //! The daemon's lifetime is not the application's: a daemon started here is put
-//! in a session of its own, is never waited on and is never signalled.
+//! in a session of its own, and is never waited on or signalled until `retire`.
 
 use std::fs::File;
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use tauri::async_runtime::Mutex;
@@ -49,6 +50,10 @@ const PROBE_LIMIT: usize = 64 * 1024;
 /// the wait looks again.
 const READY_BUDGET: Duration = Duration::from_secs(10);
 const TICK: Duration = Duration::from_millis(100);
+
+/// How long a child still running at retire has to shut down after SIGTERM,
+/// before SIGKILL. The CLI's `daemon stop` waits as long.
+const END_GRACE: Duration = Duration::from_secs(10);
 
 /// How long a daemon has to have been answering before the attempts behind it
 /// count as spent. A crash loop is a failure and not a success: a daemon that
@@ -85,6 +90,21 @@ fn backoff(made: u32) -> Duration {
 /// stub of its own.
 fn beside(executable: &Path) -> Option<PathBuf> {
     Some(executable.parent()?.join(DAEMON_EXECUTABLE))
+}
+
+/// Sends SIGTERM to a child that still runs, and answers whether it runs. A
+/// child whose end was collected no longer owns its pid, so it is not signalled.
+fn terminate(child: &mut Child) -> bool {
+    if !matches!(child.try_wait(), Ok(None)) {
+        return false;
+    }
+
+    if let Ok(pid) = libc::pid_t::try_from(child.id()) {
+        // Safety: an unreaped child keeps its pid, even as a zombie.
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+    }
+
+    true
 }
 
 /// A daemon answering, and the version it reports.
@@ -163,9 +183,11 @@ pub struct Supervisor {
     home: Option<PathBuf>,
     budget: Duration,
     tick: Duration,
+    grace: Duration,
     proven_after: Duration,
     client: reqwest::Client,
     attempts: Mutex<Attempts>,
+    retired: AtomicBool,
 }
 
 impl Supervisor {
@@ -181,9 +203,11 @@ impl Supervisor {
             home: home.map(Path::to_path_buf),
             budget: READY_BUDGET,
             tick: TICK,
+            grace: END_GRACE,
             proven_after: PROVEN_AFTER,
             client: probing(),
             attempts: Mutex::new(Attempts::default()),
+            retired: AtomicBool::new(false),
         }
     }
 
@@ -209,7 +233,18 @@ impl Supervisor {
         // A daemon this application cannot name is one it cannot start.
         self.executable.as_ref()?;
 
+        if self.is_retired() {
+            return None;
+        }
+
         let mut attempts = self.attempts.lock().await;
+
+        // Read again under the lock: a call that passed the check above just
+        // before `retire` must not start a daemon after it.
+        if self.is_retired() {
+            return None;
+        }
+
         let now = Instant::now();
 
         if let Some(serving) = self.serving().await {
@@ -233,6 +268,45 @@ impl Supervisor {
         }
 
         self.start(&mut attempts).await
+    }
+
+    /// Stops the supervisor for good. Returns only after any start attempt in
+    /// progress has ended and the last child spawned is gone, so no daemon it
+    /// spawned can write its record later. An attempt that runs out of its
+    /// budget keeps its child, and that child can still become a daemon.
+    pub async fn retire(&self) {
+        let mut attempts = self.attempts.lock().await;
+
+        self.retired.store(true, Ordering::SeqCst);
+
+        if let Some(child) = attempts.child.take() {
+            self.end(child).await;
+        }
+    }
+
+    /// Ends a child that still runs: SIGTERM, which the daemon answers with its
+    /// own shutdown, then SIGKILL after the grace.
+    async fn end(&self, mut child: Child) {
+        if !terminate(&mut child) {
+            return;
+        }
+
+        let started = Instant::now();
+
+        while matches!(child.try_wait(), Ok(None)) {
+            if started.elapsed() >= self.grace {
+                let _ = child.kill();
+                let _ = child.wait();
+
+                return;
+            }
+
+            tokio::time::sleep(self.tick).await;
+        }
+    }
+
+    fn is_retired(&self) -> bool {
+        self.retired.load(Ordering::SeqCst)
     }
 
     /// The port the record states, or the default for every way it states none.
@@ -462,12 +536,11 @@ fn probing() -> reqwest::Client {
 pub(crate) mod fixtures {
     use std::io::{Read as _, Write as _};
     use std::net::TcpListener;
-    use std::os::unix::fs::PermissionsExt as _;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
     use crate::record::fixtures::write_record;
-    use crate::testing::{dead_port, directory};
+    use crate::testing::{dead_port, directory, script_file};
 
     /// How long a test gives a stub that does serve. Generous rather than
     /// tight: a wait that a daemon answers ends on the answer, so the budget
@@ -529,12 +602,7 @@ pub(crate) mod fixtures {
 
     /// A stand-in for the daemon, written where a test can spawn it.
     pub(crate) fn stub(directory: &Path, body: &str) -> PathBuf {
-        let path = directory.join(DAEMON_EXECUTABLE);
-
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-        path
+        script_file(&directory.join(DAEMON_EXECUTABLE), body)
     }
 
     /// The line a stub writes to make a listener the test already holds count
@@ -1174,6 +1242,186 @@ mod tests {
 
         assert_eq!((first, second), (Some(port), Some(port)));
         assert_eq!(std::fs::read_to_string(&runs).unwrap().lines().count(), 1);
+    }
+
+    #[test]
+    fn a_retired_supervisor_starts_nothing() {
+        let directory = directory("retired");
+        let runs = directory.join("runs");
+        let supervisor = supervising(
+            &directory,
+            Some(stub(&directory, &format!("echo ran >> {}", runs.display()))),
+        );
+        write_record(supervisor.record.as_deref().unwrap(), no_daemon());
+
+        block_on(supervisor.retire());
+
+        assert_eq!(block_on(supervisor.ensure_serving()), None);
+        assert!(!runs.exists());
+    }
+
+    #[test]
+    fn retire_waits_for_a_start_attempt_in_progress() {
+        let directory = directory("retire-waits");
+        let port = answering(health());
+        let started = directory.join("started");
+        let supervisor = supervising(&directory, None);
+        let record = supervisor.record.clone().unwrap();
+        write_record(&record, no_daemon());
+        let supervisor = std::sync::Arc::new(Supervisor {
+            executable: Some(stub(
+                &directory,
+                &format!(
+                    "echo ran >> {}\nsleep 0.5\n{}",
+                    started.display(),
+                    records(&record, port)
+                ),
+            )),
+            ..supervisor
+        });
+
+        let late = block_on(async {
+            let attempt = tauri::async_runtime::spawn({
+                let supervisor = std::sync::Arc::clone(&supervisor);
+
+                async move { supervisor.ensure_serving().await }
+            });
+
+            while !started.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+
+            let retiring = tauri::async_runtime::spawn({
+                let supervisor = std::sync::Arc::clone(&supervisor);
+
+                async move { supervisor.retire().await }
+            });
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            // It passes the entry check, and then queues behind `retire`.
+            let late = supervisor.ensure_serving().await;
+
+            retiring.await.unwrap();
+            // The stub writes the record only after its sleep, so a retire
+            // that did not wait would return before it.
+            assert_eq!(read_port(&record), port);
+            assert_eq!(attempt.await.unwrap(), Some(port));
+
+            late
+        });
+
+        assert_eq!(late, None);
+        assert_eq!(
+            std::fs::read_to_string(&started).unwrap().lines().count(),
+            1
+        );
+    }
+
+    /// A daemon that answers only after its attempt ran out of budget, retired
+    /// while it still starts. Answers how long `retire` took.
+    fn retire_a_late_daemon(test: &str, prelude: &str, grace: Duration) -> Duration {
+        let directory = directory(test);
+        let record = directory.join("daemon.json");
+        let pidfile = directory.join("pid");
+        let supervisor = Supervisor {
+            budget: Duration::from_millis(100),
+            grace,
+            ..supervising(
+                &directory,
+                Some(stub(
+                    &directory,
+                    &format!(
+                        "{prelude}\nprintf '%s' \"$$\" > {}\nsleep 30\n{}",
+                        pidfile.display(),
+                        records(&record, answering(health()))
+                    ),
+                )),
+            )
+        };
+        write_record(&record, no_daemon());
+
+        assert_eq!(block_on(supervisor.ensure_serving()), None);
+
+        while !std::fs::read_to_string(&pidfile).is_ok_and(|pid| !pid.is_empty()) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let pid: libc::pid_t = std::fs::read_to_string(&pidfile).unwrap().parse().unwrap();
+
+        let started = Instant::now();
+        block_on(supervisor.retire());
+        let took = started.elapsed();
+
+        // Safety: signal 0 only asks whether the pid names a process.
+        assert_eq!(
+            unsafe { libc::kill(pid, 0) },
+            -1,
+            "the late daemon still runs"
+        );
+
+        took
+    }
+
+    #[test]
+    fn retire_ends_a_child_that_ran_past_the_budget() {
+        let took = retire_a_late_daemon("retire-ends-late", "", TEST_GIVE_UP);
+
+        assert!(
+            took < Duration::from_secs(1),
+            "SIGTERM was not enough: {took:?}"
+        );
+    }
+
+    #[test]
+    fn retire_kills_a_child_that_ignores_sigterm() {
+        retire_a_late_daemon(
+            "retire-kills-late",
+            "trap '' TERM",
+            Duration::from_millis(100),
+        );
+    }
+
+    #[test]
+    fn a_child_whose_end_was_collected_is_not_signalled() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .unwrap();
+
+        while matches!(child.try_wait(), Ok(None)) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(!terminate(&mut child));
+    }
+
+    #[test]
+    fn a_child_that_runs_is_sent_sigterm() {
+        let mut child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+
+        assert!(terminate(&mut child));
+
+        let status = child.wait().unwrap();
+        assert_eq!(
+            std::os::unix::process::ExitStatusExt::signal(&status),
+            Some(libc::SIGTERM)
+        );
+    }
+
+    #[test]
+    fn retire_ends_quickly_when_the_child_already_ended() {
+        let directory = directory("retire-ended");
+        let supervisor = Supervisor {
+            budget: Duration::from_millis(200),
+            ..supervising(&directory, Some(stub(&directory, "exit 0")))
+        };
+        write_record(supervisor.record.as_deref().unwrap(), no_daemon());
+
+        assert_eq!(block_on(supervisor.ensure_serving()), None);
+
+        let started = Instant::now();
+        block_on(supervisor.retire());
+
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]

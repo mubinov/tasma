@@ -425,4 +425,9 @@ describe("the CLI the app ships", () => {
     expect(config.bundle.externalBin).toContain(`binaries/${CLI_EXECUTABLE}`);
     expect(compiledOutputs).toContain(`${CRATE_DIRECTORY}/binaries/${CLI_EXECUTABLE}-$triple`);
   });
+
+  // The link in /usr/local/bin points at this name inside the bundle.
+  it("is linked under the name the bundle declares", () => {
+    expect(rustConstant("command.rs", "CLI_EXECUTABLE")).toBe(CLI_EXECUTABLE);
+  });
 });
