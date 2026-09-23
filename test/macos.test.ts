@@ -6,7 +6,7 @@ import { DAEMON_NAME, DAEMON_RECORD_FILE, DEFAULT_DAEMON_PORT } from "@tasma/pro
 import { resolveConfig } from "vite";
 import { describe, expect, it } from "vitest";
 import { PROBE_BODY_LIMIT, PROBE_TIMEOUT_MS } from "../apps/cli/src/daemon/record.js";
-import { START_BUDGET_MS, TICK_MS } from "../apps/cli/src/daemon/start.js";
+import { DAEMON_BIN, START_BUDGET_MS, TICK_MS } from "../apps/cli/src/daemon/start.js";
 import { DAEMON_PATH_PREFIX } from "../apps/web/src/api/paths.js";
 import { readManifest, workspaceRoot } from "../workspace.js";
 
@@ -89,10 +89,16 @@ const config = JSON.parse(readFileSync(join(CRATE, "tauri.conf.json"), "utf8")) 
   bundle: { externalBin: string[] };
 };
 
-/** The script that compiles the daemon into the executable the app ships. */
-const DAEMON_BINARY_SCRIPT = "scripts/daemon-binary.sh";
+/** The script that compiles the daemon and the CLI into the executables the app ships. */
+const APP_BINARIES_SCRIPT = "scripts/app-binaries.sh";
 
-const daemonBinaryScript = readFileSync(join(workspaceRoot, DAEMON_BINARY_SCRIPT), "utf8");
+const appBinariesScript = readFileSync(join(workspaceRoot, APP_BINARIES_SCRIPT), "utf8");
+
+/** The outputs the script's `compile` call sites write, in order. */
+const compiledOutputs = [...appBinariesScript.matchAll(/^compile \S+ "([^"]+)"$/gm)].map(([, output = ""]) => output);
+
+/** The CLI's file in the bundle. `tasma` would be the app's own `Tasma` on a case-insensitive disk. */
+const CLI_EXECUTABLE = "tasma-cli";
 
 describe("the macOS shell", () => {
   it("dials the port the daemon binds", () => {
@@ -344,17 +350,17 @@ describe("the macOS commands", () => {
   });
 
   // tauri_build refuses a declared external binary that is absent, so without
-  // the compiled daemon the crate does not build at all — `cargo test` included.
+  // the compiled binaries the crate does not build at all — `cargo test` included.
   // Before, not merely inside: the script placed after cargo or the Tauri CLI
   // would run once the build it feeds has already failed.
-  it("compile the daemon before anything that builds the crate", () => {
+  it("compile the daemon and the CLI before anything that builds the crate", () => {
     for (const name of ["app:dev", "app:start", "app:test", "app:build"]) {
       const command = scripts[name] ?? "";
       const builds = /\b(?:cargo|tauri)\b/.exec(command)?.index ?? -1;
 
-      expect(command, `${name} must compile the daemon`).toContain(DAEMON_BINARY_SCRIPT);
+      expect(command, `${name} must compile the binaries`).toContain(APP_BINARIES_SCRIPT);
       expect(builds, `${name} must build the crate`).toBeGreaterThan(-1);
-      expect(command.indexOf(DAEMON_BINARY_SCRIPT), `${name} must compile the daemon first`).toBeLessThan(builds);
+      expect(command.indexOf(APP_BINARIES_SCRIPT), `${name} must compile the binaries first`).toBeLessThan(builds);
     }
   });
 });
@@ -363,11 +369,12 @@ describe("the daemon the app ships", () => {
   const name = rustConstant("supervisor.rs", "DAEMON_EXECUTABLE");
 
   // Tauri appends the target triple to what the configuration names and strips
-  // it again when it places the file, so the name is spelled in three places
+  // it again when it places the file, so the name is spelled in four places
   // and a mismatch bundles cleanly and then finds no daemon at runtime.
-  it("carries one name through the build, the bundle and the supervisor", () => {
+  it("carries one name through the build, the bundle, the supervisor and the CLI", () => {
     expect(config.bundle.externalBin).toContain(`binaries/${name}`);
-    expect(daemonBinaryScript).toContain(`${CRATE_DIRECTORY}/binaries/${name}-$triple`);
+    expect(compiledOutputs).toContain(`${CRATE_DIRECTORY}/binaries/${name}-$triple`);
+    expect(DAEMON_BIN).toBe(name);
   });
 
   it("is told from anything else holding the port by the name it answers with", () => {
@@ -385,23 +392,37 @@ describe("the daemon the app ships", () => {
 
   // The script's own header holds why.
   it("compiles to a scratch file that differs from the output by directory alone", () => {
-    const shellVariable = (variable: string) => {
-      const [, stated] = new RegExp(String.raw`^${variable}="([^"]+)"$`, "m").exec(daemonBinaryScript) ?? [];
+    const [, directory] = /^\s*scratch="([^"$]+)\/\$\(basename "\$2"\)"$/m.exec(appBinariesScript) ?? [];
 
-      if (stated === undefined) {
-        throw new Error(`${DAEMON_BINARY_SCRIPT} states no ${variable}`);
-      }
+    if (directory === undefined) {
+      throw new Error(`${APP_BINARIES_SCRIPT} derives no scratch file from the output's name`);
+    }
 
-      return stated;
-    };
-    const [out, scratch] = [shellVariable("out"), shellVariable("scratch")];
+    expect(compiledOutputs).not.toEqual([]);
 
-    expect(basename(scratch), "the scratch file must share the output's name").toBe(basename(out));
-    expect(dirname(scratch)).not.toBe(dirname(out));
+    for (const output of compiledOutputs) {
+      expect(directory, output).not.toBe(dirname(output));
+    }
+  });
+
+  // The script's own comment holds why.
+  it("compiles executables that read no bunfig.toml or .env from the working directory", () => {
+    const builds = [...appBinariesScript.matchAll(/^\s*bun build .*$/gm)].map(([line]) => line);
+
+    expect(builds).toHaveLength(1);
+    expect(builds[0]).toContain("--no-compile-autoload-bunfig");
+    expect(builds[0]).toContain("--no-compile-autoload-dotenv");
   });
 
   // The repository invokes its scripts by path, never through an interpreter.
   it("is compiled by a script that is executable", () => {
-    expect(statSync(join(workspaceRoot, DAEMON_BINARY_SCRIPT)).mode & 0o111).toBeGreaterThan(0);
+    expect(statSync(join(workspaceRoot, APP_BINARIES_SCRIPT)).mode & 0o111).toBeGreaterThan(0);
+  });
+});
+
+describe("the CLI the app ships", () => {
+  it("is compiled to the name the bundle declares", () => {
+    expect(config.bundle.externalBin).toContain(`binaries/${CLI_EXECUTABLE}`);
+    expect(compiledOutputs).toContain(`${CRATE_DIRECTORY}/binaries/${CLI_EXECUTABLE}-$triple`);
   });
 });

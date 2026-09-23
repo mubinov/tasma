@@ -46,12 +46,12 @@ Rules in this chapter are for the `apps/macos` shell alone.
 - The crate is deliberately not a pnpm workspace package. When
   `test/workspace.test.ts` fails naming `apps/macos`, delete the `package.json`
   someone added — never add the scripts the failure asks for.
-- **bun is a build requirement of the crate, as Rust is.** `tauri_build` refuses
-  a declared external binary that is absent, so with no compiled daemon the
-  crate does not compile at all — `cargo test` included. `app:dev`,
-  `app:start`, `app:test` and `app:build` each run `scripts/daemon-binary.sh`
-  first; a bare `cargo` command does not.
-- Never run `scripts/daemon-binary.sh` through `scripts/dev-home.sh`. Its header
+- **bun is a build requirement of the crate, as Rust is.** bun compiles the
+  daemon and the CLI, and `tauri_build` refuses a declared external binary that
+  is absent, so with no compiled binaries the crate does not compile at all —
+  `cargo test` included. `app:dev`, `app:start`, `app:test` and `app:build`
+  each run `scripts/app-binaries.sh` first; a bare `cargo` command does not.
+- Never run `scripts/app-binaries.sh` through `scripts/dev-home.sh`. Its header
   holds why.
 - The script's scratch file differs from the output by directory alone. Never
   give it a name of its own; `test/macos.test.ts` pins this and the script's

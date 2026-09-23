@@ -5,8 +5,8 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
 import { daemonUrl, readRecord, recordPath } from "../../src/daemon/record.js";
-import { daemonExecutable, OUTPUT_FILE, startDaemon } from "../../src/daemon/start.js";
-import type { StartOutcome } from "../../src/daemon/start.js";
+import { daemonExecutable, daemonLaunch, OUTPUT_FILE, startDaemon } from "../../src/daemon/start.js";
+import type { Launch, StartOutcome } from "../../src/daemon/start.js";
 import { fakeDaemon, seedRecord, startServer, tasmaHealth, treeHome, UNUSED_PID } from "../helpers.js";
 
 /** Long enough for a spawn to land on a cold machine, for the cases that end on the daemon rather than the clock. */
@@ -23,6 +23,11 @@ function failureOf(outcome: StartOutcome): string {
 /** The captured output, in the tree of the test rather than the shared temporary directory. */
 function outputIn(home: string): string {
   return join(home, OUTPUT_FILE);
+}
+
+/** A launch that runs the script under the runtime of the test. */
+function underNode(script: string): () => Launch {
+  return () => ({ command: process.execPath, args: [script] });
 }
 
 /** A package directory holding the manifest text it is given, as module resolution would answer it. */
@@ -43,7 +48,7 @@ describe("startDaemon", () => {
 
     writeFileSync(output, "older\n");
 
-    const outcome = await startDaemon({ home, executable: () => executable, output, budgetMs: ANSWER_BUDGET_MS });
+    const outcome = await startDaemon({ home, launch: underNode(executable), output, budgetMs: ANSWER_BUDGET_MS });
     const record = await readRecord(recordPath(home));
 
     expect(record).toBeDefined();
@@ -59,7 +64,7 @@ describe("startDaemon", () => {
 
     const outcome = await startDaemon({
       home,
-      executable: () => executable,
+      launch: underNode(executable),
       output: outputIn(home),
       budgetMs: ANSWER_BUDGET_MS,
     });
@@ -76,7 +81,7 @@ describe("startDaemon", () => {
 
       const outcome = await startDaemon({
         home,
-        executable: () => executable,
+        launch: underNode(executable),
         output: outputIn(home),
         budgetMs: ANSWER_BUDGET_MS,
       });
@@ -93,7 +98,7 @@ describe("startDaemon", () => {
 
     const outcome = await startDaemon({
       home,
-      executable: () => executable,
+      launch: underNode(executable),
       output: outputIn(home),
       budgetMs: ANSWER_BUDGET_MS,
     });
@@ -132,7 +137,7 @@ describe("startDaemon", () => {
     try {
       const outcome = await startDaemon({
         home,
-        executable: () => executable,
+        launch: underNode(executable),
         output: outputIn(home),
         budgetMs: ANSWER_BUDGET_MS,
       });
@@ -159,7 +164,7 @@ describe("startDaemon", () => {
 
       const outcome = await startDaemon({
         home,
-        executable: () => executable,
+        launch: underNode(executable),
         output: outputIn(home),
         budgetMs: ANSWER_BUDGET_MS,
       });
@@ -182,7 +187,7 @@ describe("startDaemon", () => {
     try {
       const outcome = await startDaemon({
         home,
-        executable: () => executable,
+        launch: underNode(executable),
         output: outputIn(home),
         budgetMs: ANSWER_BUDGET_MS,
       });
@@ -205,7 +210,7 @@ describe("startDaemon", () => {
     execFileSync("mkfifo", [fifo]);
 
     for (const output of [fifo, "/dev/null"]) {
-      expect(await startDaemon({ home, executable: () => "unused", output, budgetMs: 500 }), output).toEqual({
+      expect(await startDaemon({ home, launch: underNode("unused"), output, budgetMs: 500 }), output).toEqual({
         failure: `the daemon output file could not be opened: ${output}`,
       });
     }
@@ -222,7 +227,7 @@ describe("startDaemon", () => {
     writeFileSync(owned, "notes\n");
     linkSync(owned, output);
 
-    expect(await startDaemon({ home, executable: () => "unused", output, budgetMs: 500 })).toEqual({
+    expect(await startDaemon({ home, launch: underNode("unused"), output, budgetMs: 500 })).toEqual({
       failure: `the daemon output file could not be opened: ${output}`,
     });
     expect(readFileSync(owned, "utf8")).toBe("notes\n");
@@ -236,7 +241,7 @@ describe("startDaemon", () => {
 
     const outcome = await startDaemon({
       home,
-      executable: () => executable,
+      launch: underNode(executable),
       output: outputIn(home),
       budgetMs: 1500,
     });
@@ -249,7 +254,7 @@ describe("startDaemon", () => {
     const home = treeHome();
     const output = join(home, "no-such-directory", OUTPUT_FILE);
 
-    expect(await startDaemon({ home, executable: () => "unused", output, budgetMs: 500 })).toEqual({
+    expect(await startDaemon({ home, launch: underNode("unused"), output, budgetMs: 500 })).toEqual({
       failure: `the daemon output file could not be opened: ${output}`,
     });
   });
@@ -263,7 +268,7 @@ describe("startDaemon", () => {
     ] as const) {
       const outcome = await startDaemon({
         home,
-        executable: () => {
+        launch: () => {
           // A throw that is not an Error is the second half of the case.
           throw thrown;
         },
@@ -283,7 +288,7 @@ describe("startDaemon", () => {
     const outcome = await startDaemon({
       // A null byte in an environment value is what a spawn refuses before it forks.
       home: `${home}\u0000`,
-      executable: () => "unused",
+      launch: underNode("unused"),
       output: outputIn(home),
       budgetMs: 500,
     });
@@ -293,22 +298,75 @@ describe("startDaemon", () => {
 
   it("reports a spawn that failed after it was accepted", async () => {
     const home = treeHome();
-    const runtime = process.execPath;
 
-    process.execPath = join(home, "no-such-node");
+    const outcome = await startDaemon({
+      home,
+      launch: () => ({ command: join(home, "no-such-daemon"), args: [] }),
+      output: outputIn(home),
+      budgetMs: 2000,
+    });
 
-    try {
-      const outcome = await startDaemon({
-        home,
-        executable: () => "unused",
-        output: outputIn(home),
-        budgetMs: 2000,
-      });
+    expect(failureOf(outcome)).toContain("tasma-daemon could not be started: ");
+  });
+});
 
-      expect(failureOf(outcome)).toContain("tasma-daemon could not be started: ");
-    } finally {
-      process.execPath = runtime;
+describe("daemonLaunch", () => {
+  /** A resolver that fails the test when it is called. */
+  const noResolve = (): string => {
+    throw new Error("the package resolver was called");
+  };
+
+  it("runs the daemon script of this install under the runtime of the CLI", () => {
+    const home = treeHome();
+    const directory = join(home, "daemon-package");
+    const resolve = packageAt(home, JSON.stringify({ bin: { "tasma-daemon": "./dist/tasma-daemon.js" } }));
+
+    mkdirSync(join(directory, "dist"), { recursive: true });
+    writeFileSync(join(directory, "dist", "tasma-daemon.js"), "");
+
+    expect(daemonLaunch({ bunVersion: undefined, execPath: "/runtime/node", exists: () => false, resolve })).toEqual({
+      command: "/runtime/node",
+      args: [join(directory, "dist", "tasma-daemon.js")],
+    });
+  });
+
+  it("runs the daemon executable beside a compiled CLI, with no arguments", () => {
+    const daemon = join("/bundle", "MacOS", "tasma-daemon");
+
+    expect(daemonLaunch({
+      bunVersion: "1.3.14",
+      execPath: join("/bundle", "MacOS", "tasma-cli"),
+      exists: (path) => path === daemon,
+      resolve: noResolve,
+    })).toEqual({ command: daemon, args: [] });
+  });
+
+  it("names the missing daemon executable beside a compiled CLI", () => {
+    expect(() => daemonLaunch({
+      bunVersion: "1.3.14",
+      execPath: join("/alone", "tasma-cli"),
+      exists: () => false,
+      resolve: noResolve,
+    })).toThrow(`no daemon executable at ${join("/alone", "tasma-daemon")}`);
+  });
+
+  it("never resolves the daemon package in a compiled CLI", () => {
+    const calls: string[] = [];
+    const resolve = (specifier: string): string => {
+      calls.push(specifier);
+
+      return noResolve();
+    };
+
+    for (const exists of [() => true, () => false]) {
+      try {
+        daemonLaunch({ bunVersion: "1.3.14", execPath: "/bundle/tasma-cli", exists, resolve });
+      } catch {
+        // The missing executable is the second half of the case.
+      }
     }
+
+    expect(calls).toEqual([]);
   });
 });
 

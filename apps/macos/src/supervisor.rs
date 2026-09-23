@@ -26,7 +26,7 @@ use crate::log;
 use crate::record::{DEFAULT_PORT, daemon_url, read_port, record_path};
 
 /// The daemon's executable, as Tauri places it beside the application's own.
-/// Held to `bundle.externalBin` and to the file `scripts/daemon-binary.sh`
+/// Held to `bundle.externalBin` and to the file `scripts/app-binaries.sh`
 /// writes by a repo test, because a mismatch bundles cleanly and finds no
 /// daemon at runtime.
 const DAEMON_EXECUTABLE: &str = "tasma-daemon";

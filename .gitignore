@@ -34,6 +34,6 @@ id_ed25519
 apps/macos/target/
 apps/macos/gen/
 
-# The compiled daemon the application ships beside its own executable, built by
-# scripts/daemon-binary.sh and 64 MB per architecture.
+# The compiled daemon and the compiled CLI the application ships beside its own
+# executable, built by scripts/app-binaries.sh and about 128 MB per architecture.
 apps/macos/binaries/

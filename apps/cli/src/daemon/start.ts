@@ -1,8 +1,9 @@
 // Starting a daemon for this tree: where its executable is, where its output
 // goes, and how long the CLI waits for it to answer.
 //
-// This is the one module below the entry point that reads `process.env` and
-// `process.execPath`, because a spawn hands the process's own environment and
+// This is the one module below the entry point that reads `process.env`,
+// `process.execPath` and `process.versions`, because the runtime decides how
+// the daemon is launched and a spawn hands the process's own environment and
 // runtime to the child.
 
 import { spawn } from "node:child_process";
@@ -45,14 +46,26 @@ const OUTPUT_TAIL_LIMIT = 4096;
 
 /** The package that carries the daemon, and the executable it declares. */
 const DAEMON_PACKAGE = "@tasma/daemon";
-const DAEMON_BIN = "tasma-daemon";
+export const DAEMON_BIN = "tasma-daemon";
 
 export type StartOutcome = { url: string } | { failure: string };
 
+/** The command that starts a daemon, and its arguments. */
+export type Launch = { command: string; args: string[] };
+
+/** What the choice of a launch reads from the running process. */
+export type LaunchHost = {
+  /** `process.versions.bun`: set under any bun runtime, compiled or not, and unset under Node. */
+  bunVersion: string | undefined;
+  execPath: string;
+  exists: (path: string) => boolean;
+  resolve: (specifier: string) => string;
+};
+
 export type StartOptions = {
   home: string;
-  /** Where the daemon executable is. A parameter for the tests alone. */
-  executable?: () => string;
+  /** How the daemon is started. A parameter for the tests alone. */
+  launch?: () => Launch;
   output?: string;
   budgetMs?: number;
 };
@@ -99,6 +112,33 @@ export function daemonExecutable(resolve: (specifier: string) => string = (s) =>
   return executable;
 }
 
+/**
+ * How the daemon is started: its script under the CLI's own runtime, or, for a
+ * compiled CLI, the daemon executable beside it.
+ *
+ * A compiled CLI never resolves the package: inside a checkout it finds the
+ * daemon's script, and `execPath` is the CLI itself, which would start the CLI
+ * again.
+ *
+ * `host` is a parameter for the tests alone.
+ */
+export function daemonLaunch(host: LaunchHost = {
+  bunVersion: process.versions.bun,
+  execPath: process.execPath,
+  exists: existsSync,
+  resolve: (s) => import.meta.resolve(s),
+}): Launch {
+  if (host.bunVersion === undefined) return { command: host.execPath, args: [daemonExecutable(host.resolve)] };
+
+  const executable = join(dirname(host.execPath), DAEMON_BIN);
+
+  if (!host.exists(executable)) {
+    throw new Error(`no daemon executable at ${printable(executable)}`);
+  }
+
+  return { command: executable, args: [] };
+}
+
 /** Holds for one tick of a wait. Shared with the wait `daemon stop` runs. */
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -107,7 +147,7 @@ export function delay(ms: number): Promise<void> {
 /**
  * The text of a throw. Unlike `errorText`, a throw that is not an `Error` is
  * rendered rather than named: what is thrown here comes from a spawn or a
- * caller's own `executable`, so its own text is the only statement of the fault.
+ * caller's own `launch`, so its own text is the only statement of the fault.
  */
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -186,10 +226,10 @@ export async function startDaemon(options: StartOptions): Promise<StartOutcome> 
   const budgetMs = options.budgetMs ?? START_BUDGET_MS;
   const output = options.output ?? join(tmpdir(), OUTPUT_FILE);
 
-  let executable: string;
+  let launch: Launch;
 
   try {
-    executable = (options.executable ?? daemonExecutable)();
+    launch = (options.launch ?? daemonLaunch)();
   } catch (error) {
     return { failure: messageOf(error) };
   }
@@ -234,7 +274,7 @@ export async function startDaemon(options: StartOptions): Promise<StartOutcome> 
   const child: { ended?: Ended; failure?: string } = {};
 
   try {
-    const process_ = spawn(process.execPath, [executable], {
+    const process_ = spawn(launch.command, launch.args, {
       detached: true,
       stdio: ["ignore", handle.fd, handle.fd],
       env: { ...process.env, HOME: home },

@@ -29,7 +29,7 @@ const SHORT_BUDGET_MS = 300;
 async function runningIn(home: string, scenario = "serves"): Promise<string> {
   const outcome = await startDaemon({
     home,
-    executable: () => fakeDaemon(home, scenario),
+    launch: () => ({ command: process.execPath, args: [fakeDaemon(home, scenario)] }),
     output: join(home, OUTPUT_FILE),
     budgetMs: 8000,
   });

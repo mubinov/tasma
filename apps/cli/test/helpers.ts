@@ -249,8 +249,8 @@ export function seedRecord(home: string, content: DaemonRecord | string): string
 export const UNUSED_PID = 2_147_483_647;
 
 /**
- * The stand-in daemon, set to run one scenario in this home, as the path a
- * `startDaemon` executable answers.
+ * The stand-in daemon, set to run one scenario in this home, as the script a
+ * `startDaemon` `launch` runs.
  *
  * The fake is ended with the test. Registered after `treeHome`, so it runs
  * before the home is removed and can still read the record naming the process.
