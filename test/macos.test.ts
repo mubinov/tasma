@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { expandRoot } from "@tasma/engine";
+import { runInNewContext } from "node:vm";
+import { expandRoot, TAG_RULE } from "@tasma/engine";
 import { DAEMON_NAME, DAEMON_RECORD_FILE, DEFAULT_DAEMON_PORT } from "@tasma/protocol";
 import { resolveConfig } from "vite";
 import { describe, expect, it } from "vitest";
@@ -59,6 +60,30 @@ function rustSize(file: string, name: string): number {
   return factors.reduce((product, factor) => product * factor, 1);
 }
 
+/** The bounds of an inclusive range the crate states, written there as two literals. */
+function rustRange(file: string, name: string): [number, number] {
+  const stated = rustConstant(file, name);
+  const [, low, high] = /^(\d+)\.\.=(\d+)$/.exec(stated) ?? [];
+
+  if (low === undefined || high === undefined) {
+    throw new Error(`apps/macos/src/${file} states ${name} as ${stated}, which is no inclusive range of literals`);
+  }
+
+  return [Number(low), Number(high)];
+}
+
+/** The text of a raw string literal the crate states. */
+function rustRawString(file: string, name: string): string {
+  const source = readFileSync(join(CRATE, "src", file), "utf8");
+  const [, stated] = new RegExp(String.raw`const ${name}: &str = r#"([\s\S]*?)"#;`).exec(source) ?? [];
+
+  if (stated === undefined) {
+    throw new Error(`apps/macos/src/${file} states no raw string ${name}`);
+  }
+
+  return stated;
+}
+
 const config = JSON.parse(readFileSync(join(CRATE, "tauri.conf.json"), "utf8")) as {
   build: { devUrl: string };
   bundle: { externalBin: string[] };
@@ -88,6 +113,42 @@ describe("the macOS shell", () => {
     expect(rustConstant("protocol.rs", "PREFIX")).toBe(DAEMON_PATH_PREFIX);
   });
 
+  // macOS hands the application a link only under a scheme the bundle declares.
+  it("declares the scheme it reads a link under", () => {
+    const plist = readFileSync(join(CRATE, "Info.plist"), "utf8");
+    const [, declared = ""] = /<key>CFBundleURLSchemes<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(plist) ?? [];
+    const schemes = [...declared.matchAll(/<string>([^<]*)<\/string>/g)].map(([, scheme]) => scheme);
+
+    expect(schemes).toEqual([rustConstant("main.rs", "LINK_SCHEME")]);
+  });
+
+  it("reads the tag of a link under the length a project is created under", () => {
+    const [shortest, longest] = rustRange("deeplink.rs", "TAG_LENGTH");
+
+    expect(TAG_RULE.test("A".repeat(shortest))).toBe(true);
+    expect(TAG_RULE.test("A".repeat(shortest - 1))).toBe(false);
+    expect(TAG_RULE.test("A".repeat(longest))).toBe(true);
+    expect(TAG_RULE.test("A".repeat(longest + 1))).toBe(false);
+  });
+
+  it("reads the tag of a link under the alphabet a project is created under", () => {
+    const [shortest] = rustRange("deeplink.rs", "TAG_LENGTH");
+    const rest = (character: string) => character.repeat(shortest - 1);
+
+    expect(TAG_RULE.test(`A${rest("1")}`)).toBe(true);
+    expect(TAG_RULE.test(`1${rest("A")}`)).toBe(false);
+    expect(TAG_RULE.test(`a${rest("A")}`)).toBe(false);
+    expect(TAG_RULE.test(`${rest("A")}a`)).toBe(false);
+    expect(TAG_RULE.test(`${rest("A")}_`)).toBe(false);
+    expect(TAG_RULE.test(`${rest("A")}À`)).toBe(false);
+  });
+
+  it("moves the board to the route the board declares for a task", () => {
+    const routes = readFileSync(join(workspaceRoot, "apps", "web", "src", "routes.tsx"), "utf8");
+
+    expect(routes).toContain(`path: "${rustConstant("deeplink.rs", "TASK_ROUTE")}"`);
+  });
+
   // The Tauri CLI probes this address and the window opens it, so a dev server
   // that moved would leave the app waiting on a port nothing binds. The literal
   // rather than localhost, for the reason @tasma/protocol states.
@@ -95,6 +156,144 @@ describe("the macOS shell", () => {
     const web = await resolveConfig({ root: join(workspaceRoot, "apps", "web"), logLevel: "silent" }, "serve");
 
     expect(config.build.devUrl).toBe(`http://127.0.0.1:${web.server.port}`);
+  });
+});
+
+/** A link's route, as `route()` in `deeplink.rs` writes it. */
+const LINKED_ROUTE = "/tasks/SAGA/SAGA-1";
+
+type Board = {
+  /** What the script did to the document, in order. */
+  calls: string[];
+  /** Mutates the document, with the board's `<main>` in it or not. */
+  mutate: (mounted: boolean) => void;
+  /** Runs every timer the script has set. */
+  elapse: () => void;
+  /** How many observers and timers the script still holds. */
+  held: () => number;
+};
+
+/**
+ * Runs the script a link runs, against a document that holds only what the
+ * script reads: `<main>`, the element with focus, the address and its history.
+ */
+function openLink({ mounted = true, hash = "#/", focusOnMain = false } = {}): Board {
+  const calls: string[] = [];
+  const body = {};
+  const main = {
+    blur: () => {
+      calls.push("blur");
+      document.activeElement = body;
+    },
+  };
+  let present = mounted;
+  const document = {
+    activeElement: focusOnMain ? main : body,
+    querySelector: (selector: string) => (selector === "main" && present ? main : null),
+  };
+  const location = { hash };
+  const history = {
+    pushState: (_state: unknown, _unused: string, url: string) => {
+      calls.push(`push ${url}`);
+      location.hash = url;
+    },
+  };
+  const observers = new Set<() => void>();
+  const timers = new Map<number, () => void>();
+  let timersSet = 0;
+
+  class MutationObserver {
+    readonly #callback: () => void;
+
+    constructor(callback: () => void) {
+      this.#callback = callback;
+    }
+
+    observe(): void {
+      observers.add(this.#callback);
+    }
+
+    disconnect(): void {
+      observers.delete(this.#callback);
+    }
+  }
+
+  const setTimeout = (callback: () => void) => {
+    timersSet += 1;
+    timers.set(timersSet, callback);
+
+    return timersSet;
+  };
+  const clearTimeout = (id: number) => timers.delete(id);
+
+  runInNewContext(`(${rustRawString("deeplink.rs", "OPEN_ROUTE")})(${JSON.stringify(LINKED_ROUTE)})`, {
+    document,
+    location,
+    history,
+    MutationObserver,
+    setTimeout,
+    clearTimeout,
+  });
+
+  return {
+    calls,
+    mutate: (mountedNow) => {
+      present = mountedNow;
+      [...observers].forEach((callback) => callback());
+    },
+    elapse: () => [...timers.values()].forEach((callback) => callback()),
+    held: () => observers.size + timers.size,
+  };
+}
+
+describe("the script a link runs in the board", () => {
+  const pushed = `push #${LINKED_ROUTE}`;
+
+  it("moves a board that has mounted at once", () => {
+    const board = openLink();
+
+    expect(board.calls).toEqual([pushed]);
+    expect(board.held()).toBe(0);
+  });
+
+  it("waits for the board to mount before it moves it", () => {
+    const board = openLink({ mounted: false });
+
+    expect(board.calls).toEqual([]);
+
+    board.mutate(false);
+
+    expect(board.calls).toEqual([]);
+
+    board.mutate(true);
+    board.mutate(true);
+
+    expect(board.calls).toEqual([pushed]);
+    expect(board.held()).toBe(0);
+  });
+
+  it("moves a board that never mounts once the wait runs out", () => {
+    const board = openLink({ mounted: false });
+
+    board.elapse();
+
+    expect(board.calls).toEqual([pushed]);
+    expect(board.held()).toBe(0);
+  });
+
+  it("takes focus off <main> before it moves the board", () => {
+    const board = openLink({ hash: "#/tasks/SAGA/SAGA-2", focusOnMain: true });
+
+    expect(board.calls).toEqual(["blur", pushed]);
+  });
+
+  it("leaves focus on <main> when the board already shows the route", () => {
+    expect(openLink({ hash: `#${LINKED_ROUTE}`, focusOnMain: true }).calls).toEqual([pushed]);
+    expect(openLink({ hash: `#${LINKED_ROUTE}?projects=SAGA`, focusOnMain: true }).calls).toEqual([pushed]);
+  });
+
+  it("leaves focus that is not on <main> where it is", () => {
+    expect(openLink({ hash: "#/tasks/SAGA/SAGA-2" }).calls).toEqual([pushed]);
   });
 });
 
@@ -113,7 +312,9 @@ describe("the macOS commands", () => {
   // TAURI_APP_PATH, so the crate's location is spelled two ways and both are
   // read back here.
   it("point the Tauri CLI at the crate", () => {
-    expect(scripts["app:dev"]).toContain(`TAURI_APP_PATH=${CRATE_DIRECTORY}`);
+    for (const name of ["app:dev", "app:build"]) {
+      expect(scripts[name], `${name} must name the crate`).toContain(`TAURI_APP_PATH=${CRATE_DIRECTORY}`);
+    }
   });
 
   // Unset, the window opens the custom scheme instead, and a development run
@@ -147,7 +348,7 @@ describe("the macOS commands", () => {
   // Before, not merely inside: the script placed after cargo or the Tauri CLI
   // would run once the build it feeds has already failed.
   it("compile the daemon before anything that builds the crate", () => {
-    for (const name of ["app:dev", "app:start", "app:test"]) {
+    for (const name of ["app:dev", "app:start", "app:test", "app:build"]) {
       const command = scripts[name] ?? "";
       const builds = /\b(?:cargo|tauri)\b/.exec(command)?.index ?? -1;
 

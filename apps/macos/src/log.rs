@@ -37,8 +37,9 @@ pub(crate) const MARK: &str = "tasma-app:";
 /// to. What it can reach here it can reach anywhere under this home.
 const ROOT: u32 = 0;
 
-/// The most of a quoted string a line carries. What is quoted is a few
-/// characters of version; the ceiling bounds whatever else holds the port.
+/// The most of a quoted string a line carries. What is quoted is the version
+/// that the listener on the port states, or a link that the application
+/// refused; either can be any length. A cut text says so.
 const QUOTED_LIMIT: usize = 64;
 
 /// Where the daemon's output and the application's own lines go, under a home
@@ -71,8 +72,9 @@ pub(crate) fn note(log: Option<&File>, text: &str) {
 /// the two binaries; the shell writes to a file of its own and carries its own.
 pub(crate) fn quoted(text: &str) -> String {
     let mut safe = String::new();
+    let mut characters = text.chars();
 
-    for character in text.chars().take(QUOTED_LIMIT) {
+    for character in characters.by_ref().take(QUOTED_LIMIT) {
         if character == ' ' || character.is_ascii_graphic() {
             safe.push(character);
 
@@ -84,6 +86,10 @@ pub(crate) fn quoted(text: &str) -> String {
         for unit in character.encode_utf16(&mut [0_u16; 2]) {
             safe.push_str(&format!("\\u{unit:04x}"));
         }
+    }
+
+    if characters.next().is_some() {
+        safe.push_str(&format!(" [cut after {QUOTED_LIMIT} characters]"));
     }
 
     safe
@@ -352,7 +358,18 @@ mod tests {
 
     #[test]
     fn a_line_a_listener_states_is_cut_to_the_ceiling() {
-        assert_eq!(quoted(&"9".repeat(QUOTED_LIMIT + 10)).len(), QUOTED_LIMIT);
+        assert_eq!(
+            quoted(&"9".repeat(QUOTED_LIMIT + 10)),
+            format!(
+                "{} [cut after {QUOTED_LIMIT} characters]",
+                "9".repeat(QUOTED_LIMIT)
+            ),
+        );
+    }
+
+    #[test]
+    fn a_line_at_the_ceiling_is_not_cut() {
+        assert_eq!(quoted(&"9".repeat(QUOTED_LIMIT)), "9".repeat(QUOTED_LIMIT));
     }
 
     #[test]

@@ -10,6 +10,7 @@
 //! written as a configuration key instead is read by nothing.
 
 mod daemon;
+mod deeplink;
 mod geometry;
 mod log;
 mod protocol;
@@ -22,8 +23,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use tauri::utils::config::Color;
+use tauri::webview::PageLoadEvent;
 use tauri::{
-    LogicalSize, Manager as _, RunEvent, Theme, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    AppHandle, LogicalSize, Manager as _, RunEvent, Theme, Url, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
 };
 
 /// The window's own origin.
@@ -33,6 +36,10 @@ use tauri::{
 /// document would land in this handler, which serves no such host.
 const SCHEME: &str = "tasma-app";
 const HOST: &str = "localhost";
+
+/// The scheme macOS hands the application a link under. `Info.plist` beside the
+/// configuration registers it, and a repo test holds the two together.
+const LINK_SCHEME: &str = "tasma";
 
 /// The one window, and the label `capabilities/zoom.json` grants against.
 const WINDOW: &str = "main";
@@ -127,6 +134,51 @@ fn background(theme: Option<Theme>) -> Color {
     }
 }
 
+fn push(window: &WebviewWindow, route: &str) {
+    let _ = window.eval(deeplink::push_script(route));
+}
+
+/// Moves the board to the task the last accepted link names, or holds that
+/// route until the document has loaded, and brings the window forward. A
+/// refused link leaves the board where it is and is written to the log, the
+/// only place a bundle's own output can be read.
+fn open_links(app: &AppHandle, delivery: &Mutex<deeplink::Delivery>, urls: &[Url]) {
+    let mut named = None;
+
+    for url in urls {
+        match deeplink::route(url) {
+            Some(route) => named = Some(route),
+            None => {
+                let file = log::open(std::env::home_dir().as_deref()).ok();
+                log::note(
+                    file.as_ref(),
+                    &format!("a link names no task: {}", log::quoted(url.as_str())),
+                );
+            }
+        }
+    }
+
+    let due = named.and_then(|route| {
+        delivery
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .arrive(route)
+    });
+
+    // Opened before the window was built, the route is held for its document.
+    let Some(window) = app.get_webview_window(WINDOW) else {
+        return;
+    };
+
+    if let Some(route) = due {
+        push(&window, &route);
+    }
+
+    // `set_focus` does nothing to a minimized window.
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
 fn main() {
     let daemon = Arc::new(daemon::Daemon::new());
     let startup = Arc::clone(&daemon);
@@ -134,6 +186,8 @@ fn main() {
     // the application exits, and a zoomed window measures nothing.
     let remembered: Arc<Mutex<geometry::Tracker>> = Arc::default();
     let tracked = Arc::clone(&remembered);
+    let delivery: Arc<Mutex<deeplink::Delivery>> = Arc::default();
+    let loading = Arc::clone(&delivery);
 
     tauri::Builder::default()
         // Asynchronous, so a daemon call never holds the main thread.
@@ -180,6 +234,21 @@ fn main() {
                     let _ = window.set_title(&title);
                 })
                 .on_navigation(move |url| may_navigate(url, dev_server.as_ref()))
+                .on_page_load(move |window, payload| {
+                    let mut delivery = loading.lock().unwrap_or_else(PoisonError::into_inner);
+                    let route = match payload.event() {
+                        PageLoadEvent::Started => {
+                            delivery.started();
+                            None
+                        }
+                        PageLoadEvent::Finished => delivery.finished(),
+                    };
+                    drop(delivery);
+
+                    if let Some(route) = route {
+                        push(&window, &route);
+                    }
+                })
                 // Shown below, once it carries the background colour. The
                 // appearance can only be read from a window, and a window shown
                 // before it carries the colour is the white frame this avoids.
@@ -226,8 +295,9 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("the window could not be opened")
-        .run(move |app, event| {
-            if let RunEvent::Exit = event {
+        .run(move |app, event| match event {
+            RunEvent::Opened { urls } => open_links(app, &delivery, &urls),
+            RunEvent::Exit => {
                 let live = app
                     .get_webview_window(WINDOW)
                     .and_then(|window| geometry::of(&window));
@@ -242,6 +312,7 @@ fn main() {
                     eprintln!("tasma: the window geometry could not be saved: {error}");
                 }
             }
+            _ => {}
         });
 }
 

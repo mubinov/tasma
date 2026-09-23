@@ -48,9 +48,9 @@ Rules in this chapter are for the `apps/macos` shell alone.
   someone added — never add the scripts the failure asks for.
 - **bun is a build requirement of the crate, as Rust is.** `tauri_build` refuses
   a declared external binary that is absent, so with no compiled daemon the
-  crate does not compile at all — `cargo test` included. `app:dev`, `app:start`
-  and `app:test` each run `scripts/daemon-binary.sh` first; a bare `cargo`
-  command does not.
+  crate does not compile at all — `cargo test` included. `app:dev`,
+  `app:start`, `app:test` and `app:build` each run `scripts/daemon-binary.sh`
+  first; a bare `cargo` command does not.
 - Never run `scripts/daemon-binary.sh` through `scripts/dev-home.sh`. Its header
   holds why.
 - The script's scratch file differs from the output by directory alone. Never
@@ -64,6 +64,14 @@ Rules in this chapter are for the `apps/macos` shell alone.
 - `app:start` uses `cargo run`, never the Tauri CLI. `tauri dev` always runs
   `beforeDevCommand` and then probes `devUrl`, which collides with the dev
   server's `strictPort`.
+- Never add `--features` to `app:build`. `tauri build` enables
+  `custom-protocol` itself.
+- Under a development `HOME`, start the bundle's inner executable
+  (`Tasma.app/Contents/MacOS/Tasma`), never the bundle through `open` or a link.
+  LaunchServices starts a bundle with the real home.
+- Unregister a bundle before you delete it, or `tasma://` stays registered to
+  it:
+  `/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u <bundle>`.
 - The window is built in Rust. `app.windows` in `tauri.conf.json` is empty, and
   a window property written there is read by nothing.
 - Never set a menu of our own and never call `enable_macos_default_menu(false)`.
