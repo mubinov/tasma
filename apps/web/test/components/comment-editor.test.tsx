@@ -488,6 +488,8 @@ describe("a refused comment save", () => {
     expect(screen.getByText("The title contains \"-->\", which closes the comment marker. Remove it."))
       .toBeTruthy();
     expect(notices().map(({ title }) => title)).toEqual(["Comment #3 of SAGA-3 was not saved"]);
+    expect(notices()[0]?.line).toBe("The daemon refused the write, so nothing changed on disk. Its own words are below. "
+      + "The title contains \"-->\", which closes the comment marker. Remove it.");
   });
 
   it("marks the body for a refusal about the body", async () => {
@@ -563,6 +565,28 @@ describe("the add form", () => {
     expect(document.activeElement).toBe(control("Comment #9 actions"));
     expect(announced()).toContain("Adding the new comment…");
     expect(announced()).toContain("Comment added.");
+  });
+
+  it("opens the page's failure notice for a refused add, and keeps the form", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon([comment(3)], {
+      [`POST ${COMMENTS_PATH}`]: refusalReply(422, { kind: "store", code: "task-not-found", message: "SAGA-3 is gone" }),
+    });
+    await renderWithRouter(PAGE, transport);
+    await openAddForm(user);
+
+    await user.type(newTitle(), "Reviewed");
+    await act(async () => {
+      await user.click(within(screen.getByRole("article", { name: "New comment" }))
+        .getByRole("button", { name: "Add comment" }));
+    });
+    await frame();
+
+    expect(notices()).toMatchObject([{
+      title: "The new comment on SAGA-3 was not added",
+      line: "The daemon refused the write, so nothing changed on disk. Its own words are below.",
+    }]);
+    expect(newTitle().value).toBe("Reviewed");
   });
 
   it("returns the caret to Add comment when the form is cancelled", async () => {

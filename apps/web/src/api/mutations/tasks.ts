@@ -6,7 +6,6 @@ import { useNoticeStore } from "../../store/notices";
 import { daemonKeys, projectQuery, taskQuery, tasksQuery } from "../queries";
 import {
   failureKind,
-  failureLine,
   FAILURE_KEY_PREFIX,
   freshDiagnostics,
   openWarnings,
@@ -16,6 +15,7 @@ import {
   usePendingVariables,
   WriteError,
   type FailureKind,
+  type WriteFailure,
 } from "./notices";
 
 /** What one write of a sequence came back with. */
@@ -24,24 +24,13 @@ type Written = {
   diagnostics: Diagnostic[];
 };
 
-/**
- * Which screen sent the writes, which picks the muted line of the failure
- * notice. Only a page write names a property — the row it changes, e.g.
- * "Status", named in front of that line — so the board cannot set a field that
- * would do nothing.
- */
-type Sender
-  = | { place: "board"; property?: never }
-    | { place: "task page"; property?: string };
-
 export type TaskWrites = {
   /** The task the failure notice is about. The writes need not include it. */
   id: string;
   /** Sent in this order. The first failure stops the rest. */
   writes: readonly TaskWrite[];
-  /** The title of the failure notice, e.g. "PROJ-1 was not moved". */
-  title: string;
-} & Sender;
+  failure: WriteFailure<TaskWriteError>;
+};
 
 export function taskWriteKey(tag: string) {
   return [...daemonKeys.tasks(tag), "write"] as const;
@@ -162,12 +151,12 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
         return;
       }
 
-      const { id, title, place, property } = variables;
+      const { id, failure } = variables;
       openWriteNotice({
         key: `${FAILURE_KEY_PREFIX}${id}`,
         form: "failure",
-        title,
-        line: failureLine({ cause: error.cause, place, completed: error.completed, property }),
+        title: failure.title,
+        line: failure.line(error),
         words: [refusalWords(error)],
       });
 

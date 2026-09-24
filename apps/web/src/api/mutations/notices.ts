@@ -111,63 +111,11 @@ export function titleCorrection(error: unknown): string | undefined {
   return code === "value-contains-arrow" && field === TITLE_FIELD ? TITLE_CORRECTION : undefined;
 }
 
-/** Nothing was written. */
-const WHOLE_FAILURE_LINES: Record<FailureKind, string> = {
-  refused: "The daemon refused the write, and the task is back where it was. Its own words are below.",
-  unanswered: "No daemon answered, so nothing was written.",
-  address: "The daemon did not answer through the address below. Start the daemon there if it is not running. "
-    + "The board shows the task where the daemon holds it after the next read.",
-  unsent: "The write did not start, and the task is back where it was.",
+/** The failure notice of a write, less the daemon's words, which the factory adds. */
+export type WriteFailure<E extends WriteError = WriteError> = {
+  title: string;
+  line: (error: E) => string;
 };
-
-/** A write before the failed one succeeded. */
-const PARTIAL_FAILURE_LINES: Record<FailureKind, string> = {
-  refused: "The daemon refused a write, and the move did not complete. The board shows what the daemon holds. "
-    + "Its own words are below.",
-  unanswered: "The daemon stopped answering, and the move did not complete. "
-    + "The board shows what the daemon holds after the next read.",
-  address: "The daemon did not answer through the address below, and the move did not complete. "
-    + "Start the daemon there if it is not running. The board shows what the daemon holds after the next read.",
-  unsent: "A write did not start, and the move did not complete. The board shows what the daemon holds.",
-};
-
-/** A page write is one write, so it has no partial form. */
-const PAGE_FAILURE_LINES: Record<FailureKind, string> = {
-  refused: "The daemon refused the write, so nothing changed on disk. Its own words are below.",
-  unanswered: "No daemon answered, so nothing was written.",
-  address: "The daemon did not answer through the address below. Start the daemon there if it is not running. "
-    + "The page shows the task as the daemon holds it after the next read.",
-  unsent: "The write did not start, so nothing changed on disk.",
-};
-
-/**
- * The pieces of a failure notice's muted line. Each domain passes what its own
- * variables carry: the board counts the writes of a sequence that landed, the
- * task page names the row a property write changes, and a comment write names
- * neither.
- */
-type FailureLineParts = {
-  cause: unknown;
-  /** Which screen sent the write, which picks the wording. */
-  place: "board" | "task page";
-  /** Board only: the writes of the sequence that succeeded before the failed one. */
-  completed?: number;
-  /** Task page only: the row the write changes, e.g. "Status", named in front of the line. */
-  property?: string;
-};
-
-/** The muted line of a failure notice, with the correction the refusal names where there is one. */
-export function failureLine({ cause, place, completed = 0, property }: FailureLineParts): string {
-  if (place === "board") {
-    return (completed > 0 ? PARTIAL_FAILURE_LINES : WHOLE_FAILURE_LINES)[failureKind(cause)];
-  }
-
-  const named = property === undefined ? "" : `${property}. `;
-  const line = `${named}${PAGE_FAILURE_LINES[failureKind(cause)]}`;
-  const correction = bodyCorrection(cause) ?? titleCorrection(cause);
-
-  return correction === undefined ? line : `${line} ${correction}`;
-}
 
 /**
  * The daemon's own words for a refused write, as its notice prints them. It

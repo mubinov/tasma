@@ -11,6 +11,7 @@ import {
   type PickerRow,
   type PropertyRow,
 } from "./task-properties";
+import { pageFailureLine } from "./write-failure";
 
 export type TaskPropertiesOptions = {
   queryClient: QueryClient;
@@ -57,7 +58,7 @@ export function useTaskProperties(options: TaskPropertiesOptions): TaskPropertie
 
   /** One notice title covers every property, and the row names itself in the muted line. */
   function sendWrites(writes: readonly TaskWrite[], property: string): void {
-    write({ id, writes, title: `${id} was not changed`, place: "task page", property });
+    write({ id, writes, failure: { title: `${id} was not changed`, line: (error) => pageFailureLine(error, property) } });
   }
 
   function send(change: TaskInput, property: string): void {

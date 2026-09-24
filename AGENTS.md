@@ -105,7 +105,7 @@ Rules in this chapter are for the `apps/web` application alone.
 - Selectors return primitives, or use `useShallow`.
 - Server data belongs in the query cache, never in the store.
 - A route's data: `query({ ...options, staleTime: "static" })` in the loader, `useSuspenseQuery` on the same `queryOptions`. Both clients arrive through router context.
-- A write goes through a factory in `src/api/mutations/`, one module per write domain, reaching the outside through `index.ts`. `notices.ts` holds what a second write domain would reuse unchanged, machinery and reader-facing text alike; what a second domain would write its own version of stays in the domain module.
+- A write goes through a factory in `src/api/mutations/`, one module per write domain, reaching the outside through `index.ts`. `notices.ts` holds the machinery a second write domain reuses unchanged, and nothing that names a screen; the notice text of each screen lives in `lib/write-failure.ts`.
 - The board shows a write from the pending mutation variables; never edit the query cache by hand.
 - State that outlives a restart goes through the store's storage adapter and is hydrated in `main.tsx`.
 - Filtering or searching a long list uses `useDeferredValue`.

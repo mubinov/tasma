@@ -5,7 +5,6 @@ import {
   TransportError,
   type Client,
   type Diagnostic,
-  type SerializeErrorCode,
   type Transport,
   type TransportReply,
   type TransportRequest,
@@ -16,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAppQueryClient } from "../../../src/api/client";
 import {
   createRefusal,
+  failureKind,
   openCreateWarnings,
   taskCreateOptions,
   taskDeleteOptions,
@@ -44,6 +44,11 @@ function written(id: string, diagnostics: Diagnostic[] = []): TransportReply {
   return successReply({ id }, diagnostics);
 }
 
+/** A sender's failure, whose line names what the factory handed it. */
+function failureOf(title: string): TaskWrites["failure"] {
+  return { title, line: (error) => `${failureKind(error.cause)} after ${String(error.completed)}` };
+}
+
 /** A move of the last task named, which writes the tasks before it first. */
 function moveOf(first: string, ...others: string[]): TaskWrites {
   const write = (id: string, order: number) => ({ id, change: { status: "Done", order } });
@@ -52,14 +57,13 @@ function moveOf(first: string, ...others: string[]): TaskWrites {
   return {
     id: moved,
     writes: [write(first, 0), ...others.map((id, index) => write(id, index + 1))],
-    title: `${moved} was not moved`,
-    place: "board",
+    failure: failureOf(`${moved} was not moved`),
   };
 }
 
 /** The one write a task page sends: the title and the body of the task it shows. */
 function pageSave(id: string, change: { title?: string; body?: string } = { title: "Renamed" }): TaskWrites {
-  return { id, writes: [{ id, change }], title: `${id} was not saved`, place: "task page" };
+  return { id, writes: [{ id, change }], failure: failureOf(`${id} was not saved`) };
 }
 
 /** The status pick of a task page, which places the card at the top of its new column. */
@@ -67,9 +71,7 @@ function pagePlace(id: string): TaskWrites {
   return {
     id,
     writes: [{ id, change: { status: "Done", order: -1000 } }],
-    title: `${id} was not changed`,
-    place: "task page",
-    property: "Status",
+    failure: failureOf(`${id} was not changed`),
   };
 }
 
@@ -77,8 +79,7 @@ function pagePlace(id: string): TaskWrites {
 const BELOW_ONLY: TaskWrites = {
   id: "NOTE-1",
   writes: [{ id: "NOTE-2", change: { order: 0 } }],
-  title: "NOTE-1 was not moved",
-  place: "board",
+  failure: failureOf("NOTE-1 was not moved"),
 };
 
 const REFUSAL = refusalReply(422, { kind: "store", code: "status-unknown", message: "status \"Gone\" is not configured" });
@@ -368,42 +369,28 @@ describe("the failure notice", () => {
     kind: string;
     reply: TransportReply | null;
     id?: string;
-    line: string;
-    /** The line when a write before the failed one succeeded. */
-    partial: string;
+    /** What `failureKind` names the cause the sender's line is handed. */
+    cause: string;
     words: string;
   }[] = [
     {
       kind: "a refusal",
       reply: REFUSAL,
-      line: "The daemon refused the write, and the task is back where it was. Its own words are below.",
-      partial: "The daemon refused a write, and the move did not complete. The board shows what the daemon holds. "
-        + "Its own words are below.",
+      cause: "refused",
       words: "store/status-unknown · status \"Gone\" is not configured",
     },
-    {
-      kind: "no answer",
-      reply: null,
-      line: "No daemon answered, so nothing was written.",
-      partial: "The daemon stopped answering, and the move did not complete. "
-        + "The board shows what the daemon holds after the next read.",
-      words: DAEMON_URL,
-    },
+    { kind: "no answer", reply: null, cause: "unanswered", words: DAEMON_URL },
     {
       kind: "an answer that is not the daemon's",
       reply: { status: 502 },
-      line: "The daemon did not answer through the address below. Start the daemon there if it is not running. "
-        + "The board shows the task where the daemon holds it after the next read.",
-      partial: "The daemon did not answer through the address below, and the move did not complete. "
-        + "Start the daemon there if it is not running. The board shows what the daemon holds after the next read.",
+      cause: "address",
       words: `${DAEMON_URL} · HTTP 502 · PATCH ${taskPath("NOTE-1")} answered with no envelope`,
     },
     {
       kind: "a write that could not start",
       reply: null,
       id: "..",
-      line: "The write did not start, and the task is back where it was.",
-      partial: "A write did not start, and the move did not complete. The board shows what the daemon holds.",
+      cause: "unsent",
       words: "/projects/{project}/tasks/{id} cannot take \"..\" as the path parameter \"id\": it is not one path component",
     },
   ];
@@ -419,29 +406,31 @@ describe("the failure notice", () => {
       reply === null && request.path === taskPath(id) ? Promise.reject(new Error("connection refused")) : answering(request);
   }
 
-  it.each(FAILURES)("says what happened for $kind, with the given title", async ({ reply, id = "NOTE-1", line, words }) => {
+  it.each(FAILURES)("opens the sender's title and line for $kind, with the daemon's words", async ({
+    reply,
+    id = "NOTE-1",
+    cause,
+    words,
+  }) => {
     const { observer } = setup({}, failing(reply, id));
 
     await expect(observer.mutate(moveOf(id))).rejects.toThrow();
 
     expect(notices()).toMatchObject([
-      { key: `task-write-failure:${id}`, form: "failure", title: `${id} was not moved`, line, words: [words] },
+      { key: `task-write-failure:${id}`, form: "failure", title: `${id} was not moved`, line: `${cause} after 0`, words: [words] },
     ]);
   });
 
-  it.each(FAILURES)("says the move did not complete for $kind after a write that succeeded", async ({
+  it.each(FAILURES)("hands the line the count of the writes that succeeded for $kind", async ({
     reply,
     id = "NOTE-1",
-    partial,
-    words,
+    cause,
   }) => {
     const { observer } = setup({}, failing(reply, id));
 
     await expect(observer.mutate(moveOf("NOTE-2", id))).rejects.toThrow();
 
-    expect(notices()).toMatchObject([
-      { key: `task-write-failure:${id}`, form: "failure", title: `${id} was not moved`, line: partial, words: [words] },
-    ]);
+    expect(notices()).toMatchObject([{ key: `task-write-failure:${id}`, line: `${cause} after 1` }]);
   });
 
   it("is about the task the writes move, whichever task the failed write is to", async () => {
@@ -491,126 +480,10 @@ describe("the failure notice", () => {
     const { observer, requests } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: REFUSAL });
 
     await expect(observer.mutate(moveOf("NOTE-1"))).rejects.toThrow();
-    await observer.mutate({ id: "NOTE-1", writes: [], title: "NOTE-1 was not moved", place: "board" });
+    await observer.mutate({ id: "NOTE-1", writes: [], failure: failureOf("NOTE-1 was not moved") });
 
     expect(writes(requests).map(({ path }) => path)).toEqual([taskPath("NOTE-1")]);
     expect(notices().map(({ key }) => key)).toEqual(["task-write-failure:NOTE-1"]);
-  });
-});
-
-describe("the failure notice of a task page write", () => {
-  const PAGE_FAILURES: { kind: string; reply: TransportReply | null; id?: string; line: string }[] = [
-    {
-      kind: "a refusal",
-      reply: REFUSAL,
-      line: "The daemon refused the write, so nothing changed on disk. Its own words are below.",
-    },
-    { kind: "no answer", reply: null, line: "No daemon answered, so nothing was written." },
-    {
-      kind: "an answer that is not the daemon's",
-      reply: { status: 502 },
-      line: "The daemon did not answer through the address below. Start the daemon there if it is not running. "
-        + "The page shows the task as the daemon holds it after the next read.",
-    },
-    {
-      kind: "a write that could not start",
-      reply: null,
-      id: "..",
-      line: "The write did not start, so nothing changed on disk.",
-    },
-  ];
-
-  function failing(reply: TransportReply | null, id: string): Transport {
-    const { transport: answering } = stubTransport(reply === null ? {} : { [`PATCH ${taskPath(id)}`]: reply });
-
-    return (request) =>
-      reply === null && request.path === taskPath(id) ? Promise.reject(new Error("connection refused")) : answering(request);
-  }
-
-  it.each(PAGE_FAILURES)("says nothing changed on disk for $kind", async ({ reply, id = "NOTE-1", line }) => {
-    const { observer } = setup({}, failing(reply, id));
-
-    await expect(observer.mutate(pageSave(id))).rejects.toThrow();
-
-    expect(notices()).toMatchObject([
-      { key: `task-write-failure:${id}`, form: "failure", title: `${id} was not saved`, line },
-    ]);
-  });
-
-  const BODY_REFUSALS: { code: SerializeErrorCode; message: string; correction: string }[] = [
-    {
-      code: "marker-collision",
-      message: "line 4 would be read as a comment marker",
-      correction: "The body starts a line with a comment marker. Indent that line, or change its first characters.",
-    },
-    {
-      code: "fence-unterminated",
-      message: "the fence opened on line 6 is not closed",
-      correction: "The body opens a code fence that never closes. Close the fence.",
-    },
-  ];
-
-  it.each(BODY_REFUSALS)("names the correction for $code at the end of its line", async ({ code, message, correction }) => {
-    const { observer } = setup({
-      [`PATCH ${taskPath("NOTE-1")}`]: refusalReply(422, { kind: "serialize", code, message, line: 4 }),
-    });
-
-    await expect(observer.mutate(pageSave("NOTE-1", { body: "text" }))).rejects.toThrow();
-
-    expect(notices()).toMatchObject([
-      {
-        line: `The daemon refused the write, so nothing changed on disk. Its own words are below. ${correction}`,
-        words: [`serialize/${code} · ${message}`],
-      },
-    ]);
-  });
-
-  it("names no correction for a refusal that ties to no field", async () => {
-    const { observer } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: REFUSAL });
-
-    await expect(observer.mutate(pageSave("NOTE-1"))).rejects.toThrow();
-
-    expect(notices()).toMatchObject([
-      { line: "The daemon refused the write, so nothing changed on disk. Its own words are below." },
-    ]);
-  });
-
-  it("names the property in front of the line, so the reader is told which control refused", async () => {
-    const { observer } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: REFUSAL });
-    const write: TaskWrites = {
-      id: "NOTE-1",
-      writes: [{ id: "NOTE-1", change: { status: "Gone" } }],
-      title: "NOTE-1 was not changed",
-      place: "task page",
-      property: "Status",
-    };
-
-    await expect(observer.mutate(write)).rejects.toThrow();
-
-    expect(notices()).toMatchObject([
-      {
-        title: "NOTE-1 was not changed",
-        line: "Status. The daemon refused the write, so nothing changed on disk. Its own words are below.",
-      },
-    ]);
-  });
-
-  it("leaves the Save line as it is for a write that names no property", async () => {
-    const { observer } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: REFUSAL });
-
-    await expect(observer.mutate(pageSave("NOTE-1"))).rejects.toThrow();
-
-    expect(notices()[0]?.line?.startsWith("The daemon refused")).toBe(true);
-  });
-
-  it("leaves a board line as it is", async () => {
-    const { observer } = setup({ [`PATCH ${taskPath("NOTE-1")}`]: REFUSAL });
-
-    await expect(observer.mutate(moveOf("NOTE-1"))).rejects.toThrow();
-
-    expect(notices()).toMatchObject([
-      { line: "The daemon refused the write, and the task is back where it was. Its own words are below." },
-    ]);
   });
 });
 
@@ -721,8 +594,7 @@ describe("usePendingTaskWrites", () => {
   const ELSE_WRITE: TaskWrites = {
     id: "ELSE-1",
     writes: [{ id: "ELSE-1", change: { order: 1 } }],
-    title: "ELSE-1 was not moved",
-    place: "board",
+    failure: failureOf("ELSE-1 was not moved"),
   };
 
   function renderPending(replies: Record<string, TransportReply | Promise<TransportReply>>) {

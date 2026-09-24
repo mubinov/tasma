@@ -4,7 +4,6 @@ import { useNoticeStore } from "../../store/notices";
 import { daemonKeys, projectQuery, taskQuery, tasksQuery } from "../queries";
 import {
   COMMENT_FAILURE_KEY_PREFIX,
-  failureLine,
   freshDiagnostics,
   openWarnings,
   openWriteNotice,
@@ -12,15 +11,14 @@ import {
   taskWriteScope,
   usePendingVariables,
   WriteError,
+  type WriteFailure,
 } from "./notices";
 
 /**
  * One write of one comment. The three kinds are one factory because they share
- * a queue, a key, a notice and an invalidation; `noticeTitle` rather than
- * `title` because a comment's own title already sits inside `input` and
- * `change`.
+ * a queue, a key, a notice and an invalidation.
  */
-export type CommentWrite = { id: string; noticeTitle: string } & (
+export type CommentWrite = { id: string; failure: WriteFailure } & (
   | { kind: "add"; input: CommentInput }
   | { kind: "update"; commentId: number; change: CommentInput }
   | { kind: "delete"; commentId: number }
@@ -103,8 +101,8 @@ export function commentWriteOptions(queryClient: QueryClient, client: Client, ta
       openWriteNotice({
         key: commentFailureKey(variables),
         form: "failure",
-        title: variables.noticeTitle,
-        line: failureLine({ cause: error.cause, place: "task page" }),
+        title: variables.failure.title,
+        line: variables.failure.line(error),
         words: [refusalWords(error)],
       });
 

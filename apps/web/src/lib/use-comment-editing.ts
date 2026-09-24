@@ -24,6 +24,7 @@ import type { EditorSubject } from "./editor-subject";
 import { savedWords, savingWords, subjectWords } from "./unsaved-words";
 import { useDiskChange, type DiskChange } from "./use-disk-change";
 import { useUnsavedEntry, type UnsavedGuard } from "./use-unsaved-guard";
+import { pageFailureLine } from "./write-failure";
 
 const EMPTY: Draft = { title: "", body: "" };
 
@@ -178,13 +179,13 @@ export function useCommentEditing({
     return subject.kind === "new"
       ? {
           id: taskId,
-          noticeTitle: commentFailureTitle(taskId, "new", "added"),
+          failure: { title: commentFailureTitle(taskId, "new", "added"), line: (error) => pageFailureLine(error) },
           kind: "add",
           input: change,
         }
       : {
           id: taskId,
-          noticeTitle: commentFailureTitle(taskId, subject.id, "saved"),
+          failure: { title: commentFailureTitle(taskId, subject.id, "saved"), line: (error) => pageFailureLine(error) },
           kind: "update",
           commentId: subject.id,
           change,

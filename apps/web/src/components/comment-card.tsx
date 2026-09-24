@@ -16,6 +16,7 @@ import { formatStamp } from "../lib/task-page";
 import { commentWords, subjectWords } from "../lib/unsaved-words";
 import type { CommentClose } from "../lib/use-comment-editing";
 import type { UnsavedGuard } from "../lib/use-unsaved-guard";
+import { pageFailureLine } from "../lib/write-failure";
 import { useNoticeStore } from "../store/notices";
 import { EditingComment } from "./comment-editor";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -103,7 +104,7 @@ export function CommentCard({
   function toggleCollapsed(next: boolean): void {
     writeFlag({
       id: taskId,
-      noticeTitle: commentFailureTitle(taskId, id, "changed"),
+      failure: { title: commentFailureTitle(taskId, id, "changed"), line: (error) => pageFailureLine(error) },
       kind: "update",
       commentId: id,
       // `null` is a removal, so the key leaves the marker exactly as
@@ -124,7 +125,7 @@ export function CommentCard({
     try {
       await writeDelete({
         id: taskId,
-        noticeTitle: commentFailureTitle(taskId, id, "deleted"),
+        failure: { title: commentFailureTitle(taskId, id, "deleted"), line: (error) => pageFailureLine(error) },
         kind: "delete",
         commentId: id,
       });

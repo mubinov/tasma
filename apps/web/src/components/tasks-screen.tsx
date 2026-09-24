@@ -36,6 +36,7 @@ import { fullIndex, placeWrites } from "../lib/order";
 import { PlusIcon } from "../lib/icons";
 import { useCardDrag, type BoardSnapshot } from "../lib/use-card-drag";
 import { warningCount } from "../lib/warning-count";
+import { boardFailureLine } from "../lib/write-failure";
 import { NAVIGATION_BY_PATH } from "../navigation";
 import { useNoticeStore } from "../store/notices";
 import { useUiStore } from "../store/ui";
@@ -212,7 +213,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
 
   /** Sends the writes of a move. `refused` runs when the daemon turns them down. */
   function sendMove(id: string, writes: TaskWrite[], refused?: () => void): void {
-    write({ id, writes, title: `${id} was not moved`, place: "board" }).catch(() => refused?.());
+    write({ id, writes, failure: { title: `${id} was not moved`, line: boardFailureLine } }).catch(() => refused?.());
   }
 
   /**

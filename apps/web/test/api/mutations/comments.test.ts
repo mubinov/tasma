@@ -4,8 +4,6 @@ import {
   ProtocolError,
   type Client,
   type Diagnostic,
-  type Failure,
-  type SerializeErrorCode,
   type TransportReply,
   type TransportRequest,
 } from "@tasma/protocol";
@@ -18,6 +16,7 @@ import {
   commentFailureTitle,
   commentWriteKey,
   commentWriteOptions,
+  failureKind,
   taskWriteKey,
   taskWriteOptions,
   usePendingCollapsed,
@@ -48,16 +47,21 @@ function written(commentId?: number, diagnostics: Diagnostic[] = []): TransportR
   return successReply({ id: TASK, commentId }, diagnostics);
 }
 
+/** A sender's failure, whose line names the cause the factory handed it. */
+function failureOf(title: string): CommentWrite["failure"] {
+  return { title, line: (error) => `line of ${failureKind(error.cause)}` };
+}
+
 const ADD: CommentWrite = {
   id: TASK,
-  noticeTitle: `The new comment on ${TASK} was not added`,
+  failure: failureOf(`The new comment on ${TASK} was not added`),
   kind: "add",
   input: { title: "Review", body: "Looks right." },
 };
 
 const UPDATE: CommentWrite = {
   id: TASK,
-  noticeTitle: `Comment #3 of ${TASK} was not saved`,
+  failure: failureOf(`Comment #3 of ${TASK} was not saved`),
   kind: "update",
   commentId: 3,
   change: { title: "Review", body: "Looks right." },
@@ -65,7 +69,7 @@ const UPDATE: CommentWrite = {
 
 const DELETE: CommentWrite = {
   id: TASK,
-  noticeTitle: `Comment #3 of ${TASK} was not deleted`,
+  failure: failureOf(`Comment #3 of ${TASK} was not deleted`),
   kind: "delete",
   commentId: 3,
 };
@@ -73,7 +77,7 @@ const DELETE: CommentWrite = {
 function flagWrite(commentId: number, collapsed: boolean): CommentWrite {
   return {
     id: TASK,
-    noticeTitle: `Comment #${String(commentId)} of ${TASK} was not changed`,
+    failure: failureOf(`Comment #${String(commentId)} of ${TASK} was not changed`),
     kind: "update",
     commentId,
     change: { collapsed: collapsed ? true : null },
@@ -100,10 +104,6 @@ function writes(requests: readonly TransportRequest[]): TransportRequest[] {
 
 function notices() {
   return useNoticeStore.getState().notices;
-}
-
-function serialize(code: SerializeErrorCode, field?: string): Failure {
-  return { kind: "serialize", code, message: `refused: ${code}`, line: 12, field };
 }
 
 beforeEach(() => {
@@ -189,8 +189,7 @@ describe("commentWriteOptions", () => {
     const second = task.mutate({
       id: TASK,
       writes: [{ id: TASK, change: { title: "Renamed" } }],
-      title: `${TASK} was not saved`,
-      place: "task page",
+      failure: { title: `${TASK} was not saved`, line: () => "not saved" },
     });
     await Promise.resolve();
 
@@ -233,45 +232,23 @@ describe("the notice of a refused comment write", () => {
     await expect(observer.mutate(ADD)).rejects.toThrow("is not in the file");
 
     expect(notices().map(({ key, title }) => [key, title])).toEqual([
-      [`comment-write-failure:${TASK}#3`, UPDATE.noticeTitle],
-      [`comment-write-failure:${TASK}#new`, ADD.noticeTitle],
+      [`comment-write-failure:${TASK}#3`, UPDATE.failure.title],
+      [`comment-write-failure:${TASK}#new`, ADD.failure.title],
     ]);
     expect(commentFailureKey(DELETE)).toBe(`comment-write-failure:${TASK}#3`);
   });
 
-  it("takes the page line of the failure it met", async () => {
+  it("opens the sender's title and the line it builds from the error, with the daemon's words", async () => {
     const { observer } = setup({ [`PATCH ${commentPath(3)}`]: REFUSAL });
 
     await expect(observer.mutate(UPDATE)).rejects.toThrow("is not in the file");
 
-    expect(notices()[0]?.line)
-      .toBe("The daemon refused the write, so nothing changed on disk. Its own words are below.");
-  });
-
-  it("names the correction where the daemon refused the title for an arrow", async () => {
-    const { observer } = setup({ [`PATCH ${commentPath(3)}`]: refusalReply(422, serialize("value-contains-arrow", "title")) });
-
-    await expect(observer.mutate(UPDATE)).rejects.toThrow("value-contains-arrow");
-
-    expect(notices()[0]?.line).toContain("The title contains \"-->\", which closes the comment marker.");
-  });
-
-  it("names no title correction for the same code raised about another field", async () => {
-    const { observer } = setup({
-      [`PATCH ${commentPath(3)}`]: refusalReply(422, serialize("value-contains-arrow", "author")),
-    });
-
-    await expect(observer.mutate(UPDATE)).rejects.toThrow("value-contains-arrow");
-
-    expect(notices()[0]?.line).not.toContain("The title contains");
-  });
-
-  it("names the body correction where the refusal is about the body", async () => {
-    const { observer } = setup({ [`PATCH ${commentPath(3)}`]: refusalReply(422, serialize("marker-collision")) });
-
-    await expect(observer.mutate(UPDATE)).rejects.toThrow("marker-collision");
-
-    expect(notices()[0]?.line).toContain("The body starts a line with a comment marker.");
+    expect(notices()).toMatchObject([{
+      form: "failure",
+      title: `Comment #3 of ${TASK} was not saved`,
+      line: "line of refused",
+      words: ["store/comment-not-found · comment 3 is not in the file"],
+    }]);
   });
 });
 
@@ -293,7 +270,7 @@ describe("what a successful comment write closes and opens", () => {
       [`PATCH ${commentPath(5)}`]: REFUSAL,
     });
     await expect(observer.mutate(UPDATE)).rejects.toThrow("is not in the file");
-    await expect(observer.mutate({ ...UPDATE, commentId: 5, noticeTitle: "Comment #5 was not saved" }))
+    await expect(observer.mutate({ ...UPDATE, commentId: 5, failure: failureOf("Comment #5 was not saved") }))
       .rejects.toThrow("is not in the file");
     expect(notices()).toHaveLength(2);
 

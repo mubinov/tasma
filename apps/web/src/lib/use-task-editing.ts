@@ -13,6 +13,7 @@ import { savedWords, savingWords } from "./unsaved-words";
 import { useDiskChange, type DiskChange } from "./use-disk-change";
 import { usePendingFocus } from "./use-pending-focus";
 import { useUnsavedEntry, type UnsavedGuard } from "./use-unsaved-guard";
+import { pageFailureLine } from "./write-failure";
 
 /** The task text is one of the editors the page can hold open at once. */
 const SUBJECT: EditorSubject = { kind: "task" };
@@ -191,8 +192,7 @@ export function useTaskEditing(
       await write({
         id,
         writes: [{ id, change: { title: draft.title, body: draft.body } }],
-        title: `${id} was not saved`,
-        place: "task page",
+        failure: { title: `${id} was not saved`, line: (error) => pageFailureLine(error) },
       });
     } catch (error) {
       // The failure notice is announced a frame from now. A dialog open over

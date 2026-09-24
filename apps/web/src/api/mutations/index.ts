@@ -6,7 +6,8 @@ export {
   usePendingCollapsed,
 } from "./comments";
 export type { CommentWrite } from "./comments";
-export { bodyCorrection, refusalWords, titleCorrection, WriteError } from "./notices";
+export { bodyCorrection, failureKind, refusalWords, titleCorrection, WriteError } from "./notices";
+export type { FailureKind, WriteFailure } from "./notices";
 export {
   createRefusal,
   openCreateWarnings,
