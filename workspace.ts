@@ -28,6 +28,7 @@ const RUNTIME_CSS_IN_JS = [
 
 export type PackageManifest = {
   name?: string;
+  version?: string;
   // npm accepts both forms: one target under the package's own name, or a map
   // of command name to target.
   bin?: string | Record<string, string>;

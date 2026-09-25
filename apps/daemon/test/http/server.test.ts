@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TaskStoreError } from "@tasma/engine";
 import { routes } from "@tasma/protocol";
 import type { Route, Success } from "@tasma/protocol";
-import manifest from "../../package.json" with { type: "json" };
+import manifest from "../../../../package.json" with { type: "json" };
 import type { Handler, RouteEntry } from "../../src/http/router.js";
 import { startTestServer } from "../helpers.js";
 

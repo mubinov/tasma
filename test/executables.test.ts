@@ -29,6 +29,9 @@ const APPS = packageDirs
 const CLI = "apps/cli";
 const DAEMON = "apps/daemon";
 
+/** The one version the app, the daemon and the CLI all carry. */
+const ROOT_VERSION = readManifest(".").version;
+
 /**
  * A process id no process can hold: every supported kernel caps its own far
  * below it. The seeded record names it, so the cleanup can tell a record the
@@ -280,7 +283,7 @@ describe("the built executables", () => {
     const { code, stdout } = await node(executable(CLI), ["--version"]);
 
     expect(code).toBe(0);
-    expect(stdout).toMatch(/^tasma \d+\.\d+\.\d+\n$/);
+    expect(stdout).toBe(`tasma ${ROOT_VERSION}\n`);
   });
 
   // Run with a port it must refuse, so the artifact reports and exits instead of
@@ -383,6 +386,12 @@ describe("the built executables", () => {
 
       expect(code).toBe(0);
       expect(stdout).toContain(` at ${url}\n`);
+    });
+
+    it("answers its liveness route with the root version", async () => {
+      const health = (await (await fetch(`${url}/health`)).json()) as { data: { version: string } };
+
+      expect(health.data.version).toBe(ROOT_VERSION);
     });
 
     // The reads, against the real daemon, the real engine and the built CLI:

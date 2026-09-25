@@ -6,15 +6,17 @@
 # It stands outside scripts/dev-home.sh: the wrapper replaces HOME for the whole
 # child, which would put bun's cache and its downloaded runtimes under /tmp,
 # where macOS clears them.
+#
+# Usage: scripts/app-binaries.sh [target-triple]
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 
 # The triple is Tauri's name for the file and the architecture is bun's name for
-# the runtime. Both are read from the toolchain, so a host this script is run on
-# cannot disagree with the crate built beside it.
-triple=$(rustc -vV | sed -n 's/^host: //p')
+# the runtime. With no argument both are read from the toolchain, so a host this
+# script is run on cannot disagree with the crate built beside it.
+triple=${1:-$(rustc -vV | sed -n 's/^host: //p')}
 
 case "$triple" in
   aarch64-*) arch=arm64 ;;

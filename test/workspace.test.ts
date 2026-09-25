@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, globSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ViteUserConfig } from "vitest/config";
 import {
@@ -143,6 +143,46 @@ describe("every manifest, the root one included", () => {
   it("declares no runtime CSS-in-JS library", () => {
     for (const dir of [".", ...packageDirs]) {
       expect(runtimeCssInJsDependencies(readManifest(dir)), `${dir}/package.json`).toEqual([]);
+    }
+  });
+});
+
+// A release edits the root version alone, so every artifact has to read it from
+// there rather than state a version of its own.
+describe("the release version", () => {
+  const readRoot = (path: string) => readFileSync(join(workspaceRoot, path), "utf8");
+
+  it("is stated in the root manifest", () => {
+    expect(readManifest(".").version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("is read by the app from the root manifest", () => {
+    const { version } = JSON.parse(readRoot("apps/macos/tauri.conf.json")) as { version?: unknown };
+
+    expect(version).toBe("../../package.json");
+  });
+
+  // Tauri writes the bundle version from its own config, so a version in the
+  // crate would be a second number that nothing keeps in step.
+  it("is not stated by the crate", () => {
+    const [, table = ""] = /^\[package\]\n([\s\S]*?)(?=^\[)/m.exec(readRoot("apps/macos/Cargo.toml")) ?? [];
+
+    expect(table).toContain("name = ");
+    expect(table).not.toMatch(/^version\s*=/m);
+  });
+
+  it("is imported by the CLI and the daemon from the root manifest", () => {
+    const sources = globSync(["apps/cli/src/**/*.ts", "apps/daemon/src/**/*.ts"], { cwd: workspaceRoot });
+    const imports = sources.flatMap((source) =>
+      [...readRoot(source).matchAll(/^import .* from "([^"]*package\.json)"/gm)].map(([, specifier = ""]) =>
+        resolve(workspaceRoot, dirname(source), specifier),
+      ),
+    );
+
+    expect(imports.length).toBeGreaterThan(0);
+
+    for (const imported of imports) {
+      expect(imported).toBe(join(workspaceRoot, "package.json"));
     }
   });
 });

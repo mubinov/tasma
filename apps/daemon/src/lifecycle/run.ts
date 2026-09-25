@@ -12,7 +12,7 @@ import type { AddressInfo } from "node:net";
 import { parseArgs } from "node:util";
 import { DAEMON_NAME, DEFAULT_DAEMON_HOST, printable } from "@tasma/protocol";
 import type { DaemonRecord } from "@tasma/protocol";
-import manifest from "../../package.json" with { type: "json" };
+import manifest from "../../../../package.json" with { type: "json" };
 import { configRoutes } from "../config/routes.js";
 import { causeOf } from "../http/failure.js";
 import { createDaemonServer } from "../http/server.js";

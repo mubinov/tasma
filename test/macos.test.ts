@@ -86,7 +86,11 @@ function rustRawString(file: string, name: string): string {
 
 const config = JSON.parse(readFileSync(join(CRATE, "tauri.conf.json"), "utf8")) as {
   build: { devUrl: string };
-  bundle: { externalBin: string[] };
+  bundle: {
+    targets: string[];
+    externalBin: string[];
+    macOS: { minimumSystemVersion: string; entitlements: string };
+  };
 };
 
 /** The script that compiles the daemon and the CLI into the executables the app ships. */
@@ -429,5 +433,43 @@ describe("the CLI the app ships", () => {
   // The link in /usr/local/bin points at this name inside the bundle.
   it("is linked under the name the bundle declares", () => {
     expect(rustConstant("command.rs", "CLI_EXECUTABLE")).toBe(CLI_EXECUTABLE);
+  });
+});
+
+/** The script that builds, signs and notarizes the release DMGs. */
+const APP_RELEASE_SCRIPT = "scripts/app-release.sh";
+
+describe("the release build", () => {
+  it("compiles the binaries for the triple it is given, or for the host", () => {
+    expect(appBinariesScript).toMatch(/^triple=\$\{1:-\$\(rustc -vV \| sed -n 's\/\^host: \/\/p'\)\}$/m);
+  });
+
+  it("is run by app:release through a script that is executable", () => {
+    expect(readManifest(".").scripts?.["app:release"]).toBe(APP_RELEASE_SCRIPT);
+    expect(statSync(join(workspaceRoot, APP_RELEASE_SCRIPT)).mode & 0o111).toBeGreaterThan(0);
+  });
+
+  it("builds the crates the lock file records", () => {
+    const script = readFileSync(join(workspaceRoot, APP_RELEASE_SCRIPT), "utf8");
+
+    expect(script).toMatch(/^\s*pnpm exec tauri build .* -- --locked$/m);
+  });
+
+  // The web UI needs 14.5.
+  it("requires macOS 14.5", () => {
+    expect(config.bundle.macOS.minimumSystemVersion).toBe("14.5");
+  });
+
+  // The compiled daemon and CLI run JavaScriptCore, whose JIT the hardened
+  // runtime blocks without this entitlement.
+  it("signs with an entitlements file that allows the JIT", () => {
+    const entitlements = readFileSync(join(CRATE, config.bundle.macOS.entitlements), "utf8");
+
+    expect(entitlements).toMatch(/<key>com\.apple\.security\.cs\.allow-jit<\/key>\s*<true\/>/);
+  });
+
+  // app:build makes no DMG. app:release asks for one on the command line.
+  it("bundles the app alone by default", () => {
+    expect(config.bundle.targets).toEqual(["app"]);
   });
 });

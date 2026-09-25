@@ -1,5 +1,6 @@
 {
   "name": "tasma",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.4.0+sha512.f0febc7e37552ab485494a914241b338e0b3580b93d54ce31f00933015880863129038a1b4ae4e414a0ee63ac35bf21197e990172c4a68256450b5636310968f",
@@ -18,7 +19,8 @@
     "app:dev": "scripts/app-binaries.sh && TASMA_DEV_SERVER=1 TAURI_APP_PATH=apps/macos tauri dev",
     "app:start": "pnpm --filter @tasma/web build && scripts/app-binaries.sh && scripts/dev-home.sh cargo run --manifest-path \"$PWD/apps/macos/Cargo.toml\" --features custom-protocol",
     "app:test": "scripts/app-binaries.sh && cargo test --manifest-path apps/macos/Cargo.toml",
-    "app:build": "scripts/app-binaries.sh && TAURI_APP_PATH=apps/macos tauri build"
+    "app:build": "scripts/app-binaries.sh && TAURI_APP_PATH=apps/macos tauri build",
+    "app:release": "scripts/app-release.sh"
   },
   "devDependencies": {
     "@eslint-react/eslint-plugin": "catalog:",

@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import manifest from "../package.json" with { type: "json" };
+import manifest from "../../../package.json" with { type: "json" };
 import { comment } from "./commands/comment.js";
 import { config } from "./commands/config.js";
 import { daemon } from "./commands/daemon.js";

@@ -1,6 +1,6 @@
 import { DAEMON_NAME } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
-import manifest from "../package.json" with { type: "json" };
+import manifest from "../../../package.json" with { type: "json" };
 // Relative: this package declares no exports, so its own name does not resolve.
 import { run, splitInvocation } from "../src/run.js";
 import { dispatch, errorText, isPathComponent, reportUsage } from "../src/shell.js";

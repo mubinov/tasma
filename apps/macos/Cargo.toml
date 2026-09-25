@@ -1,6 +1,5 @@
 [package]
 name = "tasma-macos"
-version = "0.0.0"
 edition = "2024"
 # `window_url` is a let chain, which edition 2024 accepts from 1.88 on. Without
 # the floor an earlier toolchain meets a syntax error rather than a version one.

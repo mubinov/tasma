@@ -1,6 +1,7 @@
 {
   "$schema": "../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Tasma",
+  "version": "../../package.json",
   "identifier": "dev.tasma.desktop",
   "build": {
     "beforeDevCommand": "pnpm --filter @tasma/web dev",
@@ -23,6 +24,10 @@
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "14.5",
+      "entitlements": "Entitlements.plist"
+    }
   }
 }
