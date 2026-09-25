@@ -165,3 +165,18 @@ export function absolutePath(io: Io, flag: string, path: string, cwd: string): s
 
   return resolve(cwd, path);
 }
+
+/** Every value of one repeated path flag made absolute, in order, or the code the first fault reported with. */
+export function absolutePaths(io: Io, flag: string, paths: readonly string[], cwd: string): string[] | number {
+  const absolute: string[] = [];
+
+  for (const path of paths) {
+    const stated = absolutePath(io, flag, path, cwd);
+
+    if (typeof stated === "number") return stated;
+
+    absolute.push(stated);
+  }
+
+  return absolute;
+}

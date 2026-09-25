@@ -1,28 +1,36 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import type { Workflow } from "@tasma/protocol";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { routes, type Project, type Workflow, type WorkflowReceipt } from "@tasma/protocol";
+import type { HandlerRequest } from "../../src/http/router.js";
+import { createProjectHost, type ProjectHost } from "../../src/projects/host.js";
+import { projectRoutes } from "../../src/projects/routes.js";
+import { CONFIG_KEY, WriteQueue } from "../../src/tasks/serialize.js";
 import { workflowRoutes } from "../../src/workflows/routes.js";
 import {
   failure,
   plant,
   plantSteps,
   plantWorkflow,
+  projectConfig,
   projectsRoot,
   send,
   startTestServer,
   stepFile,
   stepsOnly,
   success,
+  taskFile,
+  taskText,
+  until,
   userConfig,
   workflowDir,
   workflowFile,
 } from "../helpers.js";
 import type { TestServer } from "../helpers.js";
 
-/** A daemon serving the workflow routes over a tree, closed when the test ends. */
-async function serving(root: string): Promise<TestServer> {
-  return startTestServer(workflowRoutes({ root }));
+/** A daemon serving the workflow routes over a tree. */
+async function serving(root: string, writes = new WriteQueue()): Promise<TestServer> {
+  return startTestServer(workflowRoutes({ root, writes }));
 }
 
 describe("GET /workflows", () => {
@@ -259,5 +267,267 @@ describe("GET /workflows/{workflow}/steps/{step}", () => {
 
     expect(response.status).toBe(404);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "route-not-found" });
+  });
+});
+
+/** A step document outside the workflows tree, as a write states one. */
+async function stepDocument(root: string, name: string): Promise<string> {
+  const path = join(root, "docs", `${name}.md`);
+  await plant(path, `Do ${name}.\n`);
+  return path;
+}
+
+/** A task on one step of one workflow, in one status. */
+function taskOn(id: string, workflow: string, step: string, status = "To Do"): string {
+  return taskText(id).replace("status: To Do\n", `status: ${status}\nworkflow: ${workflow}\nstep: "${step}"\n`);
+}
+
+describe("POST /workflows", () => {
+  it("creates a workflow and answers with it", async () => {
+    const root = await projectsRoot();
+    const file = await stepDocument(root, "one");
+    const server = await serving(root);
+
+    const response = await send(server, "POST", "/workflows", {
+      name: "flow-a",
+      title: "Flow A",
+      steps: [{ name: "a:one", owner: "agent", file }],
+    });
+
+    expect(response.status).toBe(200);
+    const { data } = await success<Workflow>(response);
+    expect(data).toMatchObject({ name: "flow-a", title: "Flow A", steps: [{ name: "a:one", owner: "agent", file }] });
+    expect(await readdir(workflowDir(root, "flow-a"))).toEqual(["workflow.yml"]);
+  });
+
+  it("refuses a name that exists with 409", async () => {
+    const root = await projectsRoot();
+    await plantWorkflow(root, "flow-a", stepsOnly("one"));
+    const server = await serving(root);
+
+    const response = await send(server, "POST", "/workflows", {
+      name: "flow-a",
+      steps: [{ name: "one", owner: "agent", file: await stepDocument(root, "one") }],
+    });
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "workflow-exists" });
+  });
+
+  it.each<[string, unknown, number, string]>([
+    ["a body with no name", { steps: [] }, 400, "workflow-unknown"],
+    ["an owner outside the set", { name: "flow-a", owner: "robot" }, 400, "workflow-change-invalid"],
+  ])("refuses %s", async (_case, body, status, code) => {
+    const server = await serving(await projectsRoot());
+
+    const response = await send(server, "POST", "/workflows", body);
+
+    expect(response.status).toBe(status);
+    await expect(failure(response)).resolves.toMatchObject({ code });
+  });
+});
+
+describe("PATCH /workflows/{workflow}", () => {
+  it("changes a workflow and answers with it", async () => {
+    const root = await projectsRoot();
+    await plantWorkflow(root, "flow-a", "title: Flow A\nsteps: [{name: one, file: /one.md, owner: agent}]\n");
+    const server = await serving(root);
+
+    const response = await send(server, "PATCH", "/workflows/flow-a", { title: null });
+
+    expect(response.status).toBe(200);
+    const { data, diagnostics } = await success<Workflow>(response);
+    expect(data.title).toBeUndefined();
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("refuses a missing workflow with 400", async () => {
+    const server = await serving(await projectsRoot());
+
+    const response = await send(server, "PATCH", "/workflows/flow-a", { title: "Flow A" });
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ code: "workflow-unknown" });
+  });
+
+  it("names each open task on a removed step, in every project", async () => {
+    const root = await projectsRoot("ALPHA", "BETA");
+    const one = await stepDocument(root, "one");
+    const two = await stepDocument(root, "two");
+    await plantWorkflow(root, "flow-a", `steps: [{name: "a:one", file: ${one}, owner: agent}, {name: "a:two", file: ${two}, owner: human}]\n`);
+    await plantWorkflow(root, "flow-b", stepsOnly("a:two"));
+    await plant(taskFile(root, "ALPHA", "ALPHA-1"), taskOn("ALPHA-1", "flow-a", "a:two"));
+    await plant(taskFile(root, "ALPHA", "ALPHA-2"), taskOn("ALPHA-2", "flow-a", "a:two", "Done"));
+    await plant(taskFile(root, "ALPHA", "ALPHA-3"), taskOn("ALPHA-3", "flow-a", "a:one"));
+    await plant(taskFile(root, "ALPHA", "ALPHA-4"), taskText("ALPHA-4").replace("status: To Do\n", "status: To Do\nworkflow: flow-a\n"));
+    await plant(taskFile(root, "BETA", "BETA-1"), taskOn("BETA-1", "flow-a", "a:two"));
+    await plant(taskFile(root, "BETA", "BETA-2"), taskOn("BETA-2", "flow-b", "a:two"));
+    const server = await serving(root);
+
+    const response = await send(server, "PATCH", "/workflows/flow-a", {
+      steps: [{ name: "a:one", owner: "agent", file: one }, { name: "a:three", owner: "human", file: two }],
+    });
+
+    expect(response.status).toBe(200);
+    const { diagnostics } = await success<Workflow>(response);
+    expect(diagnostics).toEqual([
+      {
+        code: "step-stale",
+        message: 'ALPHA-1 carries the step "a:two", which the workflow "flow-a" does not declare',
+        path: taskFile(root, "ALPHA", "ALPHA-1"),
+      },
+      {
+        code: "step-stale",
+        message: 'BETA-1 carries the step "a:two", which the workflow "flow-a" does not declare',
+        path: taskFile(root, "BETA", "BETA-1"),
+      },
+    ]);
+  });
+
+  it("passes over a project that cannot be opened", async () => {
+    const root = await projectsRoot("ALPHA");
+    const one = await stepDocument(root, "one");
+    await plantWorkflow(root, "flow-a", `steps: [{name: "a:one", file: ${one}, owner: agent}, {name: "a:two", file: ${one}, owner: agent}]\n`);
+    await plant(projectConfig(root, "ALPHA"), "statuses: [\n");
+    await plant(taskFile(root, "ALPHA", "ALPHA-1"), taskOn("ALPHA-1", "flow-a", "a:two"));
+    const server = await serving(root);
+
+    const response = await send(server, "PATCH", "/workflows/flow-a", {
+      steps: [{ name: "a:one", owner: "agent", file: one }],
+    });
+
+    expect(response.status).toBe(200);
+    await expect(success<Workflow>(response)).resolves.toMatchObject({ diagnostics: [] });
+  });
+
+  it("answers with the written workflow when the tree cannot be read for the notes", async () => {
+    const root = await projectsRoot();
+    const one = await stepDocument(root, "one");
+    await plantWorkflow(root, "flow-a", `steps: [{name: "a:one", file: ${one}, owner: agent}, {name: "a:two", file: ${one}, owner: agent}]\n`);
+    await plant(join(root, "projects"), "not a directory\n");
+    const server = await serving(root);
+
+    const response = await send(server, "PATCH", "/workflows/flow-a", {
+      steps: [{ name: "a:one", owner: "agent", file: one }],
+    });
+
+    expect(response.status).toBe(200);
+    await expect(success<Workflow>(response)).resolves.toMatchObject({
+      data: { steps: [{ name: "a:one" }] },
+      diagnostics: [],
+    });
+  });
+});
+
+describe("DELETE /workflows/{workflow}", () => {
+  it("removes a workflow and answers with its name", async () => {
+    const root = await projectsRoot();
+    await plantWorkflow(root, "flow-a", stepsOnly("one"));
+    const server = await serving(root);
+
+    const response = await send(server, "DELETE", "/workflows/flow-a");
+
+    expect(response.status).toBe(200);
+    await expect(success<WorkflowReceipt>(response)).resolves.toEqual({ data: { name: "flow-a" }, diagnostics: [] });
+    await expect(readdir(workflowDir(root, "flow-a"))).rejects.toThrow();
+  });
+
+  it("refuses a workflow a project lists with 409", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantWorkflow(root, "flow-a", stepsOnly("one"));
+    await plant(projectConfig(root, "ALPHA"), "workflows: [flow-a]\n");
+    const server = await serving(root);
+
+    const response = await send(server, "DELETE", "/workflows/flow-a");
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toMatchObject({ code: "workflow-in-use" });
+  });
+
+  it("refuses a directory that holds no workflow.yml and keeps what it holds", async () => {
+    const root = await projectsRoot();
+    await plant(join(workflowDir(root, "notes"), "draft.md"), "Keep me.\n");
+    const server = await serving(root);
+
+    const response = await send(server, "DELETE", "/workflows/notes");
+
+    expect(response.status).toBe(422);
+    await expect(failure(response)).resolves.toMatchObject({ code: "workflow-invalid" });
+    expect(await readdir(workflowDir(root, "notes"))).toEqual(["draft.md"]);
+  });
+
+  it.each<[string, string, unknown]>([
+    ["POST", "/workflows", { name: "flow-b", steps: [] }],
+    ["PATCH", "/workflows/flow-a", { title: "Flow A" }],
+    ["DELETE", "/workflows/flow-a", undefined],
+  ])("runs %s %s after a write of the user's configuration", async (method, path, body) => {
+    const root = await projectsRoot();
+    await plantWorkflow(root, "flow-a", stepsOnly("one"));
+    const writes = new WriteQueue();
+    const server = await serving(root, writes);
+    let release!: () => void;
+    const configWrite = writes.run(CONFIG_KEY, () => new Promise<void>((resolve) => {
+      release = resolve;
+    }));
+    let answered = false;
+
+    const answer = send(server, method, path, body).then((response) => {
+      answered = true;
+      return response;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(answered).toBe(false);
+    release();
+    await configWrite;
+    expect((await answer).status).not.toBe(500);
+  });
+
+  it("takes turns with a project patch that adds the workflow", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantWorkflow(root, "flow-a", stepsOnly("one"));
+    const inner = createProjectHost({ root });
+    onTestFinished(() => inner.close());
+
+    const reached: string[] = [];
+    let queued!: () => void;
+    const behind = new Promise<void>((resolve) => {
+      queued = resolve;
+    });
+    const host: ProjectHost = {
+      ...inner,
+      async update(tag, change) {
+        reached.push("project");
+        await behind;
+        return inner.update(tag, change);
+      },
+    };
+    const writes = new WriteQueue();
+    // The project write is held until the delete has entered its handler, so
+    // the order below is the queue's decision.
+    const entries = workflowRoutes({ root, writes }).map((entry) => {
+      if (entry.route !== routes.deleteWorkflow) return entry;
+      return {
+        ...entry,
+        handler: (request: HandlerRequest) => {
+          queued();
+          return entry.handler(request);
+        },
+      };
+    });
+    const server = await startTestServer([...projectRoutes(host, writes), ...entries]);
+
+    const patching = send(server, "PATCH", "/projects/ALPHA", { workflows: ["flow-a"] });
+    await until(() => reached.includes("project"), "the project patch took its turn");
+    const removal = send(server, "DELETE", "/workflows/flow-a");
+
+    const patched = await patching;
+    expect(patched.status).toBe(200);
+    await expect(success<Project>(patched)).resolves.toMatchObject({ data: { config: { workflows: ["flow-a"] } } });
+    // Run after the patch, the delete finds the project that lists the workflow.
+    const removed = await removal;
+    expect(removed.status).toBe(409);
+    await expect(failure(removed)).resolves.toMatchObject({ code: "workflow-in-use" });
+    expect(await readdir(workflowDir(root, "flow-a"))).toEqual(["workflow.yml"]);
   });
 });

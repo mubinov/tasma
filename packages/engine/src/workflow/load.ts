@@ -111,9 +111,10 @@ function unusableReason(error: unknown): string {
 
 /**
  * What one name holds with symbolic links followed, or `undefined` when this
- * loader cannot see a workflow under it. A workflow file is one the user places
- * and this engine never writes, so a link is followed here on the same reasoning
- * `config.ts` states for its own files.
+ * loader cannot see a workflow under it. A workflow file is one the user places,
+ * so the reader follows a link on the same reasoning `config.ts` states for its
+ * own files; the writer refuses a linked `workflow.yml`, which its rename would
+ * replace with a plain file.
  *
  * A fault of any kind answers `undefined` rather than reaching the caller: this
  * asks one question — does this name hold a directory, does it hold a file — and
@@ -200,7 +201,7 @@ function readInstructionPaths(value: unknown, base: string, file: string): strin
  * loader accepts is a workflow that is broken, which is a different thing to
  * report and a different thing to fix.
  */
-async function readWorkflowText(paths: WorkflowPaths, name: string): Promise<string> {
+export async function readWorkflowText(paths: WorkflowPaths, name: string): Promise<string> {
   const { directory, file } = paths;
   let read;
   try {
@@ -226,11 +227,13 @@ async function readWorkflowText(paths: WorkflowPaths, name: string): Promise<str
   return read.text;
 }
 
-/** The workflow one directory holds, parsed and shaped from the text of its file. */
-async function loadWorkflow(paths: WorkflowPaths, name: string): Promise<WorkflowResult> {
+/**
+ * The workflow one text declares, under every rule the reader applies. The
+ * reader calls it on the text of the file and a write calls it on the text it
+ * is about to install, so a write never leaves a file the reader refuses.
+ */
+export function shapeWorkflow(text: string, paths: WorkflowPaths, name: string): WorkflowResult {
   const { directory, file } = paths;
-  const text = await readWorkflowText(paths, name);
-
   let content: unknown;
   try {
     content = parse(text);
@@ -389,7 +392,8 @@ class WorkflowStore implements Workflows {
   }
 
   async read(name: string): Promise<WorkflowResult> {
-    return loadWorkflow(this.pathsOf(name), name);
+    const paths = this.pathsOf(name);
+    return shapeWorkflow(await readWorkflowText(paths, name), paths, name);
   }
 
   async readStep(name: string, step: string): Promise<WorkflowStepResult> {

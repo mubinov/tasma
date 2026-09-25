@@ -57,6 +57,25 @@ export type WorkflowStepResult = {
 /** Every document that applies to one step, in the order the format states. */
 export type InstructionsResult = { documents: InstructionDocument[]; diagnostics: StoreDiagnostic[] };
 
+/**
+ * One step a write states. `file` is stored as stated, so it must be absolute or
+ * start with `~/`.
+ */
+export type StepInput = { name: string; owner: StepOwner; file: string };
+
+/** What a create states. `instructions` entries follow the rule of `StepInput.file`. */
+export type WorkflowInput = { title?: string; instructions?: string[]; steps: StepInput[] };
+
+/**
+ * One change of a `workflow.yml`. A key present with `null` removes the key from
+ * the file, and an absent key leaves it alone. A list replaces the stored list.
+ * `steps` cannot be removed.
+ */
+export type WorkflowChange = { title?: string | null; instructions?: string[] | null; steps?: StepInput[] };
+
+/** The workflow an edit left, and the step names of the old file that the new list no longer holds. */
+export type WorkflowUpdateResult = WorkflowResult & { removedSteps: string[] };
+
 /** Where one workflow stands: its directory, and the file that declares it. */
 export type WorkflowPaths = { directory: string; file: string };
 

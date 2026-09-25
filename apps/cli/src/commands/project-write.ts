@@ -10,7 +10,7 @@ import { attempt, refuseAnswer } from "../failure.js";
 import { fieldsOf } from "../output.js";
 import { reportUsage, wireText } from "../shell.js";
 import type { Command, Io, Options, Target } from "../types.js";
-import { absolutePath, applyClears, flagsGiven, keyOf, refuseClears, refuseEmpty, refuseNoChange } from "./change.js";
+import { absolutePath, absolutePaths, applyClears, flagsGiven, keyOf, refuseClears, refuseEmpty, refuseNoChange } from "./change.js";
 import type { Fields } from "./change.js";
 import { readProjectTagArgument } from "./task-id.js";
 import { HELP_OPTION, readVerb, usageBlock } from "./verb.js";
@@ -165,15 +165,9 @@ async function edit(args: string[], io: Io, target: Target, cwd: string): Promis
   }
 
   if (values.instruction !== undefined) {
-    const instructions: string[] = [];
+    const instructions = absolutePaths(io, "--instruction", values.instruction, cwd);
 
-    for (const entry of values.instruction) {
-      const path = absolutePath(io, "--instruction", entry, cwd);
-
-      if (typeof path === "number") return path;
-
-      instructions.push(path);
-    }
+    if (typeof instructions === "number") return instructions;
 
     change.instructions = instructions;
   }

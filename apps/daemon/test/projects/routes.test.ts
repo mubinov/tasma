@@ -439,6 +439,7 @@ describe("PATCH /projects/{project}", () => {
     ["a default_status not among the statuses", { default_status: "Shipped" }, 400, "config-change-invalid"],
     ["a workflow with no directory", { workflows: ["missing"] }, 400, "workflow-unknown"],
     ["a workflow that cannot be loaded", { workflows: ["broken"] }, 422, "workflow-invalid"],
+    ["a workflow that is no string", { workflows: [7] }, 400, "config-change-invalid"],
     ["an instruction that names nothing", { instructions: ["/srv/gone.md"] }, 400, "path-invalid"],
   ])("refuses %s, and the file stays as it stands", async (_reason, body, status, code) => {
     const root = await projectsRoot("SAGA");

@@ -58,9 +58,17 @@ type Sourced = { value: unknown; from: string };
  * followed here alone: the user places both configuration files, so a link on
  * one leads where the user pointed it.
  */
-async function readLevel(path: string, known: Set<string>, diagnostics: StoreDiagnostic[]): Promise<Level> {
+async function readLevel(
+  path: string,
+  known: Set<string>,
+  diagnostics: StoreDiagnostic[],
+  required = false,
+): Promise<Level> {
   const read = await readRegularFile(path, true);
-  if (read === "absent") return { path, values: {} };
+  if (read === "absent") {
+    if (required) fail("config-invalid", "no configuration file stands here", path);
+    return { path, values: {} };
+  }
   if (read === "irregular") fail("config-invalid", "this name holds no regular file", path);
   let content: unknown;
   try {
@@ -219,14 +227,16 @@ function resolveStatusesAndPriorities(levels: Level[], changed: ReadonlySet<stri
 /**
  * The recognized keys one configuration file declares, read on their own. A
  * write reads a level it does not change through this, and builds the level it
- * does change from the values it is about to store.
+ * does change from the values it is about to store. With `required`, an absent
+ * file is refused rather than read as declaring no keys.
  */
 export async function readDeclared(
   path: string,
   level: "user" | "project",
   diagnostics: StoreDiagnostic[] = [],
+  required = false,
 ): Promise<Level> {
-  return readLevel(path, level === "user" ? USER_KEYS : PROJECT_KEYS, diagnostics);
+  return readLevel(path, level === "user" ? USER_KEYS : PROJECT_KEYS, diagnostics, required);
 }
 
 /**

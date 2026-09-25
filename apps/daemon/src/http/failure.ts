@@ -86,6 +86,10 @@ const STORE_STATUS = {
   // choosing another rather than by sending the same call again.
   "project-exists": 409,
   "path-taken": 409,
+  "workflow-exists": 409,
+  // A project lists the workflow, which the caller answers by changing that
+  // project first.
+  "workflow-in-use": 409,
   // Each of these is a file on disk that cannot be used, not a bad call.
   "project-invalid": 422,
   "config-invalid": 422,
@@ -107,6 +111,7 @@ const STORE_STATUS = {
   "tag-not-generated": 400,
   "path-invalid": 400,
   "config-change-invalid": 400,
+  "workflow-change-invalid": 400,
 } satisfies Record<StoreErrorCode, number>;
 
 // A file on disk that cannot be read. The caller sent nothing wrong and

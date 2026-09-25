@@ -1,7 +1,8 @@
-// The `workflow` noun. It reads the workflows of a tree and writes none of them.
+// The `workflow` noun: the two reads here, and the three writes in
+// `workflow-write.ts`.
 //
-// Neither verb names a project: one definition is shared by the whole tree, so
-// there is nothing to resolve from the working directory.
+// No verb names a project: one definition is shared by the whole tree, so there
+// is nothing to resolve from the working directory.
 
 import { parseArgs } from "node:util";
 import { attempt, refuseAnswer } from "../failure.js";
@@ -9,6 +10,7 @@ import { cell, fieldsOf, table } from "../output.js";
 import { isPathComponent, noun, reportUsage } from "../shell.js";
 import type { Io, Options, Target } from "../types.js";
 import { HELP_OPTION, readVerb, usageBlock } from "./verb.js";
+import { WRITE_VERBS } from "./workflow-write.js";
 
 const LIST_OPTIONS = { ...HELP_OPTION } as const satisfies Options;
 
@@ -128,4 +130,5 @@ export const workflow = noun("workflow", "Work with workflows", [
     usage: { help: SHOW_HELP, options: SHOW_OPTIONS },
     run: show,
   },
+  ...WRITE_VERBS,
 ]);

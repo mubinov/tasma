@@ -143,7 +143,7 @@ export async function startDaemon(options: {
   const server = createDaemonServer([
     ...projectRoutes(host, writes),
     ...taskRoutes(host),
-    ...workflowRoutes({ root }),
+    ...workflowRoutes({ root, writes }),
     ...configRoutes({ root, writes }),
   ]);
 

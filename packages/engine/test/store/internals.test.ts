@@ -3,6 +3,7 @@ import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseTask, type TaskComment, TaskStoreError, type Workflows } from "@tasma/engine";
+import { openDeclaration } from "../../src/store/declaration.js";
 import { asStoreRefusal, causeOf, pathOf } from "../../src/store/errors.js";
 import { frontmatterNumber } from "../../src/store/ids.js";
 import { projectPaths } from "../../src/store/paths.js";
@@ -269,5 +270,31 @@ describe("timestamp", () => {
     [0, "2026-01-02T00:30:00+00:00"],
   ])("writes the offset %i minutes east of UTC as the format requires", (offset, written) => {
     expect(timestamp(new Date("2026-01-02T00:30:00Z"), offset)).toBe(written);
+  });
+});
+
+describe("opening a file for a write", () => {
+  it("answers an empty document for an absent file", async () => {
+    const root = await tempRoot();
+
+    expect((await openDeclaration(join(root, "absent.yml"))).toJS()).toEqual({});
+  });
+
+  it("refuses an absent file that is required, under the code it is given", async () => {
+    const root = await tempRoot();
+    const path = join(root, "absent.yml");
+
+    const error = await storeError(openDeclaration(path, { code: "workflow-invalid", required: true }));
+
+    expect(error.code).toBe("workflow-invalid");
+    expect(error.path).toBe(path);
+  });
+
+  it("refuses a file that is not valid YAML under the code it is given", async () => {
+    const root = await tempRoot();
+    const path = join(root, "broken.yml");
+    await plant(path, "steps: [\n");
+
+    expect((await storeError(openDeclaration(path, { code: "workflow-invalid" }))).code).toBe("workflow-invalid");
   });
 });

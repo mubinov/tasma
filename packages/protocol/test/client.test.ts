@@ -179,9 +179,29 @@ const invocations: Invocation[] = [
     path: "/workflows",
   },
   {
+    name: "createWorkflow",
+    send: (client) => client.createWorkflow({ name: "dev", steps: [{ name: "a", owner: "agent", file: "/a.md" }] }),
+    method: "POST",
+    path: "/workflows",
+    body: { name: "dev", steps: [{ name: "a", owner: "agent", file: "/a.md" }] },
+  },
+  {
     name: "readWorkflow",
     send: (client) => client.readWorkflow("dev"),
     method: "GET",
+    path: "/workflows/dev",
+  },
+  {
+    name: "updateWorkflow",
+    send: (client) => client.updateWorkflow("dev", { title: null, instructions: ["~/rules.md"] }),
+    method: "PATCH",
+    path: "/workflows/dev",
+    body: { title: null, instructions: ["~/rules.md"] },
+  },
+  {
+    name: "deleteWorkflow",
+    send: (client) => client.deleteWorkflow("dev"),
+    method: "DELETE",
     path: "/workflows/dev",
   },
   {

@@ -14,6 +14,7 @@ import type {
   RenameProjectInput,
   ResolvedConfig,
   SNAPSHOT,
+  StepInput as EngineStepInput,
   StepOwner as EngineStepOwner,
   StoreDiagnostic,
   StoreDiagnosticCode,
@@ -26,6 +27,8 @@ import type {
   UserConfigChange as EngineUserConfigChange,
   UserConfigInfo,
   Workflow as EngineWorkflow,
+  WorkflowChange as EngineWorkflowChange,
+  WorkflowInput as EngineWorkflowInput,
   WorkflowStep as EngineWorkflowStep,
   WorkflowStepResult,
   WriteResult as EngineWriteResult,
@@ -47,6 +50,7 @@ import type {
   ProjectSummary,
   SerializeErrorCode,
   StepDefinition,
+  StepInput,
   StepOwner,
   StoreErrorCode,
   Task,
@@ -57,6 +61,8 @@ import type {
   UserConfig,
   UserConfigChange,
   Workflow,
+  WorkflowChange,
+  WorkflowInput,
   WorkflowStep,
   WriteResult,
 } from "@tasma/protocol";
@@ -114,6 +120,10 @@ describe("the wire contract", () => {
     expectTypeOf<StepDefinition>().toEqualTypeOf<Omit<WorkflowStepResult, "diagnostics">>();
     expectTypeOf<UserConfig>().toEqualTypeOf<Omit<UserConfigInfo, "diagnostics">>();
     expectTypeOf<UserConfigChange>().toEqualTypeOf<EngineUserConfigChange>();
+    expectTypeOf<StepInput>().toEqualTypeOf<EngineStepInput>();
+    // The name is a separate argument of the engine create.
+    expectTypeOf<Omit<WorkflowInput, "name">>().toEqualTypeOf<EngineWorkflowInput>();
+    expectTypeOf<WorkflowChange>().toEqualTypeOf<EngineWorkflowChange>();
   });
 
   it("keeps the task and the write result in step, less what JSON cannot carry", () => {

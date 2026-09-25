@@ -110,15 +110,16 @@ export type WriteContext = {
 };
 
 /**
- * The one wording a stale step is reported with, from the write path and the
- * read path alike. It names the task once: the diagnostic already carries the
- * path of the file, so a second mention of its subject says nothing.
+ * The one wording a stale step is reported with, from the write path, the read
+ * path and the edit of a workflow alike. A diagnostic about one task names it
+ * once: it already carries the path of the file. One of many tasks is named by
+ * its id.
  */
-function staleStep(step: string, workflow: Workflow | undefined): string {
-  const carries = `this task carries the step "${step}"`;
+export function staleStep(step: string, workflow: string | undefined, subject = "this task"): string {
+  const carries = `${subject} carries the step "${step}"`;
   return workflow === undefined
     ? `${carries} and names no workflow`
-    : `${carries}, which the workflow "${workflow.name}" does not declare`;
+    : `${carries}, which the workflow "${workflow}" does not declare`;
 }
 
 /**
@@ -203,7 +204,7 @@ export async function validateWorkflowInto(check: WriteContext): Promise<void> {
   // reported and kept: it is what a workflow the user edited leaves behind, and
   // refusing it would strand the task instead of naming the problem.
   if (typeof step !== "string" || (workflow !== undefined && declaresStep(workflow, step))) return;
-  diagnostics.push({ code: "step-stale", message: staleStep(step, workflow), path });
+  diagnostics.push({ code: "step-stale", message: staleStep(step, workflow?.name), path });
 }
 
 /**
@@ -257,7 +258,7 @@ export async function reportWorkflowInto(
     return;
   }
   if (typeof step === "string" && !declaresStep(workflow, step)) {
-    diagnostics.push({ code: "step-stale", message: staleStep(step, workflow), path });
+    diagnostics.push({ code: "step-stale", message: staleStep(step, workflow.name), path });
   }
 }
 

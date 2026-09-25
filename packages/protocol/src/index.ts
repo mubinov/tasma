@@ -38,7 +38,11 @@ export type {
 export type {
   InstructionDocument,
   StepDefinition,
+  StepInput,
   StepOwner,
   Workflow,
+  WorkflowChange,
+  WorkflowInput,
+  WorkflowReceipt,
   WorkflowStep,
 } from "./workflow.js";

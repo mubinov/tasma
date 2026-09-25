@@ -9,7 +9,7 @@ import type { Project, ProjectChange, ProjectInput, ProjectRename, ProjectSummar
 import type { RouteEntry } from "../http/router.js";
 import { assertNoQuery, readProjectQuery } from "../tasks/filter.js";
 import { toChange } from "../tasks/input.js";
-import { CONFIG_KEY, PATH_KEY, type WriteQueue } from "../tasks/serialize.js";
+import { CONFIG_KEY, PATH_KEY, workflowKey, type WriteQueue } from "../tasks/serialize.js";
 import type { ProjectHost } from "./host.js";
 
 /**
@@ -52,7 +52,8 @@ async function readOne(host: ProjectHost, tag: string): Promise<Success<Project>
  *
  * A patch that states a key the user's file also holds, or `workflows`, takes
  * the configuration turn as well, since a write of the user's file checks this
- * file and this write checks that one.
+ * file and this write checks that one. A patch that states `workflows` takes the
+ * turn of each workflow it names too, which a delete of that workflow takes.
  */
 export function projectRoutes(host: ProjectHost, writes: WriteQueue): RouteEntry[] {
   return [
@@ -101,6 +102,10 @@ export function projectRoutes(host: ProjectHost, writes: WriteQueue): RouteEntry
         const keys = [tag];
         if (Object.hasOwn(change, "path")) keys.push(PATH_KEY);
         if ([...USER_CONFIG_LINKED_KEYS].some((key) => Object.hasOwn(change, key))) keys.push(CONFIG_KEY);
+        // A value that is no list of strings takes no turn; the engine refuses it.
+        if (Array.isArray(change.workflows)) {
+          for (const name of change.workflows as unknown[]) if (typeof name === "string") keys.push(workflowKey(name));
+        }
         return writes.runAll(keys, async () => {
           await host.update(tag, change);
           return readOne(host, tag);

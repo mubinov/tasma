@@ -131,3 +131,12 @@ export function createKey(project: string): string {
  * other's file.
  */
 export const CONFIG_KEY = "config\u0000";
+
+/**
+ * The key the writes of one workflow share with every project write that states
+ * it in `workflows`, so a delete cannot run between its check that no project
+ * lists the workflow and the removal.
+ */
+export function workflowKey(name: string): string {
+  return `workflow\u0000${name}`;
+}

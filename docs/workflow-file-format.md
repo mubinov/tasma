@@ -40,8 +40,11 @@ Workflows are central. One definition is shared by every project that selects
 it. A project selects the workflows its tasks may name; it does not copy them and
 it does not change them.
 
-A workflow file is a UTF-8 text file. It is read and never written: nothing in
-this format is produced by a program, so this document states reader rules alone.
+A workflow file is a UTF-8 text file. It is written by hand or by
+`tasma workflow create` and `tasma workflow edit`. A file written by hand and a
+file written by these commands must obey the same rules.
+This document states the rules of the reader; section 11 states what a write
+adds.
 
 ## 2. The workflow directory
 
@@ -331,7 +334,8 @@ workflow only when the project declares none.
 **A mismatch that already exists in a file is always reported, never refused.**
 Only the value being written is refused. Removing a step from a workflow leaves
 the tasks that sit on it as they are: they are reported, and they stay readable
-and writable.
+and writable. `tasma workflow edit` names the tasks that are on a step it
+removed (see section 11).
 
 **A stored `workflow` is not re-checked against the project's list.** The list
 states what may be written. A project that drops a workflow leaves the tasks that
@@ -415,3 +419,28 @@ A listing never fails on the directory itself. It answers the empty list and
 names the fault. Reading one workflow by name is a different question: a name
 that reaches no directory is a workflow that does not exist, which section 9
 states for the task that names one.
+
+## 11. Writing a workflow file
+
+`tasma workflow create` and `tasma workflow edit` write `workflow.yml` through
+the daemon. The new text must pass every rule of the reader before it is
+written, and a change that fails a rule writes nothing.
+
+A write:
+
+- keeps the comments, the key order, `transitions` and the unknown top-level
+  keys of the file;
+- replaces the whole `steps` list, and loses a comment inside it;
+- keeps the other keys of a step entry whose name stays the same, and drops them
+  when the name changes;
+- writes each step entry as a flow mapping of `name`, `file`, `owner`, then the
+  kept keys;
+- stores each path as absolute or starting with `~/`, and refuses a step
+  document or an instruction document that is not a regular file;
+- refuses a `workflow.yml` that is a symbolic link, because the write replaces
+  the file.
+
+`tasma workflow delete` removes the workflow directory. It refuses a directory
+that holds no `workflow.yml`, and a workflow that a project lists. After an edit
+that removes or renames a step, the command names each task that is on the
+removed step. A task in a final status is not named.

@@ -31,3 +31,32 @@ export type InstructionDocument = { path: string; text: string };
 
 /** One step and the document its file holds. */
 export type StepDefinition = { step: WorkflowStep; document: InstructionDocument };
+
+/**
+ * One step a write states. `file` must be absolute or start with `~/`, and name a
+ * regular file; it is stored as stated.
+ */
+export type StepInput = { name: string; owner: StepOwner; file: string };
+
+/**
+ * What a create states. `instructions` entries follow the rule of
+ * `StepInput.file`. The daemon refuses a name that exists as `workflow-exists`.
+ */
+export type WorkflowInput = { name: string; title?: string; instructions?: string[]; steps: StepInput[] };
+
+/**
+ * One change of a `workflow.yml`. A key present with `null` removes the key and
+ * an absent key leaves it alone. A list replaces the stored list, and a step
+ * entry keeps the other keys of the stored entry of the same name. `steps`
+ * cannot be removed.
+ *
+ * Each task on a step the new list no longer holds is reported as a
+ * `step-stale` diagnostic, except a task in a final status.
+ */
+export type WorkflowChange = { title?: string | null; instructions?: string[] | null; steps?: StepInput[] };
+
+/**
+ * The answer to a delete: the name removed. A workflow a project lists is
+ * refused as `workflow-in-use`.
+ */
+export type WorkflowReceipt = { name: string };

@@ -10,36 +10,50 @@ const UNADDRESSABLE: Record<UnaddressableKey, string> = {
   "key-unaddressable": "the file carries a key written as an alias, so a key of it cannot be written",
 };
 
+/** The code a file on disk that no write can use is refused with: a configuration file, or a workflow file. */
+export type DeclarationFault = "config-invalid" | "workflow-invalid";
+
 /**
- * One configuration file as a document this layer can write back, or an empty
- * one where the file is absent, which is how a file takes its first key.
+ * How one file is opened for a write. `required` refuses an absent file rather
+ * than answering an empty document.
+ */
+export type DeclarationOptions = { code?: DeclarationFault; required?: boolean };
+
+/**
+ * One file the user places as a document this layer can write back, or an
+ * empty one where the file is absent and not `required`, which is how a file
+ * takes its first key.
  *
  * A symbolic link is refused although the reader follows one on purpose: this
  * write installs the new text by rename, which would replace the link with a
  * plain file and leave the linked file stale. A file the parser refuses is
  * refused for the same reason — the rename would take it with it.
  */
-export async function openDeclaration(filename: string): Promise<Document> {
+export async function openDeclaration(filename: string, options: DeclarationOptions = {}): Promise<Document> {
+  const code = options.code ?? "config-invalid";
   const read = await readRegularFile(filename);
-  if (read === "absent") return new Document({});
+  if (read === "absent") {
+    if (options.required === true) fail(code, "there is no file under this name", filename);
+    return new Document({});
+  }
   if (read === "irregular") {
-    fail("config-invalid", "this name holds no regular file this layer can write", filename);
+    fail(code, "this name holds no regular file this layer can write", filename);
   }
   const doc = parseDocument(read.text);
-  if (doc.errors.length > 0) fail("config-invalid", "the file is not valid YAML", filename);
+  if (doc.errors.length > 0) fail(code, "the file is not valid YAML", filename);
   // Both tests are needed. The node says whether the document holds anything at
   // all: a file holding nothing, or nothing but comments, carries none and takes
   // its first key. The value it resolves to says whether a write reaches a key:
   // an explicit null and a `!!set` each carry a node no key can be set on, and
   // both resolve to something `isPlainMapping` refuses.
-  if (doc.contents !== null && !isPlainMapping(resolvedValue(doc, filename))) {
-    fail("config-invalid", "the file must hold a YAML mapping", filename);
+  if (doc.contents !== null && !isPlainMapping(resolvedValue(doc, filename, code))) {
+    fail(code, "the file must hold a YAML mapping", filename);
   }
   // The reader resolves a name such a file gives while no key of it carries that
   // text, so a write here would state the key a second time, or take nothing
   // away and report that it did.
   const unaddressable = unaddressableKey(doc);
-  if (unaddressable !== undefined) fail("config-invalid", UNADDRESSABLE[unaddressable], filename);
+  if (unaddressable !== undefined) fail(code, UNADDRESSABLE[unaddressable], filename);
   return doc;
 }
 
@@ -49,11 +63,11 @@ export async function openDeclaration(filename: string): Promise<Document> {
  * is about the file rather than about this call — the shape `readLevel` answers
  * a parse fault of the same file in.
  */
-function resolvedValue(doc: Document, filename: string): unknown {
+function resolvedValue(doc: Document, filename: string, code: DeclarationFault): unknown {
   try {
     return doc.toJS();
   } catch (error) {
-    fail("config-invalid", "this file holds an alias that resolves to no anchor", filename, error);
+    fail(code, "this file holds an alias that resolves to no anchor", filename, error);
   }
 }
 
@@ -79,10 +93,16 @@ export function appliedValues(doc: Document, writes: Map<string, unknown>): Reco
  * resolving to nothing. It is the condition the task writer refuses as
  * `anchor-aliased`.
  */
-export function checkAnchor(doc: Document, key: string, removing: boolean, filename: string): void {
+export function checkAnchor(
+  doc: Document,
+  key: string,
+  removing: boolean,
+  filename: string,
+  code: DeclarationFault = "config-invalid",
+): void {
   if (!anchorIsRead(doc, key, anchorsOf(doc), removing)) return;
   const description = `the key "${key}" carries a YAML anchor another value points at, so it cannot be changed`;
-  fail("config-invalid", description, filename);
+  fail(code, description, filename);
 }
 
 /** The value of a key that clears its field: none at all, or `null`. */

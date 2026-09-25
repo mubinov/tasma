@@ -49,7 +49,7 @@ When no address is given, tasma reads `$HOME/.tasma/daemon.json`. If that file i
 - To remove a field, use `--clear <field>`, one time for each field. You cannot use `--clear` and a flag for the same field together.
 - `--append` adds the new body after the stored body, with one empty line between them. It needs `--body` or `--body-file`. The read and the write are two requests: a change made between them is lost.
 
-**Output.** stdout carries the result: a table, a text, the id or tag that a write command changed, or the line of a `daemon` command. The help and the version also go to stdout. Tables have no header row, columns are separated by 2 or more spaces, and `-` marks an empty value. Notes and errors go to stderr, and each note and error line starts with `tasma:`.
+**Output.** stdout carries the result: a table, a text, the id, tag or workflow name that a write command changed, or the line of a `daemon` command. The help and the version also go to stdout. Tables have no header row, columns are separated by 2 or more spaces, and `-` marks an empty value. Notes and errors go to stderr, and each note and error line starts with `tasma:`.
 
 ## project
 
@@ -200,6 +200,30 @@ List the workflow names, one on each line.
 ### `tasma workflow show <name>`
 
 Print one workflow as three blocks with an empty line between them: the name and title; one `config <path>` row naming the file that declares the workflow, followed by one `instructions <path>` row for each instruction document; and one `<step> <owner> <file>` row for each step. The owner is `agent` or `human`. A workflow that names no instruction document still prints the `config` row.
+
+### `tasma workflow create <name> --step <name>,<owner>,<file> [--step ...] [--title <title>] [--instruction <file> ...]`
+
+Create a workflow: a folder named `<name>` that holds `workflow.yml`. Give one `--step` for each step, in the order of the steps. The value of `--step` is split at its first two commas: the step name, the owner (`agent` or `human`) and the path of the step document. A step name never contains `,`, and the path can. Repeat `--instruction` for each document that applies to every step. Prints the name.
+
+A name that exists is refused. The rules for the paths and for the check are those of `workflow edit`.
+
+### `tasma workflow edit <name> [options]`
+
+Change a workflow. Each flag writes one key of its `workflow.yml`:
+
+- `--title` writes one value.
+- `--step` and `--instruction` write lists. Repeat a flag for each entry. The list replaces the stored list. To change one step, give all the steps again.
+- `--clear <field>` removes a key: `title` or `instructions`. The steps cannot be removed.
+
+A relative path starts at the working directory; the workflow stores the absolute path. A `~/` path is stored as given. Each step document and each instruction must be a file. The daemon checks the result with the rules of the workflow file format (see [workflow-file-format.md](workflow-file-format.md)): a step name that breaks the name rule, a duplicate step name and an owner outside `agent` and `human` are refused. A change that fails the check writes nothing.
+
+The comments of the file, its other keys and the other keys of a step whose name stays the same do not change. A comment inside the list of steps is lost. A `workflow.yml` that is a symbolic link is refused.
+
+A task can stay on a step that the edit removes or renames. For each such task, in all projects, the command writes one `tasma: note: step-stale` line to stderr. A task in a final status is not named. Prints the name.
+
+### `tasma workflow delete <name>`
+
+Remove a workflow folder and everything in it. A folder that holds no `workflow.yml` is refused and does not change. A workflow that a project lists is refused, and the error names the projects. Remove the workflow from those projects first with `project edit`. The delete is also refused when the `config.yml` of a project is missing or cannot be read, because that project can list the workflow. Tasks are not checked. The command does not ask for confirmation. Prints the removed name.
 
 ## daemon
 
