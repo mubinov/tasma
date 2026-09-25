@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { routes } from "@tasma/protocol";
@@ -32,6 +32,8 @@ const BUILT_IN_CONFIG = {
   workflows: [],
   instructions: [],
 };
+
+const REVIEW_WORKFLOW = "steps:\n  - {name: check, file: steps/check.md, owner: agent}\n";
 
 /**
  * A daemon serving the project routes over a tree, both closed with the test.
@@ -392,6 +394,62 @@ describe("PATCH /projects/{project}", () => {
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "field-not-writable" });
+  });
+
+  it("sets the configuration keys, and the reply carries them resolved", async () => {
+    const root = await projectsRoot("SAGA");
+    await plant(join(root, "workflows", "review", "workflow.yml"), REVIEW_WORKFLOW);
+    const rules = join(await target(), "rules.md");
+    await writeFile(rules, "# Rules\n");
+    const server = await serving(root);
+
+    const response = await send(server, "PATCH", "/projects/SAGA", {
+      statuses: ["New", "Shipped"],
+      default_status: "New",
+      final_statuses: ["Shipped"],
+      priorities: ["urgent"],
+      workflows: ["review"],
+      instructions: [rules],
+    });
+
+    expect(response.status).toBe(200);
+    expect((await success<Project>(response)).data.config).toEqual({
+      statuses: ["New", "Shipped"],
+      default_status: "New",
+      final_statuses: ["Shipped"],
+      priorities: ["urgent"],
+      workflows: ["review"],
+      instructions: [rules],
+    });
+  });
+
+  it("clears a configuration key the body carries as null", async () => {
+    const root = await projectsRoot("SAGA");
+    await plant(projectConfig(root, "SAGA"), "priorities: [urgent]\n");
+    const server = await serving(root);
+
+    const response = await send(server, "PATCH", "/projects/SAGA", { priorities: null });
+
+    expect(response.status).toBe(200);
+    expect((await success<Project>(response)).data.config).toEqual(BUILT_IN_CONFIG);
+  });
+
+  it.each<[string, Record<string, unknown>, number, string]>([
+    ["a default_status not among the statuses", { default_status: "Shipped" }, 400, "config-change-invalid"],
+    ["a workflow with no directory", { workflows: ["missing"] }, 400, "workflow-unknown"],
+    ["a workflow that cannot be loaded", { workflows: ["broken"] }, 422, "workflow-invalid"],
+    ["an instruction that names nothing", { instructions: ["/srv/gone.md"] }, 400, "path-invalid"],
+  ])("refuses %s, and the file stays as it stands", async (_reason, body, status, code) => {
+    const root = await projectsRoot("SAGA");
+    await plant(join(root, "workflows", "broken", "workflow.yml"), "steps: [\n");
+    await plant(projectConfig(root, "SAGA"), "name: Saga\n");
+    const server = await serving(root);
+
+    const response = await send(server, "PATCH", "/projects/SAGA", body);
+
+    expect(response.status).toBe(status);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "store", code });
+    await expect(readFile(projectConfig(root, "SAGA"), "utf8")).resolves.toBe("name: Saga\n");
   });
 
   it("answers 404 for a tag the tree does not list", async () => {

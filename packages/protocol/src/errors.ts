@@ -21,6 +21,7 @@ export type StoreErrorCode
     | "path-invalid"
     | "path-taken"
     | "config-invalid"
+    | "config-change-invalid"
     | "status-unknown"
     | "priority-unknown"
     | "label-invalid"

@@ -71,9 +71,16 @@ Print the tag of the project that holds the working directory.
 
 Create a project for a folder. A relative `--path` starts at the working directory, and `~/` starts at the home directory. `--name` is the folder name when not given. `--tag` is made from the folder name when not given. Prints the tag.
 
-### `tasma project edit <tag> [--path <path>] [--name <name>] [--clear name]`
+### `tasma project edit <tag> [options]`
 
-Change the path or the name of a project. `--path` is read as in `project create`. Prints the tag.
+Change the configuration of a project. Each flag writes one key of the project `config.yml`:
+
+- `--path` and `--name`.
+- `--status`, `--final-status`, `--priority`, `--workflow` and `--instruction` write lists. Repeat a flag for each entry. The list replaces the stored list.
+- `--default-status` writes one value.
+- `--clear <field>` removes a key: `name`, `statuses`, `default_status`, `final_statuses`, `priorities`, `workflows` or `instructions`. A removed `statuses`, `default_status`, `final_statuses` or `priorities` takes its value from `$HOME/.tasma/config.yml` or from the built-in default.
+
+A relative `--path` or `--instruction` starts at the working directory; the project stores the absolute path. The daemon accepts only absolute and `~/` paths. The daemon checks the result before it writes: `default_status` and each final status must be in the statuses, each workflow must exist, and each instruction must be a file. A change that fails the check writes nothing. Tasks are not checked, so a task can keep a status the list no longer holds. Prints the tag.
 
 ### `tasma project rename <old> <new>`
 

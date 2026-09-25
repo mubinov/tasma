@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Stats } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -36,15 +37,16 @@ export function expandHome(path: string): string {
 const NAMES_NOTHING = new Set(["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"]);
 
 /**
- * True when a name a caller stated resolves to a directory. The link is
- * followed: the folder is the caller's own, so a link to it is the caller's
- * choice. A fault about the name is an answer here — it names nothing the caller
- * can be told about in any other way — while every other fault reaches the
- * caller, which stated the name and is the only one who can put it right.
+ * True when a name a caller stated resolves to an entry of the kind `holds`
+ * accepts. The link is followed: the entry is the caller's own, so a link to it
+ * is the caller's choice. A fault about the name is an answer here — it names
+ * nothing the caller can be told about in any other way — while every other
+ * fault reaches the caller, which stated the name and is the only one who can
+ * put it right.
  */
-async function namesDirectory(path: string): Promise<boolean> {
+async function namesEntry(path: string, holds: (stats: Stats) => boolean): Promise<boolean> {
   try {
-    return (await stat(path)).isDirectory();
+    return holds(await stat(path));
   } catch (error) {
     const code = errnoOf(error);
     if (code !== undefined && NAMES_NOTHING.has(code)) return false;
@@ -53,16 +55,20 @@ async function namesDirectory(path: string): Promise<boolean> {
 }
 
 /**
- * The absolute path of a directory a caller stated, which must be there. The
+ * The absolute path of an entry a caller stated, which must be there. The
  * caller states an absolute path or a `~/` path, the two forms that stand for
  * themselves: a relative one would resolve against the working directory of
  * whichever process is calling, which is nowhere the caller meant.
  *
- * `subject` opens each refusal, so one rule serves both the folder a project
- * stands for and the folder a caller asks a question about, and each is refused
- * in its own words.
+ * `subject` opens each refusal, so one rule serves every entry a caller names,
+ * and each is refused in its own words.
  */
-export async function checkedDirectoryPath(stated: string, subject: string): Promise<string> {
+async function checkedEntryPath(
+  stated: string,
+  subject: string,
+  holds: (stats: Stats) => boolean,
+  kind: string,
+): Promise<string> {
   // No name on a filesystem holds a NUL byte, and `stat` answers one as a fault
   // of its argument rather than as an answer about the path.
   if (stated.includes("\0")) fail("path-invalid", `${subject} holds no NUL byte`);
@@ -70,10 +76,18 @@ export async function checkedDirectoryPath(stated: string, subject: string): Pro
     fail("path-invalid", `${subject} must be absolute or start with "~/"`, stated);
   }
   const resolved = resolve(expandHome(stated));
-  if (!(await namesDirectory(resolved))) {
-    fail("path-invalid", "this path names no directory", resolved);
-  }
+  if (!(await namesEntry(resolved, holds))) fail("path-invalid", `this path names no ${kind}`, resolved);
   return resolved;
+}
+
+/** The same, for a directory. */
+export async function checkedDirectoryPath(stated: string, subject: string): Promise<string> {
+  return checkedEntryPath(stated, subject, (stats) => stats.isDirectory(), "directory");
+}
+
+/** The same, for a regular file. */
+export async function checkedFilePath(stated: string, subject: string): Promise<string> {
+  return checkedEntryPath(stated, subject, (stats) => stats.isFile(), "regular file");
 }
 
 /**

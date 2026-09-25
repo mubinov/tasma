@@ -275,6 +275,9 @@ instructions:
   - house-rules.md
 ```
 
+`tasma project edit --workflow` and `--instruction` set these keys; see
+[CLI](cli.md).
+
 **The first entry is the workflow of a new task that names none.** A project with
 an empty or absent `workflows` list creates tasks with no workflow.
 

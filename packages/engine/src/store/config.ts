@@ -67,6 +67,16 @@ async function readLevel(path: string, known: Set<string>, diagnostics: StoreDia
   // A plain mapping, not merely an object: a YAML tag resolves to a `Set`, a
   // `Map` or a `Date`, none of which reports its content as entries.
   if (!isPlainMapping(content)) fail("config-invalid", "the file must hold a YAML mapping", path);
+  return levelOf(path, content, known, diagnostics);
+}
+
+/** The recognized keys of one mapping a file at `path` holds, reporting every other key. */
+function levelOf(
+  path: string,
+  content: Record<string, unknown>,
+  known: Set<string>,
+  diagnostics: StoreDiagnostic[],
+): Level {
   const values: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(content)) {
     if (known.has(key)) values[key] = value;
@@ -123,6 +133,9 @@ function nonEmptyStringList(key: string, sourced: Sourced): string[] {
  * Both parameters that name a file are read for a message alone: `from` is the
  * file that stated the checked value, `declaredStatuses` is read for the name of
  * the file behind `statuses` and for nothing else.
+ *
+ * A conflict that involves a key of a write is the fault of that write; any
+ * other is a fault of the files on disk.
  */
 function checkDeclaredStatus(
   key: string,
@@ -130,10 +143,12 @@ function checkDeclaredStatus(
   statuses: string[],
   declaredStatuses: Sourced | undefined,
   from: string,
+  changed: ReadonlySet<string>,
 ): void {
   if (statuses.includes(value)) return;
   const source = declaredStatuses === undefined ? BUILT_IN : declaredStatuses.from;
-  fail("config-invalid", `${key} "${value}" is not one of the statuses declared in ${source}`, from);
+  const code = changed.has(key) || changed.has("statuses") ? "config-change-invalid" : "config-invalid";
+  fail(code, `${key} "${value}" is not one of the statuses declared in ${source}`, from);
 }
 
 /**
@@ -146,15 +161,68 @@ function checkDeclaredStatus(
  * would mean no status ever ends a task, so every open blocker would block
  * forever — the reasoning that already refuses an empty `statuses`.
  */
-function resolveFinalStatuses(levels: Level[], statuses: string[], declaredStatuses: Sourced | undefined): string[] {
+function resolveFinalStatuses(
+  levels: Level[],
+  statuses: string[],
+  declaredStatuses: Sourced | undefined,
+  changed: ReadonlySet<string>,
+): string[] {
   const stated = pick("final_statuses", levels);
   // The resolved list holds at least one entry, so its last one is a status.
   if (stated === undefined) return [statuses.at(-1)!];
   const final = nonEmptyStringList("final_statuses", stated);
   for (const entry of final) {
-    checkDeclaredStatus("final_statuses", entry, statuses, declaredStatuses, stated.from);
+    checkDeclaredStatus("final_statuses", entry, statuses, declaredStatuses, stated.from, changed);
   }
   return final;
+}
+
+type StatusAndPriorityConfig = Pick<ResolvedConfig, "statuses" | "default_status" | "final_statuses" | "priorities">;
+
+/**
+ * The statuses and the priorities the levels resolve to, under every rule the
+ * reader applies to them. `changed` names the keys a write sets or clears, and
+ * decides which code a conflict is refused with; a read passes none.
+ *
+ * A type fault is always `config-invalid`: a write checks every value it gives
+ * before this runs, so a value that fails here came from a file on disk.
+ */
+function resolveStatusesAndPriorities(levels: Level[], changed: ReadonlySet<string>): StatusAndPriorityConfig {
+  const declaredStatuses = pick("statuses", levels);
+  const statuses
+    = declaredStatuses === undefined ? BUILT_IN_STATUSES : nonEmptyStringList("statuses", declaredStatuses);
+  const declaredPriorities = pick("priorities", levels);
+  const priorities
+    = declaredPriorities === undefined ? BUILT_IN_PRIORITIES : nonEmptyStringList("priorities", declaredPriorities);
+  const finalStatuses = resolveFinalStatuses(levels, statuses, declaredStatuses, changed);
+
+  const stated = pick("default_status", levels);
+  // The first entry of the resolved list, which holds at least one.
+  if (stated === undefined) {
+    return { statuses, default_status: statuses[0]!, final_statuses: finalStatuses, priorities };
+  }
+  if (typeof stated.value !== "string") fail("config-invalid", '"default_status" must be a string', stated.from);
+  checkDeclaredStatus("default_status", stated.value, statuses, declaredStatuses, stated.from, changed);
+  return { statuses, default_status: stated.value, final_statuses: finalStatuses, priorities };
+}
+
+/**
+ * Refuses a write of a project's own file whose statuses or priorities the
+ * reader would refuse.
+ * `values` is the whole mapping the file holds once the write is applied, and
+ * the user's file is read as it stands, so a write can repair a broken project
+ * file and a broken user value it hides does not refuse it.
+ */
+export async function checkStatusAndPriorityChange(
+  paths: ProjectPaths,
+  values: Record<string, unknown>,
+  changed: ReadonlySet<string>,
+): Promise<void> {
+  const levels = [
+    levelOf(paths.projectConfig, values, PROJECT_KEYS, []),
+    await readLevel(paths.userConfig, USER_KEYS, []),
+  ];
+  resolveStatusesAndPriorities(levels, changed);
 }
 
 /**
@@ -218,50 +286,17 @@ export async function resolveConfig(paths: ProjectPaths, diagnostics: StoreDiagn
     await readLevel(paths.userConfig, USER_KEYS, diagnostics),
   ];
 
-  const declaredStatuses = pick("statuses", levels);
-  const statuses
-    = declaredStatuses === undefined ? BUILT_IN_STATUSES : nonEmptyStringList("statuses", declaredStatuses);
-  const declaredPriorities = pick("priorities", levels);
-  const priorities
-    = declaredPriorities === undefined ? BUILT_IN_PRIORITIES : nonEmptyStringList("priorities", declaredPriorities);
-  const finalStatuses = resolveFinalStatuses(levels, statuses, declaredStatuses);
-
-  const workflows = declaredList("workflows", levels);
-  const instructions = declaredPaths("instructions", levels);
-  const name = declaredString("name", levels);
-  const path = declaredPath("path", levels);
-  // Left absent when no file named one, rather than defaulted here: whether the
-  // directory was configured decides what the loader reports about it, and a
-  // default applied at this layer would throw that away.
-  const workflowsPath = declaredPath("workflows_path", levels);
-
-  const stated = pick("default_status", levels);
-  if (stated === undefined) {
-    // The first entry of the resolved list, which holds at least one.
-    return {
-      statuses,
-      default_status: statuses[0]!,
-      final_statuses: finalStatuses,
-      priorities,
-      workflows,
-      instructions,
-      name,
-      path,
-      workflows_path: workflowsPath,
-    };
-  }
-  if (typeof stated.value !== "string") fail("config-invalid", '"default_status" must be a string', stated.from);
-  checkDeclaredStatus("default_status", stated.value, statuses, declaredStatuses, stated.from);
+  const resolved = resolveStatusesAndPriorities(levels, new Set());
   return {
-    statuses,
-    default_status: stated.value,
-    final_statuses: finalStatuses,
-    priorities,
-    workflows,
-    instructions,
-    name,
-    path,
-    workflows_path: workflowsPath,
+    ...resolved,
+    workflows: declaredList("workflows", levels),
+    instructions: declaredPaths("instructions", levels),
+    name: declaredString("name", levels),
+    path: declaredPath("path", levels),
+    // Left absent when no file named one, rather than defaulted here: whether the
+    // directory was configured decides what the loader reports about it, and a
+    // default applied at this layer would throw that away.
+    workflows_path: declaredPath("workflows_path", levels),
   };
 }
 

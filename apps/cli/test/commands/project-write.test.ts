@@ -151,6 +151,66 @@ describe("project edit", () => {
     await refuses(["edit", "SAGA"], "project edit needs a change");
   });
 
+  it("sends each configuration flag under its key, and a repeated flag as a list in the order typed", async () => {
+    const args = [
+      "edit", "SAGA",
+      "--status", "New", "--status", "Doing", "--status", "Shipped",
+      "--default-status", "New",
+      "--final-status", "Shipped",
+      "--priority", "urgent", "--priority", "later",
+      "--workflow", "review", "--workflow", "build",
+      "--instruction", "/srv/rules.md",
+    ];
+
+    expect(await sent(args, { [UPDATED]: WRITTEN })).toEqual({
+      statuses: ["New", "Doing", "Shipped"],
+      default_status: "New",
+      final_statuses: ["Shipped"],
+      priorities: ["urgent", "later"],
+      workflows: ["review", "build"],
+      instructions: ["/srv/rules.md"],
+    });
+  });
+
+  it("sends a flag typed once as a list of one", async () => {
+    expect(await sent(["edit", "SAGA", "--priority", "urgent"], { [UPDATED]: WRITTEN }))
+      .toEqual({ priorities: ["urgent"] });
+  });
+
+  it("sends --clear of every configuration field as null", async () => {
+    const fields = ["statuses", "default_status", "final_statuses", "priorities", "workflows", "instructions"];
+    const args = ["edit", "SAGA", ...fields.flatMap((field) => ["--clear", field])];
+
+    expect(await sent(args, { [UPDATED]: WRITTEN })).toEqual(Object.fromEntries(fields.map((field) => [field, null])));
+  });
+
+  it("refuses a clear together with the flag that sets the same field", async () => {
+    await refuses(["edit", "SAGA", "--clear", "statuses", "--status", "A"], "--clear statuses and --status exclude each other");
+    await refuses(
+      ["edit", "SAGA", "--default-status", "A", "--clear", "default_status"],
+      "--clear default_status and --default-status exclude each other",
+    );
+    await refuses(
+      ["edit", "SAGA", "--clear", "instructions", "--instruction", "/srv/rules.md"],
+      "--clear instructions and --instruction exclude each other",
+    );
+    await refuses(["edit", "SAGA", "--clear", "status"], "not a clearable field: status");
+  });
+
+  it("refuses an empty entry of a repeated flag", async () => {
+    await refuses(["edit", "SAGA", "--status", "A", "--status", ""], "--status needs a value; --clear statuses removes the field");
+  });
+
+  it("lists the configuration flags in its help", async () => {
+    const { code, out } = await runProject(["edit", "--help"]);
+
+    expect(code).toBe(0);
+    for (const flag of ["--status", "--default-status", "--final-status", "--priority", "--workflow", "--instruction"]) {
+      expect(out, flag).toContain(`${flag} <`);
+    }
+    expect(out).toContain("Remove a field: name, statuses, default_status, final_statuses, priorities, workflows, instructions");
+  });
+
   it("knows no --tag", async () => {
     const { code, err, seen } = await runProject(["edit", "SAGA", "--tag", "NEW"]);
 
@@ -274,6 +334,20 @@ describe("the path a write sends", () => {
 
     await refuses(["create", "--path", "saga"], line, { cwd: "" });
     await refuses(["edit", "SAGA", "--path", "saga"], line, { cwd: "" });
+  });
+
+  it("is made absolute for an instruction typed relative, and sent unchanged where it starts with ~/", async () => {
+    const args = ["edit", "SAGA", "--instruction", "docs/rules.md", "--instruction", "~/notes.md"];
+
+    expect(await sent(args, { [UPDATED]: WRITTEN })).toEqual({ instructions: [`${CWD}/docs/rules.md`, "~/notes.md"] });
+  });
+
+  it("is refused for an instruction typed relative where the working directory could not be read", async () => {
+    await refuses(
+      ["edit", "SAGA", "--instruction", "rules.md"],
+      "the working directory could not be read; state --instruction as an absolute path",
+      { cwd: "" },
+    );
   });
 
   it("is not read where the edit states no path", async () => {

@@ -116,6 +116,7 @@ describe("the status of a refusal", () => {
     "tag-invalid",
     "tag-not-generated",
     "path-invalid",
+    "config-change-invalid",
   ])("answers 400 for the store code %s", (code) => expect(statusOfStore(code)).toBe(400));
 
   it.each<ParseErrorCode>([

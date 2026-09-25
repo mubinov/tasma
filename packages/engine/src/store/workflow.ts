@@ -148,6 +148,17 @@ export async function readDeclaredWorkflow(
 }
 
 /**
+ * Refuses a list of workflows a project is about to declare when any name of it
+ * does not load from the directory the user's file places the workflows in.
+ * Unlike a read, a broken user file refuses the write rather than falling back
+ * to the built-in directory, which the user did not choose.
+ */
+export async function checkDeclaredWorkflows(paths: ProjectPaths, names: string[]): Promise<void> {
+  const workflows = openWorkflows({ root: paths.root, path: await resolveWorkflowsPath(paths.userConfig, []) });
+  for (const name of names) await readDeclaredWorkflow(workflows, names, name, []);
+}
+
+/**
  * Checks `workflow` and `step` against the effective workflow — the value of
  * `workflow` once the change is applied — and reports a stored `step` that no
  * longer fits.

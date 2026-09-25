@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
-import { Document, parseDocument } from "yaml";
+import { Document, isAlias, isNode, isScalar, isSeq, type Node, parseDocument } from "yaml";
 import { anchorIsRead, anchorsOf, type UnaddressableKey, unaddressableKey } from "../format/anchors.js";
 import { isPlainMapping } from "../format/values.js";
 import {
@@ -11,14 +11,15 @@ import {
   removeTree,
   replaceFile,
 } from "./atomic.js";
-import { resolveProjectDeclaration } from "./config.js";
+import { checkStatusAndPriorityChange, resolveProjectDeclaration } from "./config.js";
 import { errnoOf, fail } from "./errors.js";
 import { pathHolder } from "./locate.js";
-import { checkedDirectoryPath, type ProjectPaths, projectPaths } from "./paths.js";
+import { checkedDirectoryPath, checkedFilePath, type ProjectPaths, projectPaths } from "./paths.js";
 import { checkedProjectsDirectory, discoverProjects } from "./projects.js";
 import { checkProjectDirectory, openProjectDirectory } from "./store.js";
 import { checkedTag, generateTag, uniqueTag } from "./tag.js";
 import { checkedKeys } from "./validate.js";
+import { checkDeclaredWorkflows } from "./workflow.js";
 import type {
   CreateProjectInput,
   ProjectChange,
@@ -27,8 +28,8 @@ import type {
   StoreDiagnostic,
 } from "./types.js";
 
-/** The fields of a project one write sets. `tag` is not among them. */
-const PROJECT_WRITABLE = new Set(["name", "path"]);
+/** The keys of the statuses and the priorities, which the reader resolves under one set of rules. */
+const STATUS_AND_PRIORITY_KEYS = new Set(["statuses", "default_status", "final_statuses", "priorities"]);
 
 /** The keys a create states: the fields it writes, and the tree it writes them in. */
 const CREATE_KEYS = new Set(["root", "path", "name", "tag"]);
@@ -248,37 +249,118 @@ function cleared(value: unknown): boolean {
   return value === undefined || value === null;
 }
 
-/** Sets the keys of one change, leaving every other key and every comment of the file alone. */
+/**
+ * A list a caller stated for one key: text entries that are never empty and
+ * never repeated, and at least one of them unless `emptyAllowed`.
+ */
+function checkedList(key: string, stated: unknown, emptyAllowed: boolean): string[] {
+  if (!Array.isArray(stated)) fail("config-change-invalid", `"${key}" must be a list of strings`);
+  if (!emptyAllowed && stated.length === 0) fail("config-change-invalid", `"${key}" must hold at least one entry`);
+  const seen = new Set<unknown>();
+  for (const entry of stated) {
+    if (typeof entry !== "string" || entry === "") {
+      fail("config-change-invalid", `every entry of "${key}" must be a string that is not empty`);
+    }
+    if (seen.has(entry)) fail("config-change-invalid", `"${key}" holds "${entry}" more than once`);
+    seen.add(entry);
+  }
+  return stated as string[];
+}
+
+/** The status a caller stated for `default_status`, which is text and never the empty string. */
+function checkedDefaultStatus(stated: unknown): string {
+  if (typeof stated !== "string" || stated === "") {
+    fail("config-change-invalid", '"default_status" must be a string that is not empty');
+  }
+  return stated;
+}
+
+/** The check of the value each writable key of a project sets, on its own. `tag` is not among them. */
+const VALUE_CHECKS: { [Key in keyof ProjectChange]-?: (stated: unknown) => unknown } = {
+  name: checkedName,
+  path: checkedPath,
+  statuses: (stated) => checkedList("statuses", stated, false),
+  default_status: checkedDefaultStatus,
+  final_statuses: (stated) => checkedList("final_statuses", stated, false),
+  priorities: (stated) => checkedList("priorities", stated, false),
+  workflows: (stated) => checkedList("workflows", stated, true),
+  instructions: (stated) => checkedList("instructions", stated, true),
+};
+
+const PROJECT_WRITABLE = new Set(Object.keys(VALUE_CHECKS));
+
+/**
+ * Refuses a change whose result the reader or a later read would refuse. Each
+ * check runs only where the change states one of the keys it reads, so a change
+ * does not fail on a value it leaves alone.
+ */
+async function checkChange(paths: ProjectPaths, doc: Document, writes: Map<string, unknown>): Promise<void> {
+  if ([...writes.keys()].some((key) => STATUS_AND_PRIORITY_KEYS.has(key))) {
+    const values = doc.contents === null ? {} : { ...(doc.toJS() as Record<string, unknown>) };
+    for (const [key, value] of writes) {
+      if (value === undefined) delete values[key];
+      else values[key] = value;
+    }
+    await checkStatusAndPriorityChange(paths, values, new Set(writes.keys()));
+  }
+  const workflows = writes.get("workflows") as string[] | undefined;
+  if (workflows !== undefined) await checkDeclaredWorkflows(paths, workflows);
+  const instructions = writes.get("instructions") as string[] | undefined;
+  for (const entry of instructions ?? []) await checkedFilePath(entry, "an instruction document");
+  for (const [key, value] of writes) checkAnchor(doc, key, value === undefined, paths.projectConfig);
+}
+
+/**
+ * The node that writes `value` over the value `key` holds now. It keeps the
+ * comments and the anchor of the old node, and its quotes or flow style where
+ * the new node is of the same kind, but never its tag: a kept tag would store
+ * another value than the one given.
+ */
+function replacement(doc: Document, key: string, value: unknown): Node {
+  const node = doc.createNode(value);
+  const old = doc.get(key, true);
+  if (!isNode(old)) return node;
+  node.commentBefore = old.commentBefore;
+  node.comment = old.comment;
+  if (!isAlias(old)) node.anchor = old.anchor;
+  if (isScalar(old) && isScalar(node)) node.type = old.type;
+  if (isSeq(old) && isSeq(node)) node.flow = old.flow;
+  return node;
+}
+
+/**
+ * Sets and clears the keys of one change, leaving every other key and every
+ * comment of the file alone. The comments inside a list it replaces go with the
+ * entries they stand beside. Every check runs before the file is touched.
+ */
 async function writeDeclaration(options: ProjectOptions, paths: ProjectPaths, change: ProjectChange): Promise<void> {
-  const statesName = Object.hasOwn(change, "name");
-  const statesPath = Object.hasOwn(change, "path");
-  const clearsName = statesName && cleared(change.name);
-  if (statesPath && cleared(change.path)) {
+  if (Object.hasOwn(change, "path") && cleared(change.path)) {
     fail("field-required", '"path" is a field every project states, so it cannot be cleared');
   }
-  const name = statesName && !clearsName ? checkedName(change.name) : undefined;
-  const path = statesPath ? await checkedPath(change.path) : undefined;
+  // The value each key of the change sets, `undefined` for a key it clears.
+  const writes = new Map<string, unknown>();
+  for (const [key, stated] of Object.entries(change)) {
+    writes.set(key, cleared(stated) ? undefined : await VALUE_CHECKS[key as keyof ProjectChange](stated));
+  }
+  const path = writes.get("path") as string | undefined;
   // Also for the path the project already states: a hand edit can have put
   // another project there.
   if (path !== undefined) await checkPathFree(path, options.root, options.project);
 
   const doc = await openDeclaration(paths);
+  await checkChange(paths, doc, writes);
+
   let written = false;
-  // A document that holds no collection — an empty file, or one carrying nothing
-  // but comments — has no key to take away, and `delete` refuses it outright.
-  if (clearsName && doc.contents !== null) {
-    checkAnchor(doc, "name", true, paths.projectConfig);
-    written = doc.delete("name");
-  }
-  if (name !== undefined) {
-    checkAnchor(doc, "name", false, paths.projectConfig);
-    doc.set("name", name);
-    written = true;
-  }
-  if (path !== undefined) {
-    checkAnchor(doc, "path", false, paths.projectConfig);
-    doc.set("path", path);
-    written = true;
+  for (const [key, value] of writes) {
+    if (value !== undefined) {
+      doc.set(key, replacement(doc, key, value));
+      written = true;
+      // A document that holds no collection — an empty file, or one carrying
+      // nothing but comments — has no key to take away, and `delete` refuses it
+      // outright.
+    } else if (doc.contents !== null && doc.delete(key)) {
+      written = true;
+    }
   }
   // A change that took no key off the file and put none on it leaves the file as
   // it stands, and installs none where a hand-made project never had one.

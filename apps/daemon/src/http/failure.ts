@@ -106,6 +106,7 @@ const STORE_STATUS = {
   "tag-invalid": 400,
   "tag-not-generated": 400,
   "path-invalid": 400,
+  "config-change-invalid": 400,
 } satisfies Record<StoreErrorCode, number>;
 
 // A file on disk that cannot be read. The caller sent nothing wrong and

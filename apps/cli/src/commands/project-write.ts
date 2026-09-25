@@ -11,7 +11,7 @@ import { attempt, refuseAnswer } from "../failure.js";
 import { fieldsOf } from "../output.js";
 import { reportUsage, wireText } from "../shell.js";
 import type { Command, Io, Options, Target } from "../types.js";
-import { applyClears, flagsGiven, refuseClears, refuseEmpty, refuseNoChange } from "./change.js";
+import { applyClears, flagsGiven, keyOf, refuseClears, refuseEmpty, refuseNoChange } from "./change.js";
 import type { Fields } from "./change.js";
 import { readProjectTagArgument } from "./task-id.js";
 import { HELP_OPTION, readVerb, usageBlock } from "./verb.js";
@@ -24,9 +24,15 @@ const CREATE_OPTIONS = {
 } as const satisfies Options;
 
 const EDIT_OPTIONS = {
-  path: { type: "string" },
-  name: { type: "string" },
-  clear: { type: "string", multiple: true },
+  "path": { type: "string" },
+  "name": { type: "string" },
+  "status": { type: "string", multiple: true },
+  "default-status": { type: "string" },
+  "final-status": { type: "string", multiple: true },
+  "priority": { type: "string", multiple: true },
+  "workflow": { type: "string", multiple: true },
+  "instruction": { type: "string", multiple: true },
+  "clear": { type: "string", multiple: true },
   ...HELP_OPTION,
 } as const satisfies Options;
 
@@ -46,10 +52,16 @@ const CREATE_HELP = [
 const EDIT_HELP = [
   "Usage: tasma project edit <tag> [options]",
   "",
-  "      --path <path>     The folder the project stands for; relative to the working directory",
-  "      --name <name>     The display name",
-  "      --clear <field>   Remove a field: name",
-  "  -h, --help            Print this help",
+  "      --path <path>          The folder the project stands for; relative to the working directory",
+  "      --name <name>          The display name",
+  "      --status <s>           A status; repeat it for every status; the list replaces the stored one",
+  "      --default-status <s>   The status a new task takes",
+  "      --final-status <s>     A status that closes a task; repeat it for every one; the list replaces the stored one",
+  "      --priority <p>         A priority; repeat it for every priority; the list replaces the stored one",
+  "      --workflow <w>         A workflow tasks may name; repeat it for every one; the first is the default",
+  "      --instruction <path>   An instruction document; repeat it for every one; relative to the working directory",
+  "      --clear <field>        Remove a field: name, statuses, default_status, final_statuses, priorities, workflows, instructions",
+  "  -h, --help                 Print this help",
 ];
 
 const RENAME_HELP = usageBlock("project rename <old> <new>");
@@ -59,8 +71,25 @@ const DELETE_HELP = usageBlock("project delete <tag>");
 /** The flags of a create that may not be empty once `--path` is known to hold a value. */
 const CREATE_FIELDS: Fields = { flags: ["name", "tag"], clearable: [] };
 
-/** The fields an edit sets, of which only the name can be removed: every project states a path. */
-const EDIT_FIELDS: Fields = { flags: ["path", "name"], clearable: ["name"] };
+/** The key of the project's `config.yml` each configuration flag of an edit sets. */
+const FIELD_KEYS: Record<string, string> = {
+  "status": "statuses",
+  "default-status": "default_status",
+  "final-status": "final_statuses",
+  "priority": "priorities",
+  "workflow": "workflows",
+  "instruction": "instructions",
+};
+
+/** The fields an edit sets, of which every one but the path can be removed: every project states a path. */
+const EDIT_FIELDS: Fields = {
+  flags: ["path", "name", ...Object.keys(FIELD_KEYS)],
+  keys: FIELD_KEYS,
+  clearable: ["name", ...Object.values(FIELD_KEYS)],
+};
+
+/** The flags of an edit whose value the daemon takes as typed; `--path` and `--instruction` are made absolute first. */
+const SENT_AS_GIVEN = ["name", "status", "default-status", "final-status", "priority", "workflow"] as const;
 
 /**
  * The path to send, or the code the fault in it reported with.
@@ -68,11 +97,11 @@ const EDIT_FIELDS: Fields = { flags: ["path", "name"], clearable: ["name"] };
  * A relative path is joined to the working directory and nothing more: `~/` is
  * the daemon's to expand, and no link is resolved.
  */
-function absolutePath(io: Io, path: string, cwd: string): string | number {
+function absolutePath(io: Io, flag: string, path: string, cwd: string): string | number {
   if (isAbsolute(path) || path.startsWith("~/")) return path;
 
   // The entry point read no directory, which is the one thing the empty value means.
-  if (cwd === "") return reportUsage(io, "the working directory could not be read; state --path as an absolute path");
+  if (cwd === "") return reportUsage(io, `the working directory could not be read; state ${flag} as an absolute path`);
 
   return resolve(cwd, path);
 }
@@ -106,7 +135,7 @@ async function create(args: string[], io: Io, target: Target, cwd: string): Prom
 
   if (refused !== undefined) return refused;
 
-  const path = absolutePath(io, values.path, cwd);
+  const path = absolutePath(io, "--path", values.path, cwd);
 
   if (typeof path === "number") return path;
 
@@ -138,14 +167,32 @@ async function edit(args: string[], io: Io, target: Target, cwd: string): Promis
   const change: ProjectChange = {};
 
   if (values.path !== undefined) {
-    const path = absolutePath(io, values.path, cwd);
+    const path = absolutePath(io, "--path", values.path, cwd);
 
     if (typeof path === "number") return path;
 
     change.path = path;
   }
 
-  if (values.name !== undefined) change.name = values.name;
+  for (const flag of SENT_AS_GIVEN) {
+    const value = values[flag];
+
+    if (value !== undefined) (change as Record<string, unknown>)[keyOf(EDIT_FIELDS, flag)] = value;
+  }
+
+  if (values.instruction !== undefined) {
+    const instructions: string[] = [];
+
+    for (const entry of values.instruction) {
+      const path = absolutePath(io, "--instruction", entry, cwd);
+
+      if (typeof path === "number") return path;
+
+      instructions.push(path);
+    }
+
+    change.instructions = instructions;
+  }
 
   applyClears(change, clears);
 
@@ -199,7 +246,7 @@ export const WRITE_VERBS: Command[] = [
   },
   {
     name: "edit",
-    summary: "Change the name or the path of a project",
+    summary: "Change the configuration of a project",
     usage: { help: EDIT_HELP, options: EDIT_OPTIONS },
     run: edit,
   },

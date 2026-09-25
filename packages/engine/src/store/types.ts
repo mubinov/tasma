@@ -173,11 +173,22 @@ export type CreateProjectInput = {
 };
 
 /**
- * One write of a project. Clearing `name` deletes the key, and the reader then
- * falls back to the tag. `path` cannot be cleared: every project states one. A
- * project is renamed by its own operation, so `tag` is no field here.
+ * One write of a project's own `config.yml`. `null` or `undefined` clears a key:
+ * a cleared `name` falls back to the tag, and every other cleared key to the
+ * user's file or the built-in default. A list replaces the stored list. `path`
+ * cannot be cleared: every project states one. A project is renamed by its own
+ * operation, so `tag` is no field here.
  */
-export type ProjectChange = { name?: string | null; path?: string };
+export type ProjectChange = {
+  name?: string | null;
+  path?: string;
+  statuses?: string[] | null;
+  default_status?: string | null;
+  final_statuses?: string[] | null;
+  priorities?: string[] | null;
+  workflows?: string[] | null;
+  instructions?: string[] | null;
+};
 
 /**
  * What a rename of a project states, which is the new tag and nothing else. The

@@ -42,14 +42,29 @@ export type ProjectSummary = {
 export type ProjectInput = { path: string; name?: string; tag?: string };
 
 /**
- * One change of a project. A key present with `null` clears the field and an
- * absent key leaves it alone, so `{ name: null }` deletes the name and the
- * reader falls back to the tag. `path` cannot be cleared: every project states
- * one. `tag` is no field here. A stated `path` must not be the folder of
- * another project, compared by real path, and the daemon refuses it as
- * `path-taken`.
+ * One change of a project's own `config.yml`. A key present with `null` clears
+ * the field and an absent key leaves it alone, so `{ name: null }` deletes the
+ * name and the reader falls back to the tag. Every other cleared key takes its
+ * value from `~/.tasma/config.yml` or from the built-in default. A list replaces
+ * the stored list. `path` cannot be cleared: every project states one. `tag` is
+ * no field here. A stated `path` must not be the folder of another project,
+ * compared by real path, and the daemon refuses it as `path-taken`.
+ *
+ * The daemon checks the result before it writes, and a change it refuses
+ * writes nothing: `default_status` and each final status must be among the
+ * statuses, each workflow must load, and each instruction must be absolute or
+ * `~/` and name a regular file.
  */
-export type ProjectChange = { name?: string | null; path?: string };
+export type ProjectChange = {
+  name?: string | null;
+  path?: string;
+  statuses?: string[] | null;
+  default_status?: string | null;
+  final_statuses?: string[] | null;
+  priorities?: string[] | null;
+  workflows?: string[] | null;
+  instructions?: string[] | null;
+};
 
 /**
  * The whole body of a rename: the tag the project takes. It follows the rule a
