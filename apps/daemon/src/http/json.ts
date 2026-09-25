@@ -68,7 +68,7 @@ export async function readBody(request: IncomingMessage): Promise<unknown> {
 async function collect(request: IncomingMessage): Promise<string> {
   // Leaving the loop must not destroy the request: destroying it takes the
   // socket with it, and a refusal raised here is still to be written on that
-  // socket. Reading simply stops, which is what bounds what is held.
+  // socket. Reading stops at the cap; the refusal reads the rest and drops it.
   const stream = request.iterator({ destroyOnReturn: false }) as AsyncIterable<Buffer>;
   const chunks: Buffer[] = [];
   let size = 0;
@@ -76,7 +76,6 @@ async function collect(request: IncomingMessage): Promise<string> {
   for await (const chunk of stream) {
     size += chunk.byteLength;
     if (size > BODY_LIMIT) {
-      request.pause();
       throw new DaemonError("request-too-large", `a body over the ${BODY_LIMIT} byte limit`);
     }
     chunks.push(chunk);

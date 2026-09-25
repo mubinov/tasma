@@ -8,7 +8,7 @@ import { routes } from "@tasma/protocol";
 import type { Route, Success } from "@tasma/protocol";
 import manifest from "../../../../package.json" with { type: "json" };
 import type { Handler, RouteEntry } from "../../src/http/router.js";
-import { startTestServer } from "../helpers.js";
+import { startTestServer, until } from "../helpers.js";
 
 function entry(route: Route, handler: Handler): RouteEntry {
   return { route, handler };
@@ -40,6 +40,46 @@ async function raw(url: string, head: string[], body = ""): Promise<string> {
 /** A body of `count` mebibytes, sent as chunks and declaring no length. */
 async function* megabytes(count: number): AsyncGenerator<Uint8Array> {
   for (let index = 0; index < count; index++) yield new Uint8Array(1024 * 1024).fill(0x20);
+}
+
+/** The head of a chunked write to a route that exists, with every header the daemon checks before the body. */
+const CHUNKED_POST = [
+  "POST /projects/SAGA/tasks HTTP/1.1",
+  "host: 127.0.0.1",
+  "content-type: application/json",
+  "transfer-encoding: chunked",
+  "",
+  "",
+].join("\r\n");
+
+/** Everything the socket has received so far, as text. */
+function received(socket: Socket): () => string {
+  let text = "";
+  socket.on("data", (chunk: Buffer) => {
+    text += chunk.toString("utf8");
+  });
+  return () => text;
+}
+
+/** Resolves when the socket can take more data, or when it has closed. */
+function drained(socket: Socket): Promise<void> {
+  return new Promise((resolve) => {
+    const done = (): void => {
+      socket.off("drain", done);
+      socket.off("close", done);
+      resolve();
+    };
+    socket.on("drain", done);
+    socket.on("close", done);
+  });
+}
+
+/** Writes `count` chunks of one mebibyte each in chunked encoding, and stops early when the socket closes. */
+async function writeChunks(socket: Socket, count: number): Promise<void> {
+  const chunk = Buffer.concat([Buffer.from("100000\r\n"), Buffer.alloc(1024 * 1024, 0x20), Buffer.from("\r\n")]);
+  for (let index = 0; index < count && !socket.destroyed; index++) {
+    if (!socket.write(chunk)) await drained(socket);
+  }
 }
 
 afterEach(() => {
@@ -170,10 +210,44 @@ describe("the daemon server", () => {
     });
 
     expect(response.status).toBe(413);
-    // The parser is stalled part way through a body the daemon stopped reading,
-    // so a connection left open could never carry another request.
-    expect(response.headers.get("connection")).toBe("close");
+    // The rest of the body is read and dropped, so the connection stays usable.
+    expect(response.headers.get("connection")).toBe("keep-alive");
     await expect(response.json()).resolves.toMatchObject({ error: { code: "request-too-large" } });
+  });
+
+  it("carries the next request on the connection that sent a chunked body over the cap", async () => {
+    const server = await startTestServer([entry(routes.createTask, ok)]);
+    const socket = await open(server.url);
+    const read = received(socket);
+
+    socket.write(CHUNKED_POST);
+    await writeChunks(socket, 9);
+    socket.write("0\r\n\r\n");
+    await until(() => read().includes('"code":"request-too-large"'), "the refusal arrived");
+    const refusal = read();
+    socket.write("GET /health HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n");
+    await until(() => read().includes("HTTP/1.1 200"), "the connection carried the next request");
+
+    expect(refusal).toContain("HTTP/1.1 413");
+    expect(refusal).toContain("Connection: keep-alive");
+    socket.destroy();
+  });
+
+  it("cuts a chunked body over the cap that does not end within the discard limit", async () => {
+    const server = await startTestServer([entry(routes.createTask, ok)], { discardLimitMs: 200 });
+    const socket = await open(server.url);
+    // A write after the daemon cuts the connection fails with EPIPE or ECONNRESET.
+    socket.on("error", () => undefined);
+    const closed = new Promise((resolve) => socket.once("close", resolve));
+    const read = received(socket);
+
+    socket.write(CHUNKED_POST);
+    void writeChunks(socket, Infinity);
+    await until(() => read().includes('"code":"request-too-large"'), "the refusal arrived");
+    const refusedAt = Date.now();
+    await closed;
+
+    expect(Date.now() - refusedAt).toBeLessThan(1000);
   });
 
   it("refuses a path no route serves", async () => {

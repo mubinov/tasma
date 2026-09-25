@@ -11,6 +11,7 @@ import type { DaemonRecord, Diagnostic, Failure } from "@tasma/protocol";
 import { DaemonError } from "../src/http/failure.js";
 import type { RouteEntry } from "../src/http/router.js";
 import { createDaemonServer } from "../src/http/server.js";
+import type { DaemonServerOptions } from "../src/http/server.js";
 import { createProjectHost } from "../src/projects/host.js";
 import type { ProjectHost } from "../src/projects/host.js";
 
@@ -24,8 +25,8 @@ export const TIMESTAMP = "2026-01-01T00:00:00+03:00";
  * files never collide. It is closed when the test ends, whether or not the test
  * closes it itself.
  */
-export async function startTestServer(entries: RouteEntry[]): Promise<TestServer> {
-  const server = createDaemonServer(entries);
+export async function startTestServer(entries: RouteEntry[], options?: DaemonServerOptions): Promise<TestServer> {
+  const server = createDaemonServer(entries, options);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
 

@@ -25,18 +25,82 @@ const SERVED_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
  */
 const SERVED_SITES = new Set<unknown>([undefined, "none", "same-origin"]);
 
+/** How long the rest of a refused body may keep arriving before the daemon cuts the connection. */
+const DISCARD_LIMIT_MS = 5000;
+
+export type DaemonServerOptions = {
+  /**
+   * How long the rest of a refused body may keep arriving, in milliseconds. It
+   * is an option so that a test can see a client that does not stop cut off,
+   * rather than wait out the limit.
+   */
+  discardLimitMs?: number;
+};
+
 /**
  * A daemon serving the entries it is given, and the liveness route in front of
  * them: every daemon answers `GET /health` whatever it was constructed with, so
  * no caller can forget it or replace it.
  */
-export function createDaemonServer(entries: RouteEntry[]): Server {
+export function createDaemonServer(entries: RouteEntry[], options: DaemonServerOptions = {}): Server {
   const served: RouteEntry[] = [{ route: routes.health, handler: readHealth }, ...entries];
+  const discardLimitMs = options.discardLimitMs ?? DISCARD_LIMIT_MS;
+
+  /**
+   * One request, start to finish, inside a single try/catch: nothing that can
+   * throw sits outside it, and a rejected promise is covered by the same `await`.
+   * Whatever is caught leaves as a reply, so one bad request cannot end the
+   * process.
+   */
+  async function serve(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    try {
+      if (!servesHost(request.headers.host)) {
+        const message = "a request must address the loopback address the daemon binds";
+        refuse(request, response, { kind: "daemon", code: "malformed-request", message });
+        return;
+      }
+
+      if (!servesSite(request.headers["sec-fetch-site"])) {
+        const message = "a request must not be sent by a page on another site";
+        refuse(request, response, { kind: "daemon", code: "malformed-request", message });
+        return;
+      }
+
+      const found = match(request.method ?? "", request.url ?? "/", served);
+      if (!found.ok) {
+        refuse(request, response, { kind: "daemon", code: found.code, message: found.message }, found.allow);
+        return;
+      }
+
+      const body = await readBody(request);
+      const success = await found.entry.handler({ params: found.params, query: found.query, body });
+      writeEnvelope(response, 200, { ok: true, ...success });
+    } catch (error) {
+      refuse(request, response, toFailure(error));
+    }
+  }
+
+  /** A refusal on the wire, where there is still a reply to be made. */
+  function refuse(request: IncomingMessage, response: ServerResponse, error: Failure, allow?: Method[]): void {
+    // Two states leave nothing to answer: the client disconnected while its body
+    // was being read, and a reply that failed part way out. Writing again would
+    // send a second head or write to a dead socket, and either would throw inside
+    // the block that is meant to be the last resort.
+    if (response.destroyed || response.writableEnded || response.headersSent) {
+      response.destroy();
+      return;
+    }
+
+    // A body never read is left to Node, which discards it once the reply is out.
+    if (request.readableDidRead && !request.complete) discardRest(request, discardLimitMs);
+
+    writeEnvelope(response, statusOf(error), { ok: false, error }, allow);
+  }
 
   return createServer((request, response) => {
     // The last resort. `serve` answers with whatever it caught, and a throw from
     // writing that answer leaves the socket rather than the process.
-    void serve(served, request, response).catch(() => {
+    void serve(request, response).catch(() => {
       response.destroy();
     });
   });
@@ -75,56 +139,26 @@ function servesSite(site: string | string[] | undefined): boolean {
 }
 
 /**
- * One request, start to finish, inside a single try/catch: nothing that can
- * throw sits outside it, and a rejected promise is covered by the same `await`.
- * Whatever is caught leaves as a reply, so one bad request cannot end the
- * process.
+ * Reads the rest of a body the daemon stopped reading, and drops it.
+ *
+ * A close while the client still sends resets the connection before the client
+ * reads the refusal. Discarding lets the client finish and read it; the limit
+ * cuts a client that does not stop.
  */
-async function serve(entries: RouteEntry[], request: IncomingMessage, response: ServerResponse): Promise<void> {
-  try {
-    if (!servesHost(request.headers.host)) {
-      const message = "a request must address the loopback address the daemon binds";
-      refuse(request, response, { kind: "daemon", code: "malformed-request", message });
-      return;
-    }
+function discardRest(request: IncomingMessage, limitMs: number): void {
+  const { socket } = request;
+  const cut = setTimeout(() => socket.destroy(), limitMs);
+  cut.unref();
 
-    if (!servesSite(request.headers["sec-fetch-site"])) {
-      const message = "a request must not be sent by a page on another site";
-      refuse(request, response, { kind: "daemon", code: "malformed-request", message });
-      return;
-    }
+  // Both listeners go on either path: a socket kept alive carries later
+  // requests, and would otherwise collect one `close` listener per refusal.
+  const settle = (): void => {
+    clearTimeout(cut);
+    request.off("end", settle);
+    socket.off("close", settle);
+  };
+  request.once("end", settle);
+  socket.once("close", settle);
 
-    const found = match(request.method ?? "", request.url ?? "/", entries);
-    if (!found.ok) {
-      refuse(request, response, { kind: "daemon", code: found.code, message: found.message }, found.allow);
-      return;
-    }
-
-    const body = await readBody(request);
-    const success = await found.entry.handler({ params: found.params, query: found.query, body });
-    writeEnvelope(response, 200, { ok: true, ...success });
-  } catch (error) {
-    refuse(request, response, toFailure(error));
-  }
-}
-
-/** A refusal on the wire, where there is still a reply to be made. */
-function refuse(request: IncomingMessage, response: ServerResponse, error: Failure, allow?: Method[]): void {
-  // Two states leave nothing to answer: the client disconnected while its body
-  // was being read, and a reply that failed part way out. Writing again would
-  // send a second head or write to a dead socket, and either would throw inside
-  // the block that is meant to be the last resort.
-  if (response.destroyed || response.writableEnded || response.headersSent) {
-    response.destroy();
-    return;
-  }
-
-  // A body the daemon started reading and stopped leaves the parser stalled part
-  // way through a message, so the connection can carry nothing after it. Naming
-  // it closed is what stops the caller sending on a socket that is spent. A body
-  // never read is not stalled: Node discards it once the reply is out, and the
-  // connection stays usable.
-  if (request.readableDidRead && !request.complete) response.setHeader("connection", "close");
-
-  writeEnvelope(response, statusOf(error), { ok: false, error }, allow);
+  request.resume();
 }
