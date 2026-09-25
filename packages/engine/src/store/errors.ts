@@ -45,17 +45,26 @@ export class TaskStoreError extends Error {
   readonly code: TaskStoreErrorCode;
   /** The file or directory the fault concerns, when one path holds it. */
   readonly path: string | undefined;
+  /** The explanation alone, without the path the message puts in front of it. */
+  readonly description: string;
 
   constructor(code: TaskStoreErrorCode, description: string, path?: string, cause?: unknown) {
     super(path === undefined ? description : `${path}: ${description}`, { cause });
     this.name = "TaskStoreError";
     this.code = code;
     this.path = path;
+    this.description = description;
   }
 }
 
 export function fail(code: TaskStoreErrorCode, description: string, path?: string, cause?: unknown): never {
   throw new TaskStoreError(code, description, path, cause);
+}
+
+/** `error` as a store refusal; any other fault is thrown again. */
+export function asStoreRefusal(error: unknown): TaskStoreError {
+  if (error instanceof TaskStoreError) return error;
+  throw error;
 }
 
 /**

@@ -5,7 +5,7 @@
 import { parseArgs } from "node:util";
 import type { Config, ProjectSummary } from "@tasma/protocol";
 import { attempt, REFUSED, refuseAnswer } from "../failure.js";
-import { cell, fieldsOf, table } from "../output.js";
+import { cell, fieldsOf, keyRows, table } from "../output.js";
 import { noun, reportUsage, wireText } from "../shell.js";
 import type { Io, Options, Target } from "../types.js";
 import { resolvedTag } from "./project-tag.js";
@@ -49,19 +49,6 @@ function isProject(answer: unknown): answer is Record<string, unknown> & { confi
   const { config } = fieldsOf(answer);
 
   return typeof config === "object" && config !== null;
-}
-
-/**
- * One key as rows: a list holds its first value on the key's row and each
- * further value on a row of its own, and an empty one marks the key's row.
- */
-function keyRows(key: string, value: unknown): string[][] {
-  if (!Array.isArray(value)) return [[key, cell(value)]];
-
-  const entries: unknown[] = value;
-  const [first, ...rest] = entries;
-
-  return [[key, cell(first)], ...rest.map((entry) => ["", cell(entry)])];
 }
 
 async function list(args: string[], io: Io, target: Target): Promise<number> {

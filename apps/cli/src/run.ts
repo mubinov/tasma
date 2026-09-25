@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import manifest from "../package.json" with { type: "json" };
 import { comment } from "./commands/comment.js";
+import { config } from "./commands/config.js";
 import { daemon } from "./commands/daemon.js";
 import { project } from "./commands/project.js";
 import { task } from "./commands/task.js";
@@ -21,7 +22,7 @@ import type { Command, Io, Target } from "./types.js";
  * `tasma --help` lists the groups in this order, which is their order of
  * importance.
  */
-export const COMMANDS: Command[] = [project, task, comment, workflow, daemon];
+export const COMMANDS: Command[] = [project, config, task, comment, workflow, daemon];
 
 /** argv split at the first token that is neither a global flag nor the value of one. */
 export type Invocation = { globals: string[]; name?: string; args: string[] };

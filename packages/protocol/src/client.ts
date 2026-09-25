@@ -1,3 +1,4 @@
+import type { UserConfig, UserConfigChange } from "./config.js";
 import { ProtocolError, TransportError } from "./errors.js";
 import type { Envelope, Failure, Success } from "./errors.js";
 import type { Health } from "./health.js";
@@ -55,6 +56,8 @@ export type Client = {
   listWorkflows(): Promise<Success<string[]>>;
   readWorkflow(name: string): Promise<Success<Workflow>>;
   readWorkflowStep(name: string, step: string): Promise<Success<StepDefinition>>;
+  readUserConfig(): Promise<Success<UserConfig>>;
+  updateUserConfig(change: UserConfigChange): Promise<Success<UserConfig>>;
 };
 
 const FAILURE_KINDS: Failure["kind"][] = ["store", "parse", "serialize", "daemon"];
@@ -158,5 +161,7 @@ export function createClient(transport: Transport): Client {
     readWorkflow: (name) => call<Workflow>(routes.readWorkflow, { workflow: name }),
     readWorkflowStep: (name, step) =>
       call<StepDefinition>(routes.readWorkflowStep, { workflow: name, step }),
+    readUserConfig: () => call<UserConfig>(routes.readUserConfig, {}),
+    updateUserConfig: (change) => call<UserConfig>(routes.updateUserConfig, {}, { body: change }),
   };
 }

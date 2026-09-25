@@ -32,6 +32,8 @@ export const routes = {
   listWorkflows: { method: "GET", template: "/workflows" },
   readWorkflow: { method: "GET", template: "/workflows/{workflow}" },
   readWorkflowStep: { method: "GET", template: "/workflows/{workflow}/steps/{step}" },
+  readUserConfig: { method: "GET", template: "/config" },
+  updateUserConfig: { method: "PATCH", template: "/config" },
 } as const satisfies Record<string, Route>;
 
 /** Which directory a resolution asks about, absolute or starting with `~/`. */

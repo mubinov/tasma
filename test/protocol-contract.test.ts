@@ -23,6 +23,8 @@ import type {
   TaskStoreErrorCode,
   TextResult,
   TextSelection,
+  UserConfigChange as EngineUserConfigChange,
+  UserConfigInfo,
   Workflow as EngineWorkflow,
   WorkflowStep as EngineWorkflowStep,
   WorkflowStepResult,
@@ -52,6 +54,8 @@ import type {
   TaskList,
   TaskText,
   TaskTextOptions,
+  UserConfig,
+  UserConfigChange,
   Workflow,
   WorkflowStep,
   WriteResult,
@@ -108,6 +112,8 @@ describe("the wire contract", () => {
     expectTypeOf<InstructionDocument>().toEqualTypeOf<EngineInstructionDocument>();
     // The envelope carries the diagnostics, so the wire's step read is the engine's less them.
     expectTypeOf<StepDefinition>().toEqualTypeOf<Omit<WorkflowStepResult, "diagnostics">>();
+    expectTypeOf<UserConfig>().toEqualTypeOf<Omit<UserConfigInfo, "diagnostics">>();
+    expectTypeOf<UserConfigChange>().toEqualTypeOf<EngineUserConfigChange>();
   });
 
   it("keeps the task and the write result in step, less what JSON cannot carry", () => {

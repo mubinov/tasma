@@ -4,6 +4,7 @@
 // Its own module because both families refuse the same faults with the same
 // lines, and a second copy of a rule is what would let two of them drift apart.
 
+import { isAbsolute, resolve } from "node:path";
 import { reportUsage } from "../shell.js";
 import type { Io } from "../types.js";
 import { BODY_OPTIONS } from "./body.js";
@@ -148,4 +149,19 @@ export function refuseNoChange(
   if (body !== undefined || Object.keys(change).length > 0) return undefined;
 
   return reportUsage(io, `${command} needs a change`);
+}
+
+/**
+ * The path to send, or the code the fault in it reported with.
+ *
+ * A relative path is joined to the working directory and nothing more: `~/` is
+ * the daemon's to expand, and no link is resolved.
+ */
+export function absolutePath(io: Io, flag: string, path: string, cwd: string): string | number {
+  if (isAbsolute(path) || path.startsWith("~/")) return path;
+
+  // The entry point read no directory, which is the one thing the empty value means.
+  if (cwd === "") return reportUsage(io, `the working directory could not be read; state ${flag} as an absolute path`);
+
+  return resolve(cwd, path);
 }

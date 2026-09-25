@@ -27,8 +27,9 @@ export function cell(value: unknown): string {
 /**
  * Rows as aligned lines, in the order they were given: nothing here sorts.
  *
- * The last column is left unpadded, so no line ends in the spaces a reader would
- * have to strip.
+ * The last column of each row is left unpadded, so no line ends in the spaces a
+ * reader would have to strip, and a width is measured over the padded cells
+ * alone, so a long last cell does not push the columns of a longer row.
  */
 export function table(rows: string[][]): string {
   if (rows.length === 0) return "";
@@ -36,7 +37,7 @@ export function table(rows: string[][]): string {
   const widths: number[] = [];
 
   for (const row of rows) {
-    row.forEach((value, column) => {
+    row.slice(0, -1).forEach((value, column) => {
       widths[column] = Math.max(widths[column] ?? 0, value.length);
     });
   }
@@ -74,4 +75,20 @@ export function isTaskText(answer: unknown): answer is { text: string; hidden: u
   const { text, hidden } = fieldsOf(answer);
 
   return typeof text === "string" && Array.isArray(hidden);
+}
+
+/**
+ * One key as rows: a list holds its first value on the key's row and each
+ * further value on a row of its own, and an empty one marks the key's row.
+ * `mark`, where given, is a third cell on the key's row alone.
+ */
+export function keyRows(key: string, value: unknown, mark?: string): string[][] {
+  const tail = mark === undefined ? [] : [mark];
+
+  if (!Array.isArray(value)) return [[key, cell(value), ...tail]];
+
+  const entries: unknown[] = value;
+  const [first, ...rest] = entries;
+
+  return [[key, cell(first), ...tail], ...rest.map((entry) => ["", cell(entry)])];
 }

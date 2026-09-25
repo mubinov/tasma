@@ -90,6 +90,31 @@ Change the tag of a project and of all its tasks. Prints the new tag.
 
 Remove a project and all its tasks. The folder at the path of the project does not change. The command does not ask for confirmation. Prints the removed tag.
 
+## config
+
+The main configuration file is `$HOME/.tasma/config.yml`. A project that does not set `statuses`, `default_status`, `final_statuses` or `priorities` in its own `config.yml` takes the value from this file.
+
+### `tasma config view`
+
+Print the main configuration file as key and value rows: `file` (the path of the file), then `statuses`, `default_status`, `final_statuses`, `priorities` and `workflows_path`. A list value continues on the next rows, with an empty key. A key that the file does not set shows its built-in default, marked `(built-in default)`.
+
+### `tasma config edit [options]`
+
+Change the main configuration file. Each flag writes one key:
+
+- `--status`, `--final-status` and `--priority` write lists. Repeat a flag for each entry. The list replaces the stored list.
+- `--default-status` and `--workflows-path` write one value.
+- `--clear <field>` removes a key: `statuses`, `default_status`, `final_statuses`, `priorities` or `workflows_path`. A removed key takes its built-in default.
+
+A relative `--workflows-path` starts at the working directory, and `~/` starts at the home directory. The daemon checks the result before it writes:
+
+- `default_status` and each final status must be in the statuses of the file.
+- Each key of the file must be valid, also a key that the change does not write.
+- The change must not break a project that resolves today. The error names the project.
+- Each workflow that a project lists must load from a new `workflows_path`. The error names the project and the workflow.
+
+A change that fails the check writes nothing. Tasks are not checked. Prints the path of the file.
+
 ## task
 
 A task id is `<tag>-<number>`, for example `SAGA-12`. The part before the `-` is the project tag.

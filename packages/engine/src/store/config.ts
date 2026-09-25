@@ -1,10 +1,17 @@
 import { dirname } from "node:path";
 import { parse } from "yaml";
 import { isPlainMapping, isStringList } from "../format/values.js";
+import { workflowsPath } from "../workflow/load.js";
 import { readRegularFile } from "./atomic.js";
 import { fail } from "./errors.js";
 import { type ProjectPaths, resolveAgainst } from "./paths.js";
-import type { ProjectDeclaration, ResolvedConfig, StoreDiagnostic } from "./types.js";
+import type {
+  ProjectDeclaration,
+  ResolvedConfig,
+  StoreDiagnostic,
+  UserConfigInfo,
+  UserSetting,
+} from "./types.js";
 
 /**
  * The lists the engine uses when no file declares them. A default is a per-key
@@ -14,6 +21,9 @@ const BUILT_IN_STATUSES = ["Backlog", "To Do", "In Progress", "Done"];
 const BUILT_IN_PRIORITIES = ["high", "medium", "low"];
 
 const ENGINE_KEYS = ["statuses", "default_status", "priorities", "final_statuses"];
+
+/** The keys of the statuses and the priorities, which the reader resolves under one set of rules. */
+export const STATUS_AND_PRIORITY_KEYS: ReadonlySet<string> = new Set(ENGINE_KEYS);
 
 /**
  * The keys each level recognizes, whether or not this layer reads them; a later
@@ -36,7 +46,7 @@ const PROJECT_KEYS = new Set([...ENGINE_KEYS, "name", "path", "workflows", "inst
 const BUILT_IN = "the built-in defaults";
 
 /** The recognized keys one configuration file declares. */
-type Level = { path: string; values: Record<string, unknown> };
+export type Level = { path: string; values: Record<string, unknown> };
 
 /** One resolved value with the file it came from, or the built-in defaults. */
 type Sourced = { value: unknown; from: string };
@@ -207,21 +217,26 @@ function resolveStatusesAndPriorities(levels: Level[], changed: ReadonlySet<stri
 }
 
 /**
- * Refuses a write of a project's own file whose statuses or priorities the
- * reader would refuse.
- * `values` is the whole mapping the file holds once the write is applied, and
- * the user's file is read as it stands, so a write can repair a broken project
- * file and a broken user value it hides does not refuse it.
+ * The recognized keys one configuration file declares, read on their own. A
+ * write reads a level it does not change through this, and builds the level it
+ * does change from the values it is about to store.
  */
-export async function checkStatusAndPriorityChange(
-  paths: ProjectPaths,
-  values: Record<string, unknown>,
-  changed: ReadonlySet<string>,
-): Promise<void> {
-  const levels = [
-    levelOf(paths.projectConfig, values, PROJECT_KEYS, []),
-    await readLevel(paths.userConfig, USER_KEYS, []),
-  ];
+export async function readDeclared(
+  path: string,
+  level: "user" | "project",
+  diagnostics: StoreDiagnostic[] = [],
+): Promise<Level> {
+  return readLevel(path, level === "user" ? USER_KEYS : PROJECT_KEYS, diagnostics);
+}
+
+/**
+ * Refuses a write whose statuses or priorities the reader would refuse.
+ * `levels` holds the project level first where there is one, then the user's,
+ * each with the values its file holds once the write is applied, so a write can
+ * repair a broken file and a broken value another level hides does not refuse
+ * it.
+ */
+export function checkStatusAndPriorityChange(levels: Level[], changed: ReadonlySet<string>): void {
   resolveStatusesAndPriorities(levels, changed);
 }
 
@@ -340,4 +355,59 @@ export async function resolveWorkflowsPath(
   diagnostics: StoreDiagnostic[],
 ): Promise<string | undefined> {
   return declaredPath("workflows_path", [await readLevel(userConfig, USER_KEYS, diagnostics)]);
+}
+
+/** The workflows a project level declares, empty when it declares none. */
+export function declaredWorkflows(project: Level): string[] {
+  return declaredList("workflows", [project]);
+}
+
+/**
+ * The workflows directory a user level names, resolved against the directory
+ * of its file, and absent when it names none.
+ */
+export function declaredWorkflowsPath(user: Level): string | undefined {
+  return declaredPath("workflows_path", [user]);
+}
+
+/** One key of the user's file, and whether the file sets it or the built-in default holds it. */
+function setting<T>(key: string, level: Level, value: T): UserSetting<T> {
+  return { value, set: pick(key, [level]) !== undefined };
+}
+
+/**
+ * The user's level under every rule the reader applies to it on its own, so a
+ * pair a project file would have to complete is refused here: a new project
+ * states no statuses and takes these as they stand.
+ */
+function resolveUserLevel(
+  level: Level,
+  changed: ReadonlySet<string>,
+): StatusAndPriorityConfig & { workflows_path: string | undefined } {
+  return { ...resolveStatusesAndPriorities([level], changed), workflows_path: declaredWorkflowsPath(level) };
+}
+
+/**
+ * Refuses a write of the user's file that leaves a file its read refuses,
+ * whether the fault is in a key of the write or in a key it leaves alone.
+ */
+export function checkUserConfigChange(next: Level, changed: ReadonlySet<string>): void {
+  resolveUserLevel(next, changed);
+}
+
+/** The user's file read on its own, every key with the value it takes when no project file states it. */
+export async function resolveUserConfig(
+  userConfig: string,
+  root: string,
+  diagnostics: StoreDiagnostic[],
+): Promise<Omit<UserConfigInfo, "path" | "diagnostics">> {
+  const level = await readLevel(userConfig, USER_KEYS, diagnostics);
+  const resolved = resolveUserLevel(level, new Set());
+  return {
+    statuses: setting("statuses", level, resolved.statuses),
+    default_status: setting("default_status", level, resolved.default_status),
+    final_statuses: setting("final_statuses", level, resolved.final_statuses),
+    priorities: setting("priorities", level, resolved.priorities),
+    workflows_path: setting("workflows_path", level, workflowsPath(root, resolved.workflows_path)),
+  };
 }

@@ -93,7 +93,7 @@ function workflowNameFault(name: string): string | undefined {
  * The directory the workflows of one tree stand in: the one configuration named,
  * else the built-in place beside `projects/`.
  */
-function workflowsPath(root: string | undefined, path: string | undefined): string {
+export function workflowsPath(root: string | undefined, path: string | undefined): string {
   return path ?? join(expandRoot(root), "workflows");
 }
 

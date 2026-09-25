@@ -3,13 +3,13 @@
 // which is the one route that reads the tree backwards, from a directory to the
 // project that holds it.
 
-import { pathMissing } from "@tasma/engine";
+import { pathMissing, USER_CONFIG_LINKED_KEYS } from "@tasma/engine";
 import { routes } from "@tasma/protocol";
 import type { Project, ProjectChange, ProjectInput, ProjectRename, ProjectSummary, Success } from "@tasma/protocol";
 import type { RouteEntry } from "../http/router.js";
 import { assertNoQuery, readProjectQuery } from "../tasks/filter.js";
 import { toChange } from "../tasks/input.js";
-import { PATH_KEY, WriteQueue } from "../tasks/serialize.js";
+import { CONFIG_KEY, PATH_KEY, type WriteQueue } from "../tasks/serialize.js";
 import type { ProjectHost } from "./host.js";
 
 /**
@@ -37,21 +37,24 @@ async function readOne(host: ProjectHost, tag: string): Promise<Success<Project>
  * the process passes the result to `createDaemonServer` along with the host it
  * built them over.
  *
- * The queue is built here and keyed by the tag, so a patch, a rename and a
- * delete of one project take turns: a patch behind a delete answers 404 rather
- * than a raw filesystem fault from a directory that went under its write. A
- * rename takes the turn of both tags it names and the path turn, so a write of
- * either tag waits for the whole of it.
+ * The queue is the one the configuration routes share, and the project writes
+ * are keyed by the tag in it, so a patch, a rename and a delete of one project
+ * take turns: a patch behind a delete answers 404 rather than a raw filesystem
+ * fault from a directory that went under its write. A rename takes the turn of
+ * both tags it names and the path turn, so a write of either tag waits for the
+ * whole of it.
  *
  * A create, a patch that states a path and a rename share the path turn, so no
  * write can pass the engine's path check while another write changes where a
  * path is held, and no two creates overlap. The engine's exclusive create of the
  * directory guards a tag only against the writes that turn does not order: a
  * delete, and a writer outside the daemon.
+ *
+ * A patch that states a key the user's file also holds, or `workflows`, takes
+ * the configuration turn as well, since a write of the user's file checks this
+ * file and this write checks that one.
  */
-export function projectRoutes(host: ProjectHost): RouteEntry[] {
-  const writes = new WriteQueue();
-
+export function projectRoutes(host: ProjectHost, writes: WriteQueue): RouteEntry[] {
   return [
     {
       route: routes.listProjects,
@@ -95,7 +98,9 @@ export function projectRoutes(host: ProjectHost): RouteEntry[] {
         // The read is inside the turn, not after it: a delete waiting behind
         // this patch starts the moment the turn ends, and a read left outside
         // would answer 404 for a project this very request wrote.
-        const keys = Object.hasOwn(change, "path") ? [tag, PATH_KEY] : [tag];
+        const keys = [tag];
+        if (Object.hasOwn(change, "path")) keys.push(PATH_KEY);
+        if ([...USER_CONFIG_LINKED_KEYS].some((key) => Object.hasOwn(change, key))) keys.push(CONFIG_KEY);
         return writes.runAll(keys, async () => {
           await host.update(tag, change);
           return readOne(host, tag);

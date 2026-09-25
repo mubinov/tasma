@@ -13,12 +13,14 @@ import { parseArgs } from "node:util";
 import { DAEMON_NAME, DEFAULT_DAEMON_HOST, printable } from "@tasma/protocol";
 import type { DaemonRecord } from "@tasma/protocol";
 import manifest from "../../package.json" with { type: "json" };
+import { configRoutes } from "../config/routes.js";
 import { causeOf } from "../http/failure.js";
 import { createDaemonServer } from "../http/server.js";
 import { createProjectHost } from "../projects/host.js";
 import type { ProjectHost } from "../projects/host.js";
 import { projectRoutes } from "../projects/routes.js";
 import { taskRoutes } from "../tasks/routes.js";
+import { WriteQueue } from "../tasks/serialize.js";
 import { workflowRoutes } from "../workflows/routes.js";
 import { resolveDaemonPort } from "./port.js";
 import { daemonAnswers, daemonUrl } from "./probe.js";
@@ -137,7 +139,13 @@ export async function startDaemon(options: {
   }
 
   const host = createProjectHost({ root });
-  const server = createDaemonServer([...projectRoutes(host), ...taskRoutes(host), ...workflowRoutes({ root })]);
+  const writes = new WriteQueue();
+  const server = createDaemonServer([
+    ...projectRoutes(host, writes),
+    ...taskRoutes(host),
+    ...workflowRoutes({ root }),
+    ...configRoutes({ root, writes }),
+  ]);
 
   async function closeServing(): Promise<void> {
     await drain(server, drainMs);

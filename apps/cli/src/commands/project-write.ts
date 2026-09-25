@@ -4,14 +4,13 @@
 // Whether a tag is well formed or taken, and whether a path names a folder, is
 // the daemon's to say: a second copy of either rule here could disagree with it.
 
-import { isAbsolute, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { ProjectChange, ProjectInput } from "@tasma/protocol";
 import { attempt, refuseAnswer } from "../failure.js";
 import { fieldsOf } from "../output.js";
 import { reportUsage, wireText } from "../shell.js";
 import type { Command, Io, Options, Target } from "../types.js";
-import { applyClears, flagsGiven, keyOf, refuseClears, refuseEmpty, refuseNoChange } from "./change.js";
+import { absolutePath, applyClears, flagsGiven, keyOf, refuseClears, refuseEmpty, refuseNoChange } from "./change.js";
 import type { Fields } from "./change.js";
 import { readProjectTagArgument } from "./task-id.js";
 import { HELP_OPTION, readVerb, usageBlock } from "./verb.js";
@@ -90,21 +89,6 @@ const EDIT_FIELDS: Fields = {
 
 /** The flags of an edit whose value the daemon takes as typed; `--path` and `--instruction` are made absolute first. */
 const SENT_AS_GIVEN = ["name", "status", "default-status", "final-status", "priority", "workflow"] as const;
-
-/**
- * The path to send, or the code the fault in it reported with.
- *
- * A relative path is joined to the working directory and nothing more: `~/` is
- * the daemon's to expand, and no link is resolved.
- */
-function absolutePath(io: Io, flag: string, path: string, cwd: string): string | number {
-  if (isAbsolute(path) || path.startsWith("~/")) return path;
-
-  // The entry point read no directory, which is the one thing the empty value means.
-  if (cwd === "") return reportUsage(io, `the working directory could not be read; state ${flag} as an absolute path`);
-
-  return resolve(cwd, path);
-}
 
 /**
  * How every write reports what it did: the receipt's tag, one line, and nothing

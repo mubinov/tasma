@@ -54,7 +54,7 @@ describe("run", () => {
     const end = lines.indexOf("", start);
     const groups = lines.slice(start, end).map((row) => row.slice(2).split(" ")[0]);
 
-    expect(groups).toEqual(["project", "task", "comment", "workflow", "daemon"]);
+    expect(groups).toEqual(["project", "config", "task", "comment", "workflow", "daemon"]);
   });
 
   it("reports an unknown option on stderr, writing nothing to stdout", async () => {

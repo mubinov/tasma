@@ -3,7 +3,7 @@ import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseTask, type TaskComment, TaskStoreError, type Workflows } from "@tasma/engine";
-import { causeOf, pathOf } from "../../src/store/errors.js";
+import { asStoreRefusal, causeOf, pathOf } from "../../src/store/errors.js";
 import { frontmatterNumber } from "../../src/store/ids.js";
 import { projectPaths } from "../../src/store/paths.js";
 import { assertSnapshots, createTaskFile, timestamp } from "../../src/store/store.js";
@@ -159,6 +159,20 @@ describe("causeOf", () => {
     [undefined, "undefined"],
   ])("states the explanation of %s without the class that carried it", (thrown, explanation) => {
     expect(causeOf(thrown)).toBe(explanation);
+  });
+});
+
+describe("asStoreRefusal", () => {
+  it("answers a store refusal as it stands", () => {
+    const refusal = new TaskStoreError("config-invalid", "the file must hold a YAML mapping");
+
+    expect(asStoreRefusal(refusal)).toBe(refusal);
+  });
+
+  it("throws any other fault again", () => {
+    const fault = new Error("the disk went away");
+
+    expect(() => asStoreRefusal(fault)).toThrow(fault);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
-import { cell, fieldsOf, table, withLineBreak } from "../src/output.js";
+import { cell, fieldsOf, keyRows, table, withLineBreak } from "../src/output.js";
 
 describe("cell", () => {
   // A column that went empty would let the columns after it slide left, so the
@@ -40,6 +40,10 @@ describe("table", () => {
     expect(table([["a", "long"], ["b", "x"]])).toBe("a  long\nb  x\n");
   });
 
+  it("measures a column over the cells it pads, so a long last cell pushes no longer row", () => {
+    expect(table([["file", "/a/long/path"], ["key", "v", "mark"]])).toBe("file  /a/long/path\nkey   v  mark\n");
+  });
+
   it("ends the last line with a break", () => {
     expect(table([["a"]])).toBe("a\n");
   });
@@ -73,5 +77,24 @@ describe("fieldsOf", () => {
     for (const value of [undefined, null, "SAGA", 1]) {
       expect(fieldsOf(value)).toEqual({});
     }
+  });
+});
+
+describe("keyRows", () => {
+  it("puts a scalar on the key's row", () => {
+    expect(keyRows("name", "Saga")).toEqual([["name", "Saga"]]);
+  });
+
+  it("puts the first entry of a list on the key's row and each further one on a row of its own", () => {
+    expect(keyRows("statuses", ["New", "Done"])).toEqual([["statuses", "New"], ["", "Done"]]);
+  });
+
+  it("marks the key's row of an empty list", () => {
+    expect(keyRows("workflows", [])).toEqual([["workflows", "-"]]);
+  });
+
+  it("puts a mark on the key's row alone", () => {
+    expect(keyRows("statuses", ["New", "Done"], "(mark)")).toEqual([["statuses", "New", "(mark)"], ["", "Done"]]);
+    expect(keyRows("default_status", "New", "(mark)")).toEqual([["default_status", "New", "(mark)"]]);
   });
 });

@@ -2,6 +2,7 @@ export { DAEMON_RECORD_FILE, DEFAULT_DAEMON_HOST, DEFAULT_DAEMON_PORT, DEFAULT_D
 export type { DaemonRecord } from "./address.js";
 export { createClient } from "./client.js";
 export type { Client, Transport, TransportReply, TransportRequest } from "./client.js";
+export type { UserConfig, UserConfigChange, UserSetting } from "./config.js";
 export type { Diagnostic, DiagnosticCode } from "./diagnostics.js";
 export { ProtocolError, TransportError } from "./errors.js";
 export type {

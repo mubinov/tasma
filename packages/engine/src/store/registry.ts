@@ -1,17 +1,28 @@
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
-import { Document, isAlias, isNode, isScalar, isSeq, type Node, parseDocument } from "yaml";
-import { anchorIsRead, anchorsOf, type UnaddressableKey, unaddressableKey } from "../format/anchors.js";
-import { isPlainMapping } from "../format/values.js";
+import { Document } from "yaml";
 import {
   createExclusive,
   createExclusiveDirectory,
   makeDirectory,
-  readRegularFile,
   removeTree,
   replaceFile,
 } from "./atomic.js";
-import { checkStatusAndPriorityChange, resolveProjectDeclaration } from "./config.js";
+import {
+  checkStatusAndPriorityChange,
+  readDeclared,
+  resolveProjectDeclaration,
+  STATUS_AND_PRIORITY_KEYS,
+} from "./config.js";
+import {
+  appliedValues,
+  applyWrites,
+  checkAnchor,
+  checkedDefaultStatus,
+  checkedList,
+  cleared,
+  openDeclaration,
+} from "./declaration.js";
 import { errnoOf, fail } from "./errors.js";
 import { pathHolder } from "./locate.js";
 import { checkedDirectoryPath, checkedFilePath, type ProjectPaths, projectPaths } from "./paths.js";
@@ -28,17 +39,8 @@ import type {
   StoreDiagnostic,
 } from "./types.js";
 
-/** The keys of the statuses and the priorities, which the reader resolves under one set of rules. */
-const STATUS_AND_PRIORITY_KEYS = new Set(["statuses", "default_status", "final_statuses", "priorities"]);
-
 /** The keys a create states: the fields it writes, and the tree it writes them in. */
 const CREATE_KEYS = new Set(["root", "path", "name", "tag"]);
-
-/** What a refusal states about a file whose key no write reaches by its name. */
-const UNADDRESSABLE: Record<UnaddressableKey, string> = {
-  "merge-key": "the file resolves a YAML merge key, so a key of it cannot be written",
-  "key-unaddressable": "the file carries a key written as an alias, so a key of it cannot be written",
-};
 
 /**
  * The finding a read adds when the folder a project stands for is gone, or
@@ -183,98 +185,6 @@ export async function readProject(options: ProjectOptions): Promise<ProjectInfo>
   return { tag: paths.project, ...declaration, diagnostics };
 }
 
-/**
- * The project's own file as a document this layer can write back, or an empty
- * one where the file is absent, which is how a directory a hand created takes
- * its first key.
- *
- * A symbolic link is refused although the reader follows one on purpose: this
- * write installs the new text by rename, which would replace the link with a
- * plain file and leave the linked file stale. A file the parser refuses is
- * refused for the same reason — the rename would take it with it.
- */
-async function openDeclaration(paths: ProjectPaths): Promise<Document> {
-  const read = await readRegularFile(paths.projectConfig);
-  if (read === "absent") return new Document({});
-  if (read === "irregular") {
-    fail("config-invalid", "this name holds no regular file this layer can write", paths.projectConfig);
-  }
-  const doc = parseDocument(read.text);
-  if (doc.errors.length > 0) fail("config-invalid", "the file is not valid YAML", paths.projectConfig);
-  // Both tests are needed. The node says whether the document holds anything at
-  // all: a file holding nothing, or nothing but comments, carries none and takes
-  // its first key. The value it resolves to says whether a write reaches a key:
-  // an explicit null and a `!!set` each carry a node no key can be set on, and
-  // both resolve to something `isPlainMapping` refuses.
-  if (doc.contents !== null && !isPlainMapping(resolvedValue(doc, paths.projectConfig))) {
-    fail("config-invalid", "the file must hold a YAML mapping", paths.projectConfig);
-  }
-  // The reader resolves a name such a file gives while no key of it carries that
-  // text, so a write here would state the key a second time, or take nothing
-  // away and report that it did.
-  const unaddressable = unaddressableKey(doc);
-  if (unaddressable !== undefined) fail("config-invalid", UNADDRESSABLE[unaddressable], paths.projectConfig);
-  return doc;
-}
-
-/**
- * The value a document resolves to. An alias reading an anchor the file never
- * sets is accepted by the parser and resolved by nothing, so the fault it raises
- * is about the file rather than about this call — the shape `readLevel` answers
- * a parse fault of the same file in.
- */
-function resolvedValue(doc: Document, filename: string): unknown {
-  try {
-    return doc.toJS();
-  } catch (error) {
-    fail("config-invalid", "this file holds an alias that resolves to no anchor", filename, error);
-  }
-}
-
-/**
- * Refuses a key whose write would change a value the change never named. An
- * anchor another value of the file reads stands on the node a write replaces, so
- * setting the key rewrites what those aliases read and clearing it leaves them
- * resolving to nothing. It is the condition the task writer refuses as
- * `anchor-aliased`.
- */
-function checkAnchor(doc: Document, key: string, removing: boolean, filename: string): void {
-  if (!anchorIsRead(doc, key, anchorsOf(doc), removing)) return;
-  const description = `the key "${key}" carries a YAML anchor another value points at, so it cannot be changed`;
-  fail("config-invalid", description, filename);
-}
-
-/** The value of a key that clears its field: none at all, or `null`. */
-function cleared(value: unknown): boolean {
-  return value === undefined || value === null;
-}
-
-/**
- * A list a caller stated for one key: text entries that are never empty and
- * never repeated, and at least one of them unless `emptyAllowed`.
- */
-function checkedList(key: string, stated: unknown, emptyAllowed: boolean): string[] {
-  if (!Array.isArray(stated)) fail("config-change-invalid", `"${key}" must be a list of strings`);
-  if (!emptyAllowed && stated.length === 0) fail("config-change-invalid", `"${key}" must hold at least one entry`);
-  const seen = new Set<unknown>();
-  for (const entry of stated) {
-    if (typeof entry !== "string" || entry === "") {
-      fail("config-change-invalid", `every entry of "${key}" must be a string that is not empty`);
-    }
-    if (seen.has(entry)) fail("config-change-invalid", `"${key}" holds "${entry}" more than once`);
-    seen.add(entry);
-  }
-  return stated as string[];
-}
-
-/** The status a caller stated for `default_status`, which is text and never the empty string. */
-function checkedDefaultStatus(stated: unknown): string {
-  if (typeof stated !== "string" || stated === "") {
-    fail("config-change-invalid", '"default_status" must be a string that is not empty');
-  }
-  return stated;
-}
-
 /** The check of the value each writable key of a project sets, on its own. `tag` is not among them. */
 const VALUE_CHECKS: { [Key in keyof ProjectChange]-?: (stated: unknown) => unknown } = {
   name: checkedName,
@@ -296,12 +206,9 @@ const PROJECT_WRITABLE = new Set(Object.keys(VALUE_CHECKS));
  */
 async function checkChange(paths: ProjectPaths, doc: Document, writes: Map<string, unknown>): Promise<void> {
   if ([...writes.keys()].some((key) => STATUS_AND_PRIORITY_KEYS.has(key))) {
-    const values = doc.contents === null ? {} : { ...(doc.toJS() as Record<string, unknown>) };
-    for (const [key, value] of writes) {
-      if (value === undefined) delete values[key];
-      else values[key] = value;
-    }
-    await checkStatusAndPriorityChange(paths, values, new Set(writes.keys()));
+    const project = { path: paths.projectConfig, values: appliedValues(doc, writes) };
+    const user = await readDeclared(paths.userConfig, "user");
+    checkStatusAndPriorityChange([project, user], new Set(writes.keys()));
   }
   const workflows = writes.get("workflows") as string[] | undefined;
   if (workflows !== undefined) await checkDeclaredWorkflows(paths, workflows);
@@ -311,27 +218,8 @@ async function checkChange(paths: ProjectPaths, doc: Document, writes: Map<strin
 }
 
 /**
- * The node that writes `value` over the value `key` holds now. It keeps the
- * comments and the anchor of the old node, and its quotes or flow style where
- * the new node is of the same kind, but never its tag: a kept tag would store
- * another value than the one given.
- */
-function replacement(doc: Document, key: string, value: unknown): Node {
-  const node = doc.createNode(value);
-  const old = doc.get(key, true);
-  if (!isNode(old)) return node;
-  node.commentBefore = old.commentBefore;
-  node.comment = old.comment;
-  if (!isAlias(old)) node.anchor = old.anchor;
-  if (isScalar(old) && isScalar(node)) node.type = old.type;
-  if (isSeq(old) && isSeq(node)) node.flow = old.flow;
-  return node;
-}
-
-/**
  * Sets and clears the keys of one change, leaving every other key and every
- * comment of the file alone. The comments inside a list it replaces go with the
- * entries they stand beside. Every check runs before the file is touched.
+ * comment of the file alone. Every check runs before the file is touched.
  */
 async function writeDeclaration(options: ProjectOptions, paths: ProjectPaths, change: ProjectChange): Promise<void> {
   if (Object.hasOwn(change, "path") && cleared(change.path)) {
@@ -347,24 +235,11 @@ async function writeDeclaration(options: ProjectOptions, paths: ProjectPaths, ch
   // another project there.
   if (path !== undefined) await checkPathFree(path, options.root, options.project);
 
-  const doc = await openDeclaration(paths);
+  const doc = await openDeclaration(paths.projectConfig);
   await checkChange(paths, doc, writes);
-
-  let written = false;
-  for (const [key, value] of writes) {
-    if (value !== undefined) {
-      doc.set(key, replacement(doc, key, value));
-      written = true;
-      // A document that holds no collection — an empty file, or one carrying
-      // nothing but comments — has no key to take away, and `delete` refuses it
-      // outright.
-    } else if (doc.contents !== null && doc.delete(key)) {
-      written = true;
-    }
-  }
   // A change that took no key off the file and put none on it leaves the file as
   // it stands, and installs none where a hand-made project never had one.
-  if (!written) return;
+  if (!applyWrites(doc, writes)) return;
   await replaceFile(paths.projectConfig, doc.toString());
 }
 

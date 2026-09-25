@@ -7,6 +7,7 @@ import type { HandlerRequest } from "../../src/http/router.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import type { ProjectHost } from "../../src/projects/host.js";
 import { projectRoutes } from "../../src/projects/routes.js";
+import { WriteQueue } from "../../src/tasks/serialize.js";
 import {
   failure,
   loseTasks,
@@ -43,7 +44,7 @@ const REVIEW_WORKFLOW = "steps:\n  - {name: check, file: steps/check.md, owner: 
 async function serving(root: string): Promise<TestServer & { host: ProjectHost }> {
   const host = createProjectHost({ root });
   onTestFinished(() => host.close());
-  return { ...(await startTestServer(projectRoutes(host))), host };
+  return { ...(await startTestServer(projectRoutes(host, new WriteQueue()))), host };
 }
 
 describe("GET /projects", () => {
@@ -492,7 +493,7 @@ describe("PATCH /projects/{project}", () => {
     // the turn behind the patch before this resolution reaches the write. So
     // what the order below states is the queue's decision rather than which
     // request the socket delivered first.
-    const entries = projectRoutes(host).map((entry) => {
+    const entries = projectRoutes(host, new WriteQueue()).map((entry) => {
       if (entry.route !== routes.deleteProject) return entry;
       return {
         ...entry,
@@ -578,7 +579,7 @@ describe("DELETE /projects/{project}", () => {
         return inner.remove(tag);
       },
     };
-    const server = await startTestServer(projectRoutes(host));
+    const server = await startTestServer(projectRoutes(host, new WriteQueue()));
 
     const creating = send(server, "POST", "/projects", { path: await target(), tag: "ONE" });
     await until(() => reached.includes("create"), "the create took the path turn");
@@ -745,7 +746,7 @@ describe("POST /projects/{project}/rename", () => {
     // The rename is held until the create has entered its handler, which takes
     // the path turn behind the rename, so the order below is the queue's
     // decision.
-    const entries = projectRoutes(host).map((entry) => {
+    const entries = projectRoutes(host, new WriteQueue()).map((entry) => {
       if (entry.route !== routes.createProject) return entry;
       return {
         ...entry,

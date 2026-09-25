@@ -192,6 +192,19 @@ const invocations: Invocation[] = [
     method: "GET",
     path: "/workflows/dev/steps/dev%3Aresearch",
   },
+  {
+    name: "readUserConfig",
+    send: (client) => client.readUserConfig(),
+    method: "GET",
+    path: "/config",
+  },
+  {
+    name: "updateUserConfig",
+    send: (client) => client.updateUserConfig({ statuses: ["New", "Done"], workflows_path: null }),
+    method: "PATCH",
+    path: "/config",
+    body: { statuses: ["New", "Done"], workflows_path: null },
+  },
 ];
 
 /** The client method one invocation calls, which its name states before the case it covers. */

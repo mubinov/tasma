@@ -124,3 +124,10 @@ export const PATH_KEY = "path\u0000";
 export function createKey(project: string): string {
   return `create\u0000${project}`;
 }
+
+/**
+ * The key a write of the user's configuration file shares with every project
+ * write that states a key that file also holds, which is where each checks the
+ * other's file.
+ */
+export const CONFIG_KEY = "config\u0000";

@@ -231,6 +231,8 @@ A project's `config.yml` does not recognize it.
 workflows_path: ~/Projects/flows/workflows
 ```
 
+`tasma config edit --workflows-path` sets this key; see [CLI](cli.md).
+
 **The default is `workflows/` beside `projects/` under the root.** A file that
 states no `workflows_path` leaves a reader on it.
 
