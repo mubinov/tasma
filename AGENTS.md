@@ -23,10 +23,10 @@
   Never write to it, never delete it, and never delete anything under it. A test
   suite that looks polluted is never caused by this tree.
 - Every command that resolves a daemon from `HOME` runs under
-  `scripts/dev-home.sh`, which puts `HOME` under `/tmp`: `pnpm dev:cli` and
-  `pnpm app:start` do. A temporary `HOME` of your own is equally fine; the real
-  home directory is forbidden. The web application reads no tree — run it with
-  `pnpm dev`.
+  `scripts/dev-home.sh`, which puts `HOME` in a per-user directory under
+  `$TMPDIR`: `pnpm dev:cli` and `pnpm app:start` do. A temporary `HOME` of your
+  own is equally fine; the real home directory is forbidden. The web
+  application reads no tree — run it with `pnpm dev`.
 - Under a development `HOME`, give the tree a daemon record of its own before
   running the app: start a daemon there, or set `TASMA_DAEMON_PORT` and write
   the record naming that port. A tree with no record falls back to the default

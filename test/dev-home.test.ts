@@ -1,11 +1,24 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { binTargets, readManifest, workspaceRoot } from "../workspace.js";
 
 const WRAPPER = "scripts/dev-home.sh";
+
+const execFileAsync = promisify(execFile);
 
 const script = join(workspaceRoot, WRAPPER);
 
@@ -16,11 +29,151 @@ describe("the development runner", () => {
     expect(statSync(script).mode & 0o111).toBeGreaterThan(0);
   });
 
-  it("puts HOME on a tree under /tmp and creates it", () => {
-    const home = execFileSync(script, ["sh", "-c", 'printf %s "$HOME"'], { encoding: "utf8" });
+  /** Runs the wrapper with TMPDIR set, and returns the HOME it gives the command. */
+  function homeUnder(tmp: string): string {
+    return execFileSync(script, ["sh", "-c", 'printf %s "$HOME"'], {
+      encoding: "utf8",
+      env: { ...process.env, TMPDIR: tmp },
+    });
+  }
 
-    expect(home.startsWith("/tmp/")).toBe(true);
-    expect(existsSync(home)).toBe(true);
+  /** Runs `body` with a scratch directory that stands in for the temporary directory. */
+  function withScratch(body: (scratch: string) => void): void {
+    const scratch = mkdtempSync(join(tmpdir(), "dev-home-tmp-"));
+    try {
+      body(scratch);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+
+  it("puts HOME in a directory of its own under the temporary directory", () => {
+    withScratch((scratch) => {
+      const home = homeUnder(`${scratch}/`);
+
+      expect(home).toBe(`${scratch}/tasma-dev`);
+      expect(statSync(home).isDirectory()).toBe(true);
+      expect(statSync(home).mode & 0o777).toBe(0o700);
+    });
+  });
+
+  it("gives the same HOME on each run", () => {
+    withScratch((scratch) => {
+      expect(homeUnder(scratch)).toBe(homeUnder(scratch));
+    });
+  });
+
+  it("runs every command when several runs create the directory at the same time", async () => {
+    for (let round = 0; round < 5; round++) {
+      const scratch = mkdtempSync(join(tmpdir(), "dev-home-tmp-"));
+      try {
+        const markers = [0, 1, 2, 3].map((run) => join(scratch, `ran-${run}`));
+
+        await Promise.all(
+          markers.map((marker) => execFileAsync(script, ["touch", marker], { env: { ...process.env, TMPDIR: scratch } })),
+        );
+
+        expect(markers.filter((marker) => !existsSync(marker))).toEqual([]);
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("narrows a directory other accounts can read", () => {
+    withScratch((scratch) => {
+      const home = join(scratch, "tasma-dev");
+      mkdirSync(home);
+      chmodSync(home, 0o755);
+
+      homeUnder(scratch);
+
+      expect(statSync(home).mode & 0o777).toBe(0o700);
+    });
+  });
+
+  /** Runs the wrapper under `scratch` and expects it to refuse without running the command. */
+  function expectRefused(scratch: string): void {
+    const marker = join(scratch, "ran");
+
+    const run = spawnSync(script, ["touch", marker], {
+      encoding: "utf8",
+      env: { ...process.env, TMPDIR: scratch },
+    });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("is not a directory of this account");
+    expect(existsSync(marker)).toBe(false);
+  }
+
+  // The target is a directory of this account that a check which follows the
+  // link would accept.
+  it("refuses a link at the name", () => {
+    withScratch((scratch) => {
+      const target = join(scratch, "target");
+      mkdirSync(target);
+      chmodSync(target, 0o755);
+      symlinkSync(target, join(scratch, "tasma-dev"));
+
+      expectRefused(scratch);
+
+      expect(statSync(target).mode & 0o777).toBe(0o755);
+    });
+  });
+
+  it("refuses a link to nothing at the name", () => {
+    withScratch((scratch) => {
+      symlinkSync(join(scratch, "absent"), join(scratch, "tasma-dev"));
+
+      expectRefused(scratch);
+
+      expect(existsSync(join(scratch, "absent"))).toBe(false);
+    });
+  });
+
+  it("refuses a file at the name", () => {
+    withScratch((scratch) => {
+      writeFileSync(join(scratch, "tasma-dev"), "");
+
+      expectRefused(scratch);
+    });
+  });
+
+  it.each([0o775, 0o777])("refuses a directory other accounts can write (mode %o)", (mode) => {
+    withScratch((scratch) => {
+      const home = join(scratch, "tasma-dev");
+      mkdirSync(home);
+      chmodSync(home, mode);
+
+      expectRefused(scratch);
+
+      expect(statSync(home).mode & 0o777).toBe(mode);
+    });
+  });
+
+  it("shows the error of mkdir when the temporary directory does not exist", () => {
+    withScratch((scratch) => {
+      const missing = join(scratch, "missing");
+      const marker = join(scratch, "ran");
+
+      const run = spawnSync(script, ["touch", marker], {
+        encoding: "utf8",
+        env: { ...process.env, TMPDIR: missing },
+      });
+
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toContain("mkdir:");
+      expect(run.stderr).not.toContain("is not a directory of this account");
+      expect(existsSync(marker)).toBe(false);
+    });
+  });
+
+  it("falls back to /tmp when TMPDIR is empty", () => {
+    expect(homeUnder("")).toBe("/tmp/tasma-dev");
+  });
+
+  it.each(["relative/dir", "-p"])("falls back to /tmp when TMPDIR is not absolute (%s)", (tmp) => {
+    expect(homeUnder(tmp)).toBe("/tmp/tasma-dev");
   });
 
   /** The cargo and rustup trees the script leaves a command, one per line. */

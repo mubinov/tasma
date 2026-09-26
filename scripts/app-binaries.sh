@@ -4,8 +4,8 @@
 # serves the tree and still runs the command.
 #
 # It stands outside scripts/dev-home.sh: the wrapper replaces HOME for the whole
-# child, which would put bun's cache and its downloaded runtimes under /tmp,
-# where macOS clears them.
+# child, which would put bun's cache and its downloaded runtimes under the
+# temporary directory, where macOS clears them.
 #
 # Usage: scripts/app-binaries.sh [target-triple]
 set -eu
