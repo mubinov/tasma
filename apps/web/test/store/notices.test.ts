@@ -370,3 +370,43 @@ describe("what a notice announces", () => {
     ]);
   });
 });
+
+describe("requestNoticeFocus", () => {
+  function requested(): boolean {
+    return useNoticeStore.getState().noticeFocusRequested;
+  }
+
+  it("sets the request", () => {
+    useNoticeStore.getState().showNotice(FIRST);
+
+    useNoticeStore.getState().requestNoticeFocus();
+
+    expect(requested()).toBe(true);
+  });
+
+  it("is cleared by clearNoticeFocusRequest", () => {
+    useNoticeStore.getState().requestNoticeFocus();
+
+    useNoticeStore.getState().clearNoticeFocusRequest();
+
+    expect(requested()).toBe(false);
+  });
+
+  it("is cleared by closeNotice", () => {
+    useNoticeStore.getState().showNotice(FIRST);
+    useNoticeStore.getState().requestNoticeFocus();
+
+    useNoticeStore.getState().closeNotice(FIRST.key);
+
+    expect(requested()).toBe(false);
+  });
+
+  it("is cleared by dismissNotice", () => {
+    useNoticeStore.getState().showNotice(FIRST);
+    useNoticeStore.getState().requestNoticeFocus();
+
+    useNoticeStore.getState().dismissNotice(FIRST.key);
+
+    expect(requested()).toBe(false);
+  });
+});

@@ -44,18 +44,19 @@ export function ScrollToTop({ scrolled, headingRef }: ScrollToTopProps): ReactNo
   const shown = scrolled && !noticeOpen;
   const focusLostRef = useRef(false);
 
-  // Runs after the commit that removed the control, so a notice that opened in it is already in the DOM. On a
-  // scrolled page the h1 is out of view, and the notice that took the corner takes the focus.
+  // On a scrolled page the h1 is out of view, and the notice that took the corner takes the focus. Its panel mounts
+  // a commit after this one, so the stack moves the focus.
   useLayoutEffect(() => {
     if (shown || !focusLostRef.current) {
       return;
     }
 
     focusLostRef.current = false;
-    const bottomDismiss = scrolled
-      ? [...document.querySelectorAll<HTMLElement>("[data-notice-dismiss]")].at(-1)
-      : undefined;
-    (bottomDismiss ?? headingRef.current)?.focus({ preventScroll: true });
+    if (scrolled) {
+      useNoticeStore.getState().requestNoticeFocus();
+    } else {
+      headingRef.current?.focus({ preventScroll: true });
+    }
   }, [shown, scrolled, headingRef]);
 
   return shown

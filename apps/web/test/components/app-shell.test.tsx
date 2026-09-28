@@ -74,7 +74,7 @@ it("mounts the notice stack after the main content", async () => {
 
   const stack = screen.getByRole("main").nextElementSibling;
   expect(stack?.classList.contains("z-(--layer-notice)")).toBe(true);
-  expect(stack?.hasAttribute("aria-live")).toBe(false);
+  expect(stack?.getAttribute("aria-live")).toBe("off");
 });
 
 // jsdom has no layout, so the classes that add the stack's height to the bottom

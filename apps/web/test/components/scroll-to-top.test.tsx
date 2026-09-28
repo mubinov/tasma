@@ -105,6 +105,7 @@ describe("focus when the control leaves", () => {
 
     expect(control()).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Dismiss" }));
+    expect(useNoticeStore.getState().noticeFocusRequested).toBe(false);
   });
 
   it("moves to the h1 when the page is back at the top", () => {

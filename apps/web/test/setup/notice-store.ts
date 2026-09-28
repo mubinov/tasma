@@ -18,5 +18,5 @@ beforeEach(async () => {
   if (typeof requestAnimationFrame === "function" && !vi.isFakeTimers()) {
     await frame();
   }
-  useNoticeStore.setState({ notices: [], dismissed: new Map(), announced: [] });
+  useNoticeStore.setState({ notices: [], dismissed: new Map(), announced: [], noticeFocusRequested: false });
 });

@@ -176,7 +176,7 @@ describe("the board", () => {
     });
     await renderWithRouter("/tasks?projects=SAGA", transport);
 
-    expect(screen.getAllByRole("region").map((region) => region.querySelector("h2")?.textContent)).toEqual(CONFIG.statuses);
+    expect(within(screen.getByRole("main")).getAllByRole("region").map((region) => region.querySelector("h2")?.textContent)).toEqual(CONFIG.statuses);
     expect(CONFIG.statuses.map(countOf)).toEqual(["2", "0", "1", "1"]);
     expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 3"]);
     expect(titlesIn("In Progress")).toEqual(["Task 2"]);
@@ -187,7 +187,7 @@ describe("the board", () => {
     await renderWithRouter("/tasks?projects=SAGA", transport);
 
     expect(screen.getByText("No tasks in Saga yet.")).toBeTruthy();
-    expect(screen.getAllByRole("region")).toHaveLength(4);
+    expect(within(screen.getByRole("main")).getAllByRole("region")).toHaveLength(4);
   });
 
   it("names a project with no name by its tag", async () => {

@@ -43,10 +43,14 @@ type NoticeState = {
   dismissed: ReadonlyMap<string, NoticeContent>;
   /** What the spoken region holds, the newest last. */
   announced: readonly Announcement[];
+  /** The newest notice's Dismiss takes focus once its panel mounts. */
+  noticeFocusRequested: boolean;
   /** Opens or replaces the notice under its key, and announces it. */
   showNotice: (notice: Notice) => void;
   dismissNotice: (key: string) => void;
   closeNotice: (key: string) => void;
+  requestNoticeFocus: () => void;
+  clearNoticeFocusRequest: () => void;
   /**
    * Raises the words one animation frame after the call: a live message and a
    * focus move in the same commit compete, and the live message loses.
@@ -81,6 +85,7 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
   notices: [],
   dismissed: new Map(),
   announced: [],
+  noticeFocusRequested: false,
   showNotice: (notice) => {
     const { notices, dismissed } = get();
     const standing = notices.find(({ key }) => key === notice.key) ?? dismissed.get(notice.key);
@@ -104,6 +109,7 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
       return {
         notices: state.notices.filter((notice) => notice !== open),
         dismissed: new Map(state.dismissed).set(key, { form, title, line, words }),
+        noticeFocusRequested: false,
       };
     });
   },
@@ -115,8 +121,18 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
 
       const dismissed = new Map(state.dismissed);
       dismissed.delete(key);
-      return { notices: state.notices.filter((notice) => notice.key !== key), dismissed };
+      return {
+        notices: state.notices.filter((notice) => notice.key !== key),
+        dismissed,
+        noticeFocusRequested: false,
+      };
     });
+  },
+  requestNoticeFocus: () => {
+    set({ noticeFocusRequested: true });
+  },
+  clearNoticeFocusRequest: () => {
+    set({ noticeFocusRequested: false });
   },
   announce: (words) => {
     requestAnimationFrame((frame) => {
