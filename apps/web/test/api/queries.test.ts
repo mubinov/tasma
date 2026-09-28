@@ -11,6 +11,8 @@ import {
   taskQuery,
   tasksQuery,
   workflowQuery,
+  workflowReadQuery,
+  workflowsQuery,
 } from "../../src/api/queries";
 import { refusalReply, stubTransport, successReply } from "../helpers";
 
@@ -243,4 +245,60 @@ it("hands the query client the retry rule and a stale time that survives an alt-
 it("builds a fresh cache every time it is called", () => {
   expect(createAppQueryClient()).not.toBe(createAppQueryClient());
   expect(createDaemonClient()).not.toBe(createDaemonClient());
+});
+
+describe("workflowsQuery", () => {
+  it("answers the names and the diagnostics", async () => {
+    const warning = { code: "workflow-missing", message: "this directory holds no workflow.yml", path: "/w/scratch" } as const;
+    const { transport, paths } = stubTransport({ "/workflows": successReply(["design", "dev"], [warning]) });
+
+    const success = await createAppQueryClient().query({ ...workflowsQuery(createClient(transport)), staleTime: "static" });
+
+    expect(success).toEqual({ data: ["design", "dev"], diagnostics: [warning] });
+    expect(paths).toEqual(["/workflows"]);
+  });
+});
+
+describe("workflowReadQuery", () => {
+  const WORKFLOW = { name: "dev", file: "/w/dev/workflow.yml", steps: [], instructions: [] };
+
+  function read(transport: Transport, name: string) {
+    return new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      .query({ ...workflowReadQuery(createClient(transport), name), staleTime: "static" });
+  }
+
+  it("answers a read with the workflow and its diagnostics", async () => {
+    const warning = { code: "workflow-key-unknown", message: "unknown key: colour", path: "/w/dev/workflow.yml" } as const;
+    const { transport } = stubTransport({ "/workflows/dev": successReply(WORKFLOW, [warning]) });
+
+    await expect(read(transport, "dev")).resolves.toEqual({ ok: true, workflow: WORKFLOW, diagnostics: [warning] });
+  });
+
+  it.each([
+    {
+      status: 422,
+      failure: { kind: "store", code: "workflow-invalid", message: "the file is not valid YAML", path: "/w/dev/workflow.yml" },
+    },
+    { status: 400, failure: { kind: "store", code: "workflow-unknown", message: "no workflow is named dev", path: "/w/dev" } },
+  ] as const)("answers the refusal $failure.code with its status", async ({ status, failure }) => {
+    const { transport } = stubTransport({ "/workflows/dev": refusalReply(status, failure) });
+
+    await expect(read(transport, "dev")).resolves.toEqual({ ok: false, failure, status });
+  });
+
+  it("throws a transport fault", async () => {
+    await expect(read(() => Promise.reject(new Error("connection refused")), "dev")).rejects.toBeInstanceOf(TransportError);
+  });
+});
+
+it("keeps the keys of the workflows screens outside the board's workflow keys", () => {
+  const client = createClient(stubTransport().transport);
+  const workflows = daemonKeys.workflows();
+
+  expect(workflowsQuery(client).queryKey).toEqual(daemonKeys.workflowList());
+  expect(workflowReadQuery(client, "list").queryKey).toEqual(daemonKeys.workflowRead("list"));
+  for (const key of [daemonKeys.workflowList(), daemonKeys.workflowRead("list")]) {
+    expect(key.slice(0, workflows.length)).not.toEqual([...workflows]);
+    expect(key[0]).toBe(daemonKeys.all[0]);
+  }
 });

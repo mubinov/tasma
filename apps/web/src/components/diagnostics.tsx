@@ -1,16 +1,19 @@
 import { Collapsible } from "@base-ui/react/collapsible";
-import type { Diagnostic, ExcludedFile } from "@tasma/protocol";
+import type { DiagnosticCode, ExcludedFile, Failure } from "@tasma/protocol";
 import { useId, useRef, useState, type ReactNode } from "react";
 import { WarningIcon } from "../lib/icons";
 import { useFocusLost } from "../lib/use-focus-lost";
 import { warningCount } from "../lib/warning-count";
 import { Tag } from "./tag";
 
+/** A diagnostic, or a refused read listed beside the diagnostics, which can carry any refusal code. */
+export type WarningItem = { code: DiagnosticCode | Failure["code"]; message: string; path?: string; line?: number };
+
 type DiagnosticsProps = {
-  items: readonly Diagnostic[];
+  items: readonly WarningItem[];
   /** Rendered before `items`. */
   excluded?: readonly ExcludedFile[];
-  subject: "this project" | "the projects";
+  subject: "this project" | "the projects" | "this workflow" | "the workflows";
   className?: string;
 };
 
@@ -63,7 +66,7 @@ function WarningsLine({ items, excluded = [], subject, className }: DiagnosticsP
         </h2>
         <Collapsible.Trigger
           aria-labelledby={`${actionId} ${countId} ${subjectId}`}
-          className="ml-1 text-muted underline underline-offset-2 hover:text-text"
+          className="ml-1 inline-flex min-h-6 items-center text-muted underline underline-offset-2 hover:text-text"
         >
           <span id={actionId}>{open ? "Hide" : "Show"}</span>
         </Collapsible.Trigger>
@@ -77,7 +80,7 @@ function WarningsLine({ items, excluded = [], subject, className }: DiagnosticsP
           <li key={path} className="px-4 py-3">
             <div className="flex flex-wrap items-center gap-2">
               <Tag>{code}</Tag>
-              <span className="text-base">{`The file was not read: ${message}`}</span>
+              <span className="text-base wrap-anywhere">{`The file was not read: ${message}`}</span>
             </div>
             <span className="mt-0.5 block font-mono text-xs text-dim wrap-anywhere">{path}</span>
           </li>
@@ -90,7 +93,7 @@ function WarningsLine({ items, excluded = [], subject, className }: DiagnosticsP
           <li key={index} className="px-4 py-3">
             <div className="flex flex-wrap items-center gap-2">
               <Tag>{code}</Tag>
-              <span className="text-base">{message}</span>
+              <span className="text-base wrap-anywhere">{message}</span>
             </div>
             {path !== undefined && (
               <span className="mt-0.5 block font-mono text-xs text-dim wrap-anywhere">

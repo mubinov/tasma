@@ -7,8 +7,16 @@ import {
   redirect,
   type RouterHistory,
 } from "@tanstack/react-router";
-import { buildPath, routes as daemonRoutes, type Client, type Route } from "@tasma/protocol";
-import { projectQuery, projectsQuery, taskQuery, tasksQuery, workflowQuery } from "./api/queries";
+import { buildPath, ProtocolError, routes as daemonRoutes, type Client, type Route } from "@tasma/protocol";
+import {
+  projectQuery,
+  projectsQuery,
+  taskQuery,
+  tasksQuery,
+  workflowQuery,
+  workflowReadQuery,
+  workflowsQuery,
+} from "./api/queries";
 import { AppShell } from "./components/app-shell";
 import { ErrorScreen, RouteFailure } from "./components/error-boundary";
 import { PlaceholderScreen } from "./components/placeholder-screen";
@@ -17,6 +25,8 @@ import { ProjectsScreen } from "./components/projects-screen";
 import { SettingsScreen } from "./components/settings-screen";
 import { TaskScreen } from "./components/task-screen";
 import { TasksFailure, TasksScreen } from "./components/tasks-screen";
+import { WorkflowScreen } from "./components/workflow-screen";
+import { WorkflowsScreen } from "./components/workflows-screen";
 import { splitList, workflowNames } from "./lib/board";
 import { NAVIGATION_BY_PATH, type NavigationPath } from "./navigation";
 import { useUiStore } from "./store/ui";
@@ -47,7 +57,6 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
 // the copy is declared beside the routes that render it.
 export const PLACEHOLDER_SUMMARIES = {
   "/": "What needs a human and what the agents are working on will be summarised here.",
-  "/workflows": "The workflows a task can run, and the steps each one takes, will be shown here.",
 } as const satisfies Partial<Record<NavigationPath, string>>;
 
 type PlaceholderPath = keyof typeof PLACEHOLDER_SUMMARIES;
@@ -177,7 +186,38 @@ const projectRoute = createRoute({
 const workflowsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workflows",
-  component: placeholderFor("/workflows"),
+});
+
+const workflowsIndexRoute = createRoute({
+  getParentRoute: () => workflowsRoute,
+  path: "/",
+  loader: async ({ context: { queryClient, client } }) => {
+    const { data: names } = await queryClient.query({ ...workflowsQuery(client), staleTime: "static" });
+
+    await Promise.all(names.map((name) => queryClient.query({ ...workflowReadQuery(client, name), staleTime: "static" })));
+  },
+  component: WorkflowsScreen,
+});
+
+const workflowRoute = createRoute({
+  getParentRoute: () => workflowsRoute,
+  path: "/$workflow",
+  beforeLoad: ({ params }) => {
+    requirePath(daemonRoutes.readWorkflow, params);
+  },
+  loader: async ({ context: { queryClient, client }, params }) => {
+    const options = workflowReadQuery(client, params.workflow);
+    const read = await queryClient.query({ ...options, staleTime: "static" });
+
+    // The page shows a file it could not parse; any other refusal means there is
+    // no page. The answer is dropped, or the next visit reads it back from the
+    // cache and never asks again.
+    if (!read.ok && read.failure.code !== "workflow-invalid") {
+      queryClient.removeQueries({ queryKey: options.queryKey, exact: true });
+      throw new ProtocolError(read.failure, read.status);
+    }
+  },
+  component: WorkflowScreen,
 });
 
 const settingsRoute = createRoute({
@@ -191,7 +231,7 @@ export const routeTree = rootRoute.addChildren([
   tasksRoute,
   taskRoute,
   projectsRoute.addChildren([projectsIndexRoute, projectRoute]),
-  workflowsRoute,
+  workflowsRoute.addChildren([workflowsIndexRoute, workflowRoute]),
   settingsRoute,
 ]);
 

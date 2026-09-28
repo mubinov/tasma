@@ -2,7 +2,7 @@ import type { Diagnostic, DiagnosticCode, ExcludedFile } from "@tasma/protocol";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
-import { Diagnostics } from "../../src/components/diagnostics";
+import { Diagnostics, type WarningItem } from "../../src/components/diagnostics";
 
 const WARNINGS: Diagnostic[] = [
   { code: "config-key-unknown", message: "unknown key: colour", path: "/repos/delta/config.yml", line: 4 },
@@ -56,6 +56,49 @@ it("names the projects as the subject on the list of projects", () => {
   render(<Diagnostics items={WARNINGS.slice(0, 1)} subject="the projects" />);
 
   expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("1 warning about the projects");
+});
+
+it.each([{ subject: "this workflow" }, { subject: "the workflows" }] as const)(
+  "names $subject as the subject",
+  ({ subject }) => {
+    render(<Diagnostics items={WARNINGS.slice(0, 1)} subject={subject} />);
+
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(`1 warning about ${subject}`);
+  },
+);
+
+// A refused read is listed beside the warnings, and it can carry any refusal code.
+it("renders a warning that carries a refusal code", async () => {
+  const refused: WarningItem = { code: "route-not-found", message: "orbit was not read: no route serves it" };
+  render(<Diagnostics items={[refused]} subject="the workflows" />);
+  await unfold();
+
+  const [row] = rows("1 warning about the workflows");
+
+  expect(row!.textContent).toBe("route-not-foundorbit was not read: no route serves it");
+});
+
+it("lets every message break inside a word", async () => {
+  render(<Diagnostics items={WARNINGS} excluded={EXCLUDED} subject="this project" />);
+  await unfold();
+
+  const messages = rows(`${String(WARNINGS.length + EXCLUDED.length)} warnings about this project`).map(
+    (row) => row.querySelector("div > span:last-child")!,
+  );
+
+  expect(messages).toHaveLength(WARNINGS.length + EXCLUDED.length);
+  for (const message of messages) {
+    expect(message.classList).toContain("wrap-anywhere");
+  }
+});
+
+// The 24px target of WCAG 2.2 SC 2.5.8, with the label centred in it.
+it("gives Show and Hide a target of 24px at least", () => {
+  render(<Diagnostics items={WARNINGS} subject="this project" />);
+
+  expect(toggle().classList).toContain("min-h-6");
+  expect(toggle().classList).toContain("inline-flex");
+  expect(toggle().classList).toContain("items-center");
 });
 
 it("counts the files that were not read as warnings", () => {

@@ -1,5 +1,14 @@
 import { queryOptions } from "@tanstack/react-query";
-import { buildPath, ProtocolError, routes, type Client, type Success, type Workflow } from "@tasma/protocol";
+import {
+  buildPath,
+  ProtocolError,
+  routes,
+  type Client,
+  type Diagnostic,
+  type Failure,
+  type Success,
+  type Workflow,
+} from "@tasma/protocol";
 
 export const POLL_INTERVAL = 5_000;
 
@@ -7,7 +16,10 @@ export const POLL_INTERVAL = 5_000;
  * Two properties a new key has to keep: every key descends from `all`, so one
  * prefix invalidation drops everything the daemon said, and keys nest the way
  * the routes nest, so a write to one project leaves every other project's cache
- * intact.
+ * intact. The keys of the workflows screens are the exception: under
+ * `workflows()`, a workflow named `list` would share the key of the list, and
+ * a read would share the key under which the board's `workflowQuery` stores a
+ * different answer shape.
  */
 export const daemonKeys = {
   all: ["daemon"] as const,
@@ -18,6 +30,8 @@ export const daemonKeys = {
   task: (tag: string, id: string) => [...daemonKeys.tasks(tag), id] as const,
   workflows: () => [...daemonKeys.all, "workflows"] as const,
   workflow: (name: string) => [...daemonKeys.workflows(), name] as const,
+  workflowList: () => [...daemonKeys.all, "workflow-list"] as const,
+  workflowRead: (name: string) => [...daemonKeys.all, "workflow-read", name] as const,
 };
 
 /**
@@ -81,6 +95,44 @@ export function workflowQuery(client: Client, name: string) {
       } catch (error) {
         if (error instanceof ProtocolError) {
           return null;
+        }
+        throw error;
+      }
+    },
+  });
+}
+
+export function workflowsQuery(client: Client) {
+  return queryOptions({
+    queryKey: daemonKeys.workflowList(),
+    queryFn: () => client.listWorkflows(),
+  });
+}
+
+export type WorkflowRead
+  = | { ok: true; workflow: Workflow; diagnostics: Diagnostic[] }
+    | { ok: false; failure: Failure; status: number };
+
+/** The engine accepts a blank `title`, which would render as nothing, so a blank title falls back to the name. */
+export function workflowTitle(read: WorkflowRead | undefined, name: string): string {
+  const title = read?.ok === true ? read.workflow.title : undefined;
+  return title === undefined || title.trim() === "" ? name : title;
+}
+
+/**
+ * A refusal is an answer, not an error: a file broken by hand is what the
+ * workflows screens show, and the query keeps showing it across a refetch.
+ */
+export function workflowReadQuery(client: Client, name: string) {
+  return queryOptions({
+    queryKey: daemonKeys.workflowRead(name),
+    queryFn: async (): Promise<WorkflowRead> => {
+      try {
+        const { data, diagnostics } = await client.readWorkflow(name);
+        return { ok: true, workflow: data, diagnostics };
+      } catch (error) {
+        if (error instanceof ProtocolError) {
+          return { ok: false, failure: error.failure, status: error.status };
         }
         throw error;
       }
