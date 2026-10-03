@@ -25,6 +25,7 @@ const LIST_OPTIONS = {
   step: { type: "string" },
   blocked: { type: "boolean" },
   unblocked: { type: "boolean" },
+  search: { type: "string" },
   ...HELP_OPTION,
 } as const satisfies Options;
 
@@ -39,6 +40,7 @@ const LIST_HELP = [
   "      --step <s>       Only the tasks on this workflow step",
   "      --blocked        Only the tasks a blocker holds up",
   "      --unblocked      Only the tasks nothing holds up",
+  "      --search <text>  Only the tasks holding every word of the text in the id, title, body or comments",
   "  -h, --help           Print this help",
 ];
 
@@ -135,6 +137,7 @@ async function list(args: string[], io: Io, target: Target, cwd: string): Promis
     parent: stated(values.parent),
     step: stated(values.step),
     blocked: blockedFilter(values.blocked, values.unblocked),
+    q: stated(values.search),
   };
 
   return attempt(io, target, (client) => client.listTasks(tag, filter), (data, url) => {

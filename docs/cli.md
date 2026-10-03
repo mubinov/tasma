@@ -127,6 +127,7 @@ List the tasks of a project. Columns: id, status, priority, step, title. A filte
 - `--status <s>`, `--priority <p>`, `--parent <id>`, `--step <s>`: only the tasks with this value.
 - `--label <l>`: only the tasks that have all the given labels. Repeat the flag for each label.
 - `--blocked` or `--unblocked`: only the tasks with an open blocker, or only the tasks with no open blocker. A blocker is open while its status is not in the `final_statuses` of the project, or when its id names no task of the project.
+- `--search <text>`: only the tasks that contain every word of the text, in any order. The daemon splits the text at whitespace and finds each word, case-insensitively, in the id, the title, the body, or the title or body of a comment, collapsed comments included. No character has a special meaning. A text with no words, for example a text of spaces only, is not applied.
 
 ### `tasma task view <id> [--full]`
 

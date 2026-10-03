@@ -59,9 +59,24 @@ describe("task list", () => {
   it("sends no key for a filter whose value is empty", async () => {
     const path = await pathOf([
       "list", "-p", "SAGA", "--status", "", "--priority", "", "--parent", "", "--step", "", "--label", "",
+      "--search", "",
     ]);
 
     expect(path).toBe("GET /projects/SAGA/tasks");
+  });
+
+  it("sends --search as q, with the text as it was typed", async () => {
+    expect(await pathOf(["list", "-p", "SAGA", "--search", "drag card"]))
+      .toBe("GET /projects/SAGA/tasks?q=drag%20card");
+  });
+
+  it("sends --search beside the other filters in one request", async () => {
+    expect(await pathOf(["list", "-p", "SAGA", "--status", "To Do", "--label", "a", "--search", "drag"]))
+      .toBe("GET /projects/SAGA/tasks?status=To%20Do&label=a&q=drag");
+  });
+
+  it("sends a --search of whitespace alone untrimmed", async () => {
+    expect(await pathOf(["list", "-p", "SAGA", "--search", " "])).toBe("GET /projects/SAGA/tasks?q=%20");
   });
 
   it("drops an empty label and keeps the ones stated beside it", async () => {
