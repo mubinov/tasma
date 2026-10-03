@@ -107,6 +107,23 @@ export function blockerKeys(
 }
 
 /**
+ * The key of the task a write states as the parent, for the reason
+ * `blockerKeys` keys a blocker. It also orders two writes that set each other as
+ * parent, so the second one's walk up the chain reads the file the first saved.
+ * A value that is not a string, or an id `listed` does not answer with, takes no
+ * turn: the engine decides on it.
+ */
+export function parentKeys(
+  project: string,
+  change: Record<string, unknown>,
+  listed: () => readonly { id: string }[],
+): string[] {
+  const parent: unknown = change.parent;
+  if (typeof parent !== "string") return [];
+  return listed().some((entry) => entry.id === parent) ? [taskKey(project, parent)] : [];
+}
+
+/**
  * The key every write that sets or moves a project path shares, so the engine's
  * path check and the write it guards are one step. A project write is keyed by
  * the tag segment of its URL before the engine checks that tag, so the key holds

@@ -116,6 +116,8 @@ describe("the status of a refusal", () => {
     "label-invalid",
     "blocked-by-invalid",
     "blocked-by-unknown",
+    "parent-invalid",
+    "parent-unknown",
     "workflow-unknown",
     "step-unknown",
     "field-not-writable",

@@ -532,6 +532,16 @@ describe("the write routes over a task", () => {
     });
   });
 
+  it("forwards a store refusal of a parent the project holds no task for", async () => {
+    const response = await send(server, "PATCH", "/projects/SAGA/tasks/SAGA-1", { parent: "SAGA-9" });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "store", code: "parent-unknown" },
+    });
+  });
+
   it("forwards a serialize refusal of a value the writer cannot put in the file", async () => {
     const response = await send(server, "PATCH", "/projects/SAGA/tasks/SAGA-1", { body: 42 });
 
@@ -737,6 +747,20 @@ describe("two writes to one project that arrive at once", () => {
     expect(deleted.status).toBe(200);
     expect(reached).toEqual(["patch", "patch done", "delete"]);
     await expect(readFile(taskFile(root, "SAGA", "SAGA-2"), "utf8")).resolves.not.toContain("blocked_by");
+  });
+
+  it("runs a delete after a patch that states the deleted task as the parent, and takes the parent out", async () => {
+    await plant(taskFile(root, "SAGA", "SAGA-2"), entryText("SAGA-2", "To Do", []));
+    const { held, reached } = await heldServer();
+
+    const patching = send(held, "PATCH", "/projects/SAGA/tasks/SAGA-2", { parent: "SAGA-1" });
+    await until(() => reached.includes("patch"), "the patch took its turn");
+    const deleted = await send(held, "DELETE", "/projects/SAGA/tasks/SAGA-1");
+
+    expect((await patching).status).toBe(200);
+    expect(deleted.status).toBe(200);
+    expect(reached).toEqual(["patch", "patch done", "delete"]);
+    await expect(readFile(taskFile(root, "SAGA", "SAGA-2"), "utf8")).resolves.not.toContain("parent");
   });
 
   it("runs a delete after a create that states the deleted task as a blocker, and takes the blocker out", async () => {

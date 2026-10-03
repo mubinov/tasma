@@ -27,6 +27,8 @@ export type StoreErrorCode
     | "label-invalid"
     | "blocked-by-invalid"
     | "blocked-by-unknown"
+    | "parent-invalid"
+    | "parent-unknown"
     | "workflow-invalid"
     | "workflow-unknown"
     | "workflow-change-invalid"

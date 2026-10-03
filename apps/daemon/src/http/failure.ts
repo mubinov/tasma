@@ -102,6 +102,8 @@ const STORE_STATUS = {
   "label-invalid": 400,
   "blocked-by-invalid": 400,
   "blocked-by-unknown": 400,
+  "parent-invalid": 400,
+  "parent-unknown": 400,
   "workflow-unknown": 400,
   "step-unknown": 400,
   "field-not-writable": 400,

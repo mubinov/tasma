@@ -16,7 +16,7 @@ import { commentRoutes } from "./comments.js";
 import { assertNoQuery, readTaskFilter, readTaskOptions, readTextSelection, selectEntries } from "./filter.js";
 import { toChange } from "./input.js";
 import { searchEntries, words } from "./search.js";
-import { blockerKeys, createKey, taskKey, WriteQueue } from "./serialize.js";
+import { blockerKeys, createKey, parentKeys, taskKey, WriteQueue } from "./serialize.js";
 
 /**
  * The task routes, against the entries the contract declares. Whoever owns the
@@ -60,7 +60,12 @@ export function taskRoutes(host: ProjectHost): RouteEntry[] {
         const change = toChange(request.body);
         const { index } = await host.open(project);
         const write = () => index.createTask(change);
-        const keys = [createKey(project), ...blockerKeys(project, change, () => index.query().entries)];
+        const listed = () => index.query().entries;
+        const keys = [
+          createKey(project),
+          ...blockerKeys(project, change, listed),
+          ...parentKeys(project, change, listed),
+        ];
         const { diagnostics, ...data } = await writes.runAll(keys, write);
         return { data, diagnostics };
       },
@@ -101,7 +106,12 @@ export function taskRoutes(host: ProjectHost): RouteEntry[] {
         const id = request.params.id!;
         const change = toChange(request.body);
         const { index } = await host.open(project);
-        const keys = [taskKey(project, id), ...blockerKeys(project, change, () => index.query().entries)];
+        const listed = () => index.query().entries;
+        const keys = [
+          taskKey(project, id),
+          ...blockerKeys(project, change, listed),
+          ...parentKeys(project, change, listed),
+        ];
         const { diagnostics, ...data } = await writes.runAll(keys, () => index.updateTask(id, change));
         return { data, diagnostics };
       },

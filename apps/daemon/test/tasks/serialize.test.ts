@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blockerKeys, createKey, PATH_KEY, taskKey, WriteQueue } from "../../src/tasks/serialize.js";
+import { blockerKeys, createKey, parentKeys, PATH_KEY, taskKey, WriteQueue } from "../../src/tasks/serialize.js";
 
 /** A promise a test resolves itself, so no assertion waits on a timer. */
 function held(): { promise: Promise<void>; release: () => void } {
@@ -162,5 +162,21 @@ describe("the keys the queue is driven by", () => {
     expect(blockerKeys("SAGA", { blocked_by: "SAGA-1" }, unread)).toEqual([]);
     expect(blockerKeys("SAGA", { blocked_by: null }, unread)).toEqual([]);
     expect(blockerKeys("SAGA", {}, unread)).toEqual([]);
+  });
+
+  it("keys the listed task a write states as the parent", () => {
+    expect(parentKeys("SAGA", { parent: "SAGA-2" }, listed)).toEqual([taskKey("SAGA", "SAGA-2")]);
+  });
+
+  it("keys no parent the index does not list", () => {
+    expect(parentKeys("SAGA", { parent: "SAGA-9" }, listed)).toEqual([]);
+  });
+
+  it("keys no task for a parent that is not a string, and reads no listing for it", () => {
+    const unread = () => expect.unreachable("the listing is read");
+    expect(parentKeys("SAGA", { parent: 7 }, unread)).toEqual([]);
+    expect(parentKeys("SAGA", { parent: null }, unread)).toEqual([]);
+    expect(parentKeys("SAGA", { parent: undefined }, unread)).toEqual([]);
+    expect(parentKeys("SAGA", {}, unread)).toEqual([]);
   });
 });

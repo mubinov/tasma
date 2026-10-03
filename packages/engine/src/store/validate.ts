@@ -1,7 +1,8 @@
+import { parseFrontmatter } from "../format/index.js";
 import { labelFault } from "../format/schema.js";
-import { entryAt } from "./atomic.js";
-import { fail } from "./errors.js";
-import { type ProjectPaths, taskEntryOf } from "./paths.js";
+import { entryAt, readRegularFile } from "./atomic.js";
+import { fail, type TaskStoreErrorCode } from "./errors.js";
+import { type ProjectPaths, type TaskEntry, taskEntryOf } from "./paths.js";
 import type { StoreDiagnostic } from "./types.js";
 
 /**
@@ -76,12 +77,11 @@ export function validateLabels(value: unknown, path: string, diagnostics: StoreD
  * naming a file that stands. Deduplication keeps the first position, the rule
  * `validateLabels` follows.
  *
- * It is the one validator of this file that touches the filesystem, because an
- * id is refused on the ground that the project holds no task under it. The form
- * of an id is checked before any path is built, which is what keeps a value such
- * as `../../etc/passwd` from reaching one. The stat is an `lstat`, so a symbolic
- * link standing at a task's name is no task — the rule the store applies to
- * every name it wrote itself.
+ * It touches the filesystem, because an id is refused on the ground that the
+ * project holds no task under it. The form of an id is checked before any path
+ * is built, which is what keeps a value such as `../../etc/passwd` from reaching
+ * one. The stat is an `lstat`, so a symbolic link standing at a task's name is no
+ * task — the rule the store applies to every name it wrote itself.
  *
  * `ownId` is absent on a create, which has no id until the file is written. Such
  * a call naming the id it is about to receive is refused by the existence check
@@ -120,19 +120,74 @@ export async function validateBlockedBy(
     seen.add(id);
     stored.push(id);
   }
-  const entries = stored.map((id) => {
-    const entry = taskEntryOf(paths, `${id}.md`);
-    if (entry === undefined) fail("blocked-by-unknown", `"${id}" is not a task id of project ${paths.project}`, path);
-    return entry;
-  });
   // One stat per blocker, run at once, over the deduplicated list: the fan-out is
-  // the number of distinct ids the write named.
-  const stats = await Promise.all(entries.map(async (entry) => ({ entry, stat: await entryAt(entry.path) })));
-  for (const { entry, stat } of stats) {
-    if (stat?.isFile() === true) continue;
-    fail("blocked-by-unknown", `"${entry.id}" names no task of project ${paths.project}`, path);
-  }
+  // the number of distinct ids the write named. The refusal names the first
+  // refused id in list order, not the first stat to finish.
+  const checks = await Promise.allSettled(stored.map((id) => standingTaskEntry(paths, id, "blocked-by-unknown", path)));
+  const refused = checks.find((check) => check.status === "rejected");
+  if (refused !== undefined) throw refused.reason;
   return stored;
+}
+
+/**
+ * The entry of a task of this project that `id` names, refused with `code`
+ * where the id has the wrong form or no regular file stands for it. The form
+ * is checked before any path is built, so a value such as `../x` never reaches
+ * the filesystem, and a symbolic link is not a task.
+ */
+async function standingTaskEntry(
+  paths: ProjectPaths,
+  id: string,
+  code: TaskStoreErrorCode,
+  path: string,
+): Promise<TaskEntry> {
+  const entry = taskEntryOf(paths, `${id}.md`);
+  if (entry === undefined) fail(code, `"${id}" is not a task id of project ${paths.project}`, path);
+  if ((await entryAt(entry.path))?.isFile() !== true) fail(code, `"${id}" names no task of project ${paths.project}`, path);
+  return entry;
+}
+
+/**
+ * Refuses a parent that is not the id of another task of this project with a
+ * file that stands, and a parent whose chain of ancestors leads back to this
+ * task. The value is stored as given.
+ *
+ * A create has no id yet, so no ancestor can name it and the chain is not
+ * walked. The walk ends without a refusal where an ancestor cannot be read: a
+ * fault in that file concerns another task.
+ */
+export async function validateParent(value: unknown, paths: ProjectPaths, ownId: unknown, path: string): Promise<void> {
+  if (typeof value !== "string") fail("parent-invalid", "parent must be a string", path);
+  if (value === ownId) fail("parent-invalid", `"${value}" is this task, and a task cannot be its own parent`, path);
+  const entry = await standingTaskEntry(paths, value, "parent-unknown", path);
+  if (typeof ownId !== "string") return;
+  // In insertion order, so the set is also the chain the refusal names. The set
+  // bounds the walk by the number of tasks, and a cycle a hand edit left higher
+  // in the chain ends it.
+  const chain = new Set([ownId, value]);
+  let next = await parentEntryOf(paths, entry);
+  while (next !== undefined) {
+    if (next.id === ownId) {
+      fail("parent-invalid", `setting parent "${value}" makes a cycle: ${[...chain, ownId].join(" → ")}`, path);
+    }
+    if (chain.has(next.id)) return;
+    chain.add(next.id);
+    next = await parentEntryOf(paths, next);
+  }
+}
+
+/** The task an ancestor's file names as its parent, or `undefined` where the walk cannot go on. */
+async function parentEntryOf(paths: ProjectPaths, ancestor: TaskEntry): Promise<TaskEntry | undefined> {
+  let parent: unknown;
+  try {
+    const read = await readRegularFile(ancestor.path);
+    if (typeof read === "string") return undefined;
+    // The frontmatter alone, so a fault below it does not end the walk.
+    parent = parseFrontmatter(read.text, { filename: ancestor.path }).parent;
+  } catch {
+    return undefined;
+  }
+  return typeof parent === "string" ? taskEntryOf(paths, `${parent}.md`) : undefined;
 }
 
 /**

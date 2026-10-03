@@ -33,7 +33,7 @@ import type {
   TextSelection,
   WriteResult,
 } from "./types.js";
-import { validateBlockedBy, validateLabels, validateMember } from "./validate.js";
+import { validateBlockedBy, validateLabels, validateMember, validateParent } from "./validate.js";
 import {
   openConfiguredWorkflows,
   openWorkflowsForRead,
@@ -131,14 +131,16 @@ function forward(diagnostics: Diagnostic[], path: string): StoreDiagnostic[] {
 }
 
 /**
- * Validates `status`, `priority`, `labels` and `blocked_by` wherever the write
- * states one, and writes the value each resolves to back into `frontmatter`.
- * Only the key set of the change is validated, so a task holding a status
- * configuration has since dropped, or a blocker the project has since deleted,
- * can still have its title edited.
+ * Validates `status`, `priority`, `labels`, `blocked_by` and `parent` wherever
+ * the write states one, and writes the resolved value back into `frontmatter`
+ * for each field except `parent`, which is stored as given. Only the key set of the
+ * change is validated, so a task holding a status configuration has since
+ * dropped, or a blocker or a parent the project has since deleted, can still have
+ * its title edited.
  *
- * It is asynchronous because resolving a workflow reads a file and resolving a
- * blocker stats one, while the other checks of the loop are pure.
+ * It is asynchronous because resolving a workflow reads a file, resolving a
+ * blocker stats one and resolving a parent stats one and reads its ancestors,
+ * while the other checks of the loop are pure.
  */
 async function validateFieldsInto(check: WriteContext): Promise<Written> {
   const { config, frontmatter, keys, path, paths, diagnostics } = check;
@@ -159,6 +161,8 @@ async function validateFieldsInto(check: WriteContext): Promise<Written> {
     } else if (key === "blocked_by") {
       written.blocked_by = await validateBlockedBy(value, paths, frontmatter.id, path, diagnostics);
       frontmatter.blocked_by = written.blocked_by;
+    } else if (key === "parent") {
+      await validateParent(value, paths, frontmatter.id, path);
     }
   }
   await validateWorkflowInto(check);

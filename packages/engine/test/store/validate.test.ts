@@ -1,5 +1,6 @@
-import { symlink } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { chmod, symlink } from "node:fs/promises";
+import { join } from "node:path";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { type Project, SNAPSHOT } from "@tasma/engine";
 import { codes, plant, project, projectConfig, read, storeError, taskFile, taskText, tempRoot } from "./helpers.js";
 
@@ -300,6 +301,16 @@ describe("blocked_by", () => {
     expect(error.message).toContain("names no task of project SAGA");
   });
 
+  it("names the first refused blocker in the order stated", async () => {
+    const root = await tempRoot();
+    const handle = await twoTasks(root);
+
+    const error = await storeError(handle.updateTask("SAGA-1", { blocked_by: ["SAGA-2", "SAGA-8", "SAGA-9", "../x"] }));
+
+    expect(error.code).toBe("blocked-by-unknown");
+    expect(error.message).toContain('"SAGA-8" names no task');
+  });
+
   it("rejects a symbolic link standing at a blocker's name, which is no task file", async () => {
     const root = await tempRoot();
     const handle = await twoTasks(root);
@@ -366,6 +377,194 @@ describe("blocked_by", () => {
     await project(root).updateTask("SAGA-1", { title: "Renamed" });
 
     expect((await project(root).readTask("SAGA-1")).task.frontmatter.blocked_by).toEqual(["SAGA-9"]);
+  });
+});
+
+describe("parent", () => {
+  /** A project holding `SAGA-1`, `SAGA-2` and `SAGA-3`, and the handle that wrote them. */
+  async function threeTasks(root: string): Promise<Project> {
+    const handle = project(root);
+    await handle.createTask({ title: "First" });
+    await handle.createTask({ title: "Second" });
+    await handle.createTask({ title: "Third" });
+    return handle;
+  }
+
+  /** Plants each task with the frontmatter lines given for it. */
+  async function planted(root: string, tasks: Record<string, string>): Promise<Project> {
+    for (const [id, extra] of Object.entries(tasks)) await plant(taskFile(root, id), taskText(id, extra));
+    return project(root);
+  }
+
+  it("stores the id of a task the project holds", async () => {
+    const root = await tempRoot();
+    const handle = await threeTasks(root);
+
+    const result = await handle.updateTask("SAGA-1", { parent: "SAGA-2" });
+
+    expect(result.diagnostics).toEqual([]);
+    expect((await handle.readTask("SAGA-1")).task.frontmatter.parent).toBe("SAGA-2");
+  });
+
+  it("stores the id a create states", async () => {
+    const root = await tempRoot();
+    const handle = await threeTasks(root);
+
+    const result = await handle.createTask({ title: "Fourth", parent: "SAGA-1" });
+
+    expect((await handle.readTask(result.id)).task.frontmatter.parent).toBe("SAGA-1");
+  });
+
+  it("rejects a value that is not a string", async () => {
+    const root = await tempRoot();
+    const handle = await threeTasks(root);
+
+    const error = await storeError(handle.updateTask("SAGA-1", { parent: 2 }));
+
+    expect(error.code).toBe("parent-invalid");
+    expect(error.message).toContain("must be a string");
+  });
+
+  it("rejects the task's own id", async () => {
+    const root = await tempRoot();
+    const handle = await threeTasks(root);
+
+    const error = await storeError(handle.updateTask("SAGA-1", { parent: "SAGA-1" }));
+
+    expect(error.code).toBe("parent-invalid");
+    expect(error.message).toContain("a task cannot be its own parent");
+  });
+
+  it.each(["", "SAGA", "saga-2", "ACME-2", "../x", "../../etc/passwd", "SAGA-1.5"])(
+    "rejects the id %s, which is no task id of this project",
+    async (id) => {
+      const root = await tempRoot();
+      const handle = await threeTasks(root);
+
+      const error = await storeError(handle.updateTask("SAGA-1", { parent: id }));
+
+      expect(error.code).toBe("parent-unknown");
+      expect(error.message).toContain(`"${id}" is not a task id of project SAGA`);
+    },
+  );
+
+  it("rejects a well-formed id the project holds no file for", async () => {
+    const root = await tempRoot();
+    const handle = await threeTasks(root);
+
+    const error = await storeError(handle.updateTask("SAGA-1", { parent: "SAGA-9" }));
+
+    expect(error.code).toBe("parent-unknown");
+    expect(error.message).toContain("names no task of project SAGA");
+  });
+
+  it("rejects a symbolic link standing at the parent's name, which is no task file", async () => {
+    const root = await tempRoot();
+    const handle = await threeTasks(root);
+    await symlink(taskFile(root, "SAGA-2"), taskFile(root, "SAGA-9"));
+
+    expect((await storeError(handle.updateTask("SAGA-1", { parent: "SAGA-9" }))).code).toBe("parent-unknown");
+  });
+
+  it("rejects a swap of two tasks and names the cycle", async () => {
+    const root = await tempRoot();
+    const handle = await threeTasks(root);
+    await handle.updateTask("SAGA-1", { parent: "SAGA-2" });
+
+    const error = await storeError(handle.updateTask("SAGA-2", { parent: "SAGA-1" }));
+
+    expect(error.code).toBe("parent-invalid");
+    expect(error.message).toContain('setting parent "SAGA-1" makes a cycle: SAGA-2 → SAGA-1 → SAGA-2');
+    expect((await handle.readTask("SAGA-2")).task.frontmatter.parent).toBeUndefined();
+  });
+
+  it("rejects a cycle through a longer chain", async () => {
+    const root = await tempRoot();
+    const handle = await threeTasks(root);
+    await handle.updateTask("SAGA-1", { parent: "SAGA-2" });
+    await handle.updateTask("SAGA-2", { parent: "SAGA-3" });
+
+    const error = await storeError(handle.updateTask("SAGA-3", { parent: "SAGA-1" }));
+
+    expect(error.code).toBe("parent-invalid");
+    expect(error.message).toContain("SAGA-3 → SAGA-1 → SAGA-2 → SAGA-3");
+  });
+
+  it.each([
+    ["names a task with no file", "parent: SAGA-9\n"],
+    ["names no task id", "parent: ../x\n"],
+    ["holds no string", "parent: 7\n"],
+    ["is not valid frontmatter", "parent: [SAGA-1\n"],
+  ])("ends the walk with no error where an ancestor's parent %s", async (_, line) => {
+    const root = await tempRoot();
+    const handle = await planted(root, { "SAGA-1": "", "SAGA-2": line });
+
+    const result = await handle.updateTask("SAGA-1", { parent: "SAGA-2" });
+
+    expect(result.diagnostics).toEqual([]);
+    expect((await handle.readTask("SAGA-1")).task.frontmatter.parent).toBe("SAGA-2");
+  });
+
+  it("ends the walk with no error at a cycle that does not include the task", async () => {
+    const root = await tempRoot();
+    const handle = await planted(root, { "SAGA-1": "", "SAGA-2": "parent: SAGA-3\n", "SAGA-3": "parent: SAGA-2\n" });
+
+    await handle.updateTask("SAGA-1", { parent: "SAGA-2" });
+
+    expect((await handle.readTask("SAGA-1")).task.frontmatter.parent).toBe("SAGA-2");
+  });
+
+  it("does not follow a symbolic link standing at an ancestor's name", async () => {
+    const root = await tempRoot();
+    const handle = await planted(root, { "SAGA-1": "", "SAGA-2": "parent: SAGA-3\n" });
+    const linked = join(root, "linked.md");
+    await plant(linked, taskText("SAGA-3", "parent: SAGA-1\n"));
+    await symlink(linked, taskFile(root, "SAGA-3"));
+
+    await handle.updateTask("SAGA-1", { parent: "SAGA-2" });
+
+    expect((await handle.readTask("SAGA-1")).task.frontmatter.parent).toBe("SAGA-2");
+  });
+
+  it("ends the walk with no error at an ancestor it cannot read", async () => {
+    const root = await tempRoot();
+    const handle = await planted(root, { "SAGA-1": "", "SAGA-2": "parent: SAGA-3\n", "SAGA-3": "parent: SAGA-1\n" });
+    await chmod(taskFile(root, "SAGA-3"), 0o000);
+    onTestFinished(() => chmod(taskFile(root, "SAGA-3"), 0o644));
+
+    await handle.updateTask("SAGA-1", { parent: "SAGA-2" });
+
+    expect((await handle.readTask("SAGA-1")).task.frontmatter.parent).toBe("SAGA-2");
+  });
+
+  it("walks through an ancestor whose file has a fault below the frontmatter", async () => {
+    const root = await tempRoot();
+    const handle = await planted(root, { "SAGA-1": "" });
+    await plant(taskFile(root, "SAGA-2"), `${taskText("SAGA-2", "parent: SAGA-1\n")}\n<!-- task:comment {id: 1\n`);
+    await expect(handle.readTask("SAGA-2")).rejects.toThrow();
+
+    const error = await storeError(handle.updateTask("SAGA-1", { parent: "SAGA-2" }));
+
+    expect(error.code).toBe("parent-invalid");
+    expect(error.message).toContain("SAGA-1 → SAGA-2 → SAGA-1");
+  });
+
+  it("clears the field when the change names it with no value", async () => {
+    const root = await tempRoot();
+    const handle = await planted(root, { "SAGA-1": "parent: SAGA-9\n" });
+
+    await handle.updateTask("SAGA-1", { parent: undefined });
+
+    expect((await handle.readTask("SAGA-1")).task.frontmatter.parent).toBeUndefined();
+  });
+
+  it("edits the title of a task whose file holds a parent the project does not have", async () => {
+    const root = await tempRoot();
+    const handle = await planted(root, { "SAGA-1": "parent: SAGA-9\n" });
+
+    await handle.updateTask("SAGA-1", { title: "Renamed" });
+
+    expect((await handle.readTask("SAGA-1")).task.frontmatter.parent).toBe("SAGA-9");
   });
 });
 

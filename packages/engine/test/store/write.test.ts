@@ -29,6 +29,7 @@ describe("createTask", () => {
     await plant(projectConfig(root), "workflows: [delivery]\n");
     await plantWorkflow(root, "delivery", stepsOnly("build"));
     const handle = project(root);
+    await handle.createTask({ title: "Contacts" });
 
     const result = await handle.createTask({
       title: "Import the address book",
@@ -36,23 +37,23 @@ describe("createTask", () => {
       priority: "high",
       order: 4200,
       labels: ["import"],
-      parent: "SAGA-30",
+      parent: "SAGA-1",
       workflow: "delivery",
       step: "build",
       custom: { workflow: { attempts: 2 } },
       body: "\n# Goal\n\nText.\n",
     });
 
-    expect(result.id).toBe("SAGA-1");
-    const { task } = await handle.readTask("SAGA-1");
+    expect(result.id).toBe("SAGA-2");
+    const { task } = await handle.readTask("SAGA-2");
     expect(task.frontmatter).toMatchObject({
-      id: "SAGA-1",
+      id: "SAGA-2",
       title: "Import the address book",
       status: "In Progress",
       priority: "high",
       order: 4200,
       labels: ["import"],
-      parent: "SAGA-30",
+      parent: "SAGA-1",
       workflow: "delivery",
       step: "build",
       custom: { workflow: { attempts: 2 } },
