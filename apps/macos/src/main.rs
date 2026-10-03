@@ -14,6 +14,7 @@ mod command;
 mod daemon;
 mod deeplink;
 mod elevate;
+mod external;
 mod geometry;
 mod log;
 mod menu;
@@ -30,9 +31,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use tauri::utils::config::Color;
-use tauri::webview::PageLoadEvent;
+use tauri::webview::{NewWindowResponse, PageLoadEvent};
 use tauri::{
-    AppHandle, LogicalSize, Manager as _, RunEvent, Theme, Url, WebviewUrl, WebviewWindow,
+    AppHandle, LogicalSize, Manager as _, RunEvent, Runtime, Theme, Url, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
 };
 
@@ -130,6 +131,34 @@ fn may_navigate(url: &Url, dev_server: Option<&Url>) -> bool {
     // An http origin, so the tuple comparison holds. The arm above is what the
     // custom scheme needs: its origin is opaque, and no two of those are equal.
     dev_server.is_some_and(|dev_server| dev_server.origin() == url.origin())
+}
+
+/// The window's navigation policy: its own origin loads in the window, a web or
+/// mail link goes to `open`, and nothing else goes anywhere.
+///
+/// A click on a `target="_blank"` link reaches this first, and WebKit asks
+/// `new_window` only when this returns true. "Open Link" in the context menu
+/// skips this and goes straight to `new_window`.
+fn navigate(url: &Url, dev_server: Option<&Url>, open: impl Fn(&Url)) -> bool {
+    if may_navigate(url, dev_server) {
+        return true;
+    }
+
+    if external::opens_outside(url) {
+        open(url);
+    }
+
+    false
+}
+
+/// The window's new-window policy: a web or mail link goes to `open`, and no
+/// second window ever opens.
+fn new_window<R: Runtime>(url: &Url, open: impl Fn(&Url)) -> NewWindowResponse<R> {
+    if external::opens_outside(url) {
+        open(url);
+    }
+
+    NewWindowResponse::Deny
 }
 
 /// The colour behind the document, for the appearance the window reports.
@@ -305,7 +334,8 @@ fn main() {
                 .on_document_title_changed(|window, title| {
                     let _ = window.set_title(&title);
                 })
-                .on_navigation(move |url| may_navigate(url, dev_server.as_ref()))
+                .on_navigation(move |url| navigate(url, dev_server.as_ref(), external::open))
+                .on_new_window(|url, _| new_window(&url, external::open))
                 .on_page_load(move |window, payload| {
                     let mut delivery = loading.lock().unwrap_or_else(PoisonError::into_inner);
                     let route = match payload.event() {
@@ -537,5 +567,71 @@ mod tests {
             &url("https://example.invalid/"),
             Some(&dev_server)
         ));
+    }
+
+    /// Whether the window loads `target`, and the links `navigate` hands to
+    /// `open`, in order.
+    fn opened(target: &str, dev_server: Option<&Url>) -> (bool, Vec<String>) {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let loads = navigate(&url(target), dev_server, |link: &Url| {
+            calls.borrow_mut().push(link.to_string());
+        });
+
+        (loads, calls.into_inner())
+    }
+
+    #[test]
+    fn the_window_loads_its_own_origin_and_opens_nothing() {
+        assert_eq!(
+            opened("tasma-app://localhost/index.html", None),
+            (true, vec![])
+        );
+        assert_eq!(
+            opened(
+                "http://127.0.0.1:8276/index.html",
+                Some(&url("http://127.0.0.1:8276"))
+            ),
+            (true, vec![])
+        );
+    }
+
+    #[test]
+    fn a_web_link_opens_once_outside_the_window() {
+        assert_eq!(
+            opened("https://example.invalid/", None),
+            (false, vec!["https://example.invalid/".to_string()])
+        );
+    }
+
+    #[test]
+    fn any_other_link_goes_nowhere() {
+        assert_eq!(opened("file:///etc/passwd", None), (false, vec![]));
+    }
+
+    /// Whether `new_window` denies `target`, and the links it hands to `open`,
+    /// in order.
+    fn opened_from_new_window(target: &str) -> (bool, Vec<String>) {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let response = new_window::<tauri::test::MockRuntime>(&url(target), |link: &Url| {
+            calls.borrow_mut().push(link.to_string());
+        });
+
+        (
+            matches!(response, NewWindowResponse::Deny),
+            calls.into_inner(),
+        )
+    }
+
+    #[test]
+    fn a_new_window_request_for_a_web_link_opens_it_once_outside() {
+        assert_eq!(
+            opened_from_new_window("https://example.invalid/"),
+            (true, vec!["https://example.invalid/".to_string()])
+        );
+    }
+
+    #[test]
+    fn a_new_window_request_for_any_other_link_opens_nothing() {
+        assert_eq!(opened_from_new_window("file:///etc/passwd"), (true, vec![]));
     }
 }
