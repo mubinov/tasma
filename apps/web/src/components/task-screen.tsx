@@ -301,8 +301,12 @@ export function TaskScreen(): ReactNode {
   const boardReturn = useUiStore((state) => state.boardReturn);
   // A page opened directly, or reached from the board of another project, has
   // no board to go back to: "Tasks" then opens this project's, unfiltered.
-  const boardLabels = boardReturn?.projects === tag ? boardReturn.labels : undefined;
-  const boardSearch = boardLabels === undefined ? { projects: tag } : { projects: tag, labels: boardLabels };
+  const { labels: boardLabels, q: boardQ } = boardReturn?.projects === tag ? boardReturn : {};
+  const boardSearch = {
+    projects: tag,
+    ...(boardLabels === undefined ? {} : { labels: boardLabels }),
+    ...(boardQ === undefined ? {} : { q: boardQ }),
+  };
   const { config } = project;
   const workflow = workflowRead === null ? null : workflowRead?.data;
   const properties = useTaskProperties({

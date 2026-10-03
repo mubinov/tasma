@@ -222,6 +222,33 @@ describe("buildColumns", () => {
     expect(ids(columns[0]!.matching)).toEqual(["T-1", "T-2"]);
     expect(columns[0]!.total).toBe(4);
   });
+
+  it("matches a task whose id is in the id set, and counts every task in the total", () => {
+    const columns = buildColumns(CONFIG, [entry("T-1"), entry("T-2"), entry("T-3", { status: "Done" })], [], new Set(["T-2", "T-3"]));
+
+    expect(ids(columns[0]!.matching)).toEqual(["T-2"]);
+    expect(columns[0]!.total).toBe(2);
+    expect(ids(columns[2]!.matching)).toEqual(["T-3"]);
+  });
+
+  it("matches no task for an empty id set", () => {
+    const columns = buildColumns(CONFIG, [entry("T-1")], [], new Set());
+
+    expect(columns[0]!.matching).toEqual([]);
+    expect(columns[0]!.total).toBe(1);
+  });
+
+  it("matches a task only when it carries a selected label and its id is in the id set", () => {
+    const columns = buildColumns(
+      CONFIG,
+      [entry("T-1", { labels: ["web"] }), entry("T-2", { labels: ["web"] }), entry("T-3")],
+      ["web"],
+      new Set(["T-2", "T-3"]),
+    );
+
+    expect(ids(columns[0]!.matching)).toEqual(["T-2"]);
+    expect(columns[0]!.total).toBe(3);
+  });
 });
 
 describe("labelChoices", () => {
@@ -537,23 +564,61 @@ describe("createdTarget", () => {
   ];
 
   it("is the card when the board shows it", () => {
-    expect(createdTarget(CONFIG, LISTING, [], "P-2", "to do")).toEqual({ kind: "card" });
-    expect(createdTarget(CONFIG, LISTING, ["WEB"], "P-2", "to do")).toEqual({ kind: "card" });
+    expect(createdTarget(CONFIG, LISTING, [], null, "P-2", "to do")).toEqual({ kind: "card" });
+    expect(createdTarget(CONFIG, LISTING, ["WEB"], null, "P-2", "to do")).toEqual({ kind: "card" });
+    expect(createdTarget(CONFIG, LISTING, ["web"], new Set(["P-2"]), "P-2", "to do")).toEqual({ kind: "card" });
   });
 
   it("is the heading of the column that holds the card when the label filter hides it", () => {
-    expect(createdTarget(CONFIG, LISTING, ["web"], "P-4", "Done")).toEqual({ kind: "column", column: 2, hidden: true });
+    expect(createdTarget(CONFIG, LISTING, ["web"], null, "P-4", "Done")).toEqual({
+      kind: "column",
+      column: 2,
+      hiddenBy: "labels",
+    });
+  });
+
+  it("names the search when the id set hides the card and the labels do not", () => {
+    expect(createdTarget(CONFIG, LISTING, [], new Set(["P-1"]), "P-4", "Done")).toEqual({
+      kind: "column",
+      column: 2,
+      hiddenBy: "search",
+    });
+    expect(createdTarget(CONFIG, LISTING, ["web"], new Set(["P-1"]), "P-2", "to do")).toEqual({
+      kind: "column",
+      column: 1,
+      hiddenBy: "search",
+    });
+  });
+
+  it("names both filters when each of them hides the card", () => {
+    expect(createdTarget(CONFIG, LISTING, ["web"], new Set(["P-1"]), "P-4", "Done")).toEqual({
+      kind: "column",
+      column: 2,
+      hiddenBy: "both",
+    });
+  });
+
+  it("names the labels when the id set holds the card", () => {
+    expect(createdTarget(CONFIG, LISTING, ["web"], new Set(["P-4"]), "P-4", "Done")).toEqual({
+      kind: "column",
+      column: 2,
+      hiddenBy: "labels",
+    });
   });
 
   it("takes the column from the listing, not from the status the receipt names", () => {
-    expect(createdTarget(CONFIG, LISTING, ["web"], "P-3", "Done")).toEqual({ kind: "column", column: 0, hidden: true });
+    expect(createdTarget(CONFIG, LISTING, ["web"], null, "P-3", "Done")).toEqual({
+      kind: "column",
+      column: 0,
+      hiddenBy: "labels",
+    });
   });
 
   it("is the heading of the column of the receipt's status, without case, when the listing holds no such task", () => {
-    expect(createdTarget(CONFIG, LISTING, [], "P-9", "done")).toEqual({ kind: "column", column: 2, hidden: false });
+    expect(createdTarget(CONFIG, LISTING, [], null, "P-9", "done")).toEqual({ kind: "column", column: 2, hiddenBy: null });
   });
 
   it("is the heading of the first column when no column names the receipt's status either", () => {
-    expect(createdTarget(CONFIG, LISTING, [], "P-9", "Gone")).toEqual({ kind: "column", column: 0, hidden: false });
+    expect(createdTarget(CONFIG, LISTING, [], null, "P-9", "Gone")).toEqual({ kind: "column", column: 0, hiddenBy: null });
   });
 });

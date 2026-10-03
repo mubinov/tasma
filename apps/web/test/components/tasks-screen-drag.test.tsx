@@ -542,6 +542,32 @@ describe("dragging a card to a place", () => {
       expect(titlesIn("Backlog")).toEqual(["Task 2", "Task 1", "Task 4"]);
     });
 
+    it("keeps the place among the cards the search hides after the search is cleared", async () => {
+      const entries = [
+        entry(1, { status: "To Do", order: 5_000 }),
+        entry(2, { order: 1_000 }),
+        entry(3, { order: 2_000 }),
+        entry(4, { order: 3_000 }),
+      ];
+      const { transport, requests } = daemon({
+        "/projects/SAGA/tasks": listing(entries),
+        "/projects/SAGA/tasks?q=parser": listing([entries[0]!, entries[1]!, entries[3]!]),
+        "PATCH /projects/SAGA/tasks/SAGA-1": heldBack().reply,
+      });
+      const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      expect(titlesIn("Backlog")).toEqual(["Task 2", "Task 4"]);
+
+      press("To Do", "Task 1");
+      movePointer(atRow(0, 0, 1));
+      await release(atRow(0, 0, 1));
+      await act(async () => {
+        await router.navigate({ to: "/tasks", search: { projects: "SAGA" } });
+      });
+
+      expect(patches(requests)).toEqual([["/projects/SAGA/tasks/SAGA-1", { status: "Backlog", order: 1_500 }]]);
+      expect(titlesIn("Backlog")).toEqual(["Task 2", "Task 1", "Task 3", "Task 4"]);
+    });
+
     it("does not open the task with the click the pointer release fires", async () => {
       const { transport } = daemon({
         "/projects/SAGA/tasks": listing([entry(1, { order: 1_000 }), entry(2, { order: 2_000 })]),

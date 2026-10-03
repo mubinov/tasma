@@ -206,6 +206,12 @@ describe("the board a task page returns to", () => {
     expect(useUiStore.getState().boardRestorePending).toBe(true);
   });
 
+  it("keeps the search text of the board's address", () => {
+    useUiStore.getState().setBoardReturn({ ...RECORD, q: "parser error" });
+
+    expect(useUiStore.getState().boardReturn?.q).toBe("parser error");
+  });
+
   it("replaces the record a later open writes", () => {
     useUiStore.getState().setBoardReturn(RECORD);
     useUiStore.getState().setBoardReturn({ projects: "DELTA", scrollX: 0, scrollY: 0, taskId: "DELTA-1" });

@@ -104,11 +104,19 @@
 
   --animate-*: initial;
   --animate-enter: enter var(--duration-base) var(--ease-standard);
+  /* No duration token: the reduced-motion durations would make it spin faster. */
+  --animate-spin: spin 1s linear infinite;
 
   @keyframes enter {
     from {
       opacity: 0;
       transform: translateY(8px);
+    }
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
     }
   }
 }

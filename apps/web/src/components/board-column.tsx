@@ -23,7 +23,7 @@ type BoardColumnProps = {
   /** The column's place on the board, which tells two columns of one status apart. */
   place: number;
   column: ColumnData;
-  /** Labels are selected. */
+  /** Labels are selected, or a search result applies. */
   filtered: boolean;
   priorities: readonly string[];
   /** By name: the workflow, `null` for a refused read, `undefined` while pending. */
@@ -44,6 +44,8 @@ type BoardColumnProps = {
   /** The card that takes focus once it renders. */
   focusCard: CardFocus | null;
   onCardFocused: () => void;
+  /** A card left the page while it held focus. */
+  onCardFocusLost: (id: string) => void;
   /** The heading takes focus, after which `onHeaderFocused` is called. */
   focusHeading: boolean;
   onHeaderFocused: () => void;
@@ -119,6 +121,7 @@ export function BoardColumn({
   onDelete,
   focusCard,
   onCardFocused,
+  onCardFocusLost,
   focusHeading,
   onHeaderFocused,
   onCreate,
@@ -226,6 +229,9 @@ export function BoardColumn({
         }}
         focusPart={focusCard?.id === entry.id ? focusCard.part : null}
         onFocused={onCardFocused}
+        onFocusLost={() => {
+          onCardFocusLost(entry.id);
+        }}
       />
     );
   }

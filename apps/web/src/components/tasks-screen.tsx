@@ -1,7 +1,7 @@
 import { useMutation, useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, Link, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import type { Workflow } from "@tasma/protocol";
-import { useDeferredValue, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import {
   openCreateWarnings,
@@ -12,7 +12,7 @@ import {
   type Created,
 } from "../api/mutations";
 import { usePollNotice } from "../api/poll-notice";
-import { POLL_INTERVAL, projectQuery, projectsQuery, tasksQuery, workflowQuery } from "../api/queries";
+import { POLL_INTERVAL, projectQuery, projectsQuery, taskSearchQuery, tasksQuery, workflowQuery } from "../api/queries";
 import {
   applyPending,
   boardWarnings,
@@ -25,6 +25,7 @@ import {
   splitList,
   stepView,
   workflowNames,
+  type HiddenBy,
   type TaskWrite,
 } from "../lib/board";
 import { formatClock } from "../lib/clock";
@@ -34,6 +35,8 @@ import type { DropPlace } from "../lib/drag-place";
 import type { FinalFocus } from "../lib/final-focus";
 import { fullIndex, placeWrites } from "../lib/order";
 import { PlusIcon } from "../lib/icons";
+import { useBoardReturn } from "../lib/use-board-return";
+import { idsOf, useBoardSearch } from "../lib/use-board-search";
 import { useCardDrag, type BoardSnapshot } from "../lib/use-card-drag";
 import { warningCount } from "../lib/warning-count";
 import { boardFailureLine } from "../lib/write-failure";
@@ -51,6 +54,7 @@ import { LabelFilter } from "./label-filter";
 import { LiveNotice } from "./live-notice";
 import { ProjectSelect } from "./project-select";
 import { ScreenHeading } from "./screen-heading";
+import { SearchField } from "./search-field";
 import type { CardFocus } from "./task-card";
 
 // The route is reached by id rather than imported: the tree in routes.tsx names
@@ -63,8 +67,37 @@ const EMPTY_CLASS = "mt-2 max-w-2xl text-base text-muted";
 
 const HEADING_LINE_CLASS = "flex min-h-8 flex-wrap items-center gap-x-4 gap-y-3";
 
+const SEARCH_FAILED = "The search failed. The board shows all tasks.";
+
+const HIDDEN_WORDS: Record<HiddenBy, string> = {
+  labels: "The label filter hides it.",
+  search: "The search hides it.",
+  both: "The filters hide it.",
+};
+
+/**
+ * The filters as the rendered columns apply them. `searchText` is the text of
+ * the search result the columns use, `null` while they use none.
+ */
+type BoardFilter = { labelled: boolean; searchText: string | null; failed: boolean; matching: number; total: number };
+
+function filterSentences({ labelled, searchText, failed, matching, total }: BoardFilter): string[] {
+  const count = `${String(matching)} of ${String(total)} tasks`;
+  const said = failed ? [SEARCH_FAILED] : [];
+
+  if (searchText !== null) {
+    said.push(labelled
+      ? `${count} match "${searchText}" and carry a selected label.`
+      : `${count} match "${searchText}".`);
+  } else if (labelled) {
+    said.push(`${count} carry a selected label.`);
+  }
+
+  return said;
+}
+
 /** What the live region says: a summary of what a poll can change while the page stays put. */
-function boardSummary(live: boolean, warnings: number, filter: { matching: number; total: number } | null): string {
+function boardSummary(live: boolean, warnings: number, filter: BoardFilter): string {
   const said: string[] = [];
 
   if (!live) {
@@ -73,74 +106,42 @@ function boardSummary(live: boolean, warnings: number, filter: { matching: numbe
   if (warnings > 0) {
     said.push(`${warningCount(warnings)} about this project.`);
   }
-  if (filter !== null) {
-    said.push(`${String(filter.matching)} of ${String(filter.total)} tasks carry a selected label.`);
+
+  return [...said, ...filterSentences(filter)].join(" ");
+}
+
+function emptyWords(title: string, labelled: boolean, searchApplied: boolean): string {
+  if (labelled && searchApplied) {
+    return `No task in ${title} matches the search and carries a selected label.`;
   }
 
-  return said.join(" ");
+  return searchApplied
+    ? `No task in ${title} matches the search.`
+    : `No task in ${title} carries any of the selected labels.`;
 }
 
 /**
  * Apart from the board, so a poll that changes nothing re-renders this alone.
  * Its reads fetch nothing: the board polls them.
+ *
+ * The search read counts only once it has a result: until then the board shows
+ * the full listing, and the search's own line reports its failure.
  */
-function BoardPollNotice({ tag }: { tag: string }): ReactNode {
+function BoardPollNotice({ tag, searchText }: { tag: string; searchText: string }): ReactNode {
   const { client } = route.useRouteContext();
   const projectRead = useQuery({ ...projectQuery(client, tag), enabled: false });
   const listingRead = useQuery({ ...tasksQuery(client, tag), enabled: false });
+  const searchRead = useQuery({ ...taskSearchQuery(client, tag, searchText), enabled: false });
+  const reads = searchText !== "" && searchRead.dataUpdatedAt > 0
+    ? [listingRead, projectRead, searchRead]
+    : [listingRead, projectRead];
 
-  usePollNotice(`board-poll:${tag}`, [listingRead, projectRead], {
+  usePollNotice(`board-poll:${tag}`, reads, {
     title: "The board is not up to date",
     line: (readAt) => `The last reads of ${tag} failed. The board shows the tasks as they were at ${formatClock(readAt)}.`,
   });
 
   return null;
-}
-
-/**
- * Puts the board back where the reader left it when they opened a card: the
- * scroll position that was recorded, and focus on that card.
- *
- * The router resets the scroll to the top from an `onRendered` subscriber it
- * registered when it was created, so a restore in a layout effect is undone.
- * This one waits for the same event, later in the subscriber list and therefore
- * after the reset, and it runs once: a later visit opens the board at the top.
- */
-function useBoardReturn(tag: string, labels: string | undefined): void {
-  const router = useRouter();
-  const boardReturn = useUiStore((state) => state.boardReturn);
-  const pending = useUiStore((state) => state.boardRestorePending);
-  const endBoardRestore = useUiStore((state) => state.endBoardRestore);
-
-  useLayoutEffect(() => {
-    if (boardReturn === null || !pending) {
-      return;
-    }
-    if (boardReturn.projects !== tag || boardReturn.labels !== labels) {
-      endBoardRestore();
-      return;
-    }
-
-    const { scrollX, scrollY, taskId } = boardReturn;
-    let frame = 0;
-    const stop = router.subscribe("onRendered", () => {
-      stop();
-      window.scrollTo(scrollX, scrollY);
-      // A frame after the effect AppShell moves focus to <main> in. A card the
-      // filter now hides, or a task that is gone, leaves the focus there.
-      frame = requestAnimationFrame(() => {
-        // Focus scrolls of its own accord where the restored offset leaves the
-        // card out of view or under the sticky column header.
-        document.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(taskId)}"] [data-task-title]`)?.focus();
-        endBoardRestore();
-      });
-    });
-
-    return () => {
-      stop();
-      cancelAnimationFrame(frame);
-    };
-  }, [boardReturn, pending, tag, labels, router, endBoardRestore]);
 }
 
 /**
@@ -150,7 +151,9 @@ function useBoardReturn(tag: string, labels: string | undefined): void {
  */
 type DeleteAsk = { id: string; title: string; column: number; open: boolean };
 
-function Board({ tag, labels }: { tag: string; labels: string | undefined }): ReactNode {
+type BoardProps = { tag: string; labels: string | undefined; q: string | undefined };
+
+function Board({ tag, labels, q }: BoardProps): ReactNode {
   const { client, queryClient } = route.useRouteContext();
   const { data: { data: projects } } = useSuspenseQuery(projectsQuery(client));
   const { data: { data: project, diagnostics: projectWarnings } } = useSuspenseQuery({
@@ -181,12 +184,15 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
   const workflowReads = useQueries({ queries: names.map((name) => workflowQuery(client, name)) });
   const selected = distinctLabels(splitList(labels));
   const deferredSelected = distinctLabels(splitList(useDeferredValue(labels)));
+  const { searchText, searchRequested, busy, failed, applied, ids, settled } = useBoardSearch(client, tag, q);
+  const failureId = useId();
+  const [lostFocus, setLostFocus] = useState<{ id: string; column: number } | null>(null);
 
   useEffect(() => {
     setLastTasksProject(tag);
   }, [tag, setLastTasksProject]);
 
-  useBoardReturn(tag, labels);
+  useBoardReturn(tag, labels, q, settled);
 
   const { name, live, config } = project;
   const title = name ?? tag;
@@ -199,17 +205,30 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
   const liveEntries = applyPending(listed, pending.writes);
   const liveBoard: BoardSnapshot = {
     entries: liveEntries,
-    columns: buildColumns(config, liveEntries, deferredSelected),
+    columns: buildColumns(config, liveEntries, deferredSelected, ids),
     pendingIds: new Set(pending.writes.map(({ id }) => id)),
     movedIds: pending.movedIds,
   };
   const { drag, board, liftedRef, press } = useCardDrag({ board: liveBoard, onDrop: dropCard });
   const { entries, columns, pendingIds, movedIds } = board;
   const origin = drag === null ? null : cardPlace(columns, drag.taskId);
-  const filtered = deferredSelected.length > 0;
+  const labelled = deferredSelected.length > 0;
+  const searchApplied = applied !== null;
+  const filtered = labelled || searchApplied;
   const warnings = boardWarnings(projectWarnings, listingWarnings);
   const matching = columns.reduce((sum, column) => sum + column.matching.length, 0);
   const total = columns.reduce((sum, column) => sum + column.total, 0);
+
+  // A card the board no longer shows took the focus with it: focus goes to the
+  // heading of its column. A card with a focus target of its own and one that
+  // moved to another column keep theirs. Read here rather than in the card,
+  // which cannot see the render that removes it.
+  if (lostFocus !== null) {
+    setLostFocus(null);
+    if (focusCard === null && focusColumn === null && cardPlace(columns, lostFocus.id) === null) {
+      setFocusColumn(lostFocus.column);
+    }
+  }
 
   /** Sends the writes of a move. `refused` runs when the daemon turns them down. */
   function sendMove(id: string, writes: TaskWrite[], refused?: () => void): void {
@@ -234,7 +253,11 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
    */
   function created(result: Created): void {
     const { data: read, diagnostics } = queryClient.getQueryData(tasksQuery(client, tag).queryKey)!;
-    const target = createdTarget(config, read.entries, selected, result.id, result.status);
+    // The write refetched the search with the listing. A failed search shows every card.
+    const searchIds = idsOf(searchRequested
+      ? queryClient.getQueryData(taskSearchQuery(client, tag, searchText).queryKey)
+      : undefined);
+    const target = createdTarget(config, read.entries, selected, searchIds, result.id, result.status);
 
     // Inside a promise continuation these would commit after the notice store's
     // update, and the warning notice would show for a frame under the scrim.
@@ -249,8 +272,8 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
     });
 
     useNoticeStore.getState().announce(
-      target.kind === "column" && target.hidden
-        ? `${result.id} was created. The label filter hides it.`
+      target.kind === "column" && target.hiddenBy !== null
+        ? `${result.id} was created. ${HIDDEN_WORDS[target.hiddenBy]}`
         : `${result.id} was created.`,
     );
     openCreateWarnings(result, boardWarnings(
@@ -263,6 +286,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
     setBoardReturn({
       projects: tag,
       ...(labels === undefined ? {} : { labels }),
+      ...(q === undefined ? {} : { q }),
       scrollX: window.scrollX,
       scrollY: window.scrollY,
       taskId: id,
@@ -275,7 +299,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
     const index = config.statuses.findIndex((candidate) => candidate.toLowerCase() === key);
     const { unfiltered, card } = moveTarget(config, entries, columns, index, id);
 
-    // The top of the column, the tasks the label filter hides counted in.
+    // The top of the column, the tasks the filters hide counted in.
     moveFromMenu(id, placeWrites(unfiltered, card, 0, status));
   }
 
@@ -331,6 +355,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
         <ScreenHeading>{TITLE}</ScreenHeading>
         <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-x-5 gap-y-3">
           <ProjectSelect projects={projects} tag={tag} />
+          <SearchField tag={tag} q={q} busy={busy} describedBy={failed ? failureId : undefined} />
           <LabelFilter entries={listed} selected={selected} />
           <button
             ref={newTaskRef}
@@ -349,8 +374,16 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
       {/* Rendered whether or not it says anything: a live region inserted
           together with its content announces nothing. */}
       <div role="status" className="sr-only">
-        {boardSummary(live, warnings.length + listing.excluded.length, filtered ? { matching, total } : null)}
+        {boardSummary(live, warnings.length + listing.excluded.length, {
+          labelled,
+          searchText: applied?.text ?? null,
+          failed,
+          matching,
+          total,
+        })}
       </div>
+      {/* Muted, not signal: a failed search needs no human. */}
+      {failed && <p id={failureId} className="mt-3 text-sm text-muted">{SEARCH_FAILED}</p>}
       {!live && <LiveNotice className="mt-6 max-w-2xl" />}
       {/* The board stays mounted when the project changes, so the key starts
           the line folded for the next project. */}
@@ -363,7 +396,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
       />
       {listed.length === 0 && <p className={EMPTY_CLASS}>{`No tasks in ${title} yet.`}</p>}
       {listed.length > 0 && filtered && matching === 0 && (
-        <p className={EMPTY_CLASS}>{`No task in ${title} carries any of the selected labels.`}</p>
+        <p className={EMPTY_CLASS}>{emptyWords(title, labelled, searchApplied)}</p>
       )}
 
       {/* The right padding of main is not part of the page's sideways overflow, so
@@ -393,6 +426,9 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
             onCardFocused={() => {
               setFocusCard(null);
             }}
+            onCardFocusLost={(id) => {
+              setLostFocus({ id, column: index });
+            }}
             focusHeading={focusColumn === index}
             onHeaderFocused={() => {
               setFocusColumn(null);
@@ -417,7 +453,7 @@ function Board({ tag, labels }: { tag: string; labels: string | undefined }): Re
           top={isTopPriority(origin.entry.frontmatter.priority, config.priorities)}
         />
       )}
-      <BoardPollNotice tag={tag} />
+      <BoardPollNotice tag={tag} searchText={searchText} />
       {creating !== null && (
         <CreateTaskDialog
           queryClient={queryClient}
@@ -485,7 +521,7 @@ function EmptyTree(): ReactNode {
 }
 
 export function TasksScreen(): ReactNode {
-  const { projects, labels } = route.useSearch();
+  const { projects, labels, q } = route.useSearch();
   const [tag] = splitList(projects);
 
   useDocumentTitle(TITLE);
@@ -494,7 +530,7 @@ export function TasksScreen(): ReactNode {
     return <EmptyTree />;
   }
 
-  return <Board tag={tag} labels={labels} />;
+  return <Board tag={tag} labels={labels} q={q} />;
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   projectQuery,
   projectsQuery,
   taskQuery,
+  taskSearchQuery,
   tasksQuery,
   workflowQuery,
   workflowReadQuery,
@@ -174,6 +175,26 @@ it("asks for the tasks of one project, with no filter", async () => {
 
   expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects/SAGA/tasks`]);
   expect(success).toEqual({ data: listing, diagnostics: [] });
+});
+
+it("asks for the tasks of one project that match a search text", async () => {
+  const listing = { entries: [], excluded: [] };
+  const paths = stubDaemon(listing);
+
+  const success = await createAppQueryClient().query({
+    ...taskSearchQuery(createDaemonClient(), "SAGA", "fix parser"),
+    staleTime: "static",
+  });
+
+  expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects/SAGA/tasks?q=fix%20parser`]);
+  expect(success).toEqual({ data: listing, diagnostics: [] });
+});
+
+// A write invalidates the tasks of its project, and the search refetches with them.
+it("nests a search of a project's tasks inside the tasks of the project", () => {
+  const tasks = daemonKeys.tasks("SAGA");
+
+  expect(taskSearchQuery(createDaemonClient(), "SAGA", "fix parser").queryKey).toEqual([...tasks, "search", "fix parser"]);
 });
 
 describe("workflowQuery", () => {

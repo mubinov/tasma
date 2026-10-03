@@ -4,9 +4,9 @@ export type ColumnData = {
   /** As configured. */
   status: string;
   final: boolean;
-  /** After the label filter, in column order. */
+  /** After the label filter and the search, in column order. */
   matching: TaskEntry[];
-  /** The tasks in the column before the label filter. */
+  /** The tasks in the column before the label filter and the search. */
   total: number;
 };
 
@@ -67,10 +67,19 @@ export function isFinalStatus(status: string, finalStatuses: readonly string[]):
   return finalStatuses.some((final) => final.toLowerCase() === key);
 }
 
+function carriesLabel(entry: TaskEntry, selected: ReadonlySet<string>): boolean {
+  return selected.size === 0 || (entry.frontmatter.labels ?? []).some((label) => selected.has(label.toLowerCase()));
+}
+
+/**
+ * @param labels A task matches when it carries any of them, or always when none is given.
+ * @param ids The tasks a search gives back. A task matches only when its id is here; `null` is no search.
+ */
 export function buildColumns(
   config: Pick<Config, "statuses" | "final_statuses">,
   entries: readonly TaskEntry[],
   labels: readonly string[],
+  ids: ReadonlySet<string> | null = null,
 ): ColumnData[] {
   const statuses = config.statuses.map((status) => status.toLowerCase());
   const selected = new Set(labels.map((label) => label.toLowerCase()));
@@ -83,9 +92,7 @@ export function buildColumns(
 
   return columns.map(({ status, tasks }) => {
     const final = isFinalStatus(status, config.final_statuses);
-    const matching = selected.size === 0
-      ? [...tasks]
-      : tasks.filter((entry) => (entry.frontmatter.labels ?? []).some((label) => selected.has(label.toLowerCase())));
+    const matching = tasks.filter((entry) => carriesLabel(entry, selected) && (ids === null || ids.has(entry.id)));
 
     return { status, final, matching: matching.sort(final ? finalOrder : openOrder), total: tasks.length };
   });
@@ -260,10 +267,10 @@ export function joinList(values: readonly string[]): string | undefined {
 
 /**
  * The tasks of the column a move puts a card in, read the two ways a placement
- * needs them: with the tasks the label filter hides and without them, both
- * without the moved card, together with the card itself.
+ * needs them: with the tasks the filters hide and without them, both without
+ * the moved card, together with the card itself.
  *
- * @param columns The board after the label filter.
+ * @param columns The board after the label filter and the search.
  * @param index The target column's position in the board's row.
  */
 export function moveTarget(
@@ -282,7 +289,10 @@ export function moveTarget(
   };
 }
 
-export type CreatedTarget = { kind: "card" } | { kind: "column"; column: number; hidden: boolean };
+/** The filter that hides a card: the label filter, the search, or both of them. */
+export type HiddenBy = "labels" | "search" | "both";
+
+export type CreatedTarget = { kind: "card" } | { kind: "column"; column: number; hiddenBy: HiddenBy | null };
 
 /**
  * Where focus goes after a create: the new card while the board shows it, else
@@ -294,16 +304,21 @@ export function createdTarget(
   config: Pick<Config, "statuses" | "final_statuses">,
   entries: readonly TaskEntry[],
   labels: readonly string[],
+  ids: ReadonlySet<string> | null,
   id: string,
   status: string,
 ): CreatedTarget {
-  if (cardPlace(buildColumns(config, entries, labels), id) !== null) {
+  if (cardPlace(buildColumns(config, entries, labels, ids), id) !== null) {
     return { kind: "card" };
   }
 
   const place = cardPlace(buildColumns(config, entries, []), id);
   if (place !== null) {
-    return { kind: "column", column: place.column, hidden: true };
+    const byLabels = cardPlace(buildColumns(config, entries, labels), id) === null;
+    const bySearch = ids !== null && !ids.has(id);
+    const hiddenBy = byLabels && bySearch ? "both" : byLabels ? "labels" : "search";
+
+    return { kind: "column", column: place.column, hiddenBy };
   }
 
   const key = status.toLowerCase();
@@ -311,7 +326,7 @@ export function createdTarget(
   return {
     kind: "column",
     column: Math.max(config.statuses.findIndex((candidate) => candidate.toLowerCase() === key), 0),
-    hidden: false,
+    hiddenBy: null,
   };
 }
 

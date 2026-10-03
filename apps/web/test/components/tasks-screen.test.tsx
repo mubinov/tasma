@@ -949,9 +949,12 @@ describe("the board a card was opened from", () => {
 
   const ENTRIES = [entry(1, { labels: ["web"] }), entry(2, { labels: ["web"] }), entry(3, { labels: ["infra"] })];
 
+  const PARSER = "/projects/SAGA/tasks?q=parser";
+
   function boardDaemon() {
     return daemon({
       "/projects/SAGA/tasks": listing(ENTRIES),
+      [PARSER]: listing([ENTRIES[1]!, ENTRIES[2]!]),
       "/projects/SAGA/tasks/SAGA-2": successReply({ frontmatter: ENTRIES[1]!.frontmatter, body: "", comments: [] }),
     });
   }
@@ -1149,6 +1152,257 @@ describe("the board a card was opened from", () => {
     expect(restoredTo(scrollTo)).toEqual([SCROLL_X, SCROLL_Y]);
     expect(document.activeElement).toBe(screen.getByRole("main"));
     expect(useUiStore.getState().boardRestorePending).toBe(false);
+  });
+
+  describe("with a search", () => {
+    /** Opens Task 2 from the board of `parser`, and drops the search result the cache holds. */
+    async function openWithNoCachedResult() {
+      const user = userEvent.setup();
+      const scrollTo = watchScroll();
+      // As in a browser, every scroll fires a scroll event: the router's reset too.
+      scrollTo.mockImplementation(() => {
+        window.dispatchEvent(new Event("scroll"));
+      });
+      const { transport, replies } = boardDaemon();
+      const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      await waitFor(() => {
+        expect(titlesIn("Backlog")).toEqual(["Task 2", "Task 3"]);
+      });
+
+      await user.click(cardLink("Task 2"));
+      router.options.context.queryClient.removeQueries({ queryKey: ["daemon", "projects", "SAGA", "tasks", "search"] });
+      const held = heldBack();
+      replies[PARSER] = held.reply;
+      scrollTo.mockClear();
+
+      return { user, scrollTo, router, held };
+    }
+
+    it("comes back with the search, scrolled where it was, with the card that was opened in focus", async () => {
+      const user = userEvent.setup();
+      const scrollTo = watchScroll();
+      const { transport } = boardDaemon();
+      const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      await waitFor(() => {
+        expect(titlesIn("Backlog")).toEqual(["Task 2", "Task 3"]);
+      });
+
+      await user.click(cardLink("Task 2"));
+      expect(useUiStore.getState().boardReturn?.q).toBe("parser");
+      await user.click(backLink());
+
+      expect(router.state.location.search).toEqual({ projects: "SAGA", q: "parser" });
+      expect(titlesIn("Backlog")).toEqual(["Task 2", "Task 3"]);
+      expect(scrollTo.mock.lastCall).toEqual([SCROLL_X, SCROLL_Y]);
+      await nextFrame();
+      expect(document.activeElement).toBe(cardLink("Task 2"));
+    });
+
+    it("restores nothing, and is spent, when the board opens with another search", async () => {
+      const user = userEvent.setup();
+      const scrollTo = watchScroll();
+      const { transport } = boardDaemon();
+      const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      await waitFor(() => {
+        expect(titlesIn("Backlog")).toEqual(["Task 2", "Task 3"]);
+      });
+
+      await user.click(cardLink("Task 2"));
+      await act(async () => {
+        await router.navigate({ to: "/tasks", search: { projects: "SAGA", q: "docs" } });
+      });
+      await nextFrame();
+
+      expect(restoredTo(scrollTo)).toBeNull();
+      expect(useUiStore.getState().boardRestorePending).toBe(false);
+    });
+
+    it("waits for the result the cache no longer holds, then scrolls back and focuses the card", async () => {
+      const { user, scrollTo, router, held } = await openWithNoCachedResult();
+
+      await user.click(backLink());
+      await nextFrame();
+
+      expect(router.state.location.search).toEqual({ projects: "SAGA", q: "parser" });
+      expect(restoredTo(scrollTo)).toBeNull();
+      expect(useUiStore.getState().boardRestorePending).toBe(true);
+
+      await act(async () => {
+        held.answer(listing([ENTRIES[1]!, ENTRIES[2]!]));
+      });
+      await waitFor(() => {
+        expect(restoredTo(scrollTo)).toEqual([SCROLL_X, SCROLL_Y]);
+      });
+      expect(titlesIn("Backlog")).toEqual(["Task 2", "Task 3"]);
+      expect(document.activeElement).toBe(cardLink("Task 2"));
+      expect(useUiStore.getState().boardRestorePending).toBe(false);
+    });
+
+    it("focuses a card of a virtualized column once the page scroll has reached it", async () => {
+      const LIST_TOP = 200;
+      const CARD_HEIGHT = 60;
+      const FAR_Y = 4700;
+      const many = Array.from({ length: 80 }, (_, index) => entry(index + 1));
+      const user = userEvent.setup();
+      const scrollTo = vi.fn((...args: unknown[]) => {
+        const top = args.length === 2 ? args[1] : (args[0] as ScrollToOptions).top;
+        vi.stubGlobal("scrollY", top ?? window.scrollY);
+        // As in a browser, the scroll event of a scroll fires in the next frame, before its frame callbacks.
+        requestAnimationFrame(() => {
+          window.dispatchEvent(new Event("scroll"));
+        });
+      });
+      vi.stubGlobal("scrollTo", scrollTo);
+      vi.stubGlobal("scrollX", SCROLL_X);
+      vi.stubGlobal("scrollY", 0);
+      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+        return this.tagName === "LI" ? CARD_HEIGHT : 0;
+      });
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+        () => ({ top: LIST_TOP - window.scrollY }) as DOMRect,
+      );
+      const { transport, replies } = daemon({
+        "/projects/SAGA/tasks": listing(many),
+        [PARSER]: listing(many),
+        "/projects/SAGA/tasks/SAGA-50": successReply({ frontmatter: many[49]!.frontmatter, body: "", comments: [] }),
+      });
+      const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      await waitFor(() => {
+        expect(screen.getByText("Task 1")).toBeTruthy();
+      });
+      act(() => {
+        vi.stubGlobal("scrollY", FAR_Y);
+        window.dispatchEvent(new Event("scroll"));
+      });
+
+      await user.click(cardLink("Task 50"));
+      router.options.context.queryClient.removeQueries({ queryKey: ["daemon", "projects", "SAGA", "tasks", "search"] });
+      const held = heldBack();
+      replies[PARSER] = held.reply;
+      await user.click(backLink());
+      await nextFrame();
+      expect(screen.queryByText("Task 50")).toBeNull();
+
+      await act(async () => {
+        held.answer(listing(many));
+      });
+      await waitFor(() => {
+        expect(restoredTo(scrollTo)).toEqual([SCROLL_X, FAR_Y]);
+      });
+      await waitFor(() => {
+        expect(useUiStore.getState().boardRestorePending).toBe(false);
+      });
+      await nextFrame();
+      expect(document.activeElement).toBe(cardLink("Task 50"));
+    });
+
+    it("drops the waiting restore when the board leaves before the result", async () => {
+      const { user, scrollTo, router, held } = await openWithNoCachedResult();
+
+      await user.click(backLink());
+      await nextFrame();
+      expect(useUiStore.getState().boardRestorePending).toBe(true);
+
+      await act(async () => {
+        await router.navigate({ to: "/tasks/$project/$task", params: { project: "SAGA", task: "SAGA-2" } });
+      });
+      expect(useUiStore.getState().boardRestorePending).toBe(false);
+
+      await act(async () => {
+        held.answer(listing([ENTRIES[1]!, ENTRIES[2]!]));
+      });
+      await act(async () => {
+        await router.navigate({ to: "/tasks", search: { projects: "SAGA", q: "parser" } });
+      });
+      await nextFrame();
+      expect(restoredTo(scrollTo)).toBeNull();
+    });
+
+    it("restores the next card opened after the address leaves the waiting restore with no input", async () => {
+      const { user, scrollTo, router, held } = await openWithNoCachedResult();
+
+      await user.click(backLink());
+      await nextFrame();
+      await act(async () => {
+        await router.navigate({ to: "/tasks", search: { projects: "SAGA", labels: "web", q: "parser" } });
+      });
+      expect(useUiStore.getState().boardRestorePending).toBe(false);
+
+      await user.click(cardLink("Task 2"));
+      await act(async () => {
+        held.answer(listing([ENTRIES[1]!, ENTRIES[2]!]));
+      });
+      await user.click(backLink());
+
+      await waitFor(() => {
+        expect(restoredTo(scrollTo)).toEqual([SCROLL_X, SCROLL_Y]);
+      });
+      await nextFrame();
+      expect(document.activeElement).toBe(cardLink("Task 2"));
+    });
+
+    it("restores the card a click alone opens while the restore waits", async () => {
+      const { user, scrollTo, router, held } = await openWithNoCachedResult();
+
+      await user.click(backLink());
+      await nextFrame();
+      act(() => {
+        fireEvent.click(cardLink("Task 2"));
+      });
+      await waitFor(() => {
+        expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-2");
+      });
+      expect(useUiStore.getState().boardRestorePending).toBe(true);
+
+      await act(async () => {
+        held.answer(listing([ENTRIES[1]!, ENTRIES[2]!]));
+      });
+      await user.click(backLink());
+
+      await waitFor(() => {
+        expect(restoredTo(scrollTo)).toEqual([SCROLL_X, SCROLL_Y]);
+      });
+      await nextFrame();
+      expect(document.activeElement).toBe(cardLink("Task 2"));
+    });
+
+    it("restores once the search fails, and shows every card", async () => {
+      const { user, scrollTo, held } = await openWithNoCachedResult();
+
+      await user.click(backLink());
+      await act(async () => {
+        held.answer(refusalReply(422, { kind: "store", code: "project-invalid", message: "config.yml is broken" }));
+      });
+
+      await waitFor(() => {
+        expect(restoredTo(scrollTo)).toEqual([SCROLL_X, SCROLL_Y]);
+      });
+      expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2", "Task 3"]);
+      expect(document.activeElement).toBe(cardLink("Task 2"));
+    });
+
+    it.each([
+      { what: "a key press", send: () => fireEvent.keyDown(document.body, { key: "j" }) },
+      { what: "a pointer press", send: () => fireEvent.pointerDown(document.body) },
+      { what: "a wheel turn", send: () => fireEvent.wheel(document.body) },
+    ])("drops the waiting restore on $what", async ({ send }) => {
+      const { user, scrollTo, held } = await openWithNoCachedResult();
+
+      await user.click(backLink());
+      await nextFrame();
+      send();
+      await act(async () => {
+        held.answer(listing([ENTRIES[1]!, ENTRIES[2]!]));
+      });
+      await waitFor(() => {
+        expect(titlesIn("Backlog")).toEqual(["Task 2", "Task 3"]);
+      });
+      await nextFrame();
+
+      expect(restoredTo(scrollTo)).toBeNull();
+      expect(document.activeElement).toBe(screen.getByRole("main"));
+      expect(useUiStore.getState().boardRestorePending).toBe(false);
+    });
   });
 });
 

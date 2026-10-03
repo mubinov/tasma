@@ -69,6 +69,8 @@ export type BoardReturn = {
   projects: string;
   /** The `labels` of the board's address, absent while no label is selected. */
   labels?: string;
+  /** The `q` of the board's address, absent while the address has none. */
+  q?: string;
   scrollX: number;
   scrollY: number;
   taskId: string;

@@ -28,6 +28,8 @@ export const daemonKeys = {
   project: (tag: string) => [...daemonKeys.projects(), tag] as const,
   tasks: (tag: string) => [...daemonKeys.project(tag), "tasks"] as const,
   task: (tag: string, id: string) => [...daemonKeys.tasks(tag), id] as const,
+  // "search" is no task id, which is always `<TAG>-<number>`.
+  taskSearch: (tag: string, q: string) => [...daemonKeys.tasks(tag), "search", q] as const,
   workflows: () => [...daemonKeys.all, "workflows"] as const,
   workflow: (name: string) => [...daemonKeys.workflows(), name] as const,
   workflowList: () => [...daemonKeys.all, "workflow-list"] as const,
@@ -63,6 +65,13 @@ export function tasksQuery(client: Client, tag: string) {
   return queryOptions({
     queryKey: daemonKeys.tasks(tag),
     queryFn: () => client.listTasks(tag),
+  });
+}
+
+export function taskSearchQuery(client: Client, tag: string, q: string) {
+  return queryOptions({
+    queryKey: daemonKeys.taskSearch(tag, q),
+    queryFn: () => client.listTasks(tag, { q }),
   });
 }
 

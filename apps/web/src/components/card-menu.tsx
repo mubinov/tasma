@@ -109,12 +109,13 @@ type CardMenuProps = CardMenuItemsProps & {
   buttonRef?: Ref<HTMLButtonElement>;
   /** The id of the card's title, which tells the menu buttons of a board apart. */
   titleId?: string;
+  onOpenChange?: (open: boolean) => void;
 };
 
 /** The menu button at the right end of the card's top row, shown while the card is hovered or holds focus. */
-export function CardMenu({ buttonRef, titleId, ...menu }: CardMenuProps): ReactNode {
+export function CardMenu({ buttonRef, titleId, onOpenChange, ...menu }: CardMenuProps): ReactNode {
   return (
-    <Menu.Root highlightItemOnHover={false}>
+    <Menu.Root highlightItemOnHover={false} onOpenChange={onOpenChange}>
       <Menu.Trigger
         ref={buttonRef}
         aria-label="Task menu"
@@ -134,7 +135,10 @@ export function CardMenu({ buttonRef, titleId, ...menu }: CardMenuProps): ReactN
   );
 }
 
-type CardContextMenuProps = ComponentProps<typeof ContextMenu.Trigger> & { menu: CardMenuItemsProps };
+type CardContextMenuProps = ComponentProps<typeof ContextMenu.Trigger> & {
+  menu: CardMenuItemsProps;
+  onOpenChange?: (open: boolean) => void;
+};
 
 function fromOutside(event: { currentTarget: EventTarget; target: EventTarget }): boolean {
   return !(event.currentTarget as Node).contains(event.target as Node);
@@ -145,9 +149,9 @@ function fromOutside(event: { currentTarget: EventTarget; target: EventTarget })
  * The menu button's popup renders in a portal, and its React events bubble
  * through the card, so an event from outside the card opens nothing.
  */
-export function CardContextMenu({ menu, children, ...card }: CardContextMenuProps): ReactNode {
+export function CardContextMenu({ menu, onOpenChange, children, ...card }: CardContextMenuProps): ReactNode {
   return (
-    <ContextMenu.Root highlightItemOnHover={false}>
+    <ContextMenu.Root highlightItemOnHover={false} onOpenChange={onOpenChange}>
       <ContextMenu.Trigger
         {...card}
         onContextMenu={(event) => {

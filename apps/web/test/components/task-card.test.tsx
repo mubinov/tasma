@@ -49,6 +49,7 @@ async function renderCard(
       focusPart={focusPart}
       onFocused={onFocused}
       onPress={onPress}
+      onFocusLost={() => {}}
     />,
   );
 

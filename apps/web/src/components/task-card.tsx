@@ -1,8 +1,9 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { TaskEntry } from "@tasma/protocol";
-import { useEffect, useEffectEvent, useId, useRef, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { opensHere, opensTask, type StepView } from "../lib/board";
 import { DRAG_ATTRIBUTE } from "../lib/drag-place";
+import { useFocusLost } from "../lib/use-focus-lost";
 import { CardContextMenu, CardMenu } from "./card-menu";
 import { CARD_CLASS, CARD_TITLE_CLASS, CardFace } from "./card-face";
 
@@ -30,6 +31,8 @@ type TaskCardProps = {
   onFocused: () => void;
   /** Every press on the card, whether or not it becomes a drag. */
   onPress: (event: PointerEvent<HTMLElement>) => void;
+  /** Called when the card leaves the page while focus is inside it or in one of its open menus. */
+  onFocusLost: () => void;
 };
 
 /** A part of the card the board can hand focus to: the menu button after a move, the title link after a create. */
@@ -66,6 +69,7 @@ export function TaskCard({
   focusPart,
   onFocused,
   onPress,
+  onFocusLost,
 }: TaskCardProps): ReactNode {
   const { id, frontmatter: { title, status } } = entry;
   const navigate = useNavigate();
@@ -73,6 +77,10 @@ export function TaskCard({
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const titleRef = useRef<HTMLAnchorElement>(null);
   const titleId = useId();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
+
+  useFocusLost(cardRef, onFocusLost, menuOpen || contextMenuOpen);
 
   const takeFocus = useEffectEvent((part: CardPart) => {
     cardRef.current?.scrollIntoView({ block: "nearest" });
@@ -93,6 +101,7 @@ export function TaskCard({
     <CardContextMenu
       ref={cardRef}
       menu={menu}
+      onOpenChange={setContextMenuOpen}
       {...{ [DRAG_ATTRIBUTE.card]: id }}
       aria-busy={pending || undefined}
       onPointerDown={onPress}
@@ -129,7 +138,7 @@ export function TaskCard({
             {title}
           </Link>
         )}
-        menu={<CardMenu buttonRef={menuButtonRef} titleId={titleId} {...menu} />}
+        menu={<CardMenu buttonRef={menuButtonRef} titleId={titleId} onOpenChange={setMenuOpen} {...menu} />}
       />
     </CardContextMenu>
   );

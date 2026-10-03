@@ -60,6 +60,7 @@ async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnPr
       onDelete={() => {}}
       focusCard={null}
       onCardFocused={() => {}}
+      onCardFocusLost={() => {}}
       focusHeading={false}
       onHeaderFocused={() => {}}
       onCreate={() => {}}

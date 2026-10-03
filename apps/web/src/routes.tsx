@@ -75,18 +75,19 @@ const dashboardRoute = createRoute({
   component: placeholderFor("/"),
 });
 
-/** Comma lists, as the address carries them. */
-type TasksSearch = { projects?: string; labels?: string };
+/** `projects` and `labels` are comma lists, as the address carries them. `q` is the search text. */
+type TasksSearch = { projects?: string; labels?: string; q?: string };
 
 const tasksRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/tasks",
   validateSearch: (search: Record<string, unknown>): TasksSearch => {
-    const { projects, labels } = search;
+    const { projects, labels, q } = search;
 
     return {
       ...(typeof projects === "string" && projects !== "" ? { projects } : {}),
       ...(typeof labels === "string" && labels !== "" ? { labels } : {}),
+      ...(typeof q === "string" && q !== "" ? { q } : {}),
     };
   },
   beforeLoad: async ({ search, context }) => {
