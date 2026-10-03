@@ -455,6 +455,17 @@ describe("the release build", () => {
     expect(script).toMatch(/^\s*pnpm exec tauri build .* -- --locked$/m);
   });
 
+  it("builds only the commit that the tag v<version> points to, and checks it before pnpm install", () => {
+    const lines = readFileSync(join(workspaceRoot, APP_RELEASE_SCRIPT), "utf8").split("\n");
+    const tagCheck = lines.findIndex((line) => line.includes('git rev-parse -q --verify "refs/tags/v$version^{commit}"'));
+    const headCheck = lines.findIndex((line) => line.includes("git rev-parse HEAD"));
+    const install = lines.findIndex((line) => /^\s*pnpm install\b/.test(line));
+
+    expect(tagCheck).toBeGreaterThan(-1);
+    expect(headCheck).toBeGreaterThan(-1);
+    expect(install).toBeGreaterThan(Math.max(tagCheck, headCheck));
+  });
+
   // The web UI needs 14.5.
   it("requires macOS 14.5", () => {
     expect(config.bundle.macOS.minimumSystemVersion).toBe("14.5");
@@ -471,5 +482,40 @@ describe("the release build", () => {
   // app:build makes no DMG. app:release asks for one on the command line.
   it("bundles the app alone by default", () => {
     expect(config.bundle.targets).toEqual(["app"]);
+  });
+});
+
+/** The script that uploads the release DMGs to a GitHub release. */
+const APP_PUBLISH_SCRIPT = "scripts/app-publish.sh";
+
+describe("the release publish", () => {
+  const script = readFileSync(join(workspaceRoot, APP_PUBLISH_SCRIPT), "utf8");
+  const readme = readFileSync(join(workspaceRoot, "README.md"), "utf8");
+
+  it("is run by app:publish through a script that is executable", () => {
+    expect(readManifest(".").scripts?.["app:publish"]).toBe(APP_PUBLISH_SCRIPT);
+    expect(statSync(join(workspaceRoot, APP_PUBLISH_SCRIPT)).mode & 0o111).toBeGreaterThan(0);
+  });
+
+  it("uploads only to a tag that is on the remote", () => {
+    expect(script).toMatch(/^\s*gh release create\b/m);
+    expect(script).toMatch(/--verify-tag\b/);
+  });
+
+  it("uploads exactly the files that the README links to on the latest release", () => {
+    const repo = /^REPO=(\S+)$/m.exec(script)?.[1];
+    const createArgs = /^set -- ((?:.*\\\n)*.*)$/m.exec(script)?.[1] ?? "";
+    const uploads = [...createArgs.matchAll(/"\$dir\/([^"/]+\.dmg)"/g)].map(([, name = ""]) => name);
+    const links = [...readme.matchAll(/\]\((\S+\/releases\/latest\/download\/[^)]+)\)/g)].map(([, url = ""]) => url);
+
+    expect(repo).toBeDefined();
+    expect(uploads.length).toBeGreaterThan(0);
+    expect(links.toSorted()).toEqual(
+      uploads.map((name) => `https://github.com/${repo}/releases/latest/download/${name}`).toSorted(),
+    );
+  });
+
+  it("states in the README the minimum macOS of the bundle", () => {
+    expect(/\bmacOS (\S+) or later\b/.exec(readme)?.[1]).toBe(config.bundle.macOS.minimumSystemVersion);
   });
 });

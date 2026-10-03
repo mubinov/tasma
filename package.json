@@ -20,7 +20,8 @@
     "app:start": "pnpm --filter @tasma/web build && scripts/app-binaries.sh && scripts/dev-home.sh cargo run --manifest-path \"$PWD/apps/macos/Cargo.toml\" --features custom-protocol",
     "app:test": "scripts/app-binaries.sh && cargo test --manifest-path apps/macos/Cargo.toml",
     "app:build": "scripts/app-binaries.sh && TAURI_APP_PATH=apps/macos tauri build",
-    "app:release": "scripts/app-release.sh"
+    "app:release": "scripts/app-release.sh",
+    "app:publish": "scripts/app-publish.sh"
   },
   "devDependencies": {
     "@eslint-react/eslint-plugin": "catalog:",

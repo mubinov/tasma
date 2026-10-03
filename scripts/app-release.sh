@@ -6,10 +6,14 @@
 #   1. Set "version" in the root package.json. The app, the daemon and the CLI
 #      all read it from there.
 #   2. Commit the change. The script refuses a working tree with changes.
-#   3. Run `pnpm app:release`.
-#   4. Install each DMG once into a new macOS user account: the app opens with
+#   3. Tag the commit and push both: `git tag v<version>`, then
+#      `git push origin main v<version>`. The script builds only a commit
+#      that the tag v<version> points to.
+#   4. Run `pnpm app:release`.
+#   5. Install each DMG once into a new macOS user account: the app opens with
 #      no Gatekeeper dialog, the board shows, and after Tasma › Install Command
 #      Line Tool… `tasma --version` prints the new version.
+#   6. Run `pnpm app:publish`.
 #
 # Prerequisites:
 #   - rustup with the targets aarch64-apple-darwin and x86_64-apple-darwin.
@@ -85,6 +89,11 @@ team=$(printf '%s\n' "$APPLE_SIGNING_IDENTITY" | sed -n 's/.*(\([A-Z0-9]*\))$/\1
 changes=$(git status --porcelain) || fail "\`git status\` fails; run the script from a git checkout"
 [ -z "$changes" ] || fail "the working tree has changes; commit them first"
 
+version=$(plutil -extract version raw -o - package.json)
+tagged=$(git rev-parse -q --verify "refs/tags/v$version^{commit}") || fail "no tag v$version; tag the release commit first"
+head=$(git rev-parse HEAD)
+[ "$tagged" = "$head" ] || fail "the tag v$version points to $tagged, not to HEAD $head"
+
 installed=$(rustup target list --installed 2>/dev/null) || fail "rustup is not installed; Homebrew Rust has the host target only"
 for target in $TARGETS; do
   printf '%s\n' "$installed" | grep -qx "$target" || fail "the Rust target $target is missing; run \`rustup target add $target\`"
@@ -101,7 +110,6 @@ pnpm install --frozen-lockfile
 # go into the signed binaries.
 pnpm store status || fail "\`pnpm store status\` finds packages with local changes"
 
-version=$(plutil -extract version raw -o - package.json)
 minimum_macos=$(plutil -extract bundle.macOS.minimumSystemVersion raw -o - apps/macos/tauri.conf.json)
 mkdir -p dist
 rm -f dist/Tasma-"$version"-*.dmg
