@@ -120,9 +120,22 @@ type UiState = {
   dropFocus: (move: () => void) => void;
   /** Reads the dropped move and clears it, so one move runs once. */
   takeDroppedFocus: () => (() => void) | null;
+  /** An editor of the task page holds unsaved text, which a restart would lose. */
+  unsavedPage: boolean;
+  setUnsavedPage: (unsaved: boolean) => void;
+  /** The update dialog that is open, if any. */
+  updateDialog: UpdateDialog | null;
+  openUpdateDialog: (dialog: UpdateDialog) => void;
+  closeUpdateDialog: () => void;
 };
 
 export type EditRequest = { tag: string; id: string };
+
+/**
+ * One of the three update dialogs, and where focus goes when it closes: the
+ * sidebar item that opened it, or `null` for where focus was when it opened.
+ */
+export type UpdateDialog = { kind: "update" | "restart" | "failure"; returnTo: HTMLElement | null };
 
 // Starts on the defaults and reads nothing: importing a module must not touch
 // storage. hydrateUiStore loads the persisted values.
@@ -188,6 +201,17 @@ export const useUiStore = create<UiState>((set, get) => ({
     }
 
     return move;
+  },
+  unsavedPage: false,
+  setUnsavedPage: (unsaved) => {
+    set({ unsavedPage: unsaved });
+  },
+  updateDialog: null,
+  openUpdateDialog: (dialog) => {
+    set({ updateDialog: dialog });
+  },
+  closeUpdateDialog: () => {
+    set({ updateDialog: null });
   },
 }));
 

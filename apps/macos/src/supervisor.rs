@@ -13,6 +13,8 @@
 //!
 //! The daemon's lifetime is not the application's: a daemon started here is put
 //! in a session of its own, and is never waited on or signalled until `retire`.
+//! The one exception is a daemon older than the application, which is stopped
+//! and replaced.
 
 use std::fs::File;
 use std::os::unix::process::CommandExt as _;
@@ -21,10 +23,14 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use semver::Version;
 use tauri::async_runtime::Mutex;
 
+use crate::command::cli_beside;
+use crate::daemon_stop::{STOP_LIMIT, STOP_TICK, stop_daemon};
 use crate::log;
 use crate::record::{DEFAULT_PORT, daemon_url, read_port, record_path};
+use crate::version::version_of;
 
 /// The daemon's executable, as Tauri places it beside the application's own.
 /// Held to `bundle.externalBin` and to the file `scripts/app-binaries.sh`
@@ -107,10 +113,12 @@ fn terminate(child: &mut Child) -> bool {
     true
 }
 
-/// A daemon answering, and the version it reports.
+/// A daemon answering, and the version it reports: as a semantic version where
+/// it reads as one, and as the log writes it.
 struct Serving {
     port: u16,
-    version: String,
+    version: Option<Version>,
+    stated: String,
 }
 
 /// What the spawns so far came to.
@@ -129,6 +137,9 @@ struct Attempts {
     /// A log that could not be opened, carried until an open succeeds and can
     /// record it.
     unlogged: Option<String>,
+    /// A stop of an older daemon failed. That daemon is used from then on, so
+    /// a forward does not wait for the stop again and again.
+    kept_older: bool,
 }
 
 impl Attempts {
@@ -179,6 +190,10 @@ impl Attempts {
 /// The daemon of this tree, kept serving.
 pub struct Supervisor {
     executable: Option<PathBuf>,
+    /// The CLI of the same bundle, which stops a daemon older than `version`.
+    cli: Option<PathBuf>,
+    /// The application's own version.
+    version: Version,
     record: Option<PathBuf>,
     home: Option<PathBuf>,
     budget: Duration,
@@ -188,17 +203,23 @@ pub struct Supervisor {
     client: reqwest::Client,
     attempts: Mutex<Attempts>,
     retired: AtomicBool,
+    held: AtomicBool,
 }
 
 impl Supervisor {
-    /// The supervisor of the tree under a home directory.
+    /// The supervisor of the tree under a home directory, for an application
+    /// of `version`.
     ///
     /// A home directory the environment names none of leaves no record to read
     /// and no log to write; the default port still stands, so a daemon already
     /// serving is still found.
-    pub fn new(home: Option<&Path>) -> Self {
+    pub fn new(home: Option<&Path>, version: Version) -> Self {
+        let executable = std::env::current_exe().ok();
+
         Self {
-            executable: std::env::current_exe().ok().as_deref().and_then(beside),
+            executable: executable.as_deref().and_then(beside),
+            cli: executable.as_deref().map(cli_beside),
+            version,
             record: home.map(record_path),
             home: home.map(Path::to_path_buf),
             budget: READY_BUDGET,
@@ -208,6 +229,7 @@ impl Supervisor {
             client: probing(),
             attempts: Mutex::new(Attempts::default()),
             retired: AtomicBool::new(false),
+            held: AtomicBool::new(false),
         }
     }
 
@@ -217,7 +239,7 @@ impl Supervisor {
     pub(crate) fn inert() -> Self {
         Self {
             executable: None,
-            ..Self::new(None)
+            ..Self::new(None, Version::new(1, 0, 0))
         }
     }
 
@@ -246,16 +268,34 @@ impl Supervisor {
         }
 
         let now = Instant::now();
+        let found = self.serving().await;
 
-        if let Some(serving) = self.serving().await {
+        // An update is replacing the bundle: a spawn now would start the old
+        // daemon again, and a stop would leave none.
+        if self.held.load(Ordering::SeqCst) {
+            return found.map(|serving| serving.port);
+        }
+
+        if let Some(serving) = found
+            && !self.stopped_older(&serving, &mut attempts).await
+        {
             if attempts.opens_a_period(now, self.proven_after) {
                 let file = self.open_log_for(&mut attempts);
-                let Serving { port, version } = &serving;
+                let Serving { port, stated, .. } = &serving;
 
                 log::note(
                     file.as_ref(),
-                    &format!("stood down to the daemon on port {port}, version {version}"),
+                    &format!("stood down to the daemon on port {port}, version {stated}"),
                 );
+
+                if serving.version.is_none() {
+                    log::note(
+                        file.as_ref(),
+                        &format!(
+                            "the version of the daemon on port {port} cannot be read, so it is used"
+                        ),
+                    );
+                }
             }
 
             return Some(serving.port);
@@ -268,6 +308,68 @@ impl Supervisor {
         }
 
         self.start(&mut attempts).await
+    }
+
+    /// Stops a daemon older than the application with the application's own
+    /// CLI, and answers whether it stopped. A newer daemon is never stopped:
+    /// two copies of different versions would stop each other's daemon in a
+    /// loop.
+    async fn stopped_older(&self, serving: &Serving, attempts: &mut Attempts) -> bool {
+        if !self.is_older(serving) || attempts.kept_older {
+            return false;
+        }
+
+        let Some(cli) = self.cli.clone() else {
+            return false;
+        };
+
+        let ran =
+            tauri::async_runtime::spawn_blocking(move || stop_daemon(&cli, STOP_LIMIT, STOP_TICK))
+                .await
+                .unwrap_or(false);
+        // The CLI also succeeds when it knows no daemon, as for one of another
+        // OS user on the default port, so the same port is probed again. The
+        // record is gone after a stop, and it no longer names that port.
+        let stopped = ran
+            && !self
+                .probe(serving.port)
+                .await
+                .is_some_and(|after| self.is_older(&after));
+        let file = self.open_log_for(attempts);
+        let Serving { port, stated, .. } = serving;
+        let own = &self.version;
+
+        if stopped {
+            log::note(
+                file.as_ref(),
+                &format!(
+                    "stopped the daemon on port {port}, version {stated}, which is older than this application, version {own}"
+                ),
+            );
+        } else {
+            attempts.kept_older = true;
+            log::note(
+                file.as_ref(),
+                &format!(
+                    "could not stop the daemon on port {port}, version {stated}, which is older than this application, version {own}, so it is used"
+                ),
+            );
+        }
+
+        stopped
+    }
+
+    fn is_older(&self, serving: &Serving) -> bool {
+        serving
+            .version
+            .as_ref()
+            .is_some_and(|version| *version < self.version)
+    }
+
+    /// While held, no daemon is started or stopped. An update holds it from
+    /// the moment it stops the daemon until the swap has ended.
+    pub fn hold(&self, held: bool) {
+        self.held.store(held, Ordering::SeqCst);
     }
 
     /// Stops the supervisor for good. Returns only after any start attempt in
@@ -347,15 +449,17 @@ impl Supervisor {
             return None;
         }
 
+        let stated = data
+            .get("version")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(UNSTATED);
+
         Some(Serving {
             port,
             // Quoted where it enters, because everything past here writes it to
             // the log and the string is whatever holds the port, not a daemon's.
-            version: log::quoted(
-                data.get("version")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or(UNSTATED),
-            ),
+            stated: log::quoted(stated),
+            version: version_of(stated),
         })
     }
 
@@ -420,12 +524,12 @@ impl Supervisor {
                 ended = Some(status.to_string());
             }
 
-            if let Some(Serving { port, version }) = self.serving().await {
+            if let Some(Serving { port, stated, .. }) = self.serving().await {
                 let ms = started.elapsed().as_millis();
 
                 log::note(
                     file.as_ref(),
-                    &format!("a daemon answered on port {port} after {ms} ms, version {version}"),
+                    &format!("a daemon answered on port {port} after {ms} ms, version {stated}"),
                 );
                 // The period opened here, so the sighting that follows reads as
                 // one already under way rather than as a stand-down.
@@ -526,7 +630,7 @@ fn probing() -> reqwest::Client {
         .timeout(PROBE_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .expect("a client with no TLS and no proxy is always buildable")
+        .expect("a client with no proxy is always buildable")
 }
 
 /// Stand-ins a test points a `Supervisor` at. Reachable across the crate,
@@ -644,13 +748,24 @@ pub(crate) mod fixtures {
     pub(crate) fn supervising(directory: &Path, executable: Option<PathBuf>) -> Supervisor {
         Supervisor {
             executable,
+            cli: None,
             record: Some(directory.join("daemon.json")),
             home: Some(directory.to_path_buf()),
             budget: TEST_BUDGET,
             tick: Duration::from_millis(25),
             proven_after: Duration::from_millis(200),
-            ..Supervisor::new(None)
+            ..Supervisor::new(None, own_version())
         }
+    }
+
+    /// The version a test application has: below the daemon of `health`.
+    pub(crate) fn own_version() -> Version {
+        Version::new(1, 0, 0)
+    }
+
+    /// A health answer naming a daemon of `version`.
+    pub(crate) fn health_of(version: &str) -> String {
+        format!(r#"{{"ok":true,"data":{{"name":"tasma-daemon","version":"{version}"}}}}"#)
     }
 
     /// A listener that is a daemon on `/health` and a broken one everywhere
@@ -724,7 +839,7 @@ mod tests {
 
     #[test]
     fn one_home_names_both_the_tree_and_the_log() {
-        let supervisor = Supervisor::new(Some(Path::new("/tmp/home")));
+        let supervisor = Supervisor::new(Some(Path::new("/tmp/home")), own_version());
 
         assert_eq!(
             supervisor.record.as_deref(),
@@ -738,7 +853,7 @@ mod tests {
 
     #[test]
     fn a_home_the_environment_names_none_of_leaves_neither() {
-        let supervisor = Supervisor::new(None);
+        let supervisor = Supervisor::new(None, own_version());
 
         assert_eq!(supervisor.record, None);
         assert_eq!(supervisor.home, None);
@@ -768,7 +883,7 @@ mod tests {
         let serving = block_on(supervisor.probe(port)).expect("the listener names a daemon");
 
         assert_eq!(serving.port, port);
-        assert_eq!(serving.version, "9.9.9");
+        assert_eq!(serving.stated, "9.9.9");
     }
 
     #[test]
@@ -778,7 +893,7 @@ mod tests {
 
         let serving = block_on(supervisor.probe(port)).expect("the listener names a daemon");
 
-        assert_eq!(serving.version, UNSTATED);
+        assert_eq!(serving.stated, UNSTATED);
     }
 
     #[test]
@@ -790,7 +905,7 @@ mod tests {
 
         let serving = block_on(supervisor.probe(port)).expect("the listener names a daemon");
 
-        assert_eq!(serving.version, r"1.0\u000atasma-app: forged");
+        assert_eq!(serving.stated, r"1.0\u000atasma-app: forged");
     }
 
     #[test]
@@ -1427,5 +1542,237 @@ mod tests {
     #[test]
     fn a_supervisor_that_names_no_daemon_makes_nothing_serve() {
         assert_eq!(block_on(Supervisor::inert().ensure_serving()), None);
+    }
+
+    /// A CLI stub that records each `daemon stop` in `runs` and then runs
+    /// `then`.
+    fn cli(directory: &Path, runs: &Path, then: &str) -> Option<PathBuf> {
+        Some(crate::testing::script_file(
+            &directory.join("tasma-cli"),
+            &format!(
+                "[ \"$1 $2\" = \"daemon stop\" ] || exit 9\necho ran >> {}\n{then}",
+                runs.display()
+            ),
+        ))
+    }
+
+    fn runs_of(runs: &Path) -> usize {
+        std::fs::read_to_string(runs).map_or(0, |text| text.lines().count())
+    }
+
+    #[test]
+    fn a_daemon_older_than_the_application_is_stopped_and_replaced() {
+        let directory = directory("older-daemon");
+        let runs = directory.join("runs");
+        let stopped = runs.clone();
+        let older = listening(move |_| {
+            if stopped.exists() {
+                ok(r#"{"data":{"name":"something-else"}}"#)
+            } else {
+                ok(&health_of("0.9.0"))
+            }
+        });
+        let newer = answering(health());
+        let record = directory.join("daemon.json");
+        let supervisor = Supervisor {
+            cli: cli(&directory, &runs, "exit 0"),
+            ..supervising(&directory, Some(stub(&directory, &records(&record, newer))))
+        };
+        write_record(&record, older);
+
+        assert_eq!(block_on(supervisor.ensure_serving()), Some(newer));
+
+        assert_eq!(runs_of(&runs), 1);
+        assert!(
+            logged(&supervisor).contains(&format!(
+                "stopped the daemon on port {older}, version 0.9.0, which is older than this application, version 1.0.0"
+            )),
+            "{}",
+            logged(&supervisor),
+        );
+    }
+
+    #[test]
+    fn a_daemon_of_the_same_or_a_higher_version_is_used() {
+        for (test, version) in [("same-version", "1.0.0"), ("higher-version", "1.0.1")] {
+            let directory = directory(test);
+            let runs = directory.join("runs");
+            let port = answering(health_of(version));
+            let supervisor = Supervisor {
+                cli: cli(&directory, &runs, "exit 0"),
+                ..supervising(&directory, Some(stub(&directory, "exit 0")))
+            };
+            write_record(supervisor.record.as_deref().unwrap(), port);
+
+            assert_eq!(block_on(supervisor.ensure_serving()), Some(port));
+            assert_eq!(runs_of(&runs), 0, "{version}");
+        }
+    }
+
+    #[test]
+    fn a_daemon_whose_version_cannot_be_read_is_used_and_logged() {
+        let directory = directory("unreadable-version");
+        let runs = directory.join("runs");
+        let port = answering(health_of("one"));
+        let supervisor = Supervisor {
+            cli: cli(&directory, &runs, "exit 0"),
+            ..supervising(&directory, Some(stub(&directory, "exit 0")))
+        };
+        write_record(supervisor.record.as_deref().unwrap(), port);
+
+        assert_eq!(block_on(supervisor.ensure_serving()), Some(port));
+        assert_eq!(block_on(supervisor.ensure_serving()), Some(port));
+
+        assert_eq!(runs_of(&runs), 0);
+        assert_eq!(
+            logged(&supervisor)
+                .matches(&format!(
+                    "the version of the daemon on port {port} cannot be read, so it is used"
+                ))
+                .count(),
+            1,
+            "{}",
+            logged(&supervisor),
+        );
+    }
+
+    #[test]
+    fn an_older_daemon_that_does_not_stop_is_used_and_not_stopped_again() {
+        let directory = directory("older-stays");
+        let runs = directory.join("runs");
+        let port = answering(health_of("0.9.0"));
+        let supervisor = Supervisor {
+            cli: cli(&directory, &runs, "exit 1"),
+            ..supervising(&directory, Some(stub(&directory, "exit 0")))
+        };
+        write_record(supervisor.record.as_deref().unwrap(), port);
+
+        assert_eq!(block_on(supervisor.ensure_serving()), Some(port));
+        assert_eq!(block_on(supervisor.ensure_serving()), Some(port));
+
+        assert_eq!(runs_of(&runs), 1);
+        assert!(
+            logged(&supervisor).contains(&format!(
+                "could not stop the daemon on port {port}, version 0.9.0"
+            )),
+            "{}",
+            logged(&supervisor),
+        );
+    }
+
+    #[test]
+    fn an_older_daemon_that_still_answers_after_a_successful_stop_is_used() {
+        let directory = directory("older-answers");
+        let runs = directory.join("runs");
+        let spawned = directory.join("spawned");
+        let port = answering(health_of("0.9.0"));
+        let supervisor = Supervisor {
+            cli: cli(&directory, &runs, "exit 0"),
+            ..supervising(
+                &directory,
+                Some(stub(
+                    &directory,
+                    &format!("echo ran >> {}\nexit 0", spawned.display()),
+                )),
+            )
+        };
+        write_record(supervisor.record.as_deref().unwrap(), port);
+
+        assert_eq!(block_on(supervisor.ensure_serving()), Some(port));
+        assert_eq!(block_on(supervisor.ensure_serving()), Some(port));
+
+        assert_eq!(runs_of(&runs), 1);
+        assert!(!spawned.exists(), "no daemon is started beside it");
+        assert!(
+            logged(&supervisor).contains(&format!(
+                "could not stop the daemon on port {port}, version 0.9.0"
+            )),
+            "{}",
+            logged(&supervisor),
+        );
+    }
+
+    #[test]
+    fn a_stop_is_checked_on_the_port_of_the_stopped_daemon() {
+        let directory = directory("older-moved");
+        let runs = directory.join("runs");
+        let stopped = runs.clone();
+        let older = listening(move |_| {
+            if stopped.exists() {
+                ok(r#"{"data":{"name":"something-else"}}"#)
+            } else {
+                ok(&health_of("0.9.0"))
+            }
+        });
+        let other = answering(health_of("0.9.0"));
+        let record = directory.join("daemon.json");
+        let supervisor = Supervisor {
+            budget: TEST_GIVE_UP,
+            cli: cli(
+                &directory,
+                &runs,
+                &format!(
+                    "printf '{{\"port\":{other}}}' > {}\nexit 0",
+                    record.display()
+                ),
+            ),
+            ..supervising(&directory, Some(stub(&directory, "exit 0")))
+        };
+        write_record(&record, older);
+
+        block_on(supervisor.ensure_serving());
+
+        assert_eq!(runs_of(&runs), 1);
+        let log = logged(&supervisor);
+        assert!(
+            log.contains(&format!("stopped the daemon on port {older}")),
+            "{log}"
+        );
+        assert!(!log.contains("could not stop"), "{log}");
+    }
+
+    #[test]
+    fn a_supervisor_that_names_no_cli_uses_an_older_daemon() {
+        let directory = directory("older-no-cli");
+        let port = answering(health_of("0.9.0"));
+        let supervisor = supervising(&directory, Some(stub(&directory, "exit 0")));
+        write_record(supervisor.record.as_deref().unwrap(), port);
+
+        assert_eq!(block_on(supervisor.ensure_serving()), Some(port));
+    }
+
+    #[test]
+    fn a_held_supervisor_starts_and_stops_nothing() {
+        let directory = directory("held");
+        let runs = directory.join("runs");
+        let spawned = directory.join("spawned");
+        let supervisor = Supervisor {
+            budget: TEST_GIVE_UP,
+            cli: cli(&directory, &runs, "exit 0"),
+            ..supervising(
+                &directory,
+                Some(stub(
+                    &directory,
+                    &format!("echo ran >> {}\nexit 0", spawned.display()),
+                )),
+            )
+        };
+        let record = supervisor.record.clone().unwrap();
+
+        supervisor.hold(true);
+
+        write_record(&record, no_daemon());
+        assert_eq!(block_on(supervisor.ensure_serving()), None);
+        assert!(!spawned.exists(), "a held supervisor spawns nothing");
+
+        let older = answering(health_of("0.9.0"));
+        write_record(&record, older);
+        assert_eq!(block_on(supervisor.ensure_serving()), Some(older));
+        assert_eq!(runs_of(&runs), 0, "a held supervisor stops nothing");
+
+        supervisor.hold(false);
+        write_record(&record, no_daemon());
+        assert_eq!(block_on(supervisor.ensure_serving()), None);
+        assert!(spawned.exists(), "a released supervisor spawns again");
     }
 }

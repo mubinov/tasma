@@ -3,36 +3,12 @@ import type { ReactNode } from "react";
 import { SidebarSimpleIcon } from "../lib/icons";
 import { FOOTER_NAVIGATION, PRIMARY_NAVIGATION, type NavigationEntry } from "../navigation";
 import { useUiStore } from "../store/ui";
+import { CollapsingLabel, ICON_BOX_CLASS, IDLE_TEXT_CLASS, ROW_CLASS, TIMING_CLASS } from "./sidebar-row";
+import { UpdateItem } from "./update-item";
 
-const ROW_CLASS = "flex h-10 w-full items-center overflow-hidden rounded-control";
-const ICON_BOX_CLASS = "flex size-10 shrink-0 items-center justify-center";
 const LIST_CLASS = "flex flex-col gap-1 px-3 py-1";
-// A duration and an easing with no property of their own: they time whichever
-// transition-* utility they are written beside.
-const TIMING_CLASS = "duration-(--duration-base) ease-standard";
-const IDLE_TEXT_CLASS = "text-dim hover:text-text";
 
 const SIDEBAR_ID = "sidebar";
-
-// Faded and clipped rather than removed: `display: none` would strip the
-// accessible name from the link the label belongs to.
-function CollapsingLabel({
-  collapsed,
-  className,
-  children,
-}: {
-  collapsed: boolean;
-  className: string;
-  children: string;
-}): ReactNode {
-  const fade = collapsed ? "opacity-0" : "opacity-0 sm:opacity-100";
-
-  return (
-    <span className={`shrink-0 whitespace-nowrap transition-opacity ${TIMING_CLASS} ${fade} ${className}`}>
-      {children}
-    </span>
-  );
-}
 
 function SidebarLink({ entry, collapsed }: { entry: NavigationEntry; collapsed: boolean }): ReactNode {
   const Icon = entry.icon;
@@ -106,6 +82,7 @@ export function Sidebar(): ReactNode {
             ))}
           </ul>
           <ul className={`${LIST_CLASS} mt-auto border-t border-line`}>
+            <UpdateItem collapsed={collapsed} />
             {FOOTER_NAVIGATION.map((entry) => (
               <SidebarLink key={entry.path} entry={entry} collapsed={collapsed} />
             ))}

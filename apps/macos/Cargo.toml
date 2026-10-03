@@ -62,9 +62,14 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
 # The traversal guard reads the decoded path, because Tauri's resolver decodes
 # before it looks a name up.
 percent-encoding = "2"
-# default-features off: the daemon is reached over loopback HTTP, so no TLS
-# stack, no HTTP/2 and no proxy resolution are needed.
-reqwest = { version = "0.13", default-features = false }
+# default-features off: no HTTP/2 is needed. TLS and the proxy of System
+# Settings are for the update check and download alone; the daemon is reached
+# over loopback HTTP with no proxy.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "system-proxy"] }
+# Both pinned to the major version that Tauri already depends on, so no second
+# copy is built.
+semver = "1"
+plist = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The form the Tauri CLI rewrites it to, as with `tauri-build`.

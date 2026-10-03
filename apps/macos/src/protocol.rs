@@ -1,9 +1,11 @@
-//! The one origin the window loads: the embedded bundle and the daemon behind a
-//! single custom scheme.
+//! The one origin the window loads: the embedded bundle, the app's own routes
+//! and the daemon behind a single custom scheme.
 //!
-//! Because the two share an origin, `apps/web` needs no change — `base: "./"`
-//! writes relative asset paths, the renderer writes `/daemon/...`, and
-//! `connect-src 'self'` covers the calls.
+//! Because they share an origin, `base: "./"` writes relative asset paths, the
+//! renderer writes `/daemon/...` and `/app/...`, and `connect-src 'self'`
+//! covers the calls.
+
+use std::sync::Arc;
 
 use percent_encoding::percent_decode_str;
 use tauri::http::header::{CONTENT_SECURITY_POLICY, CONTENT_TYPE};
@@ -11,17 +13,24 @@ use tauri::http::{Request, Response, StatusCode, Uri};
 use tauri::{AppHandle, Runtime};
 
 use crate::daemon::Daemon;
+use crate::update::{self, Updater};
 
 /// Where the renderer writes every daemon call, and where the Vite dev and
 /// preview servers mount their proxy. Held to `DAEMON_PATH_PREFIX` in
 /// `apps/web` by a repo test.
 const PREFIX: &str = "/daemon";
 
+/// Where the renderer writes the calls the app answers itself. No dev server
+/// proxies it. Held to `APP_PATH_PREFIX` in `apps/web` by a repo test.
+const APP_PREFIX: &str = "/app";
+
 /// What the origin serves a request from.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Target {
     /// The path and query to forward, with the prefix removed.
     Daemon(String),
+    /// The path of an app route, with the prefix removed.
+    App(String),
     /// The file to read out of the embedded bundle.
     Asset(String),
 }
@@ -40,26 +49,36 @@ fn asset_path(path: &str) -> String {
     }
 }
 
+/// The rest of a path under a prefix that is a whole segment of it. A request
+/// to exactly the prefix leaves nothing, which is not a path, so it is the
+/// root.
+fn under<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
+    match path.strip_prefix(prefix)? {
+        "" => Some("/"),
+        rest if rest.starts_with('/') => Some(rest),
+        _ => None,
+    }
+}
+
 /// Where a request goes.
 ///
-/// The prefix has to end the path or be followed by a separator: `/daemonx`
+/// A prefix has to end the path or be followed by a separator: `/daemonx`
 /// names a file and not the daemon. The Vite proxy keys on a plain prefix and
 /// would forward it; neither rule is normative, because the renderer writes the
 /// prefix as a whole segment and a path between the two is one no caller sends.
 pub fn route(uri: &Uri) -> Target {
     let path = uri.path();
 
-    let rest = match path.strip_prefix(PREFIX) {
-        Some(rest) if rest.is_empty() || rest.starts_with('/') => rest,
-        _ => return Target::Asset(asset_path(path)),
-    };
+    if let Some(target) = under(path, PREFIX) {
+        return match uri.query() {
+            Some(query) => Target::Daemon(format!("{target}?{query}")),
+            None => Target::Daemon(target.to_string()),
+        };
+    }
 
-    // A request to exactly /daemon leaves nothing, which is not a path.
-    let target = if rest.is_empty() { "/" } else { rest };
-
-    match uri.query() {
-        Some(query) => Target::Daemon(format!("{target}?{query}")),
-        None => Target::Daemon(target.to_string()),
+    match under(path, APP_PREFIX) {
+        Some(target) => Target::App(target.to_string()),
+        None => Target::Asset(asset_path(path)),
     }
 }
 
@@ -118,10 +137,12 @@ fn asset<R: Runtime>(app: &AppHandle<R>, path: &str) -> Response<Vec<u8>> {
 pub async fn serve<R: Runtime>(
     app: &AppHandle<R>,
     daemon: &Daemon,
+    updater: &Arc<Updater>,
     request: Request<Vec<u8>>,
 ) -> Response<Vec<u8>> {
     match route(request.uri()) {
         Target::Daemon(target) => daemon.forward(&target, &request).await,
+        Target::App(path) => update::serve(updater, request.method(), &path),
         Target::Asset(path) => asset(app, &path),
     }
 }
@@ -179,6 +200,26 @@ mod tests {
         assert_eq!(
             routed("tasma-app://localhost/daemonx"),
             Target::Asset("/daemonx".to_string()),
+        );
+    }
+
+    #[test]
+    fn an_app_path_is_routed_without_the_prefix() {
+        assert_eq!(
+            routed("tasma-app://localhost/app/update"),
+            Target::App("/update".to_string())
+        );
+        assert_eq!(
+            routed("tasma-app://localhost/app/update/install?x=1"),
+            Target::App("/update/install".to_string())
+        );
+        assert_eq!(
+            routed("tasma-app://localhost/app"),
+            Target::App("/".to_string())
+        );
+        assert_eq!(
+            routed("tasma-app://localhost/application.js"),
+            Target::Asset("/application.js".to_string())
         );
     }
 
@@ -367,25 +408,31 @@ mod tests {
     }
 
     #[test]
-    fn the_origin_serves_a_file_and_forwards_a_daemon_call() {
+    fn the_origin_serves_a_file_an_app_route_and_forwards_a_daemon_call() {
         let app = app_holding(&[("index.html", b"<!doctype html>")]);
         let daemon = crate::daemon::fixtures::daemon_on_a_dead_port("a-file-and-a-call");
+        let updater = Arc::new(crate::update::fixtures::updater("a-file-and-a-call"));
+        let served = |uri: &str| {
+            let request = Request::builder().uri(uri).body(Vec::new()).unwrap();
 
-        let file = Request::builder()
-            .uri("tasma-app://localhost/")
-            .body(Vec::new())
-            .unwrap();
-        let answer = tauri::async_runtime::block_on(serve(app.handle(), &daemon, file));
+            tauri::async_runtime::block_on(serve(app.handle(), &daemon, &updater, request))
+        };
+
+        let answer = served("tasma-app://localhost/");
 
         assert_eq!(answer.status(), StatusCode::OK);
         assert_eq!(answer.body(), b"<!doctype html>");
 
+        let answer = served("tasma-app://localhost/app/update");
+
+        assert_eq!(answer.status(), StatusCode::OK);
+        assert_eq!(
+            answer.headers().get(CONTENT_TYPE).unwrap(),
+            "application/json"
+        );
+
         // Nothing is listening for this one, so the daemon arm is what answers.
-        let call = Request::builder()
-            .uri("tasma-app://localhost/daemon/projects")
-            .body(Vec::new())
-            .unwrap();
-        let answer = tauri::async_runtime::block_on(serve(app.handle(), &daemon, call));
+        let answer = served("tasma-app://localhost/daemon/projects");
 
         assert_eq!(answer.status(), StatusCode::BAD_GATEWAY);
     }

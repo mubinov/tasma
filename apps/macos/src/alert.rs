@@ -50,9 +50,11 @@ pub(crate) async fn on_main<R: Runtime, T: Send + 'static>(
 }
 
 /// Shows one alert with one OK button.
-pub(crate) async fn notice<R: Runtime>(app: &AppHandle<R>, title: &'static str, text: String) {
+pub(crate) async fn notice<R: Runtime>(app: &AppHandle<R>, title: impl Into<String>, text: String) {
+    let title = title.into();
+
     on_main(app, move |marker| {
-        show(marker, title, &text, &[OK], None);
+        show(marker, &title, &text, &[OK], None);
     })
     .await;
 }

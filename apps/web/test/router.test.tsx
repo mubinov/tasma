@@ -191,6 +191,8 @@ describe("recovering from a loader that failed", () => {
     return createRouter({
       routeTree: rootRoute.addChildren([screenRoute, elsewhereRoute]),
       history: createMemoryHistory({ initialEntries: ["/"] }),
+      // The shell reads its query client from the context, as in the app.
+      context: testContext(),
       defaultErrorComponent: RouteFailure,
     });
   }

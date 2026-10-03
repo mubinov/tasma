@@ -11,6 +11,7 @@ import { priorityChoices, statusChoices } from "../lib/task-properties";
 import { BLANK_TITLE, isBlankTitle } from "../lib/text-draft";
 import { useFocusEmptiedWhileOpening } from "../lib/use-focus-emptied-while-opening";
 import { asSentences, useNoticeStore } from "../store/notices";
+import { useModalDialog } from "../store/ui";
 import { ConfirmDialog } from "./confirm-dialog";
 import {
   BUTTON_CLASS,
@@ -105,6 +106,7 @@ export function CreateTaskDialog({
 
   // Mounted only while open. The return focus is `opener`, not the element handed back.
   useFocusEmptiedWhileOpening(true);
+  useModalDialog(true);
 
   function change(fields: Partial<TaskDraft>): void {
     const previous = draftRef.current;

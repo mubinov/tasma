@@ -19,7 +19,12 @@ use objc2_foundation::{
     NSDictionary, NSNumber, NSString,
 };
 
-use crate::command::{LINK, LinkState, account_home, cli_beside, installed_location, link_state};
+use semver::Version;
+
+use crate::command::{
+    LINK, LinkState, account_home, bundle_of, cli_beside, installed_location, link_state,
+};
+use crate::install::{self, Failure};
 
 const INSTALL_ARGUMENT: &str = "--install-command-line-tool";
 const REMOVE_ARGUMENT: &str = "--remove-command-line-tool";
@@ -117,6 +122,119 @@ fn failed(message: &str) -> i32 {
     EXIT_FAILED
 }
 
+/// The AppleScript that starts this executable as root to copy, check and swap
+/// the release mounted at `source`. Only the shell command runs as root.
+fn update_script(executable: &str, source: &str, version: &str) -> String {
+    format!(
+        r#"do shell script quoted form of "{}" & " {} " & quoted form of "{}" & " " & quoted form of "{}" with prompt "Tasma wants to install an update." with administrator privileges"#,
+        literal(executable),
+        install::ROOT_ARGUMENT,
+        literal(source),
+        literal(version),
+    )
+}
+
+/// Runs the update's password prompt in the child, and answers the exit code
+/// of the root process, or of the failure before it. Never starts Tauri.
+pub(crate) fn run_update(source: &Path, version: &str) -> i32 {
+    match std::env::current_exe() {
+        Ok(executable) => update_as(
+            &executable,
+            account_home().as_deref(),
+            source,
+            version,
+            install::protected,
+            execute,
+        ),
+        Err(_) => Failure::Replace.code(),
+    }
+}
+
+fn update_as(
+    executable: &Path,
+    account: Option<&Path>,
+    source: &Path,
+    version: &str,
+    protected: impl FnOnce(&Path) -> bool,
+    execute: impl FnOnce(&str) -> Result<(), (isize, String)>,
+) -> i32 {
+    // Root runs the script's path, so a link in it could point elsewhere once
+    // the prompt is open. Every check below reads the real path.
+    let Ok(executable) = std::fs::canonicalize(executable) else {
+        return Failure::Replace.code();
+    };
+    let executable = executable.as_path();
+
+    // Checked again here, as for the link steps: only an installed copy
+    // replaces itself, whoever starts it with this argument.
+    let Some(installed) = bundle_of(executable).filter(|_| installed_location(executable, account))
+    else {
+        return Failure::Replace.code();
+    };
+    let Ok(release) = Version::parse(version) else {
+        return Failure::WrongVersion.code();
+    };
+
+    // The root process refuses an equal or a lower version as well; checked
+    // here, no administrator is asked for a password to install one.
+    if install::already_installed(installed, &release) {
+        return 0;
+    }
+
+    // A bundle the user can replace never needs root, and root must not work
+    // in a folder that another account can change while the prompt is open.
+    if install::writable(installed) || !installed.parent().is_some_and(protected) {
+        return Failure::Replace.code();
+    }
+
+    let (Some(executable), Some(source)) = (executable.to_str(), source.to_str()) else {
+        return Failure::Replace.code();
+    };
+
+    match execute(&update_script(executable, source, version)) {
+        Ok(()) => 0,
+        Err((USER_CANCELED, _)) => Failure::Password.code(),
+        // `do shell script` reports the exit status of the root process as the
+        // error number.
+        Err((number, _)) => i32::try_from(number)
+            .ok()
+            .and_then(Failure::of_code)
+            .unwrap_or(Failure::Replace)
+            .code(),
+    }
+}
+
+/// Runs the update's password prompt in a child process of `executable`,
+/// waiting off the main thread.
+pub(crate) async fn perform_update(
+    executable: PathBuf,
+    source: PathBuf,
+    version: String,
+    _running: &Running,
+) -> Result<(), Failure> {
+    let waited = tauri::async_runtime::spawn_blocking(move || {
+        Command::new(executable)
+            .arg(install::ELEVATED_ARGUMENT)
+            .arg(source)
+            .arg(version)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+    })
+    .await;
+
+    match waited
+        .ok()
+        .and_then(Result::ok)
+        .and_then(|status| status.code())
+    {
+        Some(0) => Ok(()),
+        Some(code) => Err(Failure::of_code(code).unwrap_or(Failure::Replace)),
+        None => Err(Failure::Replace),
+    }
+}
+
 /// Runs AppleScript source, and answers its error number and message.
 fn execute(source: &str) -> Result<(), (isize, String)> {
     autoreleasepool(|_| {
@@ -188,6 +306,11 @@ fn outcome(code: Option<i32>, stderr: &[u8]) -> Outcome {
 }
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Held by every test that takes the one child slot, so tests that run in
+/// parallel never find it busy.
+#[cfg(test)]
+pub(crate) static SLOT: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Proof that this caller holds the one child slot. Dropped, it frees it.
 pub(crate) struct Running(());
@@ -268,7 +391,7 @@ pub(crate) async fn ensure_link(link: &Path, executable: PathBuf) -> Linked {
 #[cfg(test)]
 mod tests {
     use std::os::unix::ffi::OsStrExt as _;
-    use std::os::unix::fs::symlink;
+    use std::os::unix::fs::{PermissionsExt as _, symlink};
 
     use super::*;
     use crate::testing::{directory, script_file};
@@ -449,7 +572,268 @@ mod tests {
     }
 
     #[test]
+    fn the_update_script_quotes_every_argument_for_applescript_and_the_shell() {
+        let text = update_script(
+            r#"/Applications/My "Tools"/A\B's/Sample.app/Contents/MacOS/Sample"#,
+            "/private/tmp/m 1/Tasma.app",
+            "1.1.0",
+        );
+
+        assert_eq!(
+            text,
+            r#"do shell script quoted form of "/Applications/My \"Tools\"/A\\B's/Sample.app/Contents/MacOS/Sample" & " --install-update " & quoted form of "/private/tmp/m 1/Tasma.app" & " " & quoted form of "1.1.0" with prompt "Tasma wants to install an update." with administrator privileges"#,
+        );
+    }
+
+    /// An installed bundle at `<home>/Applications/Sample.app`, in real
+    /// folders. A locked folder makes it a bundle that the user cannot replace
+    /// until the guard drops.
+    struct Installed {
+        home: PathBuf,
+        applications: PathBuf,
+        executable: PathBuf,
+    }
+
+    impl Drop for Installed {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(
+                &self.applications,
+                std::fs::Permissions::from_mode(0o755),
+            );
+        }
+    }
+
+    fn installed(test: &str, version: &str, locked: bool) -> Installed {
+        let home = std::fs::canonicalize(directory(test)).unwrap();
+        let applications = home.join("Applications");
+        std::fs::create_dir(&applications).unwrap();
+        let bundle = crate::install::fixtures::bundle(
+            &applications,
+            "Sample.app",
+            install::IDENTIFIER,
+            version,
+        );
+
+        if locked {
+            std::fs::set_permissions(&applications, std::fs::Permissions::from_mode(0o555))
+                .unwrap();
+        }
+
+        Installed {
+            executable: bundle.join("Contents/MacOS/Sample"),
+            home,
+            applications,
+        }
+    }
+
+    fn update_installed(result: Result<(), (isize, String)>) -> i32 {
+        let installed = installed("update-result", "1.0.0", true);
+        let executable = installed.executable.to_str().unwrap();
+
+        update_as(
+            &installed.executable,
+            Some(&installed.home),
+            Path::new("/tmp/m/Tasma.app"),
+            "1.1.0",
+            |folder| folder == installed.applications,
+            |source| {
+                assert_eq!(
+                    source,
+                    update_script(executable, "/tmp/m/Tasma.app", "1.1.0")
+                );
+                result
+            },
+        )
+    }
+
+    #[test]
+    fn the_update_script_result_maps_to_a_failure() {
+        assert_eq!(update_installed(Ok(())), 0);
+        assert_eq!(
+            update_installed(Err((USER_CANCELED, "cancelled".into()))),
+            Failure::Password.code()
+        );
+        assert_eq!(
+            update_installed(Err((Failure::Unsigned.code() as isize, "exit".into()))),
+            Failure::Unsigned.code()
+        );
+        assert_eq!(
+            update_installed(Err((Failure::Disk.code() as isize, "exit".into()))),
+            Failure::Disk.code()
+        );
+        assert_eq!(
+            update_installed(Err((-60005, "wrong password".into()))),
+            Failure::Replace.code()
+        );
+        assert_eq!(
+            update_installed(Err((isize::MAX, "huge".into()))),
+            Failure::Replace.code()
+        );
+    }
+
+    #[test]
+    fn an_update_outside_an_applications_folder_or_on_a_path_that_is_not_utf8_fails() {
+        // The test executable stands under `target/`.
+        assert_eq!(
+            run_update(Path::new("/tmp/m/Tasma.app"), "1.1.0"),
+            Failure::Replace.code()
+        );
+
+        let installed = installed("update-not-utf8", "1.0.0", true);
+        let code = update_as(
+            &installed.executable,
+            Some(&installed.home),
+            Path::new(OsStr::from_bytes(b"/tmp/\xff/Tasma.app")),
+            "1.1.0",
+            |_| true,
+            |_| panic!("no script runs for a path it cannot name"),
+        );
+
+        assert_eq!(code, Failure::Replace.code());
+        assert_eq!(
+            update_as(
+                Path::new(INSTALLED),
+                Some(Path::new(HOME)),
+                Path::new("/tmp/m/Tasma.app"),
+                "1.1.0",
+                |_| true,
+                |_| panic!("no script runs for an executable that is not there"),
+            ),
+            Failure::Replace.code()
+        );
+    }
+
+    #[test]
+    fn no_password_is_asked_for_a_bundle_that_the_user_can_replace_or_in_an_unprotected_folder() {
+        let update = |installed: &Installed, protected: bool| {
+            update_as(
+                &installed.executable,
+                Some(&installed.home),
+                Path::new("/tmp/m/Tasma.app"),
+                "1.1.0",
+                |_| protected,
+                |_| panic!("no password is asked for"),
+            )
+        };
+
+        assert_eq!(
+            update(&installed("update-mine", "1.0.0", false), true),
+            Failure::Replace.code(),
+            "the user owns the bundle and can write to its folder"
+        );
+        assert_eq!(
+            update(&installed("update-unprotected", "1.0.0", true), false),
+            Failure::Replace.code()
+        );
+    }
+
+    #[test]
+    fn no_password_is_asked_when_the_real_folder_is_no_applications_folder() {
+        let installed = installed("update-linked-away", "1.0.0", true);
+        // Another account's `~/Applications`, a link to a folder outside it.
+        let home = std::fs::canonicalize(directory("update-linked-home")).unwrap();
+        symlink(&installed.applications, home.join("Applications")).unwrap();
+
+        let code = update_as(
+            &home.join("Applications/Sample.app/Contents/MacOS/Sample"),
+            Some(&home),
+            Path::new("/tmp/m/Tasma.app"),
+            "1.1.0",
+            |_| true,
+            |_| panic!("no password is asked for"),
+        );
+
+        assert_eq!(code, Failure::Replace.code());
+    }
+
+    #[test]
+    fn the_password_prompt_runs_the_real_path_of_the_executable() {
+        let installed = installed("update-real", "1.0.0", true);
+        let alias = installed.home.join("Alias");
+        symlink(&installed.applications, &alias).unwrap();
+        let real = installed.executable.to_str().unwrap();
+        let mut asked = None;
+
+        let code = update_as(
+            &alias.join("Sample.app/Contents/MacOS/Sample"),
+            Some(&installed.home),
+            Path::new("/tmp/m/Tasma.app"),
+            "1.1.0",
+            |folder| {
+                asked = Some(folder.to_path_buf());
+                true
+            },
+            |source| {
+                assert_eq!(source, update_script(real, "/tmp/m/Tasma.app", "1.1.0"));
+                Ok(())
+            },
+        );
+
+        assert_eq!(code, 0);
+        assert_eq!(asked.as_deref(), Some(installed.applications.as_path()));
+    }
+
+    #[test]
+    fn an_update_to_an_equal_or_a_lower_version_asks_for_no_password() {
+        let installed = installed("update-lower", "1.1.0", false);
+        let update = |version: &str| {
+            update_as(
+                &installed.executable,
+                Some(&installed.home),
+                Path::new("/tmp/m/Tasma.app"),
+                version,
+                |_| panic!("no folder is checked"),
+                |_| panic!("no password is asked for"),
+            )
+        };
+
+        assert_eq!(update("1.1.0"), 0);
+        assert_eq!(update("1.0.0"), 0);
+        assert_eq!(update("one"), Failure::WrongVersion.code());
+    }
+
+    #[test]
+    fn the_update_child_reports_its_failure_as_its_exit_code() {
+        let _slot = SLOT
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let running = begin().expect("no child runs yet");
+        let folder = directory("update-child");
+        let child = |name: &str, body: &str| script_file(&folder.join(name), body);
+        let perform = |executable: PathBuf| {
+            tauri::async_runtime::block_on(perform_update(
+                executable,
+                PathBuf::from("/tmp/m/Tasma.app"),
+                "1.1.0".to_string(),
+                &running,
+            ))
+        };
+
+        let done = child(
+            "done",
+            r#"[ "$1 $2 $3" = "--install-update-elevated /tmp/m/Tasma.app 1.1.0" ]"#,
+        );
+        assert_eq!(perform(done), Ok(()));
+        assert_eq!(
+            perform(child("cancelled", "exit 15")),
+            Err(Failure::Password)
+        );
+        assert_eq!(perform(child("unknown", "exit 7")), Err(Failure::Replace));
+        assert_eq!(
+            perform(child("signal", "kill -TERM $$")),
+            Err(Failure::Replace)
+        );
+        assert_eq!(
+            perform(PathBuf::from("/nonexistent/helper")),
+            Err(Failure::Replace)
+        );
+    }
+
+    #[test]
     fn only_one_child_runs_at_a_time() {
+        let _slot = SLOT
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let first = begin().expect("no child runs yet");
 
         assert!(begin().is_none());

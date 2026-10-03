@@ -2,15 +2,18 @@ import { onlineManager, QueryClient } from "@tanstack/react-query";
 import { createClient, ProtocolError, TransportError, type Transport } from "@tasma/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAppQueryClient, createDaemonClient, shouldRetry } from "../../src/api/client";
-import { DAEMON_PATH_PREFIX } from "../../src/api/paths";
+import { APP_PATH_PREFIX, DAEMON_PATH_PREFIX } from "../../src/api/paths";
 import {
+  appKeys,
   daemonKeys,
   healthQuery,
   projectQuery,
   projectsQuery,
+  readUpdate,
   taskQuery,
   taskSearchQuery,
   tasksQuery,
+  updateQuery,
   workflowQuery,
   workflowReadQuery,
   workflowsQuery,
@@ -322,4 +325,84 @@ it("keeps the keys of the workflows screens outside the board's workflow keys", 
     expect(key.slice(0, workflows.length)).not.toEqual([...workflows]);
     expect(key[0]).toBe(daemonKeys.all[0]);
   }
+});
+
+describe("the update query", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function answering(response: Response | Error) {
+    const fetch = vi.fn<(input: string) => Promise<Response>>(() =>
+      response instanceof Error ? Promise.reject(response) : Promise.resolve(response));
+    vi.stubGlobal("fetch", fetch);
+
+    return fetch;
+  }
+
+  async function read() {
+    return new QueryClient().query(updateQuery());
+  }
+
+  it("reads the app's route, under a key of its own outside the daemon's", async () => {
+    const fetch = answering(new Response(JSON.stringify({ state: "none", current: "1.0.0" })));
+
+    expect(await read()).toEqual({ state: "none", current: "1.0.0", version: "", releaseUrl: "", progress: 0, error: "" });
+    expect(fetch).toHaveBeenCalledWith(`${APP_PATH_PREFIX}/update`);
+    expect(updateQuery().queryKey).toEqual(appKeys.update());
+    expect(appKeys.update()[0]).not.toBe(daemonKeys.all[0]);
+  });
+
+  it("answers null where no app answers", async () => {
+    answering(new Response("", { status: 404 }));
+    expect(await read()).toBeNull();
+
+    answering(new TypeError("Failed to fetch"));
+    expect(await read()).toBeNull();
+
+    answering(new Response("<!doctype html>"));
+    expect(await read()).toBeNull();
+  });
+});
+
+describe("an update answer", () => {
+  it("keeps the fields it knows, of the types it knows, and leaves the rest empty", () => {
+    expect(readUpdate({
+      state: "installing",
+      current: "1.0.0",
+      version: "1.1.0",
+      releaseUrl: "https://example.invalid/r",
+      progress: 42,
+      error: 7,
+      other: true,
+    })).toEqual({
+      state: "installing",
+      current: "1.0.0",
+      version: "1.1.0",
+      releaseUrl: "https://example.invalid/r",
+      progress: 42,
+      error: "",
+    });
+    expect(readUpdate({
+      state: "failed",
+      current: "1.0.0",
+      version: "1.1.0",
+      releaseUrl: "https://example.invalid/r",
+      progress: "half",
+      error: "The download failed.",
+    })).toMatchObject({ progress: 0, error: "The download failed." });
+  });
+
+  it("is null for anything that names no known state and current version", () => {
+    expect(readUpdate(null)).toBeNull();
+    expect(readUpdate("ready")).toBeNull();
+    expect(readUpdate({ state: "done", current: "1.0.0" })).toBeNull();
+    expect(readUpdate({ state: "none" })).toBeNull();
+    expect(readUpdate({ state: "none", current: 1 })).toBeNull();
+  });
+
+  it("is null for an update that names no version or no release page", () => {
+    expect(readUpdate({ state: "ready", current: "1.0.0", releaseUrl: "https://example.invalid/r" })).toBeNull();
+    expect(readUpdate({ state: "ready", current: "1.0.0", version: "1.1.0" })).toBeNull();
+  });
 });

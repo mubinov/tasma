@@ -748,6 +748,23 @@ describe("the discard dialog", () => {
     expect(document.activeElement).toBe(cancelControl);
   });
 
+  it("reports the page's unsaved text to the store until it is discarded", async () => {
+    const user = userEvent.setup();
+    await renderWithRouter(PAGE, daemon().transport);
+    await openEditor(user);
+
+    expect(useUiStore.getState().unsavedPage).toBe(false);
+
+    await typeThenCancel(user);
+    expect(useUiStore.getState().unsavedPage).toBe(true);
+
+    await user.click(within(dialog()).getByRole("button", { name: "Discard" }));
+
+    await waitFor(() => {
+      expect(useUiStore.getState().unsavedPage).toBe(false);
+    });
+  });
+
   it("returns to reading with focus on Edit when Discard is pressed", async () => {
     const user = userEvent.setup();
     await renderWithRouter(PAGE, daemon().transport);

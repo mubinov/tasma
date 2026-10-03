@@ -1,3 +1,5 @@
+import { ArrowCircleUpIcon } from "@phosphor-icons/react/ArrowCircleUp";
+import { ArrowClockwiseIcon } from "@phosphor-icons/react/ArrowClockwise";
 import { ArrowLeftIcon } from "@phosphor-icons/react/ArrowLeft";
 import { ArrowUpIcon } from "@phosphor-icons/react/ArrowUp";
 import { CaretDownIcon } from "@phosphor-icons/react/CaretDown";
@@ -24,6 +26,8 @@ import { WarningIcon } from "@phosphor-icons/react/Warning";
 import { XIcon } from "@phosphor-icons/react/X";
 
 export {
+  ArrowCircleUpIcon,
+  ArrowClockwiseIcon,
   ArrowLeftIcon,
   ArrowUpIcon,
   CaretDownIcon,

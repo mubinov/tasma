@@ -9,6 +9,7 @@ import type { Created } from "../../src/api/mutations";
 import { FIELD_TRIGGER_CLASS } from "../../src/components/control-classes";
 import { CreateTaskDialog } from "../../src/components/create-task-dialog";
 import { useNoticeStore } from "../../src/store/notices";
+import { useUiStore } from "../../src/store/ui";
 import { CONFIG, entry, listing } from "../board-fixtures";
 import { heldBack, refusalReply, stubTransport, successReply } from "../helpers";
 import { frame } from "../setup/notice-store";
@@ -684,6 +685,22 @@ describe("cancel", () => {
       expect(document.activeElement).toBe(screen.getByRole("button", { name: "New task in To Do" }));
     });
     expect(creates(requests)).toEqual([]);
+  });
+
+  it("counts as a modal dialog while it is open", async () => {
+    const user = userEvent.setup();
+    setup();
+    expect(useUiStore.getState().modalDialogs).toBe(0);
+
+    await openFromPlus(user);
+    expect(useUiStore.getState().modalDialogs).toBe(1);
+
+    await user.keyboard("Map");
+    await user.click(control("Cancel"));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Discard" }));
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(useUiStore.getState().modalDialogs).toBe(0);
   });
 });
 

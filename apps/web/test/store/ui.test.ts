@@ -292,3 +292,28 @@ describe("the request to open a task page with its editor open", () => {
     expect(window.localStorage.length).toBe(0);
   });
 });
+
+describe("what an update restart reads", () => {
+  it("starts with no unsaved text and no update dialog", () => {
+    const state = useUiStore.getInitialState();
+
+    expect(state.unsavedPage).toBe(false);
+    expect(state.updateDialog).toBeNull();
+  });
+
+  it("holds the unsaved flag, and the dialog until it closes", () => {
+    const store = useUiStore.getState();
+    const item = document.createElement("button");
+
+    store.setUnsavedPage(true);
+    expect(useUiStore.getState().unsavedPage).toBe(true);
+    store.setUnsavedPage(false);
+    expect(useUiStore.getState().unsavedPage).toBe(false);
+
+    store.openUpdateDialog({ kind: "restart", returnTo: item });
+    expect(useUiStore.getState().updateDialog).toEqual({ kind: "restart", returnTo: item });
+
+    store.closeUpdateDialog();
+    expect(useUiStore.getState().updateDialog).toBeNull();
+  });
+});

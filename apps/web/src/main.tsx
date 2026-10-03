@@ -4,6 +4,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ErrorBoundary } from "./components/error-boundary";
 import { ThemeSync } from "./components/theme-sync";
+import { UpdateEvents } from "./components/update-events";
 import { applyTheme, resolveTheme } from "./lib/theme";
 import { router } from "./router";
 import { hydrateUiStore } from "./store/ui";
@@ -26,6 +27,7 @@ applyTheme(resolveTheme(themePreference));
 createRoot(container).render(
   <StrictMode>
     <ThemeSync />
+    <UpdateEvents queryClient={router.options.context.queryClient} />
     <ErrorBoundary>
       <QueryClientProvider client={router.options.context.queryClient}>
         <RouterProvider router={router} />

@@ -1,5 +1,5 @@
-//! The default menu, with "Install Command Line Tool…" and "Uninstall
-//! Tasma…" in the Tasma menu.
+//! The default menu, with "Check for Updates…", "Install Command Line Tool…"
+//! and "Uninstall Tasma…" in the Tasma menu.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -13,7 +13,9 @@ use crate::command::{LINK, account_home, installed_executable};
 use crate::daemon::Daemon;
 use crate::elevate::{self, Linked};
 use crate::uninstall;
+use crate::update::{Origin, Updater};
 
+const CHECK: &str = "check-for-updates";
 const INSTALL: &str = "install-command-line-tool";
 const UNINSTALL: &str = "uninstall-tasma";
 
@@ -25,9 +27,11 @@ const FAILED: &str = "Tasma could not install the tasma command.";
 pub(crate) struct Shell {
     pub(crate) daemon: Arc<Daemon>,
     pub(crate) uninstalling: Arc<AtomicBool>,
+    pub(crate) updater: Arc<Updater>,
 }
 
 struct Items {
+    check: MenuItem<Wry>,
     install: MenuItem<Wry>,
     uninstall: MenuItem<Wry>,
 }
@@ -42,10 +46,11 @@ fn after_first_separator(texts: &[Option<String>]) -> Option<usize> {
         .map(|at| at + 1)
 }
 
-/// Sets the menu. It must stay the default menu plus the two items: copy,
+/// Sets the menu. It must stay the default menu plus the three items: copy,
 /// paste and select-all reach the webview only through it.
 pub(crate) fn build(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::default(app)?;
+    let check = MenuItem::with_id(app, CHECK, "Check for Updates…", true, None::<&str>)?;
     let install = MenuItem::with_id(
         app,
         INSTALL,
@@ -66,36 +71,65 @@ pub(crate) fn build(app: &AppHandle) -> tauri::Result<()> {
             .collect();
         let at = after_first_separator(&texts).unwrap_or(texts.len());
 
-        first.insert(&install, at)?;
-        first.insert(&uninstall, at + 1)?;
-        first.insert(&PredefinedMenuItem::separator(app)?, at + 2)?;
+        first.insert(&check, at)?;
+        first.insert(&install, at + 1)?;
+        first.insert(&uninstall, at + 2)?;
+        first.insert(&PredefinedMenuItem::separator(app)?, at + 3)?;
     }
 
     app.set_menu(menu)?;
-    app.manage(Items { install, uninstall });
+    app.manage(Items {
+        check,
+        install,
+        uninstall,
+    });
 
     Ok(())
 }
 
-/// Enables or disables both items. Called on the main thread.
-pub(crate) fn enable(app: &AppHandle, enabled: bool) {
-    if let Some(items) = app.try_state::<Items>() {
-        let _ = items.install.set_enabled(enabled);
-        let _ = items.uninstall.set_enabled(enabled);
-    }
+/// Which items are enabled: (check, install, uninstall). Uninstall disables
+/// all three, and an update that installs or waits for its restart disables
+/// the two that would change the bundle.
+fn enabled(uninstall_pending: bool, updating: bool) -> (bool, bool, bool) {
+    let free = !uninstall_pending && !updating;
+
+    (!uninstall_pending, free, free)
+}
+
+/// Enables each item by what Uninstall and the update do now. Called on the
+/// main thread, after each change of either.
+pub(crate) fn refresh(app: &AppHandle) {
+    let (Some(items), Some(shell)) = (app.try_state::<Items>(), app.try_state::<Shell>()) else {
+        return;
+    };
+    let (check, install, uninstall) =
+        enabled(shell.updater.uninstall_pending(), shell.updater.busy());
+
+    let _ = items.check.set_enabled(check);
+    let _ = items.install.set_enabled(install);
+    let _ = items.uninstall.set_enabled(uninstall);
 }
 
 pub(crate) fn dispatch(app: &AppHandle, id: &MenuId) {
-    if id == INSTALL {
+    let shell = app.state::<Shell>();
+
+    if id == CHECK {
+        tauri::async_runtime::spawn(check(app.clone(), Arc::clone(&shell.updater)));
+    } else if id == INSTALL {
         tauri::async_runtime::spawn(install(app.clone()));
     } else if id == UNINSTALL {
-        let shell = app.state::<Shell>();
-
         tauri::async_runtime::spawn(uninstall::run(
             app.clone(),
             Arc::clone(&shell.daemon),
+            Arc::clone(&shell.updater),
             Arc::clone(&shell.uninstalling),
         ));
+    }
+}
+
+async fn check(app: AppHandle, updater: Arc<Updater>) {
+    if let Some((title, text)) = updater.check(Origin::Menu).await {
+        alert::notice(&app, title, text).await;
     }
 }
 
@@ -149,6 +183,14 @@ mod tests {
         ]);
 
         assert_eq!(after_first_separator(&menu), Some(2));
+    }
+
+    #[test]
+    fn uninstall_disables_every_item_and_an_update_the_two_that_change_the_bundle() {
+        assert_eq!(enabled(false, false), (true, true, true));
+        assert_eq!(enabled(true, false), (false, false, false));
+        assert_eq!(enabled(false, true), (true, false, false));
+        assert_eq!(enabled(true, true), (false, false, false));
     }
 
     #[test]

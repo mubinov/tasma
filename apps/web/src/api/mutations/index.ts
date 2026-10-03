@@ -20,3 +20,5 @@ export {
   usePendingTaskWrites,
 } from "./tasks";
 export type { Created, PendingTaskWrites, TaskWrites } from "./tasks";
+export { UpdateRequestError, updateRequestOptions } from "./update";
+export type { UpdateRequest } from "./update";

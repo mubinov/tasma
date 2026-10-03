@@ -183,6 +183,17 @@ export function useUnsavedGuard(): UnsavedGuard {
     editorsRef.current = editors;
   });
 
+  // A restart for an update blocks no route change, so it reads the page's
+  // unsaved text from the store.
+  const unsaved = editors.size > 0;
+  useEffect(() => {
+    useUiStore.getState().setUnsavedPage(unsaved);
+
+    return () => {
+      useUiStore.getState().setUnsavedPage(false);
+    };
+  }, [unsaved]);
+
   return {
     register,
     keepEditing,

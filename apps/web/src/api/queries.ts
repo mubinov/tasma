@@ -10,6 +10,8 @@ import {
   type Workflow,
 } from "@tasma/protocol";
 
+import { APP_PATH_PREFIX } from "./paths";
+
 export const POLL_INTERVAL = 5_000;
 
 /**
@@ -115,6 +117,78 @@ export function workflowsQuery(client: Client) {
   return queryOptions({
     queryKey: daemonKeys.workflowList(),
     queryFn: () => client.listWorkflows(),
+  });
+}
+
+export const UPDATE_STATES = ["none", "available", "installing", "ready", "failed"] as const;
+
+export type UpdateState = (typeof UPDATE_STATES)[number];
+
+/**
+ * What the app says about an update of itself. In `none` the version and the
+ * release page are empty; the progress counts only in `installing` and the
+ * error only in `failed`.
+ */
+export type Update = {
+  state: UpdateState;
+  current: string;
+  version: string;
+  releaseUrl: string;
+  progress: number;
+  error: string;
+};
+
+/** The keys of what the app answers itself, apart from everything the daemon said. */
+export const appKeys = {
+  update: () => ["app", "update"] as const,
+};
+
+function stringOrEmpty(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+/**
+ * The update an answer states, or `null` for an answer of another shape. Every
+ * state but `none` names its version and its release page.
+ */
+export function readUpdate(value: unknown): Update | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+
+  const answer = value as Record<string, unknown>;
+  const state = UPDATE_STATES.find((known) => known === answer.state);
+  const named = state === "none" || (typeof answer.version === "string" && typeof answer.releaseUrl === "string");
+  if (state === undefined || typeof answer.current !== "string" || !named) {
+    return null;
+  }
+
+  return {
+    state,
+    current: answer.current,
+    version: stringOrEmpty(answer.version),
+    releaseUrl: stringOrEmpty(answer.releaseUrl),
+    progress: typeof answer.progress === "number" ? answer.progress : 0,
+    error: stringOrEmpty(answer.error),
+  };
+}
+
+/**
+ * Answers `null` where no app answers: in a browser during development the path
+ * reaches the dev server, which serves its page.
+ */
+export function updateQuery() {
+  return queryOptions({
+    queryKey: appKeys.update(),
+    queryFn: async (): Promise<Update | null> => {
+      try {
+        const response = await fetch(`${APP_PATH_PREFIX}/update`);
+
+        return response.ok ? readUpdate(await response.json()) : null;
+      } catch {
+        return null;
+      }
+    },
   });
 }
 

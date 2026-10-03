@@ -12,10 +12,12 @@
 mod alert;
 mod command;
 mod daemon;
+mod daemon_stop;
 mod deeplink;
 mod elevate;
 mod external;
 mod geometry;
+mod install;
 mod log;
 mod menu;
 mod protocol;
@@ -24,6 +26,8 @@ mod supervisor;
 #[cfg(test)]
 mod testing;
 mod uninstall;
+mod update;
+mod version;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -272,12 +276,29 @@ fn main() {
         std::process::exit(elevate::run(step));
     }
 
-    let daemon = Arc::new(daemon::Daemon::new());
+    let arguments: Vec<_> = std::env::args_os().collect();
+
+    if let Some(request) = install::requested(&arguments) {
+        std::process::exit(match request {
+            install::Request::Elevated { source, version } => {
+                elevate::run_update(&source, &version)
+            }
+            install::Request::Root { source, version } => install::run_root(&source, &version),
+            install::Request::Malformed => install::Failure::Replace.code(),
+        });
+    }
+
+    let context = tauri::generate_context!();
+    let version = context.package_info().version.clone();
+    let daemon = Arc::new(daemon::Daemon::new(version.clone()));
     let startup = Arc::clone(&daemon);
+    let updater = Arc::new(update::Updater::new(version, Arc::clone(&daemon)));
+    let hosted = Arc::clone(&updater);
     let uninstalling = Arc::new(AtomicBool::new(false));
     let shell = menu::Shell {
         daemon: Arc::clone(&daemon),
         uninstalling: Arc::clone(&uninstalling),
+        updater: Arc::clone(&updater),
     };
     // The last windowed geometry: the close button destroys the window before
     // the application exits, and a zoomed window measures nothing.
@@ -293,12 +314,14 @@ fn main() {
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |context, request, responder| {
             let app = context.app_handle().clone();
             let daemon = Arc::clone(&daemon);
+            let updater = Arc::clone(&updater);
 
             tauri::async_runtime::spawn(async move {
-                responder.respond(protocol::serve(&app, &daemon, request).await);
+                responder.respond(protocol::serve(&app, &daemon, &updater, request).await);
             });
         })
         .setup(move |app| {
+            hosted.attach(Arc::new(update::AppHost(app.handle().clone())));
             menu::build(app.handle())?;
 
             // On the runtime rather than here, so a spawn never holds the
@@ -394,10 +417,11 @@ fn main() {
             window.show()?;
 
             tauri::async_runtime::spawn(check_the_command());
+            tauri::async_runtime::spawn(hosted.watch());
 
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("the window could not be opened")
         .run(move |app, event| match event {
             // Its handler can write a log line, which would make the log

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
+use semver::Version;
 use tauri::http::header::{
     ALLOW, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HeaderName, X_CONTENT_TYPE_OPTIONS,
 };
@@ -123,12 +124,12 @@ impl Daemon {
     ///
     /// A home directory the environment names none of leaves no record to read,
     /// and the default port stands.
-    pub fn new() -> Self {
+    pub fn new(version: Version) -> Self {
         let home = std::env::home_dir();
 
         Self::with_supervisor(
             home.as_deref().map(record_path),
-            Supervisor::new(home.as_deref()),
+            Supervisor::new(home.as_deref(), version),
             TIMEOUT,
             REPLY_LIMIT,
         )
@@ -156,7 +157,7 @@ impl Daemon {
                 // host the reply names and return that answer inside this origin.
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
-                .expect("a client with no TLS and no proxy is always buildable"),
+                .expect("a client with no proxy is always buildable"),
         }
     }
 
@@ -200,6 +201,11 @@ impl Daemon {
     /// Stops supervising. From then on no daemon is started for this window.
     pub async fn retire(&self) {
         self.supervisor.retire().await;
+    }
+
+    /// While held, no daemon is started or stopped for this window.
+    pub fn hold(&self, held: bool) {
+        self.supervisor.hold(held);
     }
 
     /// The daemon's answer to one request: its status, the headers it set and

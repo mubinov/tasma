@@ -7,7 +7,7 @@ import { resolveConfig } from "vite";
 import { describe, expect, it } from "vitest";
 import { PROBE_BODY_LIMIT, PROBE_TIMEOUT_MS } from "../apps/cli/src/daemon/record.js";
 import { DAEMON_BIN, START_BUDGET_MS, TICK_MS } from "../apps/cli/src/daemon/start.js";
-import { DAEMON_PATH_PREFIX } from "../apps/web/src/api/paths.js";
+import { APP_PATH_PREFIX, DAEMON_PATH_PREFIX, UPDATE_EVENT } from "../apps/web/src/api/paths.js";
 import { readManifest, workspaceRoot } from "../workspace.js";
 
 /** The crate's location, as the root scripts have to spell it. */
@@ -85,6 +85,7 @@ function rustRawString(file: string, name: string): string {
 }
 
 const config = JSON.parse(readFileSync(join(CRATE, "tauri.conf.json"), "utf8")) as {
+  identifier: string;
   build: { devUrl: string };
   bundle: {
     targets: string[];
@@ -121,6 +122,18 @@ describe("the macOS shell", () => {
 
   it("forwards the prefix the renderer writes", () => {
     expect(rustConstant("protocol.rs", "PREFIX")).toBe(DAEMON_PATH_PREFIX);
+  });
+
+  it("answers its own routes under the prefix the renderer writes", () => {
+    expect(rustConstant("protocol.rs", "APP_PREFIX")).toBe(APP_PATH_PREFIX);
+  });
+
+  it("dispatches the update event the board listens for", () => {
+    expect(rustConstant("update.rs", "EVENT")).toBe(UPDATE_EVENT);
+  });
+
+  it("installs an update only of its own bundle identifier", () => {
+    expect(rustConstant("install.rs", "IDENTIFIER")).toBe(config.identifier);
   });
 
   // macOS hands the application a link only under a scheme the bundle declares.
@@ -455,6 +468,13 @@ describe("the release build", () => {
     expect(script).toMatch(/^\s*pnpm exec tauri build .* -- --locked$/m);
   });
 
+  it("signs with the team an update accepts", () => {
+    const script = readFileSync(join(workspaceRoot, APP_RELEASE_SCRIPT), "utf8");
+    const [, team] = /^APPLE_SIGNING_IDENTITY=.*\(([A-Z0-9]+)\)"\}$/m.exec(script) ?? [];
+
+    expect(rustConstant("install.rs", "TEAM")).toBe(team);
+  });
+
   it("builds only the commit that the tag v<version> points to, and checks it before pnpm install", () => {
     const lines = readFileSync(join(workspaceRoot, APP_RELEASE_SCRIPT), "utf8").split("\n");
     const tagCheck = lines.findIndex((line) => line.includes('git rev-parse -q --verify "refs/tags/v$version^{commit}"'));
@@ -513,6 +533,16 @@ describe("the release publish", () => {
     expect(links.toSorted()).toEqual(
       uploads.map((name) => `https://github.com/${repo}/releases/latest/download/${name}`).toSorted(),
     );
+  });
+
+  it("publishes where an update checks, under the names it downloads", () => {
+    const repo = /^REPO=(\S+)$/m.exec(script)?.[1];
+    const createArgs = /^set -- ((?:.*\\\n)*.*)$/m.exec(script)?.[1] ?? "";
+    const uploads = [...createArgs.matchAll(/"\$dir\/([^"/]+\.dmg)"/g)].map(([, name = ""]) => name);
+
+    expect(rustConstant("update.rs", "LATEST")).toBe(`https://api.github.com/repos/${repo}/releases/latest`);
+    expect([rustConstant("update.rs", "ARM_IMAGE"), rustConstant("update.rs", "INTEL_IMAGE")].toSorted())
+      .toEqual(uploads.toSorted());
   });
 
   it("states in the README the minimum macOS of the bundle", () => {
