@@ -44,6 +44,13 @@ export type UseTheme = {
   setPreference: (preference: ThemePreference) => void;
 };
 
+/** The resolved theme, for a component below the router; it writes nothing on <html>. */
+export function useResolvedTheme(): Theme {
+  const preference = useUiStore((state) => state.themePreference);
+  const systemTheme = useSyncExternalStore(subscribeToSystemTheme, readSystemTheme);
+  return resolveTheme(preference, systemTheme);
+}
+
 /**
  * Keeps <html> on the resolved theme for as long as the app runs. The entry
  * writes the first class before rendering, so this only has to follow later
@@ -52,8 +59,7 @@ export type UseTheme = {
 export function useTheme(): UseTheme {
   const preference = useUiStore((state) => state.themePreference);
   const setPreference = useUiStore((state) => state.setThemePreference);
-  const systemTheme = useSyncExternalStore(subscribeToSystemTheme, readSystemTheme);
-  const theme = resolveTheme(preference, systemTheme);
+  const theme = useResolvedTheme();
 
   useLayoutEffect(() => {
     applyTheme(theme);

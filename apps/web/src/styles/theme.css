@@ -31,6 +31,14 @@
   --color-line: var(--palette-line);
   --color-focus: var(--palette-focus);
   --color-scrim: var(--palette-scrim);
+  --color-chart-1: var(--palette-chart-1);
+  --color-chart-2: var(--palette-chart-2);
+  --color-chart-3: var(--palette-chart-3);
+  --color-chart-4: var(--palette-chart-4);
+  --color-chart-5: var(--palette-chart-5);
+  --color-chart-6: var(--palette-chart-6);
+  --color-chart-7: var(--palette-chart-7);
+  --color-chart-8: var(--palette-chart-8);
 
   /* Three families, three jobs: chrome, prose, and literal machine data. */
   --font-*: initial;
@@ -135,6 +143,21 @@
   --palette-line: light-dark(#e2e4e8, #343a43);
   /* Focus alone: never hover, selection, a link or a state. */
   --palette-focus: light-dark(#2563eb, #6ea8fe);
+
+  /*
+   * Categorical fills for diagrams, in order: blue, orange, green, red,
+   * violet, yellow, teal, pink. Light fills carry the light theme's text and
+   * deep fills the dark theme's. They tell series apart by hue and keep no
+   * contrast ratio between each other.
+   */
+  --palette-chart-1: light-dark(#a9c8f5, #1f4f8f);
+  --palette-chart-2: light-dark(#f3c58c, #8a5418);
+  --palette-chart-3: light-dark(#a8dcb5, #1f6b3a);
+  --palette-chart-4: light-dark(#f2a9a9, #8f2f2f);
+  --palette-chart-5: light-dark(#cdb8f0, #5a3d91);
+  --palette-chart-6: light-dark(#f0e08a, #6e5f12);
+  --palette-chart-7: light-dark(#9fd9dc, #1c6468);
+  --palette-chart-8: light-dark(#e8b4d6, #7d2f62);
 
   /*
    * One value for both themes: it drops the page behind to about 42% of its

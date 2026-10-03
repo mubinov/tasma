@@ -1,9 +1,10 @@
 import { existsSync, globSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ViteUserConfig } from "vitest/config";
 import {
   binDeclarationFaults,
+  mermaidImportFaults,
   packageDirs,
   readLockfile,
   readManifest,
@@ -190,6 +191,59 @@ describe("the release version", () => {
 describe("the installed tree", () => {
   it("resolves no runtime CSS-in-JS library, transitively either", () => {
     expect(runtimeCssInJsPackages(readLockfile())).toEqual([]);
+  });
+});
+
+describe("the board's renderer code", () => {
+  const sources = globSync("apps/web/src/**/*.{ts,tsx}", { cwd: workspaceRoot });
+
+  it("imports mermaid only from lib/mermaid.ts, and only through import()", () => {
+    expect(sources.length).toBeGreaterThan(0);
+
+    for (const source of sources) {
+      const path = relative("apps/web/src", source);
+      expect(mermaidImportFaults(path, readFileSync(join(workspaceRoot, source), "utf8")), source).toEqual([]);
+    }
+  });
+
+  it("loads mermaid in lib/mermaid.ts", () => {
+    expect(readFileSync(join(workspaceRoot, "apps/web/src/lib/mermaid.ts"), "utf8")).toMatch(/\bimport\(\s*"mermaid"\s*\)/);
+  });
+});
+
+describe("mermaidImportFaults", () => {
+  it("accepts import() in lib/mermaid.ts, and a type import anywhere", () => {
+    expect(mermaidImportFaults("lib/mermaid.ts", 'import type { Mermaid } from "mermaid";\nawait import("mermaid");')).toEqual(
+      [],
+    );
+    expect(mermaidImportFaults("components/a.tsx", 'import type { MermaidConfig } from "mermaid";')).toEqual([]);
+  });
+
+  it("rejects a static import in lib/mermaid.ts, in each form", () => {
+    for (const text of [
+      'import mermaid from "mermaid";',
+      "import {\n  render,\n  initialize,\n} from 'mermaid';",
+      'import "mermaid";',
+      'export { default } from "mermaid";',
+      'import elk from "mermaid/dist/elk";',
+    ]) {
+      expect(mermaidImportFaults("lib/mermaid.ts", text), text).toEqual(["imports mermaid statically"]);
+    }
+  });
+
+  it("rejects any import of mermaid in another file", () => {
+    expect(mermaidImportFaults("components/a.tsx", 'const m = await import("mermaid");')).toEqual([
+      "imports mermaid outside lib/mermaid.ts",
+    ]);
+    expect(mermaidImportFaults("components/a.tsx", 'import mermaid from "mermaid";')).toEqual([
+      "imports mermaid outside lib/mermaid.ts",
+    ]);
+  });
+
+  it("ignores a package whose name only starts with mermaid, and the word in text", () => {
+    expect(mermaidImportFaults("components/a.tsx", 'import x from "mermaid-lite";\nconst word = "mermaid";')).toEqual(
+      [],
+    );
   });
 });
 

@@ -1,7 +1,7 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { applyTheme, readSystemTheme, resolveTheme, useTheme } from "../../src/lib/theme";
+import { applyTheme, readSystemTheme, resolveTheme, useResolvedTheme, useTheme } from "../../src/lib/theme";
 import { useUiStore } from "../../src/store/ui";
 import { stubSystemTheme } from "../helpers";
 
@@ -49,6 +49,26 @@ describe("applyTheme", () => {
 
     applyTheme("light");
     expect(document.documentElement.className).toBe("light");
+  });
+});
+
+describe("useResolvedTheme", () => {
+  function ResolvedProbe() {
+    return <output>{useResolvedTheme()}</output>;
+  }
+
+  it("follows the preference and the system appearance and writes nothing on <html>", async () => {
+    const system = stubSystemTheme("dark");
+    render(<ResolvedProbe />);
+
+    expect(screen.getByText("dark")).toBeTruthy();
+    system.set("light");
+    expect(await screen.findByText("light")).toBeTruthy();
+    act(() => {
+      useUiStore.setState({ themePreference: "dark" });
+    });
+    expect(screen.getByText("dark")).toBeTruthy();
+    expect(document.documentElement.className).toBe("");
   });
 });
 

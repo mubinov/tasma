@@ -1,7 +1,12 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Markdown } from "../../src/components/markdown";
+import { MermaidDiagram } from "../../src/components/mermaid-diagram";
 import { remarkTaskHeadings, type HeadingBase } from "../../src/lib/markdown";
+
+vi.mock(import("../../src/components/mermaid-diagram"), () => ({
+  MermaidDiagram: vi.fn(({ source }: { source: string }) => <div data-diagram>{source}</div>),
+}));
 
 vi.mock(import("../../src/lib/markdown"), async (importOriginal) => {
   const original = await importOriginal();
@@ -336,5 +341,15 @@ describe("the styles", () => {
     const wrapper = renderMarkdown("Body");
 
     expect(classOf(wrapper)).toBe("wrap-anywhere [&>:first-child]:mt-0");
+  });
+});
+
+describe("a Mermaid block", () => {
+  it("renders as a diagram, and the code blocks beside it stay code", () => {
+    const wrapper = renderMarkdown("```mermaid\nflowchart LR\n  seed --> sprout\n```\n\n```js\nwater()\n```");
+
+    expect(MermaidDiagram).toHaveBeenCalledWith({ source: "flowchart LR\n  seed --> sprout\n" }, undefined);
+    expect(wrapper.querySelector("[data-diagram]")?.textContent).toBe("flowchart LR\n  seed --> sprout\n");
+    expect([...wrapper.querySelectorAll("pre > code")].map((code) => code.textContent)).toEqual(["water()\n"]);
   });
 });

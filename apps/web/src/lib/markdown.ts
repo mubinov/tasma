@@ -1,4 +1,5 @@
 import type { Heading, Nodes, Parents, PhrasingContent, Root, RootContent } from "mdast";
+import type { ExtraProps } from "react-markdown";
 
 const FLOW_PARENTS = new Set<Parents["type"]>(["root", "blockquote", "listItem", "footnoteDefinition"]);
 
@@ -151,6 +152,24 @@ function imageAsPhrase(alt: string, source: string | undefined): PhrasingContent
     return { type: "text", value: alt };
   }
   return { type: "link", url: source, children: [{ type: "text", value: alt === "" ? source : alt }] };
+}
+
+/**
+ * The source of a ```` ```mermaid ```` block, from its `pre` element, or `null`
+ * for any other `pre`. The language is case-sensitive, and a block that holds
+ * only whitespace is not a diagram.
+ */
+export function mermaidSource(node: ExtraProps["node"]): string | null {
+  const [code, ...others] = node?.children ?? [];
+  if (code?.type !== "element" || code.tagName !== "code" || others.length > 0) {
+    return null;
+  }
+  const classes = code.properties.className;
+  const [text, ...rest] = code.children;
+  if (!Array.isArray(classes) || !classes.includes("language-mermaid") || text?.type !== "text" || rest.length > 0) {
+    return null;
+  }
+  return text.value.trim() === "" ? null : text.value;
 }
 
 /**

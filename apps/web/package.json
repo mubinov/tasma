@@ -22,6 +22,7 @@
     "@tanstack/react-router": "catalog:",
     "@tanstack/react-virtual": "catalog:",
     "@tasma/protocol": "workspace:*",
+    "mermaid": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "catalog:",

@@ -13,7 +13,8 @@ const SURFACES = ["bg", "surface", "surface-2"] as const;
  * The design contract: which role has to stay readable on every surface, and
  * the ratio it has to keep. Text roles meet WCAG 2.2 AA (1.4.3) at 4.5:1;
  * `graphic` carries meaning without being text, so it meets 1.4.11 at 3:1.
- * `line` is decorative by definition and appears in no pair.
+ * `line` is decorative by definition and appears in no pair, and so are the
+ * `chart-*` fills, which tell diagram series apart by hue.
  */
 const READABILITY_CONTRACT: readonly { role: string; minimum: number }[] = [
   { role: "text", minimum: 4.5 },
@@ -31,7 +32,9 @@ const READABILITY_CONTRACT: readonly { role: string; minimum: number }[] = [
   { role: "focus", minimum: 4.5 },
 ];
 
-const ROLES = [...SURFACES, ...READABILITY_CONTRACT.map(({ role }) => role), "line"];
+const CHART_ROLES = Array.from({ length: 8 }, (_, index) => `chart-${String(index + 1)}`);
+
+const ROLES = [...SURFACES, ...READABILITY_CONTRACT.map(({ role }) => role), "line", ...CHART_ROLES];
 
 /** Both palettes, read from the light-dark() pair each role declares. */
 function readPalettes(css: string): Map<string, Map<string, string>> {

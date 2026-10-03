@@ -1,7 +1,9 @@
 import type { Heading, PhrasingContent, Root, RootContent } from "mdast";
+import type { ExtraProps } from "react-markdown";
 import { describe, expect, it } from "vitest";
 import {
   markdownUrl,
+  mermaidSource,
   remarkImagesAsLinks,
   remarkRawAsSource,
   remarkTaskHeadings,
@@ -28,6 +30,16 @@ function rankHeadings(options: Parameters<typeof remarkTaskHeadings>[0], ...chil
 
 function tagsOf(tree: Root): unknown[] {
   return tree.children.map((node) => node.data?.hName);
+}
+
+type HastElement = NonNullable<ExtraProps["node"]>;
+
+function element(tagName: string, className: string[] | undefined, ...children: HastElement["children"]): HastElement {
+  return { type: "element", tagName, properties: className === undefined ? {} : { className }, children };
+}
+
+function codeBlock(className: string[] | undefined, value: string): HastElement {
+  return element("pre", undefined, element("code", className, { type: "text", value }));
 }
 
 describe("the leading heading equal to the title", () => {
@@ -339,5 +351,38 @@ describe("a URL", () => {
     "http://%5B::1/items",
   ])("of a link is removed for any other scheme, none, or a path the page resolves: %j", (url) => {
     expect(markdownUrl(url)).toBeUndefined();
+  });
+});
+
+describe("the source of a Mermaid block", () => {
+  it("is the text of a mermaid fence", () => {
+    expect(mermaidSource(codeBlock(["language-mermaid"], "flowchart LR\n  a --> b\n"))).toBe("flowchart LR\n  a --> b\n");
+  });
+
+  it.each([
+    { name: "another language", block: codeBlock(["language-js"], "a()") },
+    { name: "no language", block: codeBlock(undefined, "flowchart LR") },
+    { name: "a language in another case", block: codeBlock(["language-Mermaid"], "flowchart LR") },
+    { name: "only whitespace", block: codeBlock(["language-mermaid"], " \n\t\n") },
+    { name: "a child that is not code", block: element("pre", undefined, { type: "text", value: "flowchart LR" }) },
+    {
+      name: "a second child",
+      block: element("pre", undefined, element("code", ["language-mermaid"], { type: "text", value: "flowchart LR" }), {
+        type: "text",
+        value: "\n",
+      }),
+    },
+    {
+      name: "a code element that holds more than its text",
+      block: element(
+        "pre",
+        undefined,
+        element("code", ["language-mermaid"], { type: "text", value: "flowchart LR" }, element("span", undefined)),
+      ),
+    },
+    { name: "a code element with no text", block: element("pre", undefined, element("code", ["language-mermaid"])) },
+    { name: "no node", block: undefined },
+  ])("is null for $name", ({ block }) => {
+    expect(mermaidSource(block)).toBeNull();
   });
 });

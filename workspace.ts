@@ -143,3 +143,25 @@ export function runtimeCssInJsPackages(lockfile: string): string[] {
 export function readLockfile(): string {
   return readFileSync(join(workspaceRoot, "pnpm-lock.yaml"), "utf8");
 }
+
+const MERMAID_SPECIFIER = String.raw`["']mermaid(?:/[^"']*)?["']`;
+
+const STATIC_MERMAID_IMPORT = new RegExp(
+  String.raw`^\s*(?:import|export)\s+(?!type\b)(?:[^;"']*?\bfrom\s+)?${MERMAID_SPECIFIER}`,
+  "m",
+);
+
+const DYNAMIC_MERMAID_IMPORT = new RegExp(String.raw`\bimport\(\s*${MERMAID_SPECIFIER}`);
+
+/**
+ * Faults in how a file under `apps/web/src`, named by its path from there,
+ * imports `mermaid`. Only `lib/mermaid.ts` loads it, and only through
+ * `import()`: a static import puts Mermaid into the main chunk.
+ */
+export function mermaidImportFaults(path: string, text: string): string[] {
+  const isStatic = STATIC_MERMAID_IMPORT.test(text);
+  if (path !== "lib/mermaid.ts") {
+    return isStatic || DYNAMIC_MERMAID_IMPORT.test(text) ? ["imports mermaid outside lib/mermaid.ts"] : [];
+  }
+  return isStatic ? ["imports mermaid statically"] : [];
+}

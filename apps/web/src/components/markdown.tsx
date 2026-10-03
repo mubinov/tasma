@@ -3,11 +3,13 @@ import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown"
 import remarkGfm from "remark-gfm";
 import {
   markdownUrl,
+  mermaidSource,
   remarkImagesAsLinks,
   remarkRawAsSource,
   remarkTaskHeadings,
   type TaskHeadingsOptions,
 } from "../lib/markdown";
+import { MermaidDiagram } from "./mermaid-diagram";
 
 type MarkdownProps = TaskHeadingsOptions & { text: string };
 
@@ -85,15 +87,21 @@ const components: Components = {
   code: ({ children }) => (
     <code className="rounded-[4px] bg-surface-2 px-[5px] py-px font-mono text-xs-plus">{children}</code>
   ),
-  pre: ({ children }) => (
-    // A scroll container with nothing focusable inside is a tab stop only in some engines.
-    <pre
-      tabIndex={0}
-      className="mt-3 overflow-x-auto rounded-card bg-surface-2 px-3.5 py-3 font-mono text-xs-plus [&>code]:bg-transparent [&>code]:p-0"
-    >
-      {children}
-    </pre>
-  ),
+  pre: ({ node, children }) => {
+    const source = mermaidSource(node);
+    if (source !== null) {
+      return <MermaidDiagram source={source} />;
+    }
+    return (
+      // A scroll container with nothing focusable inside is a tab stop only in some engines.
+      <pre
+        tabIndex={0}
+        className="mt-3 overflow-x-auto rounded-card bg-surface-2 px-3.5 py-3 font-mono text-xs-plus [&>code]:bg-transparent [&>code]:p-0"
+      >
+        {children}
+      </pre>
+    );
+  },
   table: ({ children }) => (
     // A tab stop for the same reason as `pre`.
     <div tabIndex={0} className="mt-3 overflow-x-auto">
@@ -116,7 +124,8 @@ const components: Components = {
 
 /**
  * Renders the markdown of a task body or a comment body: GitHub-flavoured, raw
- * HTML shown as source, links opened in a new tab, no image loaded.
+ * HTML shown as source, links opened in a new tab, no image loaded, Mermaid
+ * blocks drawn as diagrams.
  */
 export function Markdown({ text, base, title }: MarkdownProps): ReactNode {
   return (
