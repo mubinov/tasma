@@ -22,6 +22,7 @@ import {
   tasksDir,
   taskText,
   taskWithComments,
+  TIMESTAMP,
   until,
 } from "../helpers.js";
 import type { TestServer } from "../helpers.js";
@@ -179,6 +180,7 @@ describe("GET /projects/{project}/tasks", () => {
   it.each([
     ["a key the route does not declare", "?stauts=To+Do"],
     ["a single-value key given twice", "?status=A&status=B"],
+    ["the text query given twice", "?q=a&q=b"],
     ["a blocked that is neither true nor false", "?blocked=yes"],
   ])("refuses %s", async (_name, search) => {
     const server = await serving(await projectsRoot("SAGA"), taskRoutes);
@@ -189,6 +191,78 @@ describe("GET /projects/{project}/tasks", () => {
     await expect(response.json()).resolves.toMatchObject({
       ok: false,
       error: { kind: "daemon", code: "malformed-request" },
+    });
+  });
+
+  describe("the text query", () => {
+    function marker(id: number, title: string, fields = ""): string {
+      return `<!-- task:comment {id: ${id}, title: "${title}", created: "${TIMESTAMP}"${fields}} -->`;
+    }
+
+    /** A planted task with its own title, text after the front matter and frontmatter fields. */
+    function taskFileWith(id: string, title: string, text: string, extra: string[] = [], status = "To Do"): string {
+      return entryText(id, status, extra)
+        .replace("title: Planted\n", `title: ${title}\n`)
+        .replace("next_comment_id: 1\n", "next_comment_id: 2\n")
+        .replace("Body.\n", text);
+    }
+
+    /**
+     * `SAGA-1` and `SAGA-3` hold both words, each in two different places;
+     * `SAGA-2` holds one of them alone.
+     */
+    async function searchTree(): Promise<string> {
+      const root = await projectsRoot("SAGA");
+      const tasks = tasksDir(root, "SAGA");
+      await plant(join(tasks, "SAGA-1.md"), taskFileWith("SAGA-1", "Drag the board", `Body.\n\n${marker(1, "Note")}\n\nA card sticks.\n`));
+      await plant(join(tasks, "SAGA-2.md"), taskFileWith("SAGA-2", "Drag the column", "Body.\n", ["labels: [ui]"]));
+      await plant(join(tasks, "SAGA-3.md"), taskFileWith("SAGA-3", "Card colours", "Drag works.\n", ["labels: [ui]"], "In Progress"));
+      return root;
+    }
+
+    it("keeps the tasks that hold every word, and not one that holds a single word", async () => {
+      const server = await serving(await searchTree(), taskRoutes);
+
+      await expect(listed(server, "?q=drag%20card")).resolves.toEqual(["SAGA-1", "SAGA-3"]);
+    });
+
+    it.each([
+      ["an empty text query", "?q="],
+      ["a text query of whitespace alone", "?q=%20%20"],
+    ])("reads %s as no filter", async (_name, search) => {
+      const server = await serving(await searchTree(), taskRoutes);
+
+      await expect(listed(server, search)).resolves.toEqual(["SAGA-1", "SAGA-2", "SAGA-3"]);
+    });
+
+    it.each([
+      ["status", "?q=drag+card&status=To+Do", ["SAGA-1"]],
+      ["label", "?q=drag+card&label=ui", ["SAGA-3"]],
+    ])("applies the text query together with the %s filter", async (_name, search, expected) => {
+      const server = await serving(await searchTree(), taskRoutes);
+
+      await expect(listed(server, search)).resolves.toEqual(expected);
+    });
+
+    it("finds a word that is only in the body of a collapsed comment", async () => {
+      const root = await projectsRoot("SAGA");
+      const hidden = `Body.\n\n${marker(1, "Note", ", collapsed: true")}\n\nHidden lantern.\n`;
+      await plant(taskFile(root, "SAGA", "SAGA-1"), taskFileWith("SAGA-1", "Planted", hidden));
+      await plant(taskFile(root, "SAGA", "SAGA-2"), taskText("SAGA-2"));
+      const server = await serving(root, taskRoutes);
+
+      await expect(listed(server, "?q=lantern")).resolves.toEqual(["SAGA-1"]);
+    });
+
+    it("drops a task whose comments do not parse, which a listing with no text query keeps", async () => {
+      const root = await projectsRoot("SAGA");
+      const broken = "Body.\n\n<!-- task:comment {id: 1} -->\n\nNo title.\n";
+      await plant(taskFile(root, "SAGA", "SAGA-1"), taskFileWith("SAGA-1", "Lantern", broken));
+      await plant(taskFile(root, "SAGA", "SAGA-2"), taskFileWith("SAGA-2", "Lantern", "Body.\n"));
+      const server = await serving(root, taskRoutes);
+
+      await expect(listed(server, "")).resolves.toEqual(["SAGA-1", "SAGA-2"]);
+      await expect(listed(server, "?q=lantern")).resolves.toEqual(["SAGA-2"]);
     });
   });
 });

@@ -79,6 +79,11 @@ describe("buildPath", () => {
     );
   });
 
+  it("writes the text query as one value", () => {
+    const filter: TaskFilter = { q: "drag card" };
+    expect(buildPath(routes.listTasks, { project: "SAGA" }, filter)).toBe("/projects/SAGA/tasks?q=drag%20card");
+  });
+
   it("repeats a repeatable key once per entry", () => {
     const filter: TaskFilter = { label: ["dev", "ui"] };
     expect(buildPath(routes.listTasks, { project: "SAGA" }, filter)).toBe("/projects/SAGA/tasks?label=dev&label=ui");

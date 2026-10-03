@@ -57,6 +57,11 @@ export type ProjectQuery = { path: string };
  * `blocked` keeps the entries whose `blocked` equals the value. It is written as
  * exactly `true` or `false`, and any other spelling is refused with
  * `malformed-request`.
+ *
+ * `q` is free text. The daemon splits it on whitespace. A task matches when each
+ * word is a case-insensitive substring of its id, title, body, or the title or
+ * body of a comment (collapsed comments included). A `q` with no words is no
+ * filter. No character has a special meaning.
  */
 export type TaskFilter = {
   status?: string;
@@ -65,6 +70,7 @@ export type TaskFilter = {
   parent?: string;
   step?: string;
   blocked?: boolean;
+  q?: string;
 };
 
 /**

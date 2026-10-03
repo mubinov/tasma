@@ -38,7 +38,9 @@ function ids(entries: ListedEntry[], filter: TaskFilter): string[] {
 
 describe("readTaskFilter", () => {
   it("reads every key the listing declares", () => {
-    const read = readTaskFilter(query("status=To+Do&priority=high&label=dev&label=ui&parent=T-1&step=review&blocked=true"));
+    const read = readTaskFilter(
+      query("status=To+Do&priority=high&label=dev&label=ui&parent=T-1&step=review&blocked=true&q=drag%20card"),
+    );
 
     expect(read).toEqual({
       status: "To Do",
@@ -47,6 +49,7 @@ describe("readTaskFilter", () => {
       parent: "T-1",
       step: "review",
       blocked: true,
+      q: "drag card",
     });
   });
 
@@ -58,7 +61,12 @@ describe("readTaskFilter", () => {
       parent: undefined,
       step: undefined,
       blocked: undefined,
+      q: undefined,
     });
+  });
+
+  it("keeps a text query of whitespace alone as it was sent", () => {
+    expect(readTaskFilter(query("q=%20%20")).q).toBe("  ");
   });
 
   it("reads blocked=false as the filter for the unblocked", () => {
@@ -69,6 +77,7 @@ describe("readTaskFilter", () => {
     ["a text key", "status=", "status"],
     ["a repeatable key", "label=", "label"],
     ["a boolean key", "blocked=", "blocked"],
+    ["the text query", "q=", "q"],
   ])("drops the empty value of %s", (_description, search, key) => {
     expect(readTaskFilter(query(search))[key as keyof TaskFilter]).toBeUndefined();
   });
@@ -93,6 +102,13 @@ describe("readTaskFilter", () => {
 
     expect(error.code).toBe("malformed-request");
     expect(error.message).toContain("status");
+  });
+
+  it("refuses the text query given twice", () => {
+    const error = refused(() => readTaskFilter(query("q=a&q=b")));
+
+    expect(error.code).toBe("malformed-request");
+    expect(error.message).toContain('"q"');
   });
 
   it("refuses a boolean key given twice", () => {

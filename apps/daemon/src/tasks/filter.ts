@@ -1,5 +1,5 @@
-// What a route was asked for in its query, and which entries a listing answers
-// with. Every route that reads a query reads it here — the task listing its
+// What a route was asked for in its query, and which entries the front matter of
+// a listing keeps. Every route that reads a query reads it here — the task listing its
 // filter, the read of one task its options, the read of a task's text its
 // selection, the resolution of a project the directory it asks about, and every
 // route over the store that takes no query the assertion that none was sent — so
@@ -30,6 +30,7 @@ const LISTING_KEYS = Object.keys({
   parent: true,
   step: true,
   blocked: true,
+  q: true,
 } satisfies Record<keyof TaskFilter, true>);
 
 const READ_KEYS = Object.keys({ comments: true } satisfies Record<keyof TaskReadOptions, true>);
@@ -104,6 +105,7 @@ export function readTaskFilter(query: URLSearchParams): TaskFilter {
     parent: text(query, "parent"),
     step: text(query, "step"),
     blocked: flag(query, "blocked"),
+    q: text(query, "q"),
   };
 }
 
@@ -169,7 +171,9 @@ function matches(entry: ListedEntry, filter: TaskFilter): boolean {
 }
 
 /**
- * The entries a filter keeps, in the order the listing gave them.
+ * The entries the front-matter keys of a filter keep, in the order the listing
+ * gave them. `q` is not one of them: `searchEntries` in `search.ts` applies it
+ * to what this function returns.
  *
  * `entries` are what `resolveBlocked` returned over the **complete** listing.
  * Resolving over a filtered listing would make each out-of-subset blocker read

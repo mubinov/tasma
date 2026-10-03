@@ -15,6 +15,7 @@ import type { ProjectHost } from "../projects/host.js";
 import { commentRoutes } from "./comments.js";
 import { assertNoQuery, readTaskFilter, readTaskOptions, readTextSelection, selectEntries } from "./filter.js";
 import { toChange } from "./input.js";
+import { searchEntries, words } from "./search.js";
 import { blockerKeys, createKey, taskKey, WriteQueue } from "./serialize.js";
 
 /**
@@ -42,8 +43,11 @@ export function taskRoutes(host: ProjectHost): RouteEntry[] {
         // disk names a blocker that does not exist, which is a report about
         // the project rather than about the result set.
         const resolved = resolveBlocked(entries, config.config.final_statuses);
+        const selected = selectEntries(resolved.entries, filter);
+        const terms = words(filter.q);
+        const listed = terms.length === 0 ? selected : await searchEntries(index, selected, terms);
         return {
-          data: { entries: selectEntries(resolved.entries, filter), excluded },
+          data: { entries: listed, excluded },
           diagnostics: [...config.diagnostics, ...resolved.unresolved],
         };
       },
