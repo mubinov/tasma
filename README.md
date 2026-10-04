@@ -9,8 +9,6 @@ Tasma is a macOS app for macOS 14.5 or later.
    - [Apple Silicon (M1 and later)](https://github.com/mubinov/tasma/releases/latest/download/Tasma-arm64.dmg)
    - [Intel](https://github.com/mubinov/tasma/releases/latest/download/Tasma-x64.dmg)
 
-   To see which one you have, open Apple menu › About This Mac: it shows
-   "Chip Apple M…" or "Processor Intel…".
 2. Open the DMG and drag Tasma to Applications.
 3. Open Tasma. It links the `tasma` command into `/usr/local/bin`, and macOS
    asks for an administrator password once.
