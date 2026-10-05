@@ -9,7 +9,7 @@ const handler = () => Promise.resolve({ data: null, diagnostics: [] });
 const entries: RouteEntry[] = Object.values(routes).map((route) => ({ route, handler }));
 
 /** A value for every placeholder any template names, so one call builds every path. */
-const SAMPLE = { project: "SAGA", id: "SAGA-3", commentId: 7, workflow: "dev", step: "dev:research" };
+const SAMPLE = { project: "SAGA", id: "SAGA-3", commentId: 7, workflow: "dev" };
 
 function refusal(found: Match): { code: string; allow?: string[] } {
   if (found.ok) throw new Error("the router matched a route where the test expected a refusal");

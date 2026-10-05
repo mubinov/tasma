@@ -177,7 +177,7 @@ export function stepFile(root: string, workflow: string, step: string): string {
   return join(workflowDir(root, workflow), "steps", `${step.replace(":", "-")}.md`);
 }
 
-/** A workflow whose steps each have a file on disk, which a read of a step needs. */
+/** A workflow whose steps each have a file on disk. */
 export async function plantSteps(root: string, name: string, ...steps: string[]): Promise<void> {
   await plantWorkflow(root, name, stepsOnly(...steps));
   for (const step of steps) await plant(stepFile(root, name, step), `Do ${step}.\n`);

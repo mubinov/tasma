@@ -34,7 +34,6 @@ export const routes = {
   readWorkflow: { method: "GET", template: "/workflows/{workflow}" },
   updateWorkflow: { method: "PATCH", template: "/workflows/{workflow}" },
   deleteWorkflow: { method: "DELETE", template: "/workflows/{workflow}" },
-  readWorkflowStep: { method: "GET", template: "/workflows/{workflow}/steps/{step}" },
   readUserConfig: { method: "GET", template: "/config" },
   updateUserConfig: { method: "PATCH", template: "/config" },
 } as const satisfies Record<string, Route>;

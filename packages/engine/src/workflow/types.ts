@@ -48,12 +48,6 @@ export type WorkflowList = { names: string[]; diagnostics: StoreDiagnostic[] };
 
 export type WorkflowResult = { workflow: Workflow; diagnostics: StoreDiagnostic[] };
 
-export type WorkflowStepResult = {
-  step: WorkflowStep;
-  document: InstructionDocument;
-  diagnostics: StoreDiagnostic[];
-};
-
 /** Every document that applies to one step, in the order the format states. */
 export type InstructionsResult = { documents: InstructionDocument[]; diagnostics: StoreDiagnostic[] };
 
@@ -110,5 +104,4 @@ export type Workflows = {
    */
   list(): Promise<WorkflowList>;
   read(name: string): Promise<WorkflowResult>;
-  readStep(name: string, step: string): Promise<WorkflowStepResult>;
 };

@@ -6,7 +6,7 @@ import type { Project, ProjectChange, ProjectInput, ProjectRename, ProjectSummar
 import type { Method, PathQuery, ProjectQuery, Route, TaskFilter, TaskReadOptions, TaskTextOptions } from "./routes.js";
 import { buildPath, routes } from "./routes.js";
 import type { CommentHeader, CommentInput, Task, TaskInput, TaskList, TaskText, WriteResult } from "./task.js";
-import type { StepDefinition, Workflow, WorkflowChange, WorkflowInput, WorkflowReceipt } from "./workflow.js";
+import type { Workflow, WorkflowChange, WorkflowInput, WorkflowReceipt } from "./workflow.js";
 
 /**
  * One call, as the host that carries it sees it. `body` is a JavaScript value
@@ -58,7 +58,6 @@ export type Client = {
   readWorkflow(name: string): Promise<Success<Workflow>>;
   updateWorkflow(name: string, change: WorkflowChange): Promise<Success<Workflow>>;
   deleteWorkflow(name: string): Promise<Success<WorkflowReceipt>>;
-  readWorkflowStep(name: string, step: string): Promise<Success<StepDefinition>>;
   readUserConfig(): Promise<Success<UserConfig>>;
   updateUserConfig(change: UserConfigChange): Promise<Success<UserConfig>>;
 };
@@ -165,8 +164,6 @@ export function createClient(transport: Transport): Client {
     readWorkflow: (name) => call<Workflow>(routes.readWorkflow, { workflow: name }),
     updateWorkflow: (name, change) => call<Workflow>(routes.updateWorkflow, { workflow: name }, { body: change }),
     deleteWorkflow: (name) => call<WorkflowReceipt>(routes.deleteWorkflow, { workflow: name }),
-    readWorkflowStep: (name, step) =>
-      call<StepDefinition>(routes.readWorkflowStep, { workflow: name, step }),
     readUserConfig: () => call<UserConfig>(routes.readUserConfig, {}),
     updateUserConfig: (change) => call<UserConfig>(routes.updateUserConfig, {}, { body: change }),
   };

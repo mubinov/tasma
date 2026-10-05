@@ -10,7 +10,6 @@ import { workflowRoutes } from "../../src/workflows/routes.js";
 import {
   failure,
   plant,
-  plantSteps,
   plantWorkflow,
   projectConfig,
   projectsRoot,
@@ -203,70 +202,6 @@ describe("GET /workflows/{workflow}", () => {
     await expect(success<Workflow>(await fetch(`${server.url}/workflows/dev`))).resolves.toMatchObject({
       data: { steps: [{ name: "implement" }] },
     });
-  });
-});
-
-describe("GET /workflows/{workflow}/steps/{step}", () => {
-  it("answers with the step and the document its file holds", async () => {
-    const root = await projectsRoot();
-    await plantSteps(root, "dev", "dev:research");
-    const file = stepFile(root, "dev", "dev:research");
-    const server = await serving(root);
-
-    const response = await fetch(`${server.url}/workflows/dev/steps/dev%3Aresearch`);
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      ok: true,
-      data: {
-        step: { name: "dev:research", file, owner: "agent" },
-        document: { path: file, text: "Do dev:research.\n" },
-      },
-      diagnostics: [],
-    });
-  });
-
-  it("refuses a step the workflow does not declare", async () => {
-    const root = await projectsRoot();
-    await plantSteps(root, "dev", "research");
-    const server = await serving(root);
-
-    const response = await fetch(`${server.url}/workflows/dev/steps/implement`);
-
-    expect(response.status).toBe(400);
-    await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "step-unknown" });
-  });
-
-  it("refuses a step whose file cannot be read", async () => {
-    const root = await projectsRoot();
-    await plantWorkflow(root, "dev", stepsOnly("research"));
-    const server = await serving(root);
-
-    const response = await fetch(`${server.url}/workflows/dev/steps/research`);
-
-    expect(response.status).toBe(422);
-    await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "step-file-unreadable" });
-  });
-
-  it("serves the read alone, naming it in the refusal of any other method", async () => {
-    const root = await projectsRoot();
-    await plantSteps(root, "dev", "research");
-    const server = await serving(root);
-
-    const response = await send(server, "POST", "/workflows/dev/steps/research");
-
-    expect(response.status).toBe(405);
-    expect(response.headers.get("allow")).toBe("GET");
-    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "method-not-allowed" });
-  });
-
-  it("serves no route above the step of a workflow", async () => {
-    const server = await serving(await projectsRoot());
-
-    const response = await fetch(`${server.url}/workflows/dev/steps`);
-
-    expect(response.status).toBe(404);
-    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "route-not-found" });
   });
 });
 

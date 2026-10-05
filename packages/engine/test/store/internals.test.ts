@@ -209,7 +209,6 @@ describe("reportWorkflowInto", () => {
       pathsOf: (name) => ({ directory: `/tmp/tree/workflows/${name}`, file: "" }),
       list: () => Promise.reject(error),
       read: () => Promise.reject(error),
-      readStep: () => Promise.reject(error),
     };
   }
 

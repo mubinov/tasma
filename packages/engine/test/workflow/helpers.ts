@@ -64,8 +64,8 @@ export function stepsOnly(...names: string[]): string {
 }
 
 /** The path the file of one step of `stepsOnly` stands under. */
-export function stepFile(root: string, workflow: string, step: string, path?: string): string {
-  return join(workflowDir(root, workflow, path), "steps", `${step.replace(":", "-")}.md`);
+export function stepFile(root: string, workflow: string, step: string): string {
+  return join(workflowDir(root, workflow), "steps", `${step.replace(":", "-")}.md`);
 }
 
 /**

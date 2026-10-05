@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { codes, plant, project, projectConfig, projectDir, storeError, tempRoot } from "../store/helpers.js";
@@ -122,10 +122,48 @@ describe("the step's own file", () => {
     expect(error.code).toBe("step-file-unreadable");
     expect(error.path).toBe(stepFile(root, "dev", "research"));
   });
+
+  it("refuses the call when it holds no regular file", async () => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "workflows: [dev]\n");
+    await plantWorkflow(root, "dev", stepsOnly("research"));
+    await mkdir(stepFile(root, "dev", "research"), { recursive: true });
+
+    const error = await storeError(project(root).stepInstructions("dev", "research"));
+
+    expect(error.code).toBe("step-file-unreadable");
+    expect(error.message).toContain("regular file");
+  });
+
+  it("refuses the call when the filesystem cannot open it", async () => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "workflows: [dev]\n");
+    await plantWorkflow(root, "dev", "steps:\n  - {name: research, file: notes/research.md, owner: agent}\n");
+    await plant(join(workflowDir(root, "dev"), "notes"), "a file where the directory belongs");
+
+    const error = await storeError(project(root).stepInstructions("dev", "research"));
+
+    expect(error.code).toBe("step-file-unreadable");
+    expect(error.message).toContain("cannot be read");
+  });
+
+  it("is read through a symbolic link to a directory outside the tree", async () => {
+    const root = await tempRoot();
+    const outside = join(root, "outside");
+    await plant(projectConfig(root), "workflows: [dev]\n");
+    await plant(join(outside, "research.md"), "Research.\n");
+    await mkdir(workflowDir(root, "dev"), { recursive: true });
+    await symlink(outside, join(workflowDir(root, "dev"), "steps"));
+    await plantWorkflow(root, "dev", stepsOnly("research"));
+
+    const { documents } = await project(root).stepInstructions("dev", "research");
+
+    expect(documents.at(-1)?.text).toBe("Research.\n");
+  });
 });
 
 describe("the project the call sits on", () => {
-  it("refuses a workflow the project does not declare, which readStep cannot check", async () => {
+  it("refuses a workflow the project does not declare", async () => {
     const root = await tempRoot();
     await plantSteps(root, "dev", "research");
 

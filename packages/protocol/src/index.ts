@@ -36,8 +36,6 @@ export type {
   WriteResult,
 } from "./task.js";
 export type {
-  InstructionDocument,
-  StepDefinition,
   StepInput,
   StepOwner,
   Workflow,

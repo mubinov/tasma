@@ -205,14 +205,6 @@ const invocations: Invocation[] = [
     path: "/workflows/dev",
   },
   {
-    // The colon a flow puts in front of a step is part of the name, so the
-    // segment it travels in carries it encoded.
-    name: "readWorkflowStep",
-    send: (client) => client.readWorkflowStep("dev", "dev:research"),
-    method: "GET",
-    path: "/workflows/dev/steps/dev%3Aresearch",
-  },
-  {
     name: "readUserConfig",
     send: (client) => client.readUserConfig(),
     method: "GET",

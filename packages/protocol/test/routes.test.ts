@@ -3,7 +3,7 @@ import { buildPath, routes } from "@tasma/protocol";
 import type { Route, TaskFilter, TaskReadOptions, TaskTextOptions } from "@tasma/protocol";
 
 /** The placeholder names the client fills, which is every name a template may use. */
-const SUPPLIED_PLACEHOLDERS = ["project", "id", "commentId", "workflow", "step"];
+const SUPPLIED_PLACEHOLDERS = ["project", "id", "commentId", "workflow"];
 
 function placeholdersOf(template: string): string[] {
   return [...template.matchAll(/\{(\w+)\}/g)].map((match) => match[1]!);

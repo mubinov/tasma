@@ -17,7 +17,6 @@ import type {
   WorkflowResult,
   Workflows,
   WorkflowStep,
-  WorkflowStepResult,
 } from "./types.js";
 
 /** The one file a workflow directory must hold. */
@@ -394,12 +393,6 @@ class WorkflowStore implements Workflows {
   async read(name: string): Promise<WorkflowResult> {
     const paths = this.pathsOf(name);
     return shapeWorkflow(await readWorkflowText(paths, name), paths, name);
-  }
-
-  async readStep(name: string, step: string): Promise<WorkflowStepResult> {
-    const { workflow, diagnostics } = await this.read(name);
-    const entry = stepEntry(workflow, step);
-    return { step: entry, document: await readStepDocument(entry.file), diagnostics };
   }
 }
 

@@ -5,7 +5,6 @@ import { bareRoot, codes, plant, storeError } from "../store/helpers.js";
 import {
   outsideWorkflows,
   plantWorkflow,
-  stepFile,
   stepsOnly,
   workflowDir,
   workflowFile,
@@ -26,12 +25,10 @@ describe("a configured workflows directory", () => {
     const root = await bareRoot();
     const path = outsideWorkflows(root);
     await plantWorkflow(root, "shared", stepsOnly("research"), path);
-    await plant(stepFile(root, "shared", "research", path), "Research.\n");
 
-    const { step, document } = await workflows(root, path).readStep("shared", "research");
+    const { workflow } = await workflows(root, path).read("shared");
 
-    expect(step.file).toBe(join(path, "shared", "steps", "research.md"));
-    expect(document.text).toBe("Research.\n");
+    expect(workflow.steps[0]?.file).toBe(join(path, "shared", "steps", "research.md"));
   });
 
   it("names it in the fault for a workflow that is not there", async () => {

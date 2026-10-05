@@ -5,7 +5,6 @@ import type {
   ExcludedFile as EngineExcludedFile,
   ExclusionCode as EngineExclusionCode,
   Frontmatter as EngineFrontmatter,
-  InstructionDocument as EngineInstructionDocument,
   ListedEntry,
   LocatedProject,
   ProjectChange as EngineProjectChange,
@@ -30,7 +29,6 @@ import type {
   WorkflowChange as EngineWorkflowChange,
   WorkflowInput as EngineWorkflowInput,
   WorkflowStep as EngineWorkflowStep,
-  WorkflowStepResult,
   WriteResult as EngineWriteResult,
 } from "@tasma/engine";
 import type {
@@ -42,14 +40,12 @@ import type {
   ExcludedFile,
   ExclusionCode,
   Frontmatter,
-  InstructionDocument,
   ParseErrorCode,
   ProjectChange,
   ProjectInput,
   ProjectRename,
   ProjectSummary,
   SerializeErrorCode,
-  StepDefinition,
   StepInput,
   StepOwner,
   StoreErrorCode,
@@ -115,9 +111,6 @@ describe("the wire contract", () => {
     expectTypeOf<ProjectSummary>().toEqualTypeOf<Flat<LocatedProject>>();
     expectTypeOf<WorkflowStep>().toEqualTypeOf<EngineWorkflowStep>();
     expectTypeOf<Workflow>().toEqualTypeOf<EngineWorkflow>();
-    expectTypeOf<InstructionDocument>().toEqualTypeOf<EngineInstructionDocument>();
-    // The envelope carries the diagnostics, so the wire's step read is the engine's less them.
-    expectTypeOf<StepDefinition>().toEqualTypeOf<Omit<WorkflowStepResult, "diagnostics">>();
     expectTypeOf<UserConfig>().toEqualTypeOf<Omit<UserConfigInfo, "diagnostics">>();
     expectTypeOf<UserConfigChange>().toEqualTypeOf<EngineUserConfigChange>();
     expectTypeOf<StepInput>().toEqualTypeOf<EngineStepInput>();

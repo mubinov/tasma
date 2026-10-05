@@ -1,4 +1,4 @@
-// A workflow, its steps, and the documents a step is defined in.
+// A workflow and its steps.
 
 /** Who performs a step. The step's default turn, never the state of a running session. */
 export type StepOwner = "agent" | "human";
@@ -25,12 +25,6 @@ export type Workflow = {
   /** Stored exactly as read and never consulted. */
   transitions?: unknown;
 };
-
-/** One instruction document: the whole file, with the path it was read from. */
-export type InstructionDocument = { path: string; text: string };
-
-/** One step and the document its file holds. */
-export type StepDefinition = { step: WorkflowStep; document: InstructionDocument };
 
 /**
  * One step a write states. `file` must be absolute or start with `~/`, and name a

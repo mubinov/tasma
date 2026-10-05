@@ -1,6 +1,5 @@
 // The routes over the workflows of one tree: the names it holds, one workflow,
-// one step of it with the document its file holds, and the create, the edit and
-// the delete of one workflow.
+// and the create, the edit and the delete of one workflow.
 
 import {
   createWorkflow,
@@ -12,7 +11,7 @@ import {
 } from "@tasma/engine";
 import type { WorkflowChange as EngineWorkflowChange, WorkflowInput as EngineWorkflowInput } from "@tasma/engine";
 import { routes } from "@tasma/protocol";
-import type { Diagnostic, StepDefinition, Success, Workflow, WorkflowReceipt } from "@tasma/protocol";
+import type { Diagnostic, Success, Workflow, WorkflowReceipt } from "@tasma/protocol";
 import type { RouteEntry } from "../http/router.js";
 import { assertNoQuery } from "../tasks/filter.js";
 import { toChange } from "../tasks/input.js";
@@ -69,18 +68,6 @@ export function workflowRoutes(options: { root?: string; writes: WriteQueue }): 
         const { workflows, diagnostics } = await openTreeWorkflows(root);
         const { workflow, diagnostics: read } = await workflows.read(request.params.workflow!);
         return { data: workflow, diagnostics: [...diagnostics, ...read] };
-      },
-    },
-    {
-      route: routes.readWorkflowStep,
-      handler: async (request): Promise<Success<StepDefinition>> => {
-        assertNoQuery(request.query);
-        const { workflows, diagnostics } = await openTreeWorkflows(root);
-        const { step, document, diagnostics: read } = await workflows.readStep(
-          request.params.workflow!,
-          request.params.step!,
-        );
-        return { data: { step, document }, diagnostics: [...diagnostics, ...read] };
       },
     },
     {
