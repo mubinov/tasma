@@ -1233,6 +1233,7 @@ describe("the board a card was opened from", () => {
       await waitFor(() => {
         expect(restoredTo(scrollTo)).toEqual([SCROLL_X, SCROLL_Y]);
       });
+      await nextFrame();
       expect(titlesIn("Backlog")).toEqual(["Task 2", "Task 3"]);
       expect(document.activeElement).toBe(cardLink("Task 2"));
       expect(useUiStore.getState().boardRestorePending).toBe(false);
@@ -1377,6 +1378,7 @@ describe("the board a card was opened from", () => {
       await waitFor(() => {
         expect(restoredTo(scrollTo)).toEqual([SCROLL_X, SCROLL_Y]);
       });
+      await nextFrame();
       expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2", "Task 3"]);
       expect(document.activeElement).toBe(cardLink("Task 2"));
     });
