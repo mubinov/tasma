@@ -1,10 +1,12 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import {
+  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -108,6 +110,15 @@ const SECOND_BODY = "The body of the second task.\n";
 /** The body the comment steps write, and the one their append adds to. */
 const COMMENT_BODY = "The body of the comment the CLI wrote.\n";
 
+/**
+ * The body the Bun steps create their task with, from a regular file well below
+ * 64 KiB: the input Bun's async iteration of `process.stdin` reads as empty.
+ */
+const BUN_BODY = "# Goal\n\nThe body Bun read from a regular file.\n";
+
+/** Whether a `bun` is on PATH to run the built CLI under, as the app's compiled CLI runs. */
+const HAS_BUN = spawnSync("bun", ["--version"]).error === undefined;
+
 let outRoot = "";
 
 /** Where each app's own config puts its output, relative to the package. */
@@ -130,6 +141,33 @@ function node(
     // Ended in every case: a step reading standard input waits for the end of
     // it, and a step that reads none never sees the bytes.
     child.stdin?.end(input);
+  });
+}
+
+/** A run of a built file under the `bun` on PATH, standard input an open descriptor or text sent through a pipe. */
+function bun(
+  file: string,
+  args: string[],
+  options: { env?: Record<string, string>; input?: string | number } = {},
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const { env, input = "" } = options;
+
+  return new Promise((resolve, reject) => {
+    const child = spawn("bun", [file, ...args], {
+      env: env === undefined ? process.env : { ...process.env, ...env },
+      stdio: [typeof input === "number" ? input : "pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+    child.stderr?.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      resolve({ code: code ?? 1, stdout, stderr });
+    });
+
+    if (typeof input === "string") child.stdin?.end(input);
   });
 }
 
@@ -557,6 +595,67 @@ describe("the built executables", () => {
       const listed = await node(executable(CLI), ["task", "list", "-p", "SAGA"], { env: treeEnv(home) });
 
       expect(listed.stdout).toBe("SAGA-1  To Do  -  -  Read the tree through the CLI\n");
+    });
+
+    // The same CLI under Bun, which is how the app ships it. These steps delete
+    // the task they create, so the steps after them see the same tree whether
+    // Bun ran or not.
+    let bunTask = "";
+
+    it("creates a task under Bun, the body read from a regular file on standard input", async (ctx) => {
+      if (!HAS_BUN) ctx.skip("bun is not on PATH");
+
+      const path = join(home, "bun-body.md");
+
+      writeFileSync(path, BUN_BODY);
+
+      const fd = openSync(path, "r");
+
+      try {
+        const { code, stdout, stderr } = await bun(executable(CLI),
+          ["task", "create", "-p", "SAGA", "--title", "Under Bun", "--body-file", "-"], { env: treeEnv(home), input: fd });
+
+        // Before the assertions, so the delete step still removes a task the
+        // create wrote when an assertion here fails.
+        bunTask = stdout.trim();
+
+        expect(stderr).toBe("");
+        expect(code).toBe(0);
+        expect(stdout).toMatch(/^SAGA-\d+\n$/);
+      } finally {
+        closeSync(fd);
+      }
+
+      const { stdout } = await node(executable(CLI), ["task", "view", bunTask], { env: treeEnv(home) });
+
+      expect(stdout).toContain(BUN_BODY);
+    });
+
+    it("adds text after the stored body under Bun, read from a pipe", async (ctx) => {
+      if (!HAS_BUN) ctx.skip("bun is not on PATH");
+      expect(bunTask, "the create step under Bun wrote no task").not.toBe("");
+
+      const written = await bun(executable(CLI),
+        ["task", "edit", bunTask, "--body-file", "-", "--append"], { env: treeEnv(home), input: "more" });
+
+      expect(written.stderr).toBe("");
+      expect(written.code).toBe(0);
+      expect(written.stdout).toBe(`${bunTask}\n`);
+
+      const { stdout } = await node(executable(CLI), ["task", "view", bunTask], { env: treeEnv(home) });
+
+      expect(stdout).toContain(`${BUN_BODY.trimEnd()}\n\nmore\n`);
+    });
+
+    it("deletes the task the Bun steps created", async (ctx) => {
+      if (!HAS_BUN) ctx.skip("bun is not on PATH");
+      expect(bunTask, "the create step under Bun wrote no task").not.toBe("");
+
+      const { code, stdout, stderr } = await bun(executable(CLI), ["task", "delete", bunTask], { env: treeEnv(home) });
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe(`${bunTask}\n`);
     });
 
     // The comment writes, on the task the read steps planted: each acts on what
