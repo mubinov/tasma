@@ -8,7 +8,8 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "pnpm --filter @tasma/web dev",
+    "dev": "pnpm --filter @tasma/web dev:home",
+    "preview": "pnpm --filter @tasma/web preview:home",
     "dev:cli": "pnpm --filter @tasma/cli --filter @tasma/daemon build >&2 && scripts/dev-home.sh node \"$PWD/apps/cli/dist/tasma.js\"",
     "build": "pnpm -r build",
     "lint": "eslint . --max-warnings 0",

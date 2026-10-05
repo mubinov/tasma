@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { createClient } from "@tasma/protocol";
+import { createClient, isTokenText, OPEN_ROUTES } from "@tasma/protocol";
 import type { Client, Transport } from "@tasma/protocol";
 import type { Target } from "../types.js";
 
@@ -74,12 +74,16 @@ type Stated = { channel: "--daemon" | "TASMA_DAEMON_URL"; value: string | undefi
  * somebody hunting a process that was never addressed.
  *
  * Only `http:` on a loopback host is accepted — the set the daemon itself
- * serves. Tasma has no authentication, so any other host would receive task
- * content and be believed on the answer; a remote daemon reached through an SSH
- * tunnel is still loopback locally, so nothing legitimate is refused.
+ * serves. Any other host would receive task content and the daemon token, and
+ * be believed on the answer; a remote daemon reached through an SSH tunnel is
+ * still loopback locally, so nothing legitimate is refused.
  *
  * `HOME` decides which tree, as it decides `homedir()` itself, and the fallback
- * covers an environment that exports none.
+ * covers an environment that exports none. An explicit target keeps the home
+ * too, because the record under it can hold the token for the stated address.
+ *
+ * `TASMA_DAEMON_TOKEN` is passed on whatever the target, empty being no value,
+ * and a value no header can carry throws as a usage error.
  */
 export function resolveTarget(flag: string | undefined, env: Record<string, string | undefined>): Target {
   const channels: Stated[] = [
@@ -87,9 +91,17 @@ export function resolveTarget(flag: string | undefined, env: Record<string, stri
     { channel: "TASMA_DAEMON_URL", value: env.TASMA_DAEMON_URL },
   ];
   const stated = channels.find((entry) => entry.value !== undefined && entry.value !== "");
+  const home = env.HOME === undefined || env.HOME === "" ? homedir() : env.HOME;
+  const token = env.TASMA_DAEMON_TOKEN === "" ? undefined : env.TASMA_DAEMON_TOKEN;
+
+  if (token !== undefined && !isTokenText(token)) {
+    throw new Error("TASMA_DAEMON_TOKEN holds a character a header cannot carry");
+  }
+
+  const tokenField = token === undefined ? {} : { token };
 
   if (stated?.value === undefined) {
-    return { kind: "tree", home: env.HOME === undefined || env.HOME === "" ? homedir() : env.HOME };
+    return { kind: "tree", home, ...tokenField };
   }
 
   let url: URL;
@@ -109,7 +121,7 @@ export function resolveTarget(flag: string | undefined, env: Record<string, stri
 
   // The origin alone, which normalises away a trailing slash — otherwise
   // `${base}${path}` produces //health — along with the case and a redundant :80.
-  return { kind: "explicit", url: url.origin, stated: stated.channel };
+  return { kind: "explicit", url: url.origin, stated: stated.channel, home, ...tokenField };
 }
 
 /** One call's budget. A fresh signal per request, so it is not a process-wide deadline. */
@@ -185,18 +197,32 @@ async function readJson(response: Response, timeoutMs: number): Promise<unknown>
  * loopback host alone, and following a redirect would leave that governing the
  * first hop only, carrying the body to whatever host the answer named.
  *
+ * The token goes on every call but the open routes, which the daemon serves to
+ * any caller.
+ *
  * Nothing in production passes `timeoutMs`; it is there so the budget can be
  * driven in milliseconds.
  */
-export function createFetchTransport(baseUrl: string, timeoutMs = REQUEST_TIMEOUT_MS): Transport {
+export function createFetchTransport(
+  baseUrl: string,
+  options: { token?: string; timeoutMs?: number } = {},
+): Transport {
+  const { token, timeoutMs = REQUEST_TIMEOUT_MS } = options;
+
   return async ({ method, path, body }) => {
+    const headers: Record<string, string> = {};
+    // The daemon requires the media type on a write and ignores it on a read.
+    if (body !== undefined) headers["content-type"] = "application/json";
+    if (token !== undefined && !OPEN_ROUTES.some((route) => route.method === method && route.template === path)) {
+      headers.authorization = `Bearer ${token}`;
+    }
+
     let response: Response;
 
     try {
       response = await fetch(`${baseUrl}${path}`, {
         method,
-        // The daemon requires the media type on a write and ignores it on a read.
-        headers: body === undefined ? {} : { "content-type": "application/json" },
+        headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         redirect: "error",
         signal: AbortSignal.timeout(timeoutMs),
@@ -209,6 +235,6 @@ export function createFetchTransport(baseUrl: string, timeoutMs = REQUEST_TIMEOU
   };
 }
 
-export function createDaemonClient(url: string): Client {
-  return createClient(createFetchTransport(url));
+export function createDaemonClient(url: string, token?: string): Client {
+  return createClient(createFetchTransport(url, { token }));
 }

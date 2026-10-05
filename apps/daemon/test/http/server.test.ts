@@ -8,7 +8,7 @@ import { routes } from "@tasma/protocol";
 import type { Route, Success } from "@tasma/protocol";
 import manifest from "../../../../package.json" with { type: "json" };
 import type { Handler, RouteEntry } from "../../src/http/router.js";
-import { startTestServer, until } from "../helpers.js";
+import { bearer, get, startTestServer, until } from "../helpers.js";
 
 function entry(route: Route, handler: Handler): RouteEntry {
   return { route, handler };
@@ -43,14 +43,17 @@ async function* megabytes(count: number): AsyncGenerator<Uint8Array> {
 }
 
 /** The head of a chunked write to a route that exists, with every header the daemon checks before the body. */
-const CHUNKED_POST = [
-  "POST /projects/SAGA/tasks HTTP/1.1",
-  "host: 127.0.0.1",
-  "content-type: application/json",
-  "transfer-encoding: chunked",
-  "",
-  "",
-].join("\r\n");
+function chunkedPost(token: string): string {
+  return [
+    "POST /projects/SAGA/tasks HTTP/1.1",
+    "host: 127.0.0.1",
+    `authorization: Bearer ${token}`,
+    "content-type: application/json",
+    "transfer-encoding: chunked",
+    "",
+    "",
+  ].join("\r\n");
+}
 
 /** Everything the socket has received so far, as text. */
 function received(socket: Socket): () => string {
@@ -90,7 +93,7 @@ describe("the daemon server", () => {
   it("answers the liveness route with the name and the version of this daemon", async () => {
     const server = await startTestServer([]);
 
-    const response = await fetch(`${server.url}/health`);
+    const response = await get(server, "/health");
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/json; charset=utf-8");
@@ -106,7 +109,7 @@ describe("the daemon server", () => {
   it("serves its own liveness route rather than one it was handed", async () => {
     const server = await startTestServer([entry(routes.health, ok)]);
 
-    await expect((await fetch(`${server.url}/health`)).json()).resolves.toMatchObject({
+    await expect((await get(server, "/health")).json()).resolves.toMatchObject({
       data: { name: "tasma-daemon" },
     });
   });
@@ -121,7 +124,7 @@ describe("the daemon server", () => {
 
     const response = await fetch(`${server.url}/projects/SAGA/tasks/SAGA-3?dry=yes`, {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...bearer(server.token) },
       body: JSON.stringify({ status: "Done" }),
     });
 
@@ -140,7 +143,7 @@ describe("the daemon server", () => {
     const refuse: Handler = () => Promise.reject(new TaskStoreError("task-not-found", "no such task", "/tmp/a.md"));
     const server = await startTestServer([entry(routes.readTask, refuse)]);
 
-    const response = await fetch(`${server.url}/projects/SAGA/tasks/SAGA-3`);
+    const response = await get(server, "/projects/SAGA/tasks/SAGA-3");
 
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({
@@ -155,21 +158,21 @@ describe("the daemon server", () => {
     };
     const server = await startTestServer([entry(routes.readTask, broken)]);
 
-    const response = await fetch(`${server.url}/projects/SAGA/tasks/SAGA-3`);
+    const response = await get(server, "/projects/SAGA/tasks/SAGA-3");
 
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toEqual({
       ok: false,
       error: { kind: "daemon", code: "internal", message: "the disk went away" },
     });
-    expect((await fetch(`${server.url}/health`)).status).toBe(200);
+    expect((await get(server, "/health")).status).toBe(200);
   });
 
   it("answers 500 where the data of a success is not something JSON carries", async () => {
     const unserializable: Handler = () => Promise.resolve({ data: 1n, diagnostics: [] });
     const server = await startTestServer([entry(routes.readTask, unserializable)]);
 
-    const response = await fetch(`${server.url}/projects/SAGA/tasks/SAGA-3`);
+    const response = await get(server, "/projects/SAGA/tasks/SAGA-3");
 
     // The reply is serialized before the head goes out, so this is still reportable.
     expect(response.status).toBe(500);
@@ -179,7 +182,7 @@ describe("the daemon server", () => {
   it("refuses a write that declares another content type", async () => {
     const server = await startTestServer([entry(routes.createTask, ok)]);
 
-    const response = await fetch(`${server.url}/projects/SAGA/tasks`, { method: "POST", body: "{}" });
+    const response = await fetch(`${server.url}/projects/SAGA/tasks`, { method: "POST", headers: bearer(server.token), body: "{}" });
 
     expect(response.status).toBe(415);
     await expect(response.json()).resolves.toMatchObject({ error: { code: "unsupported-media-type" } });
@@ -191,6 +194,7 @@ describe("the daemon server", () => {
     const answer = await raw(server.url, [
       "POST /projects/SAGA/tasks HTTP/1.1",
       "host: 127.0.0.1",
+      `authorization: Bearer ${server.token}`,
       "content-type: application/json",
       `content-length: ${9 * 1024 * 1024}`,
     ]);
@@ -204,7 +208,7 @@ describe("the daemon server", () => {
 
     const response = await fetch(`${server.url}/projects/SAGA/tasks`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...bearer(server.token) },
       body: megabytes(9),
       duplex: "half",
     });
@@ -220,7 +224,7 @@ describe("the daemon server", () => {
     const socket = await open(server.url);
     const read = received(socket);
 
-    socket.write(CHUNKED_POST);
+    socket.write(chunkedPost(server.token));
     await writeChunks(socket, 9);
     socket.write("0\r\n\r\n");
     await until(() => read().includes('"code":"request-too-large"'), "the refusal arrived");
@@ -241,7 +245,7 @@ describe("the daemon server", () => {
     const closed = new Promise((resolve) => socket.once("close", resolve));
     const read = received(socket);
 
-    socket.write(CHUNKED_POST);
+    socket.write(chunkedPost(server.token));
     void writeChunks(socket, Infinity);
     await until(() => read().includes('"code":"request-too-large"'), "the refusal arrived");
     const refusedAt = Date.now();
@@ -253,7 +257,7 @@ describe("the daemon server", () => {
   it("refuses a path no route serves", async () => {
     const server = await startTestServer([]);
 
-    const response = await fetch(`${server.url}/projects/SAGA/notes`);
+    const response = await get(server, "/projects/SAGA/notes");
 
     expect(response.status).toBe(404);
     // The request carried no body, so nothing was left half read: the caller
@@ -265,7 +269,7 @@ describe("the daemon server", () => {
   it("names the methods a path does serve when the one asked for is not among them", async () => {
     const server = await startTestServer([entry(routes.listTasks, ok), entry(routes.createTask, ok)]);
 
-    const response = await fetch(`${server.url}/projects/SAGA/tasks`, { method: "DELETE" });
+    const response = await fetch(`${server.url}/projects/SAGA/tasks`, { method: "DELETE", headers: bearer(server.token) });
 
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("GET, POST");
@@ -275,7 +279,7 @@ describe("the daemon server", () => {
   it("names a method once where the caller registered a route the daemon serves itself", async () => {
     const server = await startTestServer([entry(routes.health, ok)]);
 
-    const response = await fetch(`${server.url}/health`, { method: "DELETE" });
+    const response = await fetch(`${server.url}/health`, { method: "DELETE", headers: bearer(server.token) });
 
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("GET");
@@ -287,10 +291,10 @@ describe("the daemon server", () => {
       throw new Error("the head was refused");
     });
 
-    await expect(fetch(`${server.url}/health`)).rejects.toThrow();
+    await expect(get(server, "/health")).rejects.toThrow();
 
     broken.mockRestore();
-    expect((await fetch(`${server.url}/health`)).status).toBe(200);
+    expect((await get(server, "/health")).status).toBe(200);
   });
 
   it("survives a client that disconnects while its body is being read", async () => {
@@ -300,6 +304,7 @@ describe("the daemon server", () => {
     const head = [
       "POST /projects/SAGA/tasks HTTP/1.1",
       "host: 127.0.0.1",
+      `authorization: Bearer ${server.token}`,
       "content-type: application/json",
       // Ninety-nine bytes short of what it declares, so the daemon is still
       // reading the body when the socket goes.
@@ -311,7 +316,7 @@ describe("the daemon server", () => {
     socket.destroy();
     await once(socket, "close");
 
-    expect((await fetch(`${server.url}/health`)).status).toBe(200);
+    expect((await get(server, "/health")).status).toBe(200);
   });
 
   it("stops listening when it is closed", async () => {
@@ -361,10 +366,10 @@ describe("a success", () => {
 
     const created = await fetch(`${server.url}/projects/SAGA/tasks`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...bearer(server.token) },
       body: JSON.stringify({ title: "Write it" }),
     });
-    const deleted = await fetch(`${server.url}/projects/SAGA/tasks/SAGA-3`, { method: "DELETE" });
+    const deleted = await fetch(`${server.url}/projects/SAGA/tasks/SAGA-3`, { method: "DELETE", headers: bearer(server.token) });
 
     expect([created.status, deleted.status]).toEqual([200, 200]);
     const envelope: { ok: true } & Success<string> = { ok: true, data: "served", diagnostics: [] };
@@ -394,5 +399,81 @@ describe("the site a request comes from", () => {
     const answer = await raw(server.url, ["GET /health HTTP/1.1", "host: localhost", `sec-fetch-site: ${site}`]);
 
     expect(answer).toContain("HTTP/1.1 200");
+  });
+});
+
+describe("the token a request carries", () => {
+  it.each([
+    ["no header", undefined],
+    ["another scheme", "Basic dXNlcjpwYXNz"],
+    ["a scheme with no value", "Bearer"],
+    ["a token of another run", `Bearer ${"0".repeat(64)}`],
+  ])("refuses a request carrying %s", async (_description, authorization) => {
+    const server = await startTestServer([entry(routes.readTask, ok)]);
+
+    const response = await fetch(`${server.url}/projects/SAGA/tasks/SAGA-3`, {
+      headers: authorization === undefined ? {} : { authorization },
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toBe("Bearer");
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: { kind: "daemon", code: "unauthorized", message: "a request must carry the daemon token" },
+    });
+  });
+
+  it("serves a request carrying the token, whatever the case of the scheme and the spaces around the value", async () => {
+    const server = await startTestServer([entry(routes.readTask, ok)]);
+
+    const response = await fetch(`${server.url}/projects/SAGA/tasks/SAGA-3`, {
+      headers: { authorization: `bEARER   ${server.token}  ` },
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  it.each(["/health", "/health?probe=1"])("serves GET %s without the token", async (path) => {
+    const server = await startTestServer([]);
+
+    expect((await fetch(`${server.url}${path}`)).status).toBe(200);
+  });
+
+  it("refuses a path no route serves before it says so", async () => {
+    const server = await startTestServer([]);
+
+    const response = await fetch(`${server.url}/projects/SAGA/notes`);
+
+    expect(response.status).toBe(401);
+  });
+
+  it("refuses another method on the liveness path without the token", async () => {
+    const server = await startTestServer([]);
+
+    const response = await fetch(`${server.url}/health`, { method: "DELETE" });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("discards the body of a refused write and carries the next request on the connection", async () => {
+    const server = await startTestServer([entry(routes.createTask, ok)]);
+    const socket = await open(server.url);
+    const read = received(socket);
+    const body = JSON.stringify({ title: "Write it" });
+
+    socket.write([
+      "POST /projects/SAGA/tasks HTTP/1.1",
+      "host: 127.0.0.1",
+      "content-type: application/json",
+      `content-length: ${Buffer.byteLength(body)}`,
+      "",
+      body,
+    ].join("\r\n"));
+    await until(() => read().includes('"code":"unauthorized"'), "the refusal arrived");
+    socket.write("GET /health HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n");
+    await until(() => read().includes("HTTP/1.1 200"), "the connection carried the next request");
+
+    expect(read()).toContain("HTTP/1.1 401");
+    socket.destroy();
   });
 });

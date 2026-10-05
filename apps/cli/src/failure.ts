@@ -1,7 +1,9 @@
-import { DEFAULT_DAEMON_URL, printable, ProtocolError, TransportError } from "@tasma/protocol";
-import type { Client, DaemonRecord, Diagnostic, Success } from "@tasma/protocol";
-import { daemonUrl, probe, readRecord, recordPath } from "./daemon/record.js";
-import type { Probed } from "./daemon/record.js";
+import {
+  daemonUrl, DEFAULT_DAEMON_URL, printable, ProtocolError, recordTokenFor, TransportError,
+} from "@tasma/protocol";
+import type { Client, Diagnostic, Success } from "@tasma/protocol";
+import { inspectRecord, probe, recordPath } from "./daemon/record.js";
+import type { Probed, RecordRead } from "./daemon/record.js";
 import { startDaemon } from "./daemon/start.js";
 import type { StartOutcome } from "./daemon/start.js";
 import { createDaemonClient, RequestTimeoutError } from "./daemon/transport.js";
@@ -19,12 +21,12 @@ export const REFUSED = 1;
  * daemon of a tree is recorded, what answers an address, and how one is started.
  */
 export type Reach = {
-  readRecord: (path: string) => Promise<DaemonRecord | undefined>;
+  readRecord: (path: string) => Promise<RecordRead>;
   probe: (url: string) => Promise<Probed>;
   start: (options: { home: string }) => Promise<StartOutcome>;
 };
 
-const REACH: Reach = { readRecord, probe, start: startDaemon };
+const REACH: Reach = { readRecord: inspectRecord, probe, start: startDaemon };
 
 /**
  * The budget a call ran out of, or nothing where it failed some other way. A
@@ -103,25 +105,85 @@ export function refuseAnswer(io: Io, url: string, what: string): number {
   return UNREACHABLE;
 }
 
-/** The address to call, and the record it came from where one named it. */
-type Located = { url: string; recorded?: string };
+const TOKEN_VARIABLE = "TASMA_DAEMON_TOKEN";
+
+/**
+ * The token a call carries and where it was read, or why the record gave none:
+ * no record, a record that cannot be read, a record of another address, or a
+ * record that holds no token.
+ */
+type Credential
+  = | { token: string; from: string; missing?: undefined }
+    | { token?: undefined; missing: "no-record" | "unreadable-record" | "no-token" }
+    | { token?: undefined; missing: "other-address"; recordUrl: string };
+
+/** The token for a call to `url`: the variable, else the token `read` holds for that address. */
+function credentialOf(target: Target, path: string, read: RecordRead, url: string): Credential {
+  if (target.token !== undefined) return { token: target.token, from: TOKEN_VARIABLE };
+  if (read === "absent") return { missing: "no-record" };
+  if (read === "unreadable") return { missing: "unreadable-record" };
+
+  const token = recordTokenFor(read, url);
+  if (token !== undefined) return { token, from: path };
+
+  const recordUrl = daemonUrl(read.port);
+
+  return url === recordUrl ? { missing: "no-token" } : { missing: "other-address", recordUrl };
+}
+
+/** Why the daemon refused a call for its token, in the terms the remedy differs on. */
+function unauthorizedText(credential: Credential, path: string): string {
+  const needs = "the daemon needs a token, and";
+  const record = printable(path);
+
+  switch (credential.missing) {
+    case undefined:
+      return `the daemon refused the token from ${printable(credential.from)}. The token belongs to another run of`
+        + " the daemon. Run the command again; if it fails again, restart the daemon with \"tasma daemon stop\".";
+    case "no-record":
+      return `${needs} ${record} does not exist. Set ${TOKEN_VARIABLE}, or start the daemon of this tree (with`
+        + " TASMA_DAEMON_PORT if another daemon holds the default port).";
+    case "unreadable-record":
+      return `${needs} ${record} cannot be read as a daemon record. Set ${TOKEN_VARIABLE}, or start the daemon of`
+        + " this tree again: a start replaces that file.";
+    case "other-address":
+      return `${needs} ${record} holds a token for ${credential.recordUrl} only. Call ${credential.recordUrl},`
+        + ` or set ${TOKEN_VARIABLE}.`;
+    case "no-token":
+      return `${needs} ${record} holds none for this port. Set ${TOKEN_VARIABLE}, or restart the daemon with`
+        + " \"tasma daemon stop\".";
+  }
+}
+
+/**
+ * The address to call with its token, the path of the record of the home, and
+ * whether that record named the address.
+ */
+type Located = { url: string; credential: Credential; path: string; fromRecord: boolean };
 
 /**
  * Where a target is reached. A tree is reached at the port its record names,
  * and at the built-in default where it holds no record — the fallback for a
  * daemon whose record was removed by hand.
  *
+ * The token of the record goes only to the address that record names, so a
+ * listener on any other address never receives the token of a live daemon.
+ *
  * No probe runs first for a call that may be sent again: the command's own call
  * is the probe, and a port that gives no usable answer is what makes a record
  * stale.
  */
 async function locate(target: Target, reach: Reach): Promise<Located> {
-  if (target.kind === "explicit") return { url: target.url };
-
   const path = recordPath(target.home);
-  const record = await reach.readRecord(path);
+  const read = await reach.readRecord(path);
+  const record = typeof read === "string" ? undefined : read;
+  const fromRecord = target.kind === "tree" && record !== undefined;
 
-  return record === undefined ? { url: DEFAULT_DAEMON_URL } : { url: daemonUrl(record.port), recorded: path };
+  let url: string;
+  if (target.kind === "explicit") url = target.url;
+  else url = record === undefined ? DEFAULT_DAEMON_URL : daemonUrl(record.port);
+
+  return { url, credential: credentialOf(target, path, read, url), path, fromRecord };
 }
 
 /**
@@ -176,11 +238,15 @@ export async function attempt<T>(
   // either; every other call is its own probe.
   const probed = options.prove === true;
 
-  async function once(url: string): Promise<number | TransportError> {
+  const located = await locate(target, reach);
+  const { path, fromRecord } = located;
+  let { url, credential } = located;
+
+  async function once(url: string, credential: Credential): Promise<number | TransportError> {
     let success: Success<T>;
 
     try {
-      success = await call(createDaemonClient(url));
+      success = await call(createDaemonClient(url, credential.token));
     } catch (error) {
       if (error instanceof TransportError) return error;
 
@@ -188,6 +254,11 @@ export async function attempt<T>(
         // The client admits a refusal only where all three of these are strings,
         // so a refusal that reached here carries no value to coerce.
         const { kind, code, message } = error.failure;
+
+        if (kind === "daemon" && code === "unauthorized") {
+          io.stderr.write(`tasma: ${unauthorizedText(credential, path)}\n`);
+          return REFUSED;
+        }
 
         return reportRefusal(io, kind, code, message);
       }
@@ -214,8 +285,11 @@ export async function attempt<T>(
     return code;
   }
 
-  /** Where the daemon of this tree is once one has been started, or the code the failed start reported with. */
-  async function startHere(home: string): Promise<string | number> {
+  /**
+   * Where the daemon of this tree is once one has been started, with the token
+   * of the record it wrote, or the code the failed start reported with.
+   */
+  async function startHere(home: string): Promise<{ url: string; credential: Credential } | number> {
     const started = await reach.start({ home });
 
     if ("failure" in started) {
@@ -223,12 +297,8 @@ export async function attempt<T>(
       return UNREACHABLE;
     }
 
-    return started.url;
+    return { url: started.url, credential: credentialOf(target, path, started.record, started.url) };
   }
-
-  const located = await locate(target, reach);
-  const { recorded } = located;
-  let url = located.url;
 
   /** The tree a daemon may be started for, or nothing for an address stated by hand and a caller that forbade it. */
   const startHome = target.kind === "tree" && options.start !== false ? target.home : undefined;
@@ -236,7 +306,7 @@ export async function attempt<T>(
   if (probed) {
     // The record is what names this tree's daemon, so a tree holding none is
     // started for rather than probed at the machine-wide default.
-    const found = target.kind === "tree" && recorded === undefined ? "none" : await reach.probe(url);
+    const found = target.kind === "tree" && !fromRecord ? "none" : await reach.probe(url);
 
     if (found === "none") {
       if (startHome === undefined) {
@@ -244,15 +314,15 @@ export async function attempt<T>(
         return UNREACHABLE;
       }
 
-      const startedUrl = await startHere(startHome);
+      const started = await startHere(startHome);
 
-      if (typeof startedUrl === "number") return startedUrl;
+      if (typeof started === "number") return started;
 
-      url = startedUrl;
+      ({ url, credential } = started);
     }
   }
 
-  const first = await once(url);
+  const first = await once(url, credential);
 
   if (!(first instanceof TransportError)) return first;
 
@@ -267,24 +337,24 @@ export async function attempt<T>(
     // answer: the port answering nothing is what makes that record stale, while
     // a call that ran out of time reached something the record may well name and
     // a probed one settled its record before it was sent.
-    const staleNote = recorded === undefined || timedOut || probed
+    const staleNote = !fromRecord || timedOut || probed
       ? ""
-      : `; the record at ${printable(recorded)} is stale`;
+      : `; the record at ${printable(path)} is stale`;
 
     io.stderr.write(`tasma: ${transportText(first, url)}${staleNote}\n`);
     return UNREACHABLE;
   }
 
-  const startedUrl = await startHere(startHome);
+  const started = await startHere(startHome);
 
-  if (typeof startedUrl === "number") return startedUrl;
+  if (typeof started === "number") return started;
 
   // The one retry, against the address the new record names. Its outcome is
   // final: a second start would spawn a daemon for a tree that just produced one.
-  const second = await once(startedUrl);
+  const second = await once(started.url, started.credential);
 
   if (second instanceof TransportError) {
-    io.stderr.write(`tasma: ${transportText(second, startedUrl)}\n`);
+    io.stderr.write(`tasma: ${transportText(second, started.url)}\n`);
     return UNREACHABLE;
   }
 

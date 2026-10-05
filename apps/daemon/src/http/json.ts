@@ -6,7 +6,7 @@
 // written here.
 
 import type { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from "node:http";
-import type { Envelope, Method } from "@tasma/protocol";
+import type { Envelope } from "@tasma/protocol";
 import { DaemonError, causeOf } from "./failure.js";
 
 /** The largest body the daemon reads, in bytes. */
@@ -95,7 +95,7 @@ export function writeEnvelope(
   response: ServerResponse,
   status: number,
   envelope: Envelope<unknown>,
-  allow?: Method[],
+  extra: OutgoingHttpHeaders = {},
 ): void {
   const body = Buffer.from(JSON.stringify(envelope), "utf8");
 
@@ -106,8 +106,8 @@ export function writeEnvelope(
     "cache-control": "no-store",
     // The body is JSON whatever a reader guesses from its content.
     "x-content-type-options": "nosniff",
+    ...extra,
   };
-  if (allow !== undefined) headers.allow = allow.join(", ");
 
   response.writeHead(status, headers);
   response.end(body);

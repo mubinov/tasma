@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -15,7 +16,7 @@ import type { DaemonServerOptions } from "../src/http/server.js";
 import { createProjectHost } from "../src/projects/host.js";
 import type { ProjectHost } from "../src/projects/host.js";
 
-export type TestServer = { url: string; close(): Promise<void> };
+export type TestServer = { url: string; token: string; close(): Promise<void> };
 
 /** The stamp every planted file carries, so a test asserts against a known value. */
 export const TIMESTAMP = "2026-01-01T00:00:00+03:00";
@@ -25,8 +26,12 @@ export const TIMESTAMP = "2026-01-01T00:00:00+03:00";
  * files never collide. It is closed when the test ends, whether or not the test
  * closes it itself.
  */
-export async function startTestServer(entries: RouteEntry[], options?: DaemonServerOptions): Promise<TestServer> {
-  const server = createDaemonServer(entries, options);
+export async function startTestServer(
+  entries: RouteEntry[],
+  options?: Omit<DaemonServerOptions, "token">,
+): Promise<TestServer> {
+  const token = randomBytes(32).toString("hex");
+  const server = createDaemonServer(entries, { ...options, token });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
 
@@ -43,7 +48,17 @@ export async function startTestServer(entries: RouteEntry[], options?: DaemonSer
   onTestFinished(close);
 
   const { port } = server.address() as AddressInfo;
-  return { url: `http://127.0.0.1:${port}`, close };
+  return { url: `http://127.0.0.1:${port}`, token, close };
+}
+
+/** The header that carries a daemon token. */
+export function bearer(token: string): { authorization: string } {
+  return { authorization: `Bearer ${token}` };
+}
+
+/** A read from a test server, carrying its token. */
+export async function get(server: TestServer, path: string): Promise<Response> {
+  return fetch(`${server.url}${path}`, { headers: bearer(server.token) });
 }
 
 /**
@@ -56,11 +71,11 @@ export async function serving(root: string, routesOf: (host: ProjectHost) => Rou
   return startTestServer(routesOf(host));
 }
 
-/** One request to a test server, with the media type every write route requires. */
+/** One request to a test server, with its token and the media type every write route requires. */
 export async function send(server: TestServer, method: string, path: string, body?: unknown): Promise<Response> {
   return fetch(`${server.url}${path}`, {
     method,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...bearer(server.token) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }

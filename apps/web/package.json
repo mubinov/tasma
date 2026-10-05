@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:home": "INIT_CWD=\"$PWD\" ../../scripts/dev-home.sh vite",
     "build": "vite build",
     "preview": "vite preview",
+    "preview:home": "INIT_CWD=\"$PWD\" ../../scripts/dev-home.sh vite preview",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --max-warnings 0 --fix",
     "test": "vitest run",

@@ -56,7 +56,14 @@ describe("the record of the running daemon", () => {
   it("reads back what a claim wrote", async () => {
     const root = await projectsRoot();
 
-    await claimRecord(root, { port: 8278, pid: 4242 }, gone);
+    await claimRecord(root, { port: 8278, pid: 4242, token: "ab12" }, gone);
+
+    expect(await readRecord(root)).toEqual({ port: 8278, pid: 4242, token: "ab12" });
+  });
+
+  it("reads a record with no token as the record of its port and process", async () => {
+    const root = await projectsRoot();
+    await writeFile(recordPath(root), '{"port": 8278, "pid": 4242}', "utf8");
 
     expect(await readRecord(root)).toEqual({ port: 8278, pid: 4242 });
   });

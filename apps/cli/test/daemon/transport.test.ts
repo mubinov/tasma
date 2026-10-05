@@ -27,9 +27,9 @@ describe("resolveTarget", () => {
   // cleared differently.
   it("names the channel that stated the address", () => {
     expect(resolveTarget("http://127.0.0.1:9000", {}))
-      .toEqual({ kind: "explicit", url: "http://127.0.0.1:9000", stated: "--daemon" });
+      .toEqual({ kind: "explicit", url: "http://127.0.0.1:9000", stated: "--daemon", home: homedir() });
     expect(resolveTarget(undefined, { TASMA_DAEMON_URL: "http://127.0.0.1:9001" }))
-      .toEqual({ kind: "explicit", url: "http://127.0.0.1:9001", stated: "TASMA_DAEMON_URL" });
+      .toEqual({ kind: "explicit", url: "http://127.0.0.1:9001", stated: "TASMA_DAEMON_URL", home: homedir() });
   });
 
   // With no address stated a command acts on the tree, and the home is where
@@ -38,6 +38,24 @@ describe("resolveTarget", () => {
     expect(resolveTarget(undefined, { HOME: "/tmp/home" })).toEqual({ kind: "tree", home: "/tmp/home" });
     expect(resolveTarget(undefined, {})).toEqual({ kind: "tree", home: homedir() });
     expect(resolveTarget(undefined, { HOME: "" })).toEqual({ kind: "tree", home: homedir() });
+  });
+
+  it("carries TASMA_DAEMON_TOKEN on either target, an empty value being none", () => {
+    expect(resolveTarget(undefined, { HOME: "/tmp/home", TASMA_DAEMON_TOKEN: "ab12" }))
+      .toEqual({ kind: "tree", home: "/tmp/home", token: "ab12" });
+    expect(resolveTarget("http://127.0.0.1:9000", { HOME: "/tmp/home", TASMA_DAEMON_TOKEN: "ab12" }))
+      .toEqual({ kind: "explicit", url: "http://127.0.0.1:9000", stated: "--daemon", home: "/tmp/home", token: "ab12" });
+    expect(resolveTarget(undefined, { HOME: "/tmp/home", TASMA_DAEMON_TOKEN: "" }))
+      .toEqual({ kind: "tree", home: "/tmp/home" });
+  });
+
+  it("refuses a TASMA_DAEMON_TOKEN that no header can carry, without quoting it", () => {
+    for (const token of ["ab 12", "ab\r\nx: y", "abÿ"]) {
+      expect(() => resolveTarget(undefined, { HOME: "/tmp/home", TASMA_DAEMON_TOKEN: token }))
+        .toThrow(/^TASMA_DAEMON_TOKEN holds a character a header cannot carry$/);
+      expect(() => resolveTarget("http://127.0.0.1:9000", { HOME: "/tmp/home", TASMA_DAEMON_TOKEN: token }))
+        .toThrow(/^TASMA_DAEMON_TOKEN holds a character a header cannot carry$/);
+    }
   });
 
   // Without this, `${base}${path}` produces //health.
@@ -154,7 +172,7 @@ describe("resolveTarget", () => {
   });
 });
 
-type Seen = { method?: string; url?: string; contentType?: string; body: string };
+type Seen = { method?: string; url?: string; contentType?: string; authorization?: string; body: string };
 
 async function collect(request: IncomingMessage): Promise<Seen> {
   const chunks: Buffer[] = [];
@@ -163,6 +181,7 @@ async function collect(request: IncomingMessage): Promise<Seen> {
     method: request.method,
     url: request.url,
     contentType: request.headers["content-type"],
+    authorization: request.headers.authorization,
     body: Buffer.concat(chunks).toString(),
   };
 }
@@ -193,6 +212,29 @@ describe("createFetchTransport", () => {
       contentType: "application/json",
       body: JSON.stringify({ title: "t" }),
     });
+  });
+
+  it("sends the token on every call but the liveness read, and none where it has none", async () => {
+    const seen: Seen[] = [];
+    const server = await startServer((request, response) => {
+      void collect(request).then((entry) => {
+        seen.push(entry);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ ok: true, data: null, diagnostics: [] }));
+      });
+    });
+
+    try {
+      const transport = createFetchTransport(server.url, { token: "ab12" });
+      await transport({ method: "GET", path: "/health" });
+      await transport({ method: "GET", path: "/workflows" });
+      await transport({ method: "POST", path: "/projects/x/tasks", body: { title: "t" } });
+      await createFetchTransport(server.url)({ method: "GET", path: "/workflows" });
+    } finally {
+      await server.close();
+    }
+
+    expect(seen.map((entry) => entry.authorization)).toEqual([undefined, "Bearer ab12", "Bearer ab12", undefined]);
   });
 
   it("returns a refusal's status and envelope rather than throwing", async () => {
@@ -230,7 +272,7 @@ describe("createFetchTransport", () => {
     const server = await startServer(() => {});
 
     try {
-      await expect(createFetchTransport(server.url, 50)({ method: "GET", path: "/health" }))
+      await expect(createFetchTransport(server.url, { timeoutMs: 50 })({ method: "GET", path: "/health" }))
         .rejects.toMatchObject({ timeoutMs: 50 });
     } finally {
       await server.close();
@@ -246,7 +288,7 @@ describe("createFetchTransport", () => {
     });
 
     try {
-      await expect(createFetchTransport(server.url, 50)({ method: "GET", path: "/health" }))
+      await expect(createFetchTransport(server.url, { timeoutMs: 50 })({ method: "GET", path: "/health" }))
         .rejects.toBeInstanceOf(RequestTimeoutError);
     } finally {
       await server.close();

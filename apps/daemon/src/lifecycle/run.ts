@@ -6,6 +6,7 @@
 // writes to no stream, and the wiring around it owns the arguments, the streams
 // and the exit code.
 
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -28,6 +29,8 @@ import { claimRecord, readRecord, recordPath, removeRecord } from "./record.js";
 
 /** How long a shutdown waits for requests already running before it closes their connections. */
 const DRAIN_MS = 5000;
+
+const TOKEN_BYTES = 32;
 
 /** The signals a shutdown answers. A closed terminal sends `SIGHUP`, whose default ends the process outright. */
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
@@ -138,14 +141,20 @@ export async function startDaemon(options: {
     return { started: false, code: 0, message: `a daemon is already serving this tree at ${daemonUrl(record.port)}` };
   }
 
+  // New at each start: a listener that took a free port and was sent the token
+  // of a run holds nothing once the next run starts.
+  const token = randomBytes(TOKEN_BYTES).toString("hex");
   const host = createProjectHost({ root });
   const writes = new WriteQueue();
-  const server = createDaemonServer([
-    ...projectRoutes(host, writes),
-    ...taskRoutes(host),
-    ...workflowRoutes({ root, writes }),
-    ...configRoutes({ root, writes }),
-  ]);
+  const server = createDaemonServer(
+    [
+      ...projectRoutes(host, writes),
+      ...taskRoutes(host),
+      ...workflowRoutes({ root, writes }),
+      ...configRoutes({ root, writes }),
+    ],
+    { token },
+  );
 
   async function closeServing(): Promise<void> {
     await drain(server, drainMs);
@@ -164,7 +173,7 @@ export async function startDaemon(options: {
 
   // The port the server reports rather than the one that was asked for, so a
   // start on port zero records the number the operating system chose.
-  const mine: DaemonRecord = { port: (server.address() as AddressInfo).port, pid };
+  const mine: DaemonRecord = { port: (server.address() as AddressInfo).port, pid, token };
 
   // A record naming the port this process holds describes no other daemon: the
   // probe would be answered by this process itself, and a record an ungraceful

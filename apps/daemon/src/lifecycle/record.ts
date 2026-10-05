@@ -10,9 +10,8 @@ import { randomUUID } from "node:crypto";
 import { constants, link, lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expandRoot } from "@tasma/engine";
-import { DAEMON_RECORD_FILE } from "@tasma/protocol";
+import { DAEMON_RECORD_FILE, parseDaemonRecord } from "@tasma/protocol";
 import type { DaemonRecord } from "@tasma/protocol";
-import { isPortNumber } from "./port.js";
 
 /** The modes the engine gives everything in the tree: the account that owns it, alone. */
 const DIRECTORY_MODE = 0o700;
@@ -31,11 +30,6 @@ const RECORD_LIMIT = 4096;
  * record, so only a name being retaken as fast as it is cleared runs out.
  */
 const CLAIM_ROUNDS = 3;
-
-/** A process a signal can be sent to. Zero names the caller's own group and a negative value names another. */
-function isProcessId(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-}
 
 export function recordPath(root?: string): string {
   return join(expandRoot(root), DAEMON_RECORD_FILE);
@@ -89,30 +83,12 @@ async function readText(path: string): Promise<string> {
 }
 
 /**
- * What the text states, or `undefined` for every way it states nothing: not
- * JSON, not an object, or holding a field that is not the number it has to be.
- *
- * None of those is a fault. The file is a hint about where to look, and the
- * claim is what decides which daemon serves the tree.
+ * What the record states, or `undefined` where it states nothing. That is not a
+ * fault: the file is a hint about where to look, and the claim is what decides
+ * which daemon serves the tree.
  */
-function recordOf(text: string): DaemonRecord | undefined {
-  let value: unknown;
-
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-
-  if (typeof value !== "object" || value === null) return undefined;
-
-  const { port, pid } = value as { port?: unknown; pid?: unknown };
-
-  return isPortNumber(port) && isProcessId(pid) ? { port, pid } : undefined;
-}
-
 export async function readRecord(root?: string): Promise<DaemonRecord | undefined> {
-  return recordOf(await readText(recordPath(root)));
+  return parseDaemonRecord(await readText(recordPath(root)));
 }
 
 /**
@@ -244,7 +220,7 @@ export async function claimRecord(
       if (await linkOnto(staged, path)) return undefined;
 
       const text = await readText(path);
-      const held = recordOf(text);
+      const held = parseDaemonRecord(text);
 
       if (held !== undefined && (await serving(held.port))) return held;
 
@@ -274,5 +250,5 @@ export async function removeRecord(root: string | undefined, pid: number): Promi
   // decides ownership; this decides nothing.
   if ((await readRecord(root))?.pid !== pid) return;
 
-  await takeAway(path, scratch(dirname(path), "taken"), (text) => recordOf(text)?.pid === pid);
+  await takeAway(path, scratch(dirname(path), "taken"), (text) => parseDaemonRecord(text)?.pid === pid);
 }

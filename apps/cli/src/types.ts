@@ -14,11 +14,14 @@ export type Io = { stdin: Source; stdout: Sink; stderr: Sink };
  * `stated` names the channel the address arrived through, so a verb that refuses
  * an address can say which one to remove. A tree target carries its home rather
  * than a path, because a verb reads the record and signals the process behind
- * it, and both are derived from the home.
+ * it, and both are derived from the home. An explicit target carries the home
+ * too, for the token the record under it holds.
+ *
+ * `token` is the value of `TASMA_DAEMON_TOKEN`, which wins over the record.
  */
 export type Target
-  = | { kind: "explicit"; url: string; stated: "--daemon" | "TASMA_DAEMON_URL" }
-    | { kind: "tree"; home: string };
+  = | { kind: "explicit"; url: string; stated: "--daemon" | "TASMA_DAEMON_URL"; home: string; token?: string }
+    | { kind: "tree"; home: string; token?: string };
 
 /** What a verb's parser is given, and what its usage block is read against. */
 export type Options = Record<string, { type: "string" | "boolean"; short?: string; multiple?: boolean }>;

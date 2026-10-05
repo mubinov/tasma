@@ -5,10 +5,11 @@
 // hooks, the signal handlers and the shutdown belong to whoever owns the port,
 // not here.
 
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
-import type { IncomingMessage, Server, ServerResponse } from "node:http";
-import { routes } from "@tasma/protocol";
-import type { Failure, Method } from "@tasma/protocol";
+import type { IncomingMessage, OutgoingHttpHeaders, Server, ServerResponse } from "node:http";
+import { OPEN_ROUTES, routes } from "@tasma/protocol";
+import type { Failure } from "@tasma/protocol";
 import { statusOf, toFailure } from "./failure.js";
 import { readHealth } from "./health.js";
 import { readBody, writeEnvelope } from "./json.js";
@@ -29,6 +30,8 @@ const SERVED_SITES = new Set<unknown>([undefined, "none", "same-origin"]);
 const DISCARD_LIMIT_MS = 5000;
 
 export type DaemonServerOptions = {
+  /** The token every request except `GET /health` must carry as `Authorization: Bearer`. */
+  token: string;
   /**
    * How long the rest of a refused body may keep arriving, in milliseconds. It
    * is an option so that a test can see a client that does not stop cut off,
@@ -42,9 +45,10 @@ export type DaemonServerOptions = {
  * them: every daemon answers `GET /health` whatever it was constructed with, so
  * no caller can forget it or replace it.
  */
-export function createDaemonServer(entries: RouteEntry[], options: DaemonServerOptions = {}): Server {
+export function createDaemonServer(entries: RouteEntry[], options: DaemonServerOptions): Server {
   const served: RouteEntry[] = [{ route: routes.health, handler: readHealth }, ...entries];
   const discardLimitMs = options.discardLimitMs ?? DISCARD_LIMIT_MS;
+  const expected = digestOf(options.token);
 
   /**
    * One request, start to finish, inside a single try/catch: nothing that can
@@ -66,9 +70,23 @@ export function createDaemonServer(entries: RouteEntry[], options: DaemonServerO
         return;
       }
 
-      const found = match(request.method ?? "", request.url ?? "/", served);
+      const method = request.method ?? "";
+      const target = request.url ?? "/";
+
+      const found = match(method, target, served);
+      const open = found.ok && OPEN_ROUTES.includes(found.entry.route);
+
+      // Before a refusal of the match, so a caller without the token learns
+      // nothing of which routes exist from a 404 or a 405.
+      if (!open && !carries(request.headers.authorization, expected)) {
+        const message = "a request must carry the daemon token";
+        refuse(request, response, { kind: "daemon", code: "unauthorized", message }, { "www-authenticate": "Bearer" });
+        return;
+      }
+
       if (!found.ok) {
-        refuse(request, response, { kind: "daemon", code: found.code, message: found.message }, found.allow);
+        const headers = found.allow === undefined ? {} : { allow: found.allow.join(", ") };
+        refuse(request, response, { kind: "daemon", code: found.code, message: found.message }, headers);
         return;
       }
 
@@ -81,7 +99,12 @@ export function createDaemonServer(entries: RouteEntry[], options: DaemonServerO
   }
 
   /** A refusal on the wire, where there is still a reply to be made. */
-  function refuse(request: IncomingMessage, response: ServerResponse, error: Failure, allow?: Method[]): void {
+  function refuse(
+    request: IncomingMessage,
+    response: ServerResponse,
+    error: Failure,
+    headers?: OutgoingHttpHeaders,
+  ): void {
     // Two states leave nothing to answer: the client disconnected while its body
     // was being read, and a reply that failed part way out. Writing again would
     // send a second head or write to a dead socket, and either would throw inside
@@ -94,7 +117,7 @@ export function createDaemonServer(entries: RouteEntry[], options: DaemonServerO
     // A body never read is left to Node, which discards it once the reply is out.
     if (request.readableDidRead && !request.complete) discardRest(request, discardLimitMs);
 
-    writeEnvelope(response, statusOf(error), { ok: false, error }, allow);
+    writeEnvelope(response, statusOf(error), { ok: false, error }, headers);
   }
 
   return createServer((request, response) => {
@@ -136,6 +159,25 @@ function servesHost(host: string | undefined): boolean {
  */
 function servesSite(site: string | string[] | undefined): boolean {
   return SERVED_SITES.has(site);
+}
+
+function digestOf(value: string): Buffer {
+  return createHash("sha256").update(value, "utf8").digest();
+}
+
+/**
+ * Whether the header carries the token of this run.
+ *
+ * The two digests are compared rather than the two strings, so the compare
+ * takes one time whatever the length of the sent value and wherever it first
+ * differs.
+ */
+function carries(header: string | undefined, expected: Buffer): boolean {
+  const value = (header ?? "").trim();
+  const space = value.indexOf(" ");
+  if (space < 0 || value.slice(0, space).toLowerCase() !== "bearer") return false;
+
+  return timingSafeEqual(digestOf(value.slice(space + 1).trim()), expected);
 }
 
 /**

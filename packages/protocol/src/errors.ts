@@ -76,7 +76,8 @@ export type DaemonErrorCode
     | "route-not-found"
     | "method-not-allowed"
     | "unsupported-media-type"
-    | "request-too-large";
+    | "request-too-large"
+    | "unauthorized";
 
 /**
  * Why a call was refused. Each arm carries only the fields its engine class has:

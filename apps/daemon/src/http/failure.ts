@@ -160,6 +160,7 @@ const DAEMON_STATUS = {
   "method-not-allowed": 405,
   "unsupported-media-type": 415,
   "request-too-large": 413,
+  "unauthorized": 401,
 } satisfies Record<DaemonErrorCode, number>;
 
 /** The status a refusal is sent with. Every success answers 200. */

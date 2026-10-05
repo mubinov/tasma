@@ -1,12 +1,20 @@
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 // The address module rather than the package index: this config is loaded by
 // Node, which resolves an import path literally, and the index re-exports its
 // modules by the `.js` names TypeScript writes.
-import { DEFAULT_DAEMON_URL } from "@tasma/protocol/address";
+import {
+  DAEMON_RECORD_FILE,
+  DEFAULT_DAEMON_URL,
+  isTokenText,
+  parseDaemonRecord,
+  recordTokenFor,
+  TREE_DIRNAME,
+} from "@tasma/protocol/address";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
-import { defineConfig, type HtmlTagDescriptor, type Plugin } from "vite";
+import { defineConfig, type HtmlTagDescriptor, type Plugin, type ProxyOptions } from "vite";
 // With the extension, which Vite's native config loader requires. The import
 // never goes the other way: pulling this config into renderer code would pull
 // Node into the bundle with it.
@@ -172,17 +180,92 @@ export function isLoopbackAddress(address: string | undefined): boolean {
   return bare === "::1" || LOOPBACK_IPV4.test(bare);
 }
 
+/** How much of the record is read. A record is a few dozen bytes. */
+const RECORD_LIMIT = 4096;
+
+/**
+ * The text of the record, or nothing where the name holds no regular file within
+ * the limit. `O_NOFOLLOW` refuses a link out of the tree and `O_NONBLOCK` a pipe
+ * that would hold the request open.
+ */
+function readRecordText(path: string): string | undefined {
+  let fd: number | undefined;
+
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    if (!fstatSync(fd).isFile()) return undefined;
+
+    const buffer = Buffer.alloc(RECORD_LIMIT + 1);
+    let filled = 0;
+    let read: number;
+
+    do {
+      read = readSync(fd, buffer, filled, buffer.length - filled, filled);
+      filled += read;
+    } while (read > 0 && filled < buffer.length);
+
+    return filled > RECORD_LIMIT ? undefined : buffer.toString("utf8", 0, filled);
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/**
+ * The token the proxy sends to `target`: `TASMA_DAEMON_TOKEN`, else the token of
+ * the record under `HOME` where that record names `target` itself, so a
+ * listener on another port never receives the token of a live daemon. A
+ * `TASMA_DAEMON_TOKEN` that no header can carry gives no token, because
+ * `setHeader` throws on it and each proxied request fails.
+ *
+ * A target other than `http:` on a loopback name gets no token at all, because
+ * the header would cross the network in cleartext.
+ *
+ * Exported so a test can drive it with a tree of its own.
+ */
+export function daemonToken(env: NodeJS.ProcessEnv, target: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(target);
+  } catch {
+    return undefined;
+  }
+
+  if (url.protocol !== "http:" || !PROXIED_HOSTS.has(url.hostname)) return undefined;
+
+  const stated = env.TASMA_DAEMON_TOKEN;
+  if (stated !== undefined && stated !== "") return isTokenText(stated) ? stated : undefined;
+
+  if (env.HOME === undefined || env.HOME === "") return undefined;
+
+  const text = readRecordText(join(env.HOME, TREE_DIRNAME, DAEMON_RECORD_FILE));
+  if (text === undefined) return undefined;
+
+  return recordTokenFor(parseDaemonRecord(text), url.origin);
+}
+
 /*
  * Every daemon call is same-origin and this proxy is what carries it: the daemon
  * sends no CORS headers, so a direct cross-origin call from the browser has no
  * answer to read. The CSP needs no daemon origin for the same reason —
  * connect-src stays 'self'.
  *
+ * The proxy adds the daemon token, so while the server runs each loopback
+ * caller of its port gets the access of the token.
+ *
  * One object serves dev and preview, so the two cannot drift apart.
  */
 const daemonProxy = {
   [DAEMON_PATH_PREFIX]: {
     target: DAEMON_URL,
+    // The record is read on each request, so a daemon restart needs no restart of the server.
+    configure: (proxy: Parameters<NonNullable<ProxyOptions["configure"]>>[0]) => {
+      proxy.on("proxyReq", (proxyRequest) => {
+        const token = daemonToken(process.env, DAEMON_URL);
+        if (token !== undefined) proxyRequest.setHeader("authorization", `Bearer ${token}`);
+      });
+    },
     // A request to exactly /daemon leaves an empty path, which is not a path.
     rewrite: (path: string) => path.slice(DAEMON_PATH_PREFIX.length) || "/",
     // The daemon serves its own loopback names alone and reads the forwarded

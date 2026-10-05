@@ -232,6 +232,20 @@ describe("the development runner", () => {
     }
   });
 
+  // The proxy of the web server reads the daemon token from
+  // $HOME/.tasma/daemon.json. The wrapper stands in the web package's own
+  // script, so pnpm keeps the real HOME, and the script names its own directory
+  // as the one to run in.
+  it("runs the web server under the development home", () => {
+    const root = readManifest(".").scripts ?? {};
+    const web = readManifest("apps/web").scripts ?? {};
+
+    expect(root.dev).toBe("pnpm --filter @tasma/web dev:home");
+    expect(root.preview).toBe("pnpm --filter @tasma/web preview:home");
+    expect(web["dev:home"]).toBe(`INIT_CWD="$PWD" ../../${WRAPPER} vite`);
+    expect(web["preview:home"]).toBe(`INIT_CWD="$PWD" ../../${WRAPPER} vite preview`);
+  });
+
   // pnpm exports the directory it was invoked from, which is where the CLI has
   // to run: the acting project is resolved from the working directory, and a
   // root script otherwise pins every invocation to the repository.

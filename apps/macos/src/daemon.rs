@@ -1,19 +1,19 @@
 //! The forward to the daemon.
 //!
-//! The shell reads a port and writes nothing. Every write goes to the daemon,
-//! and the tree written is the one the daemon's own `HOME` resolved.
+//! The shell reads a port and a token and writes nothing. Every write goes to
+//! the daemon, and the tree written is the one the daemon's own `HOME` resolved.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
 use semver::Version;
 use tauri::http::header::{
-    ALLOW, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HeaderName, X_CONTENT_TYPE_OPTIONS,
+    ALLOW, AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HeaderName,
+    X_CONTENT_TYPE_OPTIONS,
 };
 use tauri::http::{HeaderValue, Method, Request, Response, StatusCode};
 
-use crate::record::{DEFAULT_PORT, daemon_url, read_port, record_path};
+use crate::record::{Address, DEFAULT_PORT, daemon_url, read_address, record_path};
 use crate::supervisor::Supervisor;
 
 /// How long a forward waits. The daemon is a local process and answers at once;
@@ -62,16 +62,23 @@ struct Forward {
     url: String,
     method: Method,
     media_type: Option<HeaderValue>,
+    authorization: Option<HeaderValue>,
     body: Vec<u8>,
 }
 
 /// The outgoing request for one incoming one: the method, the path, the media
-/// type and the body, and nothing else the incoming request carried.
-fn forward_of(port: u16, target: &str, request: &Request<Vec<u8>>) -> Forward {
+/// type and the body, and nothing else the incoming request carried, with the
+/// token of the record that named the port. A token no header can carry is
+/// left off, and the daemon refuses the request.
+fn forward_of(address: &Address, target: &str, request: &Request<Vec<u8>>) -> Forward {
     Forward {
-        url: format!("{}{target}", daemon_url(port)),
+        url: format!("{}{target}", daemon_url(address.port)),
         method: request.method().clone(),
         media_type: request.headers().get(CONTENT_TYPE).cloned(),
+        authorization: address
+            .token
+            .as_ref()
+            .and_then(|token| HeaderValue::from_str(&format!("Bearer {token}")).ok()),
         body: request.body().clone(),
     }
 }
@@ -112,7 +119,6 @@ fn fault_of(error: &reqwest::Error) -> String {
 /// The daemon this window reads and writes through.
 pub struct Daemon {
     record: Option<PathBuf>,
-    port: AtomicU16,
     client: reqwest::Client,
     reply_limit: usize,
     supervisor: Supervisor,
@@ -142,11 +148,8 @@ impl Daemon {
         timeout: Duration,
         reply_limit: usize,
     ) -> Self {
-        let port = record.as_deref().map_or(DEFAULT_PORT, read_port);
-
         Self {
             record,
-            port: AtomicU16::new(port),
             reply_limit,
             supervisor,
             client: reqwest::Client::builder()
@@ -175,27 +178,26 @@ impl Daemon {
         Self::with_supervisor(record, Supervisor::inert(), timeout, reply_limit)
     }
 
-    /// The port last read from the record.
-    fn port(&self) -> u16 {
-        self.port.load(Ordering::Relaxed)
-    }
-
-    /// Reads the record again and keeps what it states. A daemon restarted on
+    /// The port and the token of one read of the record, or the default port
+    /// and no token where there is no record. One read, so the token of a run
+    /// only ever goes to the port of the same run, and a daemon restarted on
     /// another port is picked up without restarting the app.
-    fn reread(&self) -> u16 {
-        let port = self.record.as_deref().map_or(DEFAULT_PORT, read_port);
-        self.port.store(port, Ordering::Relaxed);
-        port
+    fn address(&self) -> Address {
+        self.record
+            .as_deref()
+            .and_then(read_address)
+            .unwrap_or(Address {
+                port: DEFAULT_PORT,
+                token: None,
+            })
     }
 
-    /// Makes sure a daemon is serving this tree, and keeps the port one answers
-    /// on. Called once at startup, so the daemon is warm before the board's
+    /// Makes sure a daemon is serving this tree, and answers whether one is.
+    /// It gives no port: a send takes the port and the token from one record
+    /// read. Called once at startup, so the daemon is warm before the board's
     /// first request, and again by a forward that could not connect.
-    pub async fn ensure_serving(&self) -> Option<u16> {
-        let port = self.supervisor.ensure_serving().await?;
-        self.port.store(port, Ordering::Relaxed);
-
-        Some(port)
+    pub async fn ensure_serving(&self) -> bool {
+        self.supervisor.ensure_serving().await.is_some()
     }
 
     /// Stops supervising. From then on no daemon is started for this window.
@@ -212,19 +214,19 @@ impl Daemon {
     /// its bytes, untouched. The daemon's body is authoritative and its status
     /// advisory, so neither is read here.
     pub async fn forward(&self, target: &str, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
-        let mut port = self.port();
+        let mut address = self.address();
         // Only a failure to connect is retried: it is the one fault that proves
         // the request never reached the daemon, so replaying a write cannot
         // carry it out twice.
-        let mut error = match self.send(port, target, request).await {
+        let mut error = match self.send(&address, target, request).await {
             Ok(reply) => return reply,
             Err(error) => error,
         };
 
         // The record first, which names a daemon restarted on another port.
         if error.is_connect() {
-            port = self.reread();
-            error = match self.send(port, target, request).await {
+            address = self.address();
+            error = match self.send(&address, target, request).await {
                 Ok(reply) => return reply,
                 Err(error) => error,
             };
@@ -233,30 +235,32 @@ impl Daemon {
         // Then the supervisor, which starts one where none is serving at all,
         // so a cold start recovers the request in flight rather than showing
         // the failure screen and waiting for Retry.
-        if error.is_connect()
-            && let Some(serving) = self.ensure_serving().await
-        {
-            port = serving;
-            error = match self.send(port, target, request).await {
+        if error.is_connect() && self.ensure_serving().await {
+            address = self.address();
+            error = match self.send(&address, target, request).await {
                 Ok(reply) => return reply,
                 Err(error) => error,
             };
         }
 
-        bad_gateway(port, &fault_of(&error))
+        bad_gateway(address.port, &fault_of(&error))
     }
 
     async fn send(
         &self,
-        port: u16,
+        address: &Address,
         target: &str,
         request: &Request<Vec<u8>>,
     ) -> reqwest::Result<Response<Vec<u8>>> {
-        let forward = forward_of(port, target, request);
+        let port = address.port;
+        let forward = forward_of(address, target, request);
         let mut outgoing = self.client.request(forward.method, forward.url);
 
         if let Some(media_type) = forward.media_type {
             outgoing = outgoing.header(CONTENT_TYPE, media_type);
+        }
+        if let Some(authorization) = forward.authorization {
+            outgoing = outgoing.header(AUTHORIZATION, authorization);
         }
 
         let mut reply = outgoing.body(forward.body).send().await?;
@@ -316,11 +320,11 @@ mod tests {
 
     use super::fixtures::*;
     use super::*;
-    use crate::record::fixtures::{record_naming, write_record};
+    use crate::record::fixtures::{record_naming, write_record, write_record_with_token};
     use crate::supervisor::fixtures::{
         a_daemon_serving_nothing_else, answering, health, supervising_a_stub,
     };
-    use crate::testing::dead_port;
+    use crate::testing::{dead_port, temp_file};
 
     #[test]
     fn a_forward_carries_the_method_the_path_the_media_type_and_the_body() {
@@ -337,11 +341,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            forward_of(9001, "/projects/AAA/tasks", &request),
+            forward_of(
+                &Address {
+                    port: 9001,
+                    token: None
+                },
+                "/projects/AAA/tasks",
+                &request
+            ),
             Forward {
                 url: "http://127.0.0.1:9001/projects/AAA/tasks".to_string(),
                 method: Method::POST,
                 media_type: Some(HeaderValue::from_static("application/json")),
+                authorization: None,
                 body: br#"{"title":"one"}"#.to_vec(),
             },
         );
@@ -356,11 +368,56 @@ mod tests {
             .body(Vec::new())
             .unwrap();
 
-        let forward = forward_of(DEFAULT_PORT, "/projects", &request);
+        let forward = forward_of(
+            &Address {
+                port: DEFAULT_PORT,
+                token: None,
+            },
+            "/projects",
+            &request,
+        );
 
         assert_eq!(forward.media_type, None);
+        assert_eq!(forward.authorization, None);
         assert_eq!(forward.url, "http://127.0.0.1:8278/projects");
         assert!(forward.body.is_empty());
+    }
+
+    #[test]
+    fn a_forward_carries_the_token_of_the_record_that_named_its_port() {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("tasma-app://localhost/daemon/projects")
+            .header("authorization", "Bearer from-the-page")
+            .body(Vec::new())
+            .unwrap();
+        let address = Address {
+            port: 9001,
+            token: Some("ab12".to_string()),
+        };
+
+        assert_eq!(
+            forward_of(&address, "/projects", &request).authorization,
+            Some(HeaderValue::from_static("Bearer ab12")),
+        );
+    }
+
+    #[test]
+    fn a_token_no_header_can_carry_is_left_off() {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("tasma-app://localhost/daemon/projects")
+            .body(Vec::new())
+            .unwrap();
+        let address = Address {
+            port: 9001,
+            token: Some("a\nb".to_string()),
+        };
+
+        assert_eq!(
+            forward_of(&address, "/projects", &request).authorization,
+            None
+        );
     }
 
     #[test]
@@ -577,7 +634,7 @@ mod tests {
         let gone = dead_port();
         let record = record_naming("another-port", gone);
         let daemon = Daemon::at(Some(record.clone()));
-        assert_eq!(daemon.port(), gone);
+        assert_eq!(daemon.address().port, gone);
 
         let (port, seen) = listen("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}");
         write_record(&record, port);
@@ -590,7 +647,7 @@ mod tests {
                 .unwrap()
                 .starts_with("POST /health ")
         );
-        assert_eq!(daemon.port(), port);
+        assert_eq!(daemon.address().port, port);
     }
 
     #[test]
@@ -602,7 +659,7 @@ mod tests {
         let answer = tauri::async_runtime::block_on(daemon.forward("/health", &write("/health")));
 
         assert_eq!(answer.status(), StatusCode::OK);
-        assert_eq!(daemon.port(), port);
+        assert_eq!(daemon.address().port, port);
     }
 
     #[test]
@@ -641,11 +698,58 @@ mod tests {
     }
 
     #[test]
+    fn a_write_carries_the_token_of_the_record_it_read_its_port_from() {
+        let (port, seen) = listen("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}");
+        let record = temp_file("daemon-a-token.json");
+        write_record_with_token(&record, port, "ab12");
+        let daemon = Daemon::at(Some(record));
+
+        tauri::async_runtime::block_on(daemon.forward("/projects", &write("/projects")));
+        let request = seen
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .to_lowercase();
+
+        assert!(request.contains("authorization: bearer ab12"), "{request}");
+    }
+
+    #[test]
+    fn a_record_without_a_token_sends_none() {
+        let (port, seen) = listen("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}");
+        let daemon = Daemon::at(Some(record_naming("no-token", port)));
+
+        tauri::async_runtime::block_on(daemon.forward("/projects", &write("/projects")));
+        let request = seen
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .to_lowercase();
+
+        assert!(!request.contains("authorization:"), "{request}");
+    }
+
+    #[test]
+    fn a_daemon_restarted_on_another_port_gets_the_token_of_its_own_run() {
+        let record = temp_file("daemon-a-restart-with-a-token.json");
+        write_record_with_token(&record, dead_port(), "old");
+        let daemon = Daemon::at(Some(record.clone()));
+
+        let (port, seen) = listen("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}");
+        write_record_with_token(&record, port, "new");
+
+        tauri::async_runtime::block_on(daemon.forward("/projects", &write("/projects")));
+        let request = seen
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .to_lowercase();
+
+        assert!(request.contains("authorization: bearer new"), "{request}");
+    }
+
+    #[test]
     fn a_home_the_environment_names_none_of_leaves_the_default_port() {
         let daemon = Daemon::at(None);
 
-        assert_eq!(daemon.port(), DEFAULT_PORT);
-        assert_eq!(daemon.reread(), DEFAULT_PORT);
+        assert_eq!(daemon.address().port, DEFAULT_PORT);
     }
 
     #[test]
@@ -678,7 +782,8 @@ mod tests {
     fn a_failed_forward_names_the_fault_it_ended_in() {
         let call = write("/projects");
         let fault = |daemon: &Daemon, port| {
-            let sent = daemon.send(port, "/projects", &call);
+            let address = Address { port, token: None };
+            let sent = daemon.send(&address, "/projects", &call);
             fault_of(&tauri::async_runtime::block_on(sent).unwrap_err())
         };
 

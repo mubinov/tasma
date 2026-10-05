@@ -6,16 +6,11 @@
 
 import { constants, open } from "node:fs/promises";
 import { join } from "node:path";
-import { createClient, DAEMON_NAME, DAEMON_RECORD_FILE, DEFAULT_DAEMON_HOST, TransportError } from "@tasma/protocol";
+import {
+  createClient, DAEMON_NAME, DAEMON_RECORD_FILE, parseDaemonRecord, TransportError, TREE_DIRNAME,
+} from "@tasma/protocol";
 import type { DaemonRecord, Transport } from "@tasma/protocol";
 import { ranOutOfTime, replyText } from "./transport.js";
-
-/**
- * The directory the tree stands in, under the home. It repeats the engine's own
- * default because neither package can take the name from the other: the engine
- * does not depend on the protocol, and the CLI may not depend on the engine.
- */
-export const TREE_DIRNAME = ".tasma";
 
 /**
  * How much of the name is read. A record is a few dozen bytes, and a process
@@ -38,32 +33,14 @@ export const PROBE_TIMEOUT_MS = 1000;
  */
 export const PROBE_BODY_LIMIT = 64 * 1024;
 
-const HIGHEST_PORT = 65535;
-
-/**
- * The highest process id a signal can name. `process.kill` takes an `int32` and
- * refuses anything above it by type, and the record is a file any process that
- * can write the tree root may hold, so a larger value names nothing to signal.
- */
-const HIGHEST_PROCESS_ID = 2_147_483_647;
-
-/** The rule the daemon writes a port under, so a value outside it names no daemon to reach. */
-function isPortNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= HIGHEST_PORT;
-}
-
-/** A process a signal can be sent to. Zero names the caller's own group and a negative value names another. */
-function isProcessId(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= HIGHEST_PROCESS_ID;
-}
-
 export function recordPath(home: string): string {
   return join(home, TREE_DIRNAME, DAEMON_RECORD_FILE);
 }
 
 /**
- * The text under the name, or an empty string where the name holds no record to
- * read: absent, not a regular file, or longer than a record can be.
+ * The text under the name, `undefined` where nothing stands at the name, or an
+ * empty string where it holds no record to read: a link, not a regular file, or
+ * longer than a record can be.
  *
  * `O_NOFOLLOW`, because a symbolic link there points outside the tree, and
  * `O_NONBLOCK`, because the open of a pipe would otherwise wait for a writer — a
@@ -75,7 +52,7 @@ export function recordPath(home: string): string {
  * it: a file grows between the two calls, and a measure the read does not use is
  * no ceiling at all.
  */
-async function readText(path: string): Promise<string> {
+async function readText(path: string): Promise<string | undefined> {
   let handle;
 
   try {
@@ -95,43 +72,33 @@ async function readText(path: string): Promise<string> {
     } while (read > 0 && filled < buffer.length);
 
     return filled > RECORD_LIMIT ? "" : buffer.toString("utf8", 0, filled);
-  } catch {
-    return "";
+  } catch (error) {
+    const { code } = error as NodeJS.ErrnoException;
+
+    return code === "ENOENT" || code === "ENOTDIR" ? undefined : "";
   } finally {
     await handle?.close();
   }
 }
 
+/** What stands at the name of the record: a record, nothing, or a file that states no record. */
+export type RecordRead = DaemonRecord | "absent" | "unreadable";
+
+export async function inspectRecord(path: string): Promise<RecordRead> {
+  const text = await readText(path);
+
+  return text === undefined ? "absent" : parseDaemonRecord(text) ?? "unreadable";
+}
+
 /**
- * What the text states, or `undefined` for every way it states nothing: not
- * JSON, not an object, or holding a field that is not the number it has to be.
- *
- * None of those is a fault. The record is a hint about where to look, and a
- * command that reaches no daemon at the address it names says so.
+ * What the record states, or `undefined` where it states nothing. That is not a
+ * fault: the record is a hint about where to look, and a command that reaches
+ * no daemon at the address it names says so.
  */
-function recordOf(text: string): DaemonRecord | undefined {
-  let value: unknown;
-
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-
-  if (typeof value !== "object" || value === null) return undefined;
-
-  const { port, pid } = value as { port?: unknown; pid?: unknown };
-
-  return isPortNumber(port) && isProcessId(pid) ? { port, pid } : undefined;
-}
-
 export async function readRecord(path: string): Promise<DaemonRecord | undefined> {
-  return recordOf(await readText(path));
-}
+  const read = await inspectRecord(path);
 
-/** The address a daemon on this machine listens at, from the host every bind uses. */
-export function daemonUrl(port: number): string {
-  return `http://${DEFAULT_DAEMON_HOST}:${port}`;
+  return typeof read === "string" ? undefined : read;
 }
 
 /**

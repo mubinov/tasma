@@ -156,7 +156,7 @@ export function serveAnswers(table: Record<string, unknown>): Answers {
 
 /** The address the flag carried, as the target a command acts on. */
 export function at(url: string): Target {
-  return { kind: "explicit", url, stated: "--daemon" };
+  return { kind: "explicit", url, stated: "--daemon", home: treeHome() };
 }
 
 /** A success envelope, as a route answers one. */

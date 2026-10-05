@@ -9,6 +9,7 @@ import { CONFIG_KEY, WriteQueue } from "../../src/tasks/serialize.js";
 import { workflowRoutes } from "../../src/workflows/routes.js";
 import {
   failure,
+  get,
   plant,
   plantWorkflow,
   projectConfig,
@@ -39,7 +40,7 @@ describe("GET /workflows", () => {
     await plantWorkflow(root, "dev", stepsOnly("research"));
     const server = await serving(root);
 
-    const response = await fetch(`${server.url}/workflows`);
+    const response = await get(server, "/workflows");
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true, data: ["dev", "review"], diagnostics: [] });
@@ -48,7 +49,7 @@ describe("GET /workflows", () => {
   it("answers with the empty list, and says nothing, for a tree holding no workflows directory", async () => {
     const server = await serving(await projectsRoot());
 
-    await expect((await fetch(`${server.url}/workflows`)).json()).resolves.toEqual({
+    await expect((await get(server, "/workflows")).json()).resolves.toEqual({
       ok: true,
       data: [],
       diagnostics: [],
@@ -61,7 +62,7 @@ describe("GET /workflows", () => {
     await mkdir(workflowDir(root, "empty"), { recursive: true });
     const server = await serving(root);
 
-    const { data, diagnostics } = await success<string[]>(await fetch(`${server.url}/workflows`));
+    const { data, diagnostics } = await success<string[]>(await get(server, "/workflows"));
 
     expect(data).toEqual(["dev"]);
     expect(diagnostics).toEqual([
@@ -79,7 +80,7 @@ describe("GET /workflows", () => {
     await plant(userConfig(root), `workflows_path: ${JSON.stringify(path)}\n`);
     const server = await serving(root);
 
-    const { data, diagnostics } = await success<string[]>(await fetch(`${server.url}/workflows`));
+    const { data, diagnostics } = await success<string[]>(await get(server, "/workflows"));
 
     expect(data).toEqual([]);
     expect(diagnostics).toEqual([
@@ -93,7 +94,7 @@ describe("GET /workflows", () => {
     await plant(userConfig(root), "workflows_path: [\n");
     const server = await serving(root);
 
-    const { data, diagnostics } = await success<string[]>(await fetch(`${server.url}/workflows`));
+    const { data, diagnostics } = await success<string[]>(await get(server, "/workflows"));
 
     expect(data).toEqual(["dev"]);
     expect(diagnostics).toEqual([
@@ -107,7 +108,7 @@ describe("GET /workflows", () => {
     await plant(userConfig(root), "workflow_path: /elsewhere\n");
     const server = await serving(root);
 
-    const { data, diagnostics } = await success<string[]>(await fetch(`${server.url}/workflows`));
+    const { data, diagnostics } = await success<string[]>(await get(server, "/workflows"));
 
     expect(data).toEqual(["dev"]);
     expect(diagnostics).toEqual([
@@ -122,7 +123,7 @@ describe("GET /workflows", () => {
   it("refuses a query key, since the route declares none", async () => {
     const server = await serving(await projectsRoot());
 
-    const response = await fetch(`${server.url}/workflows?name=dev`);
+    const response = await get(server, "/workflows?name=dev");
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
@@ -139,7 +140,7 @@ describe("GET /workflows/{workflow}", () => {
     );
     const server = await serving(root);
 
-    const response = await fetch(`${server.url}/workflows/dev`);
+    const response = await get(server, "/workflows/dev");
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -161,7 +162,7 @@ describe("GET /workflows/{workflow}", () => {
     await plantWorkflow(root, "dev", `stpes: []\n${stepsOnly("research")}`);
     const server = await serving(root);
 
-    const { diagnostics } = await success<Workflow>(await fetch(`${server.url}/workflows/dev`));
+    const { diagnostics } = await success<Workflow>(await get(server, "/workflows/dev"));
 
     expect(diagnostics).toMatchObject([{ code: "workflow-key-unknown" }]);
   });
@@ -172,7 +173,7 @@ describe("GET /workflows/{workflow}", () => {
   ])("refuses %s", async (_description, name) => {
     const server = await serving(await projectsRoot());
 
-    const response = await fetch(`${server.url}/workflows/${name}`);
+    const response = await get(server, `/workflows/${name}`);
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "workflow-unknown" });
@@ -183,7 +184,7 @@ describe("GET /workflows/{workflow}", () => {
     await plantWorkflow(root, "dev", "steps: []\n");
     const server = await serving(root);
 
-    const response = await fetch(`${server.url}/workflows/dev`);
+    const response = await get(server, "/workflows/dev");
 
     expect(response.status).toBe(422);
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "workflow-invalid" });
@@ -194,12 +195,12 @@ describe("GET /workflows/{workflow}", () => {
     await plantWorkflow(root, "dev", stepsOnly("research"));
     const server = await serving(root);
 
-    await expect(success<Workflow>(await fetch(`${server.url}/workflows/dev`))).resolves.toMatchObject({
+    await expect(success<Workflow>(await get(server, "/workflows/dev"))).resolves.toMatchObject({
       data: { steps: [{ name: "research" }] },
     });
     await plantWorkflow(root, "dev", stepsOnly("implement"));
 
-    await expect(success<Workflow>(await fetch(`${server.url}/workflows/dev`))).resolves.toMatchObject({
+    await expect(success<Workflow>(await get(server, "/workflows/dev"))).resolves.toMatchObject({
       data: { steps: [{ name: "implement" }] },
     });
   });

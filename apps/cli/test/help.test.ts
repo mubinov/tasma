@@ -50,6 +50,7 @@ describe("helpText", () => {
     const text = helpText(COMMANDS);
 
     expect(text).toContain("TASMA_DAEMON_URL");
+    expect(text).toContain("TASMA_DAEMON_TOKEN");
     expect(text).toContain(DEFAULT_DAEMON_URL);
   });
 });

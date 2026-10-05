@@ -17,6 +17,9 @@ const DAEMON_NAME = "tasma-daemon";
 const TREE_DIRNAME = ".tasma";
 const DAEMON_RECORD_FILE = "daemon.json";
 
+/** The token every record of this stand-in holds. */
+const FAKE_TOKEN = "f00d";
+
 /** How long a scenario that waits for a signal stands, so a fixture never outlives the run that spawned it. */
 const LIFETIME_MS = 60_000;
 
@@ -25,7 +28,7 @@ const record = join(home, TREE_DIRNAME, DAEMON_RECORD_FILE);
 
 function writeRecord(port: number): void {
   mkdirSync(dirname(record), { recursive: true });
-  writeFileSync(record, JSON.stringify({ port, pid: process.pid }));
+  writeFileSync(record, JSON.stringify({ port, pid: process.pid, token: FAKE_TOKEN }));
 }
 
 /** Holds the process until the test ends it, and ends it in any case. */

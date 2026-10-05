@@ -1,5 +1,4 @@
-import { DAEMON_RECORD_FILE, DEFAULT_DAEMON_URL } from "@tasma/protocol";
-import { TREE_DIRNAME } from "./daemon/record.js";
+import { DAEMON_RECORD_FILE, DEFAULT_DAEMON_URL, TREE_DIRNAME } from "@tasma/protocol";
 import type { Command } from "./types.js";
 
 /**
@@ -39,6 +38,7 @@ export function helpText(commands: Command[]): string {
     "",
     "Environment:",
     "  TASMA_DAEMON_URL    Where the daemon listens, unless --daemon says otherwise",
+    "  TASMA_DAEMON_TOKEN  The daemon token, instead of the one the record holds",
     "",
     `Without either, tasma reads ~/${TREE_DIRNAME}/${DAEMON_RECORD_FILE} and falls back to ${DEFAULT_DAEMON_URL}.`,
     "A command that needs a daemon starts one there when none answers; daemon status never does.",

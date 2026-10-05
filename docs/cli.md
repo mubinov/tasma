@@ -19,9 +19,12 @@ Global options go before `<group>`. `tasma <group> --help` lists the commands of
 | Variable | Meaning |
 |---|---|
 | `TASMA_DAEMON_URL` | The daemon address when `--daemon` is not given. |
+| `TASMA_DAEMON_TOKEN` | The daemon token. The default is the `token` in `$HOME/.tasma/daemon.json`, sent only to the address that file names. The daemon makes a new token each time it starts, so set the variable again after a restart. A value with a space, a control character or a character outside ASCII is a usage error. |
 | `HOME` | The data directory is `$HOME/.tasma`. |
 
 When no address is given, tasma reads `$HOME/.tasma/daemon.json`. If that file is missing or not valid, it uses `http://127.0.0.1:8278`. If no daemon answers there, the command starts one. `daemon status` and `daemon stop` never start a daemon. tasma never starts a daemon at an address given by `--daemon` or `TASMA_DAEMON_URL`.
+
+The daemon refuses each request without its token, except its health check. tasma then fails with exit code 1 and a text that tells why it has no valid token and how to get one: run the command again, call the address that `daemon.json` names, set `TASMA_DAEMON_TOKEN`, or restart the daemon.
 
 ## Exit codes
 

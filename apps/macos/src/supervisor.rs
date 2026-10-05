@@ -29,7 +29,7 @@ use tauri::async_runtime::Mutex;
 use crate::command::cli_beside;
 use crate::daemon_stop::{STOP_LIMIT, STOP_TICK, stop_daemon};
 use crate::log;
-use crate::record::{DEFAULT_PORT, daemon_url, read_port, record_path};
+use crate::record::{DEFAULT_PORT, daemon_url, read_address, read_port, record_path};
 use crate::version::version_of;
 
 /// The daemon's executable, as Tauri places it beside the application's own.
@@ -421,6 +421,19 @@ impl Supervisor {
         self.probe(self.port()).await
     }
 
+    /// Probes the port the record names, and answers none while there is no
+    /// record: the strict check of the start wait. A started daemon answers
+    /// before it writes its record, and a forward sent in that gap would go to
+    /// the default port with no token.
+    async fn serving_at_recorded_port(&self) -> Option<Serving> {
+        let port = match self.record.as_deref() {
+            Some(path) => read_address(path)?.port,
+            None => DEFAULT_PORT,
+        };
+
+        self.probe(port).await
+    }
+
     /// What answers at a port. The one field that identifies a daemon decides,
     /// because a stale record names a port another program may hold and answer
     /// well-formed JSON on.
@@ -524,7 +537,7 @@ impl Supervisor {
                 ended = Some(status.to_string());
             }
 
-            if let Some(Serving { port, stated, .. }) = self.serving().await {
+            if let Some(Serving { port, stated, .. }) = self.serving_at_recorded_port().await {
                 let ms = started.elapsed().as_millis();
 
                 log::note(
@@ -873,6 +886,24 @@ mod tests {
         write_record(supervisor.record.as_deref().unwrap(), 9001);
 
         assert_eq!(supervisor.port(), 9001);
+    }
+
+    #[test]
+    fn a_started_daemon_counts_only_once_its_record_names_the_port_that_answers() {
+        let directory = directory("recorded-daemon");
+        let supervisor = supervising(&directory, None);
+        let record = supervisor.record.clone().unwrap();
+        let _ = std::fs::remove_file(&record);
+
+        assert!(block_on(supervisor.serving_at_recorded_port()).is_none());
+
+        let port = answering(health());
+        write_record(&record, port);
+
+        assert_eq!(
+            block_on(supervisor.serving_at_recorded_port()).map(|serving| serving.port),
+            Some(port)
+        );
     }
 
     #[test]

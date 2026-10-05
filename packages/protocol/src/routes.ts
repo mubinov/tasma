@@ -38,6 +38,13 @@ export const routes = {
   updateUserConfig: { method: "PATCH", template: "/config" },
 } as const satisfies Record<string, Route>;
 
+/**
+ * The routes the daemon serves to a caller without the token. A client asks
+ * them whether a Tasma daemon holds a port before it has a record to read the
+ * token from. None takes a parameter, so a template is the path a client calls.
+ */
+export const OPEN_ROUTES: readonly Route[] = [routes.health];
+
 /** Which directory a resolution asks about, absolute or starting with `~/`. */
 export type ProjectQuery = { path: string };
 

@@ -12,8 +12,9 @@ import { constants, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { printable } from "@tasma/protocol";
-import { daemonAnswers, daemonUrl, readRecord, recordPath } from "./record.js";
+import { daemonUrl, printable } from "@tasma/protocol";
+import type { DaemonRecord } from "@tasma/protocol";
+import { daemonAnswers, readRecord, recordPath } from "./record.js";
 
 /** Where the spawned daemon's stdout and stderr are captured. Appended to and never rotated: it is stdio, not a log. */
 export const OUTPUT_FILE = "tasma-daemon.out";
@@ -48,7 +49,8 @@ const OUTPUT_TAIL_LIMIT = 4096;
 const DAEMON_PACKAGE = "@tasma/daemon";
 export const DAEMON_BIN = "tasma-daemon";
 
-export type StartOutcome = { url: string } | { failure: string };
+/** Where the started daemon answers, and the record that address was read from. */
+export type StartOutcome = { url: string; record: DaemonRecord } | { failure: string };
 
 /** The command that starts a daemon, and its arguments. */
 export type Launch = { command: string; args: string[] };
@@ -306,7 +308,7 @@ export async function startDaemon(options: StartOptions): Promise<StartOutcome> 
     if (record !== undefined) {
       const url = daemonUrl(record.port);
 
-      if (await daemonAnswers(url)) return { url };
+      if (await daemonAnswers(url)) return { url, record };
     }
 
     if (child.failure !== undefined) return { failure: child.failure };

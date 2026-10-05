@@ -166,17 +166,17 @@ describe("writing an envelope", () => {
     expect(reply.headers["content-length"]).toBeGreaterThan(reply.body.length);
   });
 
-  it("names the allowed methods only where the caller passes them", () => {
+  it("adds the headers the caller passes to the ones every reply carries", () => {
     const { reply, response } = collector();
 
     writeEnvelope(
       response,
-      405,
-      { ok: false, error: { kind: "daemon", code: "method-not-allowed", message: "no" } },
-      ["GET", "POST"],
+      401,
+      { ok: false, error: { kind: "daemon", code: "unauthorized", message: "no" } },
+      { "www-authenticate": "Bearer" },
     );
 
-    expect(reply.status).toBe(405);
-    expect(reply.headers.allow).toBe("GET, POST");
+    expect(reply.status).toBe(401);
+    expect(reply.headers).toMatchObject({ "www-authenticate": "Bearer", "cache-control": "no-store" });
   });
 });

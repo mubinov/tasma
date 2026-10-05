@@ -7,7 +7,7 @@ import { dispatch, errorText, isPathComponent, reportUsage } from "../src/shell.
 import type { Command, Target } from "../src/types.js";
 import { capture, CWD, ok, serveAnswers, startServer, treeHome } from "./helpers.js";
 
-const TARGET: Target = { kind: "explicit", url: "http://127.0.0.1:8278", stated: "--daemon" };
+const TARGET: Target = { kind: "explicit", url: "http://127.0.0.1:8278", stated: "--daemon", home: "/srv/home" };
 
 /*
  * A refused address, passed as the environment to the paths that answer above

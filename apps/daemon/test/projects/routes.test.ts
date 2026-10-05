@@ -10,6 +10,7 @@ import { projectRoutes } from "../../src/projects/routes.js";
 import { WriteQueue } from "../../src/tasks/serialize.js";
 import {
   failure,
+  get,
   loseTasks,
   plant,
   projectConfig,
@@ -53,7 +54,7 @@ describe("GET /projects", () => {
     await plant(projectConfig(root, "SAGA"), "name: Saga\npath: /srv/saga\n");
     const server = await serving(root);
 
-    const response = await fetch(`${server.url}/projects`);
+    const response = await get(server, "/projects");
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -68,7 +69,7 @@ describe("GET /projects", () => {
     await plant(projectConfig(root, "SAGA"), "name: [Saga\n");
     const server = await serving(root);
 
-    await expect((await fetch(`${server.url}/projects`)).json()).resolves.toEqual({
+    await expect((await get(server, "/projects")).json()).resolves.toEqual({
       ok: true,
       data: [{ tag: "SAGA" }],
       diagnostics: [],
@@ -78,7 +79,7 @@ describe("GET /projects", () => {
   it("refuses a query key, so a resolution sent to this route does not read as the whole tree", async () => {
     const server = await serving(await projectsRoot("SAGA"));
 
-    const response = await fetch(`${server.url}/projects?path=/x`);
+    const response = await get(server, "/projects?path=/x");
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
@@ -92,7 +93,7 @@ describe("GET /projects/{project}", () => {
     await plant(projectConfig(root, "SAGA"), `name: Saga\npath: ${path}\nstatuses: [New, Doing]\n`);
     const server = await serving(root);
 
-    const response = await fetch(`${server.url}/projects/SAGA`);
+    const response = await get(server, "/projects/SAGA");
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -121,7 +122,7 @@ describe("GET /projects/{project}", () => {
 
     await loseTasks(root, "SAGA", index);
 
-    const response = await fetch(`${server.url}/projects/SAGA`);
+    const response = await get(server, "/projects/SAGA");
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ ok: true, data: { tag: "SAGA", live: false } });
@@ -132,7 +133,7 @@ describe("GET /projects/{project}", () => {
     await plant(projectConfig(root, "SAGA"), "statues: [New]\n");
     const server = await serving(root);
 
-    const response = await fetch(`${server.url}/projects/SAGA`);
+    const response = await get(server, "/projects/SAGA");
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as { data: unknown; diagnostics: { code: string; path: string }[] };
@@ -147,7 +148,7 @@ describe("GET /projects/{project}", () => {
     await plant(projectConfig(root, "SAGA"), "name: [Saga\n");
     const server = await serving(root);
 
-    const response = await fetch(`${server.url}/projects/SAGA`);
+    const response = await get(server, "/projects/SAGA");
 
     expect(response.status).toBe(422);
     await expect(failure(response)).resolves.toMatchObject({
@@ -164,7 +165,7 @@ describe("GET /projects/{project}", () => {
     const server = await serving(root);
     await rm(path, { recursive: true });
 
-    const response = await fetch(`${server.url}/projects/SAGA`);
+    const response = await get(server, "/projects/SAGA");
 
     expect(response.status).toBe(200);
     const { data, diagnostics } = await success<Project>(response);
@@ -179,7 +180,7 @@ describe("GET /projects/{project}", () => {
     await plant(projectConfig(root, "SAGA"), `path: ${await target()}\n`);
     const server = await serving(root);
 
-    await expect(success<Project>(await fetch(`${server.url}/projects/SAGA`))).resolves.toMatchObject({
+    await expect(success<Project>(await get(server, "/projects/SAGA"))).resolves.toMatchObject({
       diagnostics: [],
     });
   });
@@ -187,7 +188,7 @@ describe("GET /projects/{project}", () => {
   it("refuses a query key, which this route declares none of", async () => {
     const server = await serving(await projectsRoot("SAGA"));
 
-    const response = await fetch(`${server.url}/projects/SAGA?x=1`);
+    const response = await get(server, "/projects/SAGA?x=1");
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
@@ -199,7 +200,7 @@ describe("GET /projects/{project}", () => {
   ])("answers 404 project-not-found for %s", async (_name, tag) => {
     const server = await serving(await projectsRoot("SAGA"));
 
-    const response = await fetch(`${server.url}/projects/${tag}`);
+    const response = await get(server, `/projects/${tag}`);
 
     expect(response.status).toBe(404);
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "project-not-found" });
@@ -296,7 +297,7 @@ describe("POST /projects", () => {
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
-    await expect(success<ProjectSummary[]>(await fetch(`${server.url}/projects`))).resolves.toMatchObject({ data: [] });
+    await expect(success<ProjectSummary[]>(await get(server, "/projects"))).resolves.toMatchObject({ data: [] });
   });
 
   it("refuses a body naming the tree the daemon serves", async () => {
@@ -531,7 +532,7 @@ describe("DELETE /projects/{project}", () => {
       data: { tag: "SAGA", name: "Saga", path: "/srv/saga" },
       diagnostics: [],
     });
-    expect((await fetch(`${server.url}/projects/SAGA`)).status).toBe(404);
+    expect((await get(server, "/projects/SAGA")).status).toBe(404);
   });
 
   it("answers 404 for a project a delete already took", async () => {
@@ -618,8 +619,8 @@ describe("POST /projects/{project}/rename", () => {
 
     expect((await send(server, "POST", "/projects/SAGA/rename", { tag: "NEW" })).status).toBe(200);
 
-    expect((await fetch(`${server.url}/projects/SAGA`)).status).toBe(404);
-    expect((await fetch(`${server.url}/projects/NEW`)).status).toBe(200);
+    expect((await get(server, "/projects/SAGA")).status).toBe(404);
+    expect((await get(server, "/projects/NEW")).status).toBe(200);
     const { index } = await server.host.open("NEW");
     expect(index.query().entries.map((entry) => entry.id)).toEqual(["NEW-1", "NEW-2"]);
   });
@@ -783,7 +784,7 @@ describe("GET /project", () => {
     await mkdir(inside);
     const server = await serving(root);
 
-    const response = await fetch(`${server.url}/project?path=${encodeURIComponent(inside)}`);
+    const response = await get(server, `/project?path=${encodeURIComponent(inside)}`);
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -796,7 +797,7 @@ describe("GET /project", () => {
   it("answers with a data key holding null where no project holds the directory", async () => {
     const server = await serving(await projectsRoot("SAGA"));
 
-    const response = await fetch(`${server.url}/project?path=${encodeURIComponent(await target())}`);
+    const response = await get(server, `/project?path=${encodeURIComponent(await target())}`);
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as Record<string, unknown>;
@@ -811,7 +812,7 @@ describe("GET /project", () => {
     await plant(projectConfig(root, "ACME"), `path: ${path}\n`);
     const server = await serving(root);
 
-    const response = await fetch(`${server.url}/project?path=${encodeURIComponent(path)}`);
+    const response = await get(server, `/project?path=${encodeURIComponent(path)}`);
 
     expect(response.status).toBe(200);
     const { data, diagnostics } = await success<ProjectSummary>(response);
@@ -825,7 +826,7 @@ describe("GET /project", () => {
   it("refuses a relative path, which would stand against the daemon's own directory", async () => {
     const server = await serving(await projectsRoot("SAGA"));
 
-    const response = await fetch(`${server.url}/project?path=repo`);
+    const response = await get(server, "/project?path=repo");
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "path-invalid" });
@@ -838,7 +839,7 @@ describe("GET /project", () => {
   ])("refuses a query stating %s", async (_name, search) => {
     const server = await serving(await projectsRoot("SAGA"));
 
-    const response = await fetch(`${server.url}/project?${search}`);
+    const response = await get(server, `/project?${search}`);
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });

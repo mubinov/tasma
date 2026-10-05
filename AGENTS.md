@@ -24,14 +24,14 @@
   suite that looks polluted is never caused by this tree.
 - Every command that resolves a daemon from `HOME` runs under
   `scripts/dev-home.sh`, which puts `HOME` in a per-user directory under
-  `$TMPDIR`: `pnpm dev:cli` and `pnpm app:start` do. A temporary `HOME` of your
-  own is equally fine; the real home directory is forbidden. The web
-  application reads no tree — run it with `pnpm dev`.
-- Under a development `HOME`, give the tree a daemon record of its own before
-  running the app: start a daemon there, or set `TASMA_DAEMON_PORT` and write
-  the record naming that port. A tree with no record falls back to the default
-  port, where the daemon on the real home answers, and the app stands down to
-  it and serves the real tree.
+  `$TMPDIR`: `pnpm dev`, `pnpm dev:cli` and `pnpm app:start` do. A temporary
+  `HOME` of your own is equally fine; the real home directory is forbidden.
+- Under a development `HOME`, start a daemon there before running the app, with
+  `TASMA_DAEMON_PORT` for a port other than the default. A tree with no record
+  falls back to the default port, where the daemon of the real home refuses the
+  requests of the app with 401. Run `pnpm dev` against that daemon with
+  `TASMA_DAEMON_URL=http://127.0.0.1:<port>`; the proxy targets the default
+  port otherwise.
 - Tests, fixtures, examples, docs and comments hold invented data only. Never
   use the tag, a task id, the name or the path of a real project, or the name
   of a real person. This project is no exception: no `TASM` or `TASM-<n>`, and

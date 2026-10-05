@@ -1,14 +1,16 @@
 // @vitest-environment node
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_DAEMON_URL } from "@tasma/protocol";
 import { build, createLogger, type LogOptions, type Plugin, type ResolvedConfig } from "vite";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { DAEMON_PATH_PREFIX } from "../src/api/paths";
 import config, {
   CONTENT_SECURITY_POLICY,
+  daemonToken,
   isExpectedCompilerSkip,
   isLoopbackAddress,
   proxiesHost,
@@ -318,5 +320,102 @@ describe.each([
   // header left to it is a header on every daemon reply.
   it("sends no CORS header, so no other origin can read the daemon through it", () => {
     expect(server?.cors).toBe(false);
+  });
+});
+
+describe("the daemon token the proxy sends", () => {
+  const target = "http://127.0.0.1:9000";
+
+  /** A home of the test's own, holding the given record text when there is one. */
+  function homeWith(record?: string): string {
+    const home = mkdtempSync(join(tmpdir(), "tasma-web-home-"));
+    onTestFinished(() => rmSync(home, { recursive: true, force: true }));
+    mkdirSync(join(home, ".tasma"));
+    if (record !== undefined) writeFileSync(join(home, ".tasma", "daemon.json"), record);
+    return home;
+  }
+
+  it("is the token of the record that names the target, a path on the target aside", () => {
+    const HOME = homeWith('{"port":9000,"pid":1,"token":"ab12"}');
+
+    expect(daemonToken({ HOME }, target)).toBe("ab12");
+    expect(daemonToken({ HOME }, `${target}/`)).toBe("ab12");
+  });
+
+  it("is TASMA_DAEMON_TOKEN where it is set and not empty", () => {
+    const HOME = homeWith('{"port":9000,"pid":1,"token":"ab12"}');
+
+    expect(daemonToken({ HOME, TASMA_DAEMON_TOKEN: "cd34" }, target)).toBe("cd34");
+    expect(daemonToken({ HOME, TASMA_DAEMON_TOKEN: "" }, target)).toBe("ab12");
+  });
+
+  it("is none where TASMA_DAEMON_TOKEN holds a character no header can carry", () => {
+    const HOME = homeWith('{"port":9000,"pid":1,"token":"ab12"}');
+
+    expect(daemonToken({ HOME, TASMA_DAEMON_TOKEN: "cd\r\nx: y" }, target)).toBeUndefined();
+  });
+
+  it("sends TASMA_DAEMON_TOKEN to an http: target on a loopback name alone", () => {
+    const env = { TASMA_DAEMON_TOKEN: "cd34" };
+
+    for (const loopback of ["http://127.0.0.1:9000", "http://[::1]:9000", "http://localhost:9000"]) {
+      expect(daemonToken(env, loopback), loopback).toBe("cd34");
+    }
+
+    for (const remote of ["http://192.0.2.10:9000", "http://daemon.example:9000", "https://127.0.0.1:9000"]) {
+      expect(daemonToken(env, remote), remote).toBeUndefined();
+    }
+  });
+
+  it("reads no record under an empty HOME, and none for a target that is not a URL", () => {
+    expect(daemonToken({ HOME: "" }, target)).toBeUndefined();
+    expect(daemonToken({ HOME: homeWith('{"port":9000,"pid":1,"token":"ab12"}') }, "nonsense")).toBeUndefined();
+  });
+
+  it.each([
+    ["names another port", '{"port":9001,"pid":1,"token":"ab12"}'],
+    ["holds no token", '{"port":9000,"pid":1}'],
+    ["holds a token no header can carry", '{"port":9000,"pid":1,"token":"ab\\nx"}'],
+    ["holds a port that is not a number", '{"port":"9000","pid":1,"token":"ab12"}'],
+    ["holds no process id", '{"port":9000,"token":"ab12"}'],
+    ["holds a port out of range", '{"port":70000,"pid":1,"token":"ab12"}'],
+    ["is not JSON", "{"],
+    ["is longer than a record can be", `{"port":9000,"pid":1,"token":"ab12"}${" ".repeat(4096)}`],
+  ])("is none where the record %s", (_description, record) => {
+    expect(daemonToken({ HOME: homeWith(record) }, target)).toBeUndefined();
+  });
+
+  it("is none where there is no record, no file under its name, or no home", () => {
+    const directory = homeWith();
+    mkdirSync(join(directory, ".tasma", "daemon.json"));
+
+    expect(daemonToken({ HOME: homeWith() }, target)).toBeUndefined();
+    expect(daemonToken({ HOME: directory }, target)).toBeUndefined();
+    expect(daemonToken({}, target)).toBeUndefined();
+  });
+
+  it("goes on each forwarded request, read from the record as it stands then", () => {
+    const entry = config.server?.proxy?.[DAEMON_PATH_PREFIX];
+    const options = typeof entry === "object" ? entry : undefined;
+    const port = new URL(resolveDaemonUrl(process.env)).port;
+    const home = homeWith(`{"port":${port},"pid":1,"token":"ab12"}`);
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("TASMA_DAEMON_TOKEN", "");
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+
+    const proxy = new EventEmitter();
+    options?.configure?.(proxy as unknown as Parameters<NonNullable<typeof options.configure>>[0], options);
+    const headers: string[] = [];
+    const proxyRequest = { setHeader: (_name: string, value: string) => headers.push(value) };
+
+    proxy.emit("proxyReq", proxyRequest);
+    writeFileSync(join(home, ".tasma", "daemon.json"), `{"port":${port},"pid":2,"token":"ef56"}`);
+    proxy.emit("proxyReq", proxyRequest);
+    writeFileSync(join(home, ".tasma", "daemon.json"), `{"port":${port},"pid":3}`);
+    proxy.emit("proxyReq", proxyRequest);
+
+    expect(headers).toEqual(["Bearer ab12", "Bearer ef56"]);
   });
 });

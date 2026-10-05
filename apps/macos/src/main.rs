@@ -328,7 +328,7 @@ fn main() {
             // window back. It leaves the daemon warm before the board's first
             // request, and the forward covers the case where it did not.
             tauri::async_runtime::spawn(async move {
-                let _ = startup.ensure_serving().await;
+                startup.ensure_serving().await;
             });
 
             let url = window_url(app);

@@ -1,10 +1,10 @@
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DAEMON_NAME, DAEMON_RECORD_FILE } from "@tasma/protocol";
+import { DAEMON_NAME, DAEMON_RECORD_FILE, TREE_DIRNAME } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
 import {
-  daemonAnswers, daemonUrl, probe, readRecord, RECORD_LIMIT, recordPath, TREE_DIRNAME,
+  daemonAnswers, inspectRecord, probe, readRecord, RECORD_LIMIT, recordPath,
 } from "../../src/daemon/record.js";
 import { seedRecord, serveHealth, startServer, tasmaHealth, treeHome, unusedUrl } from "../helpers.js";
 
@@ -21,6 +21,15 @@ describe("readRecord", () => {
     expect(await readRecord(seedRecord(home, { port: 9000, pid: 4242 }))).toEqual({ port: 9000, pid: 4242 });
     expect(await readRecord(seedRecord(home, { port: 0, pid: 2_147_483_647 })))
       .toEqual({ port: 0, pid: 2_147_483_647 });
+  });
+
+  it("reads the token a record states, and reads a record without one as a record still", async () => {
+    const home = treeHome();
+
+    expect(await readRecord(seedRecord(home, { port: 9000, pid: 4242, token: "ab12" })))
+      .toEqual({ port: 9000, pid: 4242, token: "ab12" });
+    expect(await readRecord(seedRecord(home, '{"port": 9000, "pid": 4242, "token": 7}')))
+      .toEqual({ port: 9000, pid: 4242 });
   });
 
   it("answers nothing for a name that holds no file", async () => {
@@ -88,9 +97,22 @@ describe("readRecord", () => {
   });
 });
 
-describe("daemonUrl", () => {
-  it("names the loopback address every daemon binds", () => {
-    expect(daemonUrl(9000)).toBe("http://127.0.0.1:9000");
+describe("inspectRecord", () => {
+  it("tells a name that holds nothing from a name that holds no record", async () => {
+    const home = treeHome();
+    const elsewhere = join(home, "elsewhere.json");
+
+    expect(await inspectRecord(recordPath(home))).toBe("absent");
+    writeFileSync(join(home, "file"), "");
+    expect(await inspectRecord(recordPath(join(home, "file")))).toBe("absent");
+
+    expect(await inspectRecord(seedRecord(home, { port: 9000, pid: 4242 }))).toEqual({ port: 9000, pid: 4242 });
+    expect(await inspectRecord(seedRecord(home, "{"))).toBe("unreadable");
+
+    writeFileSync(elsewhere, JSON.stringify({ port: 9000, pid: 4242 }));
+    rmSync(recordPath(home));
+    symlinkSync(elsewhere, recordPath(home));
+    expect(await inspectRecord(recordPath(home))).toBe("unreadable");
   });
 });
 

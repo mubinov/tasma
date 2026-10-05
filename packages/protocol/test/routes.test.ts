@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPath, routes } from "@tasma/protocol";
+import { buildPath, OPEN_ROUTES, routes } from "@tasma/protocol";
 import type { Route, TaskFilter, TaskReadOptions, TaskTextOptions } from "@tasma/protocol";
 
 /** The placeholder names the client fills, which is every name a template may use. */
@@ -138,5 +138,13 @@ describe("buildPath", () => {
   it("omits the query altogether when no key survives", () => {
     expect(buildPath(routes.listTasks, { project: "SAGA" }, {})).toBe("/projects/SAGA/tasks");
     expect(buildPath(routes.listTasks, { project: "SAGA" })).toBe("/projects/SAGA/tasks");
+  });
+});
+
+describe("OPEN_ROUTES", () => {
+  it("holds the health probe, and no route with a parameter", () => {
+    expect(OPEN_ROUTES).toContain(routes.health);
+
+    for (const route of OPEN_ROUTES) expect(placeholdersOf(route.template)).toEqual([]);
   });
 });

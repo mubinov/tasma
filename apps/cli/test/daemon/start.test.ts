@@ -2,9 +2,10 @@ import { execFileSync } from "node:child_process";
 import { linkSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { daemonUrl } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
-import { daemonUrl, readRecord, recordPath } from "../../src/daemon/record.js";
+import { readRecord, recordPath } from "../../src/daemon/record.js";
 import { daemonExecutable, daemonLaunch, OUTPUT_FILE, startDaemon } from "../../src/daemon/start.js";
 import type { Launch, StartOutcome } from "../../src/daemon/start.js";
 import { fakeDaemon, seedRecord, startServer, tasmaHealth, treeHome, UNUSED_PID } from "../helpers.js";
@@ -52,7 +53,8 @@ describe("startDaemon", () => {
     const record = await readRecord(recordPath(home));
 
     expect(record).toBeDefined();
-    expect(outcome).toEqual({ url: daemonUrl(record?.port ?? 0) });
+    expect(outcome).toEqual({ url: daemonUrl(record?.port ?? 0), record });
+    expect(record?.token).toBe("f00d");
     expect(readFileSync(output, "utf8")).toMatch(/^older\ntasma-daemon 0\.0\.0 at http:\/\/127\.0\.0\.1:\d+\n$/);
   });
 
@@ -142,7 +144,7 @@ describe("startDaemon", () => {
         budgetMs: ANSWER_BUDGET_MS,
       });
 
-      expect(outcome).toEqual({ url: daemonUrl(port) });
+      expect(outcome).toEqual({ url: daemonUrl(port), record: { port, pid: UNUSED_PID } });
     } finally {
       await server.close();
     }
@@ -192,7 +194,7 @@ describe("startDaemon", () => {
         budgetMs: ANSWER_BUDGET_MS,
       });
 
-      expect(outcome).toEqual({ url: daemonUrl(port) });
+      expect(outcome).toEqual({ url: daemonUrl(port), record: { port, pid: UNUSED_PID } });
     } finally {
       clearTimeout(late);
       await server.close();

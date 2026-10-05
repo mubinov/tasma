@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
-import { DAEMON_NAME, printable } from "@tasma/protocol";
-import { daemonAnswers, daemonUrl, readRecord, recordPath } from "../daemon/record.js";
+import { DAEMON_NAME, daemonUrl, printable } from "@tasma/protocol";
+import { daemonAnswers, readRecord, recordPath } from "../daemon/record.js";
 import { delay, TICK_MS } from "../daemon/start.js";
 import { REQUEST_TIMEOUT_MS } from "../daemon/transport.js";
 import { attempt, reportForeign, UNREACHABLE } from "../failure.js";

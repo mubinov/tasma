@@ -11,6 +11,7 @@ import { projectRoutes } from "../../src/projects/routes.js";
 import { WriteQueue } from "../../src/tasks/serialize.js";
 import {
   failure,
+  get,
   plant,
   plantWorkflow,
   projectConfig,
@@ -35,7 +36,7 @@ describe("GET /config", () => {
     await plant(userConfig(root), "priorities: [urgent, later]\n");
     const server = await serving(root);
 
-    const response = await fetch(`${server.url}/config`);
+    const response = await get(server, "/config");
 
     expect(response.status).toBe(200);
     await expect(success<UserConfig>(response)).resolves.toEqual({
@@ -56,7 +57,7 @@ describe("GET /config", () => {
     await plant(userConfig(root), "default_status: Review\n");
     const server = await serving(root);
 
-    const response = await fetch(`${server.url}/config`);
+    const response = await get(server, "/config");
 
     expect(response.status).toBe(422);
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "config-invalid" });

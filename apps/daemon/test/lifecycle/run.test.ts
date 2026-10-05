@@ -3,13 +3,30 @@ import { chmod } from "node:fs/promises";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
+import type { DaemonRecord } from "@tasma/protocol";
 import { daemonAnswers } from "../../src/lifecycle/probe.js";
 import { readRecord, recordPath } from "../../src/lifecycle/record.js";
 import { runDaemon, startDaemon } from "../../src/lifecycle/run.js";
 import type { DaemonIo, Start } from "../../src/lifecycle/run.js";
-import { foreignPort, freePort, projectsRoot, seedRecord, startTestServer, until } from "../helpers.js";
+import { bearer, foreignPort, freePort, projectsRoot, seedRecord, startTestServer, until } from "../helpers.js";
 
 type Serving = Extract<Start, { started: true }>;
+
+/** The shape of the token a start writes: 32 random bytes as hex. */
+const TOKEN = /^[0-9a-f]{64}$/;
+
+/** The token the record of the running daemon holds. */
+async function tokenOf(root: string): Promise<string> {
+  const token = (await readRecord(root))?.token;
+  if (token === undefined) throw new Error("the record holds no token");
+
+  return token;
+}
+
+/** The record a start in this process writes for a port, with a token of the shape every start makes. */
+function ownRecord(port: number): DaemonRecord {
+  return { port, pid: process.pid, token: expect.stringMatching(TOKEN) as string };
+}
 
 /** The events a daemon installs a handler on, so a test counts what stands on them. */
 const HANDLED = ["SIGINT", "SIGTERM", "SIGHUP", "uncaughtException", "unhandledRejection"];
@@ -113,10 +130,11 @@ describe("starting a daemon", () => {
     const port = portOf(start.url);
 
     expect(await daemonAnswers(port)).toBe(true);
-    expect(await readRecord(root)).toEqual({ port, pid: process.pid });
+    expect(await readRecord(root)).toEqual(ownRecord(port));
     // The tree-level routes stand in the array too, and they are the one group
     // built over the root rather than over the host.
-    await expect((await fetch(`${start.url}/workflows`)).json()).resolves.toMatchObject({ ok: true, data: [] });
+    const response = await fetch(`${start.url}/workflows`, { headers: bearer(await tokenOf(root)) });
+    await expect(response.json()).resolves.toMatchObject({ ok: true, data: [] });
   });
 
   it("finds the daemon already serving this tree and binds nothing", async () => {
@@ -145,7 +163,7 @@ describe("starting a daemon", () => {
 
     const start = await daemonOn(root);
 
-    expect(await readRecord(root)).toEqual({ port: portOf(start.url), pid: process.pid });
+    expect(await readRecord(root)).toEqual(ownRecord(portOf(start.url)));
   });
 
   it("overwrites a record naming the very port it binds", async () => {
@@ -159,7 +177,7 @@ describe("starting a daemon", () => {
     const start = await daemonOn(root, { port });
 
     expect(portOf(start.url)).toBe(port);
-    expect(await readRecord(root)).toEqual({ port, pid: process.pid });
+    expect(await readRecord(root)).toEqual(ownRecord(port));
   });
 
   it("lets one of two starts racing for the same tree serve it", async () => {
@@ -167,7 +185,7 @@ describe("starting a daemon", () => {
 
     const starts = await Promise.all([startDaemon({ port: 0, root }), startDaemon({ port: 0, root })]);
 
-    expect(await readRecord(root)).toEqual({ port: portOf(onlyServing(starts).url), pid: process.pid });
+    expect(await readRecord(root)).toEqual(ownRecord(portOf(onlyServing(starts).url)));
   });
 
   it("lets one of two starts racing to clear a record left behind serve the tree", async () => {
@@ -176,7 +194,7 @@ describe("starting a daemon", () => {
 
     const starts = await Promise.all([startDaemon({ port: 0, root }), startDaemon({ port: 0, root })]);
 
-    expect(await readRecord(root)).toEqual({ port: portOf(onlyServing(starts).url), pid: process.pid });
+    expect(await readRecord(root)).toEqual(ownRecord(portOf(onlyServing(starts).url)));
   });
 
   it("refuses a port another process holds", async () => {
@@ -226,7 +244,8 @@ describe("stopping a daemon", () => {
   });
 
   it("closes a request that outlives the drain deadline", async () => {
-    const start = await daemonOn(await projectsRoot("ONE"), { drainMs: 50 });
+    const root = await projectsRoot("ONE");
+    const start = await daemonOn(root, { drainMs: 50 });
     const port = portOf(start.url);
     const socket = connect(port, "127.0.0.1");
     onTestFinished(() => void socket.destroy());
@@ -237,6 +256,7 @@ describe("stopping a daemon", () => {
     const request = [
       "POST /projects/ONE/tasks HTTP/1.1",
       `host: 127.0.0.1:${port}`,
+      `authorization: Bearer ${await tokenOf(root)}`,
       "content-type: application/json",
       "content-length: 64",
       "",
@@ -261,7 +281,7 @@ describe("the daemon as a process", () => {
     const daemon = await running(root);
 
     expect(daemon.out.join("")).toMatch(/^tasma-daemon \d+\.\d+\.\d+ at http:\/\/127\.0\.0\.1:\d+\n$/);
-    expect(await readRecord(root)).toEqual({ port: daemon.port, pid: process.pid });
+    expect(await readRecord(root)).toEqual(ownRecord(daemon.port));
     expect(installed().length - before.length, "one handler per signal and per fault").toBe(5);
 
     // Twice, as a terminal sends it. The handlers stand until the shutdown has
@@ -352,5 +372,48 @@ describe("the daemon as a process", () => {
 
     expect(err).toEqual([`tasma-daemon: a daemon is already serving this tree at ${first.url}\n`]);
     expect(out).toEqual([]);
+  });
+});
+
+describe("the token of a run", () => {
+  it("is required by every route but the liveness route", async () => {
+    const root = await projectsRoot();
+    const start = await daemonOn(root);
+
+    expect((await fetch(`${start.url}/workflows`)).status).toBe(401);
+    expect((await fetch(`${start.url}/workflows`, { headers: bearer(await tokenOf(root)) })).status).toBe(200);
+  });
+
+  it("is new at each start", async () => {
+    const root = await projectsRoot();
+    const first = await daemonOn(root);
+    const before = await tokenOf(root);
+    await first.stop();
+
+    await daemonOn(root);
+
+    expect(await tokenOf(root)).not.toBe(before);
+  });
+
+  it("stays as it is when a start stands down to the daemon serving the tree", async () => {
+    const root = await projectsRoot();
+    await daemonOn(root);
+    const before = await readRecord(root);
+
+    refusal(await startDaemon({ port: 0, root }));
+
+    expect(await readRecord(root)).toEqual(before);
+  });
+
+  it("is not needed to find a daemon of an earlier version through its record", async () => {
+    const root = await projectsRoot();
+    const other = await startTestServer([]);
+    await seedRecord(root, { port: portOf(other.url), pid: 4242 });
+
+    const start = refusal(await startDaemon({ port: 0, root }));
+
+    expect(start.code).toBe(0);
+    expect(start.message).toContain(other.url);
+    expect(await readRecord(root)).toEqual({ port: portOf(other.url), pid: 4242 });
   });
 });
