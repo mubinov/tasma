@@ -16,6 +16,8 @@ const CONFIG = {
 
 const PROJECT = { tag: "DELTA", name: "Delta", path: "/repos/delta", live: true, config: CONFIG };
 
+const CHANGE_SENTENCE = "If you want to change this project, ask your agent, naming it and the change you want. For example:";
+
 const WARNING: Diagnostic = { code: "path-missing", message: "the repository is not on disk", path: "/repos/delta" };
 
 /** Mounts the page over one project answer, with the fields a test cares about changed. */
@@ -166,11 +168,30 @@ it("does not show the workflows path", async () => {
 
 it("shows the notice only when the index stopped following the disk", async () => {
   await renderProject({ live: false });
-  expect(within(screen.getByRole("note")).getByText("The index is not following the disk")).toBeTruthy();
+  expect(screen.getByText("The index is not following the disk")).toBeTruthy();
 
   cleanup();
   await renderProject({ live: true });
-  expect(screen.queryByRole("note")).toBeNull();
+  expect(screen.queryByText("The index is not following the disk")).toBeNull();
+});
+
+it.each([
+  { source: "the fixture configuration", config: CONFIG, last: "Done" },
+  { source: "another configuration", config: { ...CONFIG, statuses: ["Open", "Closed"], default_status: "Open", final_statuses: ["Closed"] }, last: "Closed" },
+])("builds the hint from the tag and the last status of $source", async ({ config, last }) => {
+  await renderProject({ config });
+
+  expect(screen.getByRole("note").textContent).toBe(
+    CHANGE_SENTENCE + `Use the tasma skill. In the "DELTA" project, add the status "Review" before "${last}".`,
+  );
+});
+
+it("names the project by its tag in the hint when the project declares no name", async () => {
+  await renderProject({ tag: "ACME", name: undefined }, "ACME");
+
+  expect(screen.getByRole("note").textContent).toBe(
+    CHANGE_SENTENCE + "Use the tasma skill. In the \"ACME\" project, add the status \"Review\" before \"Done\".",
+  );
 });
 
 it("shows the daemon's warnings about the project", async () => {

@@ -11,6 +11,9 @@ const PROJECTS = [
   { tag: "ZED" },
 ];
 
+const HINT_SENTENCE = "If you want to add a new project, ask your agent, naming its folder. For example:";
+const HINT_EXAMPLE = "Use the tasma skill. Create a tasma project for the folder ~/Projects/my-app.";
+
 // What the row leads to. The page renders the whole configuration, so this is
 // the least a project can carry and still open; the page's own tests cover what
 // it makes of it.
@@ -98,8 +101,19 @@ it("opens the main content with the heading Projects and names the document", as
 it("says a tree with no project is normal", async () => {
   await renderWithRouter("/projects", listing([]));
 
-  expect(screen.getByRole("main").textContent).toContain("No projects yet.");
+  expect(screen.getByRole("main").textContent).toContain("No projects yet. Add one, and it is listed here.");
   expect(screen.queryByRole("list", { name: "Projects" })).toBeNull();
+});
+
+it.each([
+  { state: "a list", projects: PROJECTS },
+  { state: "an empty list", projects: [] },
+])("shows the hint on $state", async ({ projects }) => {
+  await renderWithRouter("/projects", listing(projects));
+
+  const hint = screen.getByRole("note");
+  expect(within(hint).getByText(HINT_SENTENCE)).toBeTruthy();
+  expect(within(hint).getByText(HINT_EXAMPLE)).toBeTruthy();
 });
 
 it("opens a project's page from its row", async () => {

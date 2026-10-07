@@ -8,10 +8,10 @@ import { CaretRightIcon, WarningIcon } from "../lib/icons";
 import { useFocusLost } from "../lib/use-focus-lost";
 import { warningCount } from "../lib/warning-count";
 import { NAVIGATION_BY_PATH } from "../navigation";
+import { AgentHint } from "./agent-hint";
 import { Diagnostics, type WarningItem } from "./diagnostics";
 import { ScreenHeading } from "./screen-heading";
 import { Tag } from "./tag";
-import { WorkflowHint } from "./workflow-hint";
 
 // The route is reached by id rather than imported: the tree in routes.tsx names
 // this component, so importing the route back would close a cycle.
@@ -107,7 +107,7 @@ export function WorkflowsScreen(): ReactNode {
               })}
             </ul>
           )}
-      <WorkflowHint
+      <AgentHint
         className="mt-7"
         sentence="If you want to add a new workflow, ask your agent, naming what it is for. For example:"
         example="Use the tasma skill. Create a tasma workflow for my engineering tasks."

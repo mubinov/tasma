@@ -6,6 +6,7 @@ import { projectsQuery } from "../api/queries";
 import { useDocumentTitle } from "../lib/document-title";
 import { CaretRightIcon } from "../lib/icons";
 import { NAVIGATION_BY_PATH } from "../navigation";
+import { AgentHint } from "./agent-hint";
 import { Diagnostics } from "./diagnostics";
 import { ScreenHeading } from "./screen-heading";
 import { Tag } from "./tag";
@@ -52,7 +53,7 @@ export function ProjectsScreen(): ReactNode {
       {projects.length === 0
         ? (
             <p className="mt-2 text-base text-muted">
-              No projects yet. The daemon&apos;s tree holds no project directory. Add one, and it is listed here.
+              No projects yet. Add one, and it is listed here.
             </p>
           )
         : (
@@ -68,6 +69,11 @@ export function ProjectsScreen(): ReactNode {
               ))}
             </ul>
           )}
+      <AgentHint
+        className="mt-7"
+        sentence="If you want to add a new project, ask your agent, naming its folder. For example:"
+        example="Use the tasma skill. Create a tasma project for the folder ~/Projects/my-app."
+      />
     </>
   );
 }

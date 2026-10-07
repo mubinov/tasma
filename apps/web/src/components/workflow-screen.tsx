@@ -6,12 +6,12 @@ import { workflowReadQuery, workflowTitle, type WorkflowRead } from "../api/quer
 import { useDocumentTitle } from "../lib/document-title";
 import { ArrowLeftIcon, WarningIcon } from "../lib/icons";
 import { warningCount } from "../lib/warning-count";
+import { AgentHint } from "./agent-hint";
 import { Diagnostics } from "./diagnostics";
 import { InstructionLines } from "./instruction-lines";
 import { ScreenHeading } from "./screen-heading";
 import { SectionHeading } from "./section-heading";
 import { Tag } from "./tag";
-import { WorkflowHint } from "./workflow-hint";
 
 // The route is reached by id rather than imported: the tree in routes.tsx names
 // this component, so importing the route back would close a cycle.
@@ -55,7 +55,7 @@ function WorkflowBody({ workflow }: { workflow: Workflow }): ReactNode {
       <div className="mt-2 rounded-card border border-line bg-surface px-4 py-3">
         <InstructionLines paths={workflow.instructions} />
       </div>
-      <WorkflowHint
+      <AgentHint
         className="mt-7"
         sentence={CHANGE_SENTENCE}
         example={`Use the tasma skill. In the "${workflow.name}" workflow, add a step "docs" after "${lastStep}", owned by an agent.`}
@@ -75,7 +75,7 @@ function FaultBody({ name, failure }: { name: string; failure: Failure }): React
         <p className="text-sm text-muted">Its steps and its instruction documents are unknown until the file is valid.</p>
         <p className="mt-3 rounded-card bg-surface-2 px-3 py-2.5 font-mono text-xs text-dim wrap-anywhere">{failure.message}</p>
       </div>
-      <WorkflowHint
+      <AgentHint
         className="mt-7"
         sentence={CHANGE_SENTENCE}
         example={`Use the tasma skill. In the "${name}" workflow, fix the file so it can be read.`}

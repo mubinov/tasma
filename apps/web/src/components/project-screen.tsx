@@ -6,6 +6,7 @@ import { projectQuery } from "../api/queries";
 import { useDocumentTitle } from "../lib/document-title";
 import { ArrowLeftIcon } from "../lib/icons";
 import { warningCount } from "../lib/warning-count";
+import { AgentHint } from "./agent-hint";
 import { Diagnostics } from "./diagnostics";
 import { InstructionLines, NoValue } from "./instruction-lines";
 import { LiveNotice } from "./live-notice";
@@ -116,6 +117,8 @@ export function ProjectScreen(): ReactNode {
   const { data: { data: project, diagnostics } } = useSuspenseQuery(projectQuery(client, tag));
   const { name, path, live, config } = project;
   const title = name ?? tag;
+  // The engine refuses an empty list of statuses, so the last one exists.
+  const lastStatus = config.statuses.at(-1)!;
 
   useDocumentTitle(title);
 
@@ -161,6 +164,11 @@ export function ProjectScreen(): ReactNode {
           <InstructionLines paths={config.instructions} />
         </ConfigurationRow>
       </dl>
+      <AgentHint
+        className="mt-7"
+        sentence="If you want to change this project, ask your agent, naming it and the change you want. For example:"
+        example={`Use the tasma skill. In the "${tag}" project, add the status "Review" before "${lastStatus}".`}
+      />
     </div>
   );
 }
