@@ -7,6 +7,7 @@ import { resolveConfig } from "vite";
 import { describe, expect, it } from "vitest";
 import { PROBE_BODY_LIMIT, PROBE_TIMEOUT_MS } from "../apps/cli/src/daemon/record.js";
 import { DAEMON_BIN, START_BUDGET_MS, TICK_MS } from "../apps/cli/src/daemon/start.js";
+import { TASK_LINK_PREFIX } from "../apps/daemon/src/http/task-link.js";
 import { APP_PATH_PREFIX, DAEMON_PATH_PREFIX, UPDATE_EVENT } from "../apps/web/src/api/paths.js";
 import { readManifest, workspaceRoot } from "../workspace.js";
 
@@ -143,6 +144,10 @@ describe("the macOS shell", () => {
     const schemes = [...declared.matchAll(/<string>([^<]*)<\/string>/g)].map(([, scheme]) => scheme);
 
     expect(schemes).toEqual([rustConstant("main.rs", "LINK_SCHEME")]);
+  });
+
+  it("reads the link the daemon's task link page opens", () => {
+    expect(TASK_LINK_PREFIX).toBe(`${rustConstant("main.rs", "LINK_SCHEME")}://${rustConstant("deeplink.rs", "TASK")}/`);
   });
 
   it("reads the tag of a link under the length a project is created under", () => {

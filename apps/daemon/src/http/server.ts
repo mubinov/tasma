@@ -1,5 +1,5 @@
-// The server itself: one request in, one envelope out, and nothing a handler
-// does can end the process.
+// The server itself: one request in, one reply out, and nothing a handler does
+// can end the process. Every reply is an envelope except the task link page.
 //
 // It is created here and started by its caller. The process-level exception
 // hooks, the signal handlers and the shutdown belong to whoever owns the port,
@@ -15,6 +15,7 @@ import { readHealth } from "./health.js";
 import { readBody, writeEnvelope } from "./json.js";
 import { match } from "./router.js";
 import type { RouteEntry } from "./router.js";
+import { taskLinkSegment, writeTaskLinkPage } from "./task-link.js";
 
 /** The names the daemon answers to. It binds the loopback address and no other. */
 const SERVED_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
@@ -30,7 +31,7 @@ const SERVED_SITES = new Set<unknown>([undefined, "none", "same-origin"]);
 const DISCARD_LIMIT_MS = 5000;
 
 export type DaemonServerOptions = {
-  /** The token every request except `GET /health` must carry as `Authorization: Bearer`. */
+  /** The token every request except `GET /health` and the task link page must carry as `Authorization: Bearer`. */
   token: string;
   /**
    * How long the rest of a refused body may keep arriving, in milliseconds. It
@@ -72,6 +73,12 @@ export function createDaemonServer(entries: RouteEntry[], options: DaemonServerO
 
       const method = request.method ?? "";
       const target = request.url ?? "/";
+
+      const segment = taskLinkSegment(method, target);
+      if (segment !== undefined) {
+        writeTaskLinkPage(response, segment);
+        return;
+      }
 
       const found = match(method, target, served);
       const open = found.ok && OPEN_ROUTES.includes(found.entry.route);

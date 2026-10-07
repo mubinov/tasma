@@ -4,7 +4,7 @@ import { connect } from "node:net";
 import type { Socket } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TaskStoreError } from "@tasma/engine";
-import { routes } from "@tasma/protocol";
+import { DEFAULT_DAEMON_URL, routes } from "@tasma/protocol";
 import type { Route, Success } from "@tasma/protocol";
 import manifest from "../../../../package.json" with { type: "json" };
 import type { Handler, RouteEntry } from "../../src/http/router.js";
@@ -475,5 +475,95 @@ describe("the token a request carries", () => {
 
     expect(read()).toContain("HTTP/1.1 401");
     socket.destroy();
+  });
+});
+
+describe("the task link page", () => {
+  const pageHeaders = {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "referrer-policy": "no-referrer",
+  };
+
+  function headersOf(response: Response): Record<string, string | null> {
+    return Object.fromEntries(Object.keys(pageHeaders).map((name) => [name, response.headers.get(name)]));
+  }
+
+  function count(text: string, part: string): number {
+    return text.split(part).length - 1;
+  }
+
+  function bodyOf(page: string): string {
+    return /<body>([\s\S]*)<\/body>/.exec(page)?.[1]?.trim() ?? "";
+  }
+
+  it("serves a page without the token that sends the browser to the task once", async () => {
+    const server = await startTestServer([]);
+
+    const response = await fetch(`${server.url}/task/AB-12`);
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(headersOf(response)).toEqual(pageHeaders);
+    expect(count(body, 'http-equiv="refresh"')).toBe(1);
+    expect(body).toContain('<meta http-equiv="refresh" content="0; url=tasma://task/AB-12">');
+    expect(count(body, '<a href="tasma://task/AB-12">')).toBe(1);
+    expect(body).not.toContain("<script");
+    expect(bodyOf(body)).toMatch(/^<main>\n<h1>Open AB-12 in Tasma<\/h1>\n[\s\S]*<\/main>$/);
+  });
+
+  it.each(["/task/ab-12", "/task/AB-12?x=1", "/task/AB-12/"])("serves GET %s as the page of AB-12", async (path) => {
+    const server = await startTestServer([]);
+
+    const response = await fetch(`${server.url}${path}`);
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("url=tasma://task/AB-12");
+  });
+
+  it.each(["foo", "1A-2", "AB-", "AB-x", "A-1", "ABCDEFGHI-1", "AB%2D1", "AB-1%2F2", "A%C3%9F-1"])(
+    "answers GET /task/%s with a page that is no task link",
+    async (segment) => {
+      const server = await startTestServer([]);
+
+      const response = await fetch(`${server.url}/task/${segment}`);
+      const body = await response.text();
+
+      expect(response.status).toBe(404);
+      expect(headersOf(response)).toEqual(pageHeaders);
+      expect(body).toContain("Not a Tasma task link");
+      expect(body).toContain(`${DEFAULT_DAEMON_URL}/task/XY-7`);
+      expect(body).not.toContain(segment);
+      expect(body).not.toContain("http-equiv");
+      expect(bodyOf(body)).toMatch(/^<main>\n<h1>Not a Tasma task link<\/h1>\n[\s\S]*<\/main>$/);
+    },
+  );
+
+  it.each([
+    ["POST", "/task/AB-12"],
+    ["HEAD", "/task/AB-12"],
+    ["GET", "/task"],
+    ["GET", "/task/AB-12//"],
+    ["GET", "/task/AB-12/x"],
+  ])("refuses %s %s without the token", async (method, path) => {
+    const server = await startTestServer([]);
+
+    const response = await fetch(`${server.url}${path}`, { method });
+
+    expect(response.status).toBe(401);
+  });
+
+  it.each([
+    ["a name that is not the daemon's own", ["host: saga.example"]],
+    ["a page on another site", ["host: 127.0.0.1", "sec-fetch-site: cross-site"]],
+  ])("refuses a request for the page from %s", async (_description, lines) => {
+    const server = await startTestServer([]);
+
+    const answer = await raw(server.url, ["GET /task/AB-12 HTTP/1.1", ...lines]);
+
+    expect(answer).toContain("HTTP/1.1 400");
+    expect(answer).toContain('"code":"malformed-request"');
   });
 });

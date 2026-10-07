@@ -24,7 +24,7 @@ Global options go before `<group>`. `tasma <group> --help` lists the commands of
 
 When no address is given, tasma reads `$HOME/.tasma/daemon.json`. If that file is missing or not valid, it uses `http://127.0.0.1:8278`. If no daemon answers there, the command starts one. `daemon status` and `daemon stop` never start a daemon. tasma never starts a daemon at an address given by `--daemon` or `TASMA_DAEMON_URL`.
 
-The daemon refuses each request without its token, except its health check. tasma then fails with exit code 1 and a text that tells why it has no valid token and how to get one: run the command again, call the address that `daemon.json` names, set `TASMA_DAEMON_TOKEN`, or restart the daemon.
+The daemon refuses each request without its token, except its health check and the task link page. tasma then fails with exit code 1 and a text that tells why it has no valid token and how to get one: run the command again, call the address that `daemon.json` names, set `TASMA_DAEMON_TOKEN`, or restart the daemon.
 
 ## Exit codes
 
@@ -227,6 +227,8 @@ Remove a workflow folder and everything in it. A folder that holds no `workflow.
 ## daemon
 
 `daemon start` and `daemon stop` act only on the daemon of `$HOME/.tasma`. They refuse `--daemon` and `TASMA_DAEMON_URL`.
+
+The daemon serves `GET /task/<TAG>-<number>` without a token, for task links in places that open only `http` links, for example `http://127.0.0.1:8278/task/AB-12`. The page opens `tasma://task/AB-12`, so the browser asks to open Tasma. The link uses the default address `http://127.0.0.1:8278` and works only while a daemon answers there. A click on the link opens whatever page answers at that address: when your daemon does not hold the port, another OS user or another local process can hold it and serve a page of its own.
 
 ### `tasma daemon start`
 
