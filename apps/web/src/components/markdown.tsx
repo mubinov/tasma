@@ -1,15 +1,20 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
+import { normalizeUri } from "micromark-util-sanitize-uri";
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { WarningIcon } from "../lib/icons";
 import {
+  hiddenHost,
   markdownUrl,
   mermaidSource,
+  rehypeLinkText,
   remarkImagesAsLinks,
   remarkRawAsSource,
   remarkTaskHeadings,
   type TaskHeadingsOptions,
 } from "../lib/markdown";
 import { MermaidDiagram } from "./mermaid-diagram";
+import { Tooltip } from "./tooltip";
 
 type MarkdownProps = TaskHeadingsOptions & { text: string };
 
@@ -45,6 +50,7 @@ function MarkdownHeading({ node, children }: ChildrenProps & ExtraProps): ReactN
 }
 
 function MarkdownLink({ node, href, children }: ChildrenProps & ExtraProps & { href?: string | undefined }): ReactNode {
+  const descriptionId = useId();
   // A footnote back-reference is a `#…` link: with its href dropped, only a "↩" that does nothing is left.
   if (node?.properties.dataFootnoteBackref !== undefined) {
     return null;
@@ -53,11 +59,43 @@ function MarkdownLink({ node, href, children }: ChildrenProps & ExtraProps & { h
   if (href === undefined) {
     return children;
   }
+  const named = node?.children.some(hasText) === true;
+  const text = String(node?.properties.dataText);
+  const host = named ? hiddenHost(text, href) : undefined;
+  // A link named by its own URL gets no description, so a screen reader does not read the URL twice. The href is
+  // the output of normalizeUri and then markdownUrl, so the text goes through both. A GFM `www.` literal gets
+  // `http://`, and an email autolink gets `mailto:`.
+  const describe = named && ["", "http://", "mailto:"].every((prefix) => markdownUrl(normalizeUri(prefix + text)) !== href);
   return (
-    <a href={href} target="_blank" rel="noreferrer" className="underline underline-offset-2">
-      {node?.children.some(hasText) ? children : href}
-      <span className="sr-only"> (opens in a new tab)</span>
-    </a>
+    // The isolates keep a bidi control in the text around the link, or in the link text, from reordering the link
+    // and its mark. `dir` on the `<a>` gives it `unicode-bidi: isolate`. They hold because rehypeLinkText removes
+    // every PDI from the link text.
+    <bdi dir="ltr">
+      <Tooltip content={<span className="font-mono">{href}</span>}>
+        <a
+          dir="ltr"
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          aria-describedby={describe ? descriptionId : undefined}
+          className="underline underline-offset-2"
+        >
+          {named ? children : href}
+          {host !== undefined && <span className="sr-only">{` (warning: goes to ${host})`}</span>}
+          <span className="sr-only"> (opens in a new tab)</span>
+        </a>
+      </Tooltip>
+      {/* A hidden element still gives the description, and the virtual cursor does not read it as text. */}
+      {describe && <span id={descriptionId} hidden>{href}</span>}
+      {host !== undefined && (
+        <span aria-hidden="true" className="ml-1.5 text-signal wrap-anywhere">
+          (
+          <WarningIcon size="1em" className="mr-0.5 inline align-[-0.125em]" />
+          {host}
+          )
+        </span>
+      )}
+    </bdi>
   );
 }
 
@@ -138,6 +176,7 @@ export function Markdown({ text, base, title }: MarkdownProps): ReactNode {
           remarkImagesAsLinks,
         ]}
         // The footnote label is added after the remark plugins run, so no heading rank reaches it.
+        rehypePlugins={[rehypeLinkText]}
         remarkRehypeOptions={{ footnoteLabelTagName: "p" }}
         urlTransform={markdownUrl}
         components={components}

@@ -1,4 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Markdown } from "../../src/components/markdown";
 import { MermaidDiagram } from "../../src/components/mermaid-diagram";
@@ -171,6 +172,123 @@ describe("a link", () => {
 
     expect(wrapper.querySelector("a")).toBeNull();
   });
+
+  it("shows its full URL in a tooltip on keyboard focus", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<Markdown text="[site](https://example.com/a?b)" base={2} />);
+
+    await user.tab();
+
+    expect(document.activeElement).toBe(screen.getByRole("link"));
+    const popup = await screen.findByRole("presentation");
+    expect(container.contains(popup)).toBe(false);
+    expect(popup.textContent).toBe("https://example.com/a?b");
+    expect(classOf(popup.querySelector("span"))).toBe("font-mono");
+  });
+
+  it("whose text shows another host names the real host in the link name and in a mark after it", () => {
+    const wrapper = renderMarkdown("[https://github.com/acme/repo](https://evil.example/login)");
+
+    const link = screen.getByRole("link");
+    expect(link.textContent).toBe("https://github.com/acme/repo (warning: goes to evil.example) (opens in a new tab)");
+    expect([...link.querySelectorAll("span")].map((span) => classOf(span))).toEqual(["sr-only", "sr-only"]);
+    const mark = wrapper.querySelector("[aria-hidden='true']:has(svg)");
+    expect(link.contains(mark)).toBe(false);
+    expect(mark?.textContent).toBe("(evil.example)");
+    expect(classOf(mark)).toBe("ml-1.5 text-signal wrap-anywhere");
+    expect(mark?.querySelector("svg")?.getAttribute("width")).toBe("1em");
+  });
+
+  it("sits in a left-to-right bidi isolate, so a bidi control before it cannot reorder its text", () => {
+    renderMarkdown("See \u202E[/moc.buhtig//:sptth](https://evil.example/login)");
+
+    const isolate = screen.getByRole("link").parentElement;
+    expect(isolate?.tagName).toBe("BDI");
+    expect(isolate?.getAttribute("dir")).toBe("ltr");
+  });
+
+  it("whose text shows another host has its mark in the bidi isolate of the link", () => {
+    renderMarkdown("See \u202E[https://github.com/acme/repo](https://evil.example/login)");
+
+    const isolate = screen.getByRole("link").parentElement;
+    expect(isolate?.querySelector("[aria-hidden='true']:has(svg)")?.textContent).toBe("(evil.example)");
+  });
+
+  it("isolates its own text, so a bidi control in it cannot reorder the mark after it", () => {
+    const wrapper = renderMarkdown("[‮oper/emca/moc.buhtig//:sptth](https://moc.buhtig.ac/login)");
+
+    const link = screen.getByRole("link");
+    expect(link.getAttribute("dir")).toBe("ltr");
+    const mark = wrapper.querySelector("[aria-hidden='true']:has(svg)");
+    expect(mark?.textContent).toBe("(moc.buhtig.ac)");
+    expect(link.contains(mark)).toBe(false);
+  });
+
+  it.each([
+    "Docs: [⁩⁩‮oper/emca/moc.buhtig//:sptth](https://moc.buhtig.ac/login)",
+    "Docs: ‮[⁩oper/emca/moc.buhtig//:sptth](https://moc.buhtig.ac/login)",
+  ])("in %j has no isolate or override control in its text, so its text cannot close the isolates", (text) => {
+    const wrapper = renderMarkdown(text);
+
+    const link = screen.getByRole("link");
+    expect(link.textContent).toBe("oper/emca/moc.buhtig//:sptth (warning: goes to moc.buhtig.ac) (opens in a new tab)");
+    expect(wrapper.querySelector("[aria-hidden='true']:has(svg)")?.textContent).toBe("(moc.buhtig.ac)");
+  });
+
+  it("removes the isolate and override controls from the text of its inner elements", () => {
+    renderMarkdown("[**⁩bold** `⁦code⁩` ‮plain](https://example.com)");
+
+    const link = screen.getByRole("link");
+    expect(link.querySelector("strong")?.textContent).toBe("bold");
+    expect(link.querySelector("code")?.textContent).toBe("code");
+    expect(link.textContent).toBe("bold code plain (opens in a new tab)");
+  });
+
+  it("keeps the bidi controls of the text around it", () => {
+    const wrapper = renderMarkdown("⁧See⁩ ‮[site](https://example.com)");
+
+    expect(wrapper.querySelector("p")?.firstChild?.textContent).toBe("⁧See⁩ ‮");
+  });
+
+  it("whose text is only bidi controls is named by its URL", () => {
+    renderMarkdown("[⁩‮](https://example.com/a)");
+
+    expect(screen.getByRole("link").textContent).toBe("https://example.com/a (opens in a new tab)");
+  });
+
+  it("whose text is not a URL has no mark", () => {
+    const wrapper = renderMarkdown("[site](https://example.com)");
+
+    expect(screen.getByRole("link").textContent).toBe("site (opens in a new tab)");
+    expect(wrapper.querySelector("svg")).toBeNull();
+  });
+
+  it("has its full URL as its description, from a hidden element", () => {
+    renderMarkdown("[site](https://example.com)");
+
+    const link = screen.getByRole("link");
+    const description = document.getElementById(link.getAttribute("aria-describedby") ?? "");
+    expect(description?.textContent).toBe("https://example.com/");
+    expect(description?.hidden).toBe(true);
+  });
+
+  it.each([
+    "<https://example.com/a>",
+    "[https://example.com/a](https://example.com/a)",
+    "[](https://example.com/a)",
+    "<https://example.com/?filter[status]=open&q=a|b^c{d}>",
+    "www.example.com",
+    "<someone@example.com>",
+    "someone@example.com",
+  ])(
+    "named by its own URL has no description: %j",
+    (text) => {
+      const wrapper = renderMarkdown(text);
+
+      expect(screen.getByRole("link").hasAttribute("aria-describedby")).toBe(false);
+      expect(wrapper.querySelector("[hidden]")).toBeNull();
+    },
+  );
 });
 
 describe("an image", () => {

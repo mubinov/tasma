@@ -2,8 +2,10 @@ import type { Heading, PhrasingContent, Root, RootContent } from "mdast";
 import type { ExtraProps } from "react-markdown";
 import { describe, expect, it } from "vitest";
 import {
+  hiddenHost,
   markdownUrl,
   mermaidSource,
+  rehypeLinkText,
   remarkImagesAsLinks,
   remarkRawAsSource,
   remarkTaskHeadings,
@@ -384,5 +386,140 @@ describe("the source of a Mermaid block", () => {
     { name: "no node", block: undefined },
   ])("is null for $name", ({ block }) => {
     expect(mermaidSource(block)).toBeNull();
+  });
+});
+
+describe("the hidden host of a link", () => {
+  it.each([
+    { text: "https://github.com/acme/repo", href: "https://evil.example/login", host: "evil.example" },
+    { text: "github.com/acme/repo", href: "https://evil.example/", host: "evil.example" },
+    { text: "www.github.com", href: "https://evil.example/", host: "evil.example" },
+    { text: "https://github.com", href: "https://github.com@evil.example/", host: "evil.example" },
+    { text: "github.com/acme", href: "https://gist.github.com/x", host: "gist.github.com" },
+    { text: " github.com/acme ", href: "https://evil.example/", host: "evil.example" },
+    { text: "https://github.com", href: "https://g\u0456thub.com/", host: "xn--gthub-n2e.com" },
+    { text: "https://github.com", href: "https://www.github.com:8443/", host: undefined },
+    { text: "www.github.com", href: "https://github.com/", host: undefined },
+    { text: "https://github.com", href: "mailto:a@evil.example", host: undefined },
+    { text: "see github.com/acme", href: "https://evil.example/", host: undefined },
+    { text: "see\u200F github.com/acme", href: "https://evil.example/", host: undefined },
+    { text: "Shortcut story", href: "https://app.shortcut.com/x", host: undefined },
+    { text: "github.com", href: "https://evil.example/", host: undefined },
+    { text: "markdown.ts", href: "https://github.com/acme/repo", host: undefined },
+    { text: "v1.2/notes", href: "https://evil.example/", host: undefined },
+    { text: "WWW.GitHub.com", href: "https://github.com/", host: undefined },
+    { text: "github.com:8080/acme", href: "https://evil.example/", host: "evil.example" },
+    { text: "www.github.com:8080", href: "https://evil.example/", host: "evil.example" },
+    { text: "github.com:443/acme", href: "https://github.com/", host: undefined },
+    { text: "markdown.ts:42", href: "https://evil.example/", host: undefined },
+    { text: "github.com:x/acme", href: "https://evil.example/", host: undefined },
+    { text: "//github.com/acme/repo", href: "https://evil.example/", host: "evil.example" },
+    { text: "//github.com", href: "https://evil.example/", host: "evil.example" },
+    { text: "//notes", href: "https://evil.example/", host: undefined },
+    { text: "/github.com/acme", href: "https://evil.example/", host: undefined },
+    { text: "someone@github.com/acme", href: "https://evil.example/", host: undefined },
+    { text: "ftp://github.com/acme", href: "https://evil.example/", host: undefined },
+    { text: "https://github.com", href: "not a URL", host: undefined },
+    { text: "https:/github.com/acme", href: "https://evil.example/", host: "evil.example" },
+    { text: "https:github.com/acme", href: "https://evil.example/", host: "evil.example" },
+    { text: "https:\\\\github.com/acme", href: "https://evil.example/", host: "evil.example" },
+    { text: "github\uFF0Ecom/acme", href: "https://evil.example/", host: "evil.example" },
+    { text: "github\u3002com/acme", href: "https://evil.example/", host: "evil.example" },
+    { text: "\uFF48\uFF54\uFF54\uFF50\uFF53\uFF1A\uFF0F\uFF0Fgithub.com", href: "https://evil.example/", host: "evil.example" },
+    { text: "123/456", href: "https://evil.example/", host: undefined },
+    { text: "github.com?tab=1", href: "https://evil.example/", host: undefined },
+    { text: "https:", href: "https://evil.example/", host: undefined },
+  ])("of $text to $href is $host", ({ text, href, host }) => {
+    expect(hiddenHost(text, href)).toBe(host);
+  });
+
+  it.each([
+    { text: "(https://github.com/acme/repo)", href: "https://evil.example/", host: "evil.example" },
+    { text: "\"https://github.com/acme/repo\"", href: "https://evil.example/", host: "evil.example" },
+    { text: "\u2192https://github.com/acme/repo", href: "https://evil.example/", host: "evil.example" },
+    { text: "\u2800https://github.com/acme/repo", href: "https://evil.example/", host: "evil.example" },
+    { text: "\u201Cgithub.com/acme\u201D", href: "https://evil.example/", host: "evil.example" },
+    { text: "(//github.com/acme)", href: "https://evil.example/", host: "evil.example" },
+    { text: "(github.com/)", href: "https://evil.example/", host: "evil.example" },
+    { text: "(https://github.com)", href: "https://github.com/", host: undefined },
+    { text: "(www.github.com).", href: "https://github.com/", host: undefined },
+    { text: "(markdown.ts)", href: "https://evil.example/", host: undefined },
+  ])("of $text to $href, with punctuation or a symbol around it, is $host", ({ text, href, host }) => {
+    expect(hiddenHost(text, href)).toBe(host);
+  });
+
+  it.each([
+    "ht\u200Btps://github.com/acme/repo",
+    "ht\u00ADtps://github.com/acme/repo",
+    "ht\u2060tps://github.com/acme/repo",
+    "https://github.com/acme/\uFEFFrepo",
+    "https://git\u200Chub.com/acme/repo",
+    "git\u200Bhub.com/acme",
+    "\u202Eoper/emca/moc.buhtig//:sptth",
+    "\u202Eoper/emca/moc.buhtig//:sp\u200Atth",
+    "\u2067oper/emca/moc.buhtig//:sptth\u2069 see",
+    "https://github.com\u200E/acme/repo",
+    "github.com\u200F",
+    "https://github.com:99999/acme",
+    "github.com:99999/acme",
+    "//github.com:99999/acme",
+    "https://[github.com",
+    "https://",
+  ])("of %j, which hides or garbles its host, is the destination host", (text) => {
+    expect(hiddenHost(text, "https://evil.example/login")).toBe("evil.example");
+  });
+
+  it.each(["\u05D3\u05D5\u05D7\u200F", "\u062A\u0642\u0631\u064A\u0631\u061C", "report\u200E", "\u202Ereport"])(
+    "of %j, with a bidi control and no dot or colon, is undefined",
+    (text) => {
+      expect(hiddenHost(text, "https://evil.example/login")).toBeUndefined();
+    },
+  );
+
+  it.each([
+    { text: "https://github.com/acme\u200B", href: "https://github.com/acme" },
+    { text: "\u200Bgithub.com/acme", href: "https://github.com/x" },
+  ])("of $text to $href, with an invisible character and the same host, is undefined", ({ text, href }) => {
+    expect(hiddenHost(text, href)).toBeUndefined();
+  });
+});
+
+describe("the text of a link", () => {
+  function text(value: string): HastElement["children"][number] {
+    return { type: "text", value };
+  }
+
+  function linkIn(...children: HastElement["children"]): { tree: { children: HastElement[] }; link: HastElement } {
+    const link = element("a", undefined, ...children);
+    const tree = { children: [element("p", undefined, text("‮See "), element("em", undefined, link))] };
+    rehypeLinkText()(tree);
+    return { tree, link };
+  }
+
+  it("has no embedding, override or isolate control, also in its inner elements", () => {
+    const { link } = linkIn(
+      text("⁩⁩‪a‫b‬c‭d‮e"),
+      element("strong", undefined, text("⁦f⁧g⁨h⁩")),
+    );
+
+    expect(link.children).toEqual([text("abcde"), element("strong", undefined, text("fgh"))]);
+  });
+
+  it("keeps its text with the controls in `dataText`", () => {
+    const { link } = linkIn(text("⁩a"), element("code", undefined, text("‮b")), { type: "comment", value: "c" });
+
+    expect(link.properties.dataText).toBe("⁩a‮b");
+  });
+
+  it("keeps the bidi marks, which reorder no text outside an isolate", () => {
+    const { link } = linkIn(text("a‎b‏c؜d"));
+
+    expect(link.children).toEqual([text("a‎b‏c؜d")]);
+  });
+
+  it("is the only text that loses its controls", () => {
+    const { tree } = linkIn(text("a"));
+
+    expect(tree.children[0]?.children[0]).toEqual(text("‮See "));
   });
 });

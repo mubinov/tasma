@@ -25,6 +25,7 @@
     "@tanstack/react-virtual": "catalog:",
     "@tasma/protocol": "workspace:*",
     "mermaid": "catalog:",
+    "micromark-util-sanitize-uri": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "catalog:",

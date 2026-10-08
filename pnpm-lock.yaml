@@ -87,6 +87,9 @@ catalogs:
     mermaid:
       specifier: ^12.0.0
       version: 12.0.0
+    micromark-util-sanitize-uri:
+      specifier: ^2.0.1
+      version: 2.0.1
     oxc-transform-react:
       specifier: ^0.145.0
       version: 0.145.0
@@ -265,6 +268,9 @@ importers:
       mermaid:
         specifier: 'catalog:'
         version: 12.0.0
+      micromark-util-sanitize-uri:
+        specifier: 'catalog:'
+        version: 2.0.1
       react:
         specifier: 'catalog:'
         version: 19.2.8

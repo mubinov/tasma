@@ -65,10 +65,13 @@ import { TaskSidebar } from "./task-sidebar";
 // this component, so importing the route back would close a cycle.
 const route = getRouteApi("/tasks/$project/$task");
 
-/** The text of the element that is on the screen, without the words only a screen reader hears. */
+/**
+ * The text of the element that is on the screen, without the words only a
+ * screen reader hears, and without hidden or decorative text.
+ */
 function visibleText(element: Element): string {
   const copy = element.cloneNode(true) as Element;
-  for (const hidden of copy.querySelectorAll(".sr-only")) {
+  for (const hidden of copy.querySelectorAll('.sr-only, [hidden], [aria-hidden="true"]')) {
     hidden.remove();
   }
   return copy.textContent;

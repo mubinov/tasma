@@ -483,7 +483,16 @@ describe("the contents outline", () => {
     expect(heading.querySelector(".sr-only")?.textContent).toBe(" (opens in a new tab)");
     expect(lines()).toEqual(["Read the guide first", "Plan"]);
     expect(within(outline()).getByRole("button", { name: "Read the guide first" })).toBeTruthy();
-    expect(heading.textContent).toBe("Read the guide (opens in a new tab) first");
+    expect(heading.textContent).toBe("Read the guide (opens in a new tab)https://example.com/ first");
+  });
+
+  it("labels a heading line without the description and the host mark of a link", async () => {
+    const { transport } = daemon({
+      [TASK_PATH]: task({ body: "## See [https://github.com/acme/repo](https://evil.example/) now" }),
+    });
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    expect(lines()).toEqual(["See https://github.com/acme/repo now"]);
   });
 });
 
