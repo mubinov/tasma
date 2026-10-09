@@ -77,11 +77,23 @@ const HIDDEN_WORDS: Record<HiddenBy, string> = {
 
 /**
  * The filters as the rendered columns apply them. `searchText` is the text of
- * the search result the columns use, `null` while they use none.
+ * the search result the columns use, `null` while they use none. `searching`
+ * is the text of a long search wait, `null` while none is said.
  */
-type BoardFilter = { labelled: boolean; searchText: string | null; failed: boolean; matching: number; total: number };
+type BoardFilter = {
+  labelled: boolean;
+  searchText: string | null;
+  searching: string | null;
+  failed: boolean;
+  matching: number;
+  total: number;
+};
 
-function filterSentences({ labelled, searchText, failed, matching, total }: BoardFilter): string[] {
+function filterSentences({ labelled, searchText, searching, failed, matching, total }: BoardFilter): string[] {
+  if (searching !== null) {
+    return [`Searching for "${searching}".`];
+  }
+
   const count = `${String(matching)} of ${String(total)} tasks`;
   const said = failed ? [SEARCH_FAILED] : [];
 
@@ -184,7 +196,8 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
   const workflowReads = useQueries({ queries: names.map((name) => workflowQuery(client, name)) });
   const selected = distinctLabels(splitList(labels));
   const deferredSelected = distinctLabels(splitList(useDeferredValue(labels)));
-  const { searchText, searchRequested, busy, failed, applied, ids, settled } = useBoardSearch(client, tag, q);
+  const { searchText, searchRequested, busy, failed, searching, applied, ids, settled }
+    = useBoardSearch(client, tag, q);
   const failureId = useId();
   const [lostFocus, setLostFocus] = useState<{ id: string; column: number } | null>(null);
 
@@ -377,6 +390,7 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
         {boardSummary(live, warnings.length + listing.excluded.length, {
           labelled,
           searchText: applied?.text ?? null,
+          searching,
           failed,
           matching,
           total,

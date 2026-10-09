@@ -3,6 +3,7 @@ import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_URL } from "../../src/api/transport";
+import { BUSY_ANNOUNCE_DELAY } from "../../src/lib/use-board-search";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
 import { CONFIG, column, countOf, daemon, entry, listing, titlesIn } from "../board-fixtures";
@@ -185,6 +186,214 @@ describe("the search", () => {
   });
 
   describe("the wait", () => {
+    const observers: MutationObserver[] = [];
+
+    afterEach(() => {
+      for (const observer of observers.splice(0)) {
+        observer.disconnect();
+      }
+    });
+
+    /** The fake clock also moves with real time, so a wait ends at a time point, not after a duration. */
+    async function advanceTo(time: number) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(Math.max(0, time - Date.now()));
+      });
+    }
+
+    /** `start` is a clock read before the navigation, so the timer has not fired yet. */
+    async function advanceToBeforeDelay(start: number) {
+      await advanceTo(start + BUSY_ANNOUNCE_DELAY - 300);
+    }
+
+    /** Called after the navigation, so the timer has started and fires. */
+    async function advancePastDelay() {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(BUSY_ANNOUNCE_DELAY);
+      });
+    }
+
+    /**
+     * Records every text the status region takes from now on. `act` runs the
+     * urgent and the deferred commit with no microtask between them, so the old
+     * texts come from the mutation records, not from reads of the region.
+     */
+    function recordStatus(): () => string[] {
+      const region = screen.getByRole("status");
+      const texts: string[] = [];
+      const take = (records: MutationRecord[]) => {
+        for (const record of records) {
+          texts.push(record.type === "characterData"
+            ? record.oldValue ?? ""
+            : [...record.removedNodes].map((node) => node.textContent).join(""));
+        }
+      };
+      const observer = new MutationObserver(take);
+
+      observer.observe(region, { childList: true, characterData: true, characterDataOldValue: true, subtree: true });
+      observers.push(observer);
+
+      return () => {
+        take(observer.takeRecords());
+
+        return [...texts, region.textContent ?? ""].filter((text, index, all) => index === 0 || text !== all[index - 1]);
+      };
+    }
+
+    function textsFrom(texts: string[], first: string): string[] {
+      return texts.slice(texts.indexOf(first));
+    }
+
+    it("keeps the old sentence while the request for a new text runs shorter than the delay", async () => {
+      const held = heldBack();
+      const { transport } = searchDaemon({ [DOCS]: held.reply });
+      const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      await settle();
+
+      const start = Date.now();
+      await go(router, { q: "docs" });
+      await advanceToBeforeDelay(start);
+
+      expect(status()).toBe("2 of 4 tasks match \"parser\".");
+    });
+
+    it("says the busy sentence after the delay, and then the result with no old sentence between", async () => {
+      const held = heldBack();
+      const { transport } = searchDaemon({ [DOCS]: held.reply });
+      const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      await settle();
+      const record = recordStatus();
+
+      await go(router, { q: "docs" });
+      await advancePastDelay();
+      expect(status()).toBe("Searching for \"docs\".");
+
+      await act(async () => {
+        held.answer(listing([ENTRIES[1]!]));
+      });
+      await settle();
+      expect(status()).toBe("1 of 4 tasks match \"docs\".");
+      expect(textsFrom(record(), "Searching for \"docs\".")).toEqual([
+        "Searching for \"docs\".",
+        "1 of 4 tasks match \"docs\".",
+      ]);
+    });
+
+    it("says the busy sentence after the delay for a first search", async () => {
+      const held = heldBack();
+      const { transport } = searchDaemon({ [PARSER]: held.reply });
+      await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      await settle();
+      expect(status()).toBe("");
+
+      await advancePastDelay();
+
+      expect(status()).toBe("Searching for \"parser\".");
+    });
+
+    it("says no busy sentence for an answer that comes before the delay", async () => {
+      const { transport } = searchDaemon();
+      const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      await settle();
+      const record = recordStatus();
+
+      await go(router, { q: "docs" });
+      await advancePastDelay();
+
+      expect(status()).toBe("1 of 4 tasks match \"docs\".");
+      expect(record().filter((text) => text.includes("Searching"))).toEqual([]);
+    });
+
+    it("says only the busy sentence while labels are selected", async () => {
+      const held = heldBack();
+      const { transport } = searchDaemon({ [DOCS]: held.reply });
+      const router = await renderWithRouter("/tasks?projects=SAGA&labels=web&q=parser", transport);
+      await settle();
+
+      await go(router, { labels: "web", q: "docs" });
+      await advancePastDelay();
+
+      expect(status()).toBe("Searching for \"docs\".");
+    });
+
+    it("keeps the busy sentence of the earlier text until a new text has run for the delay", async () => {
+      const { transport } = searchDaemon({ [DOCS]: heldBack().reply, [RELEASE]: heldBack().reply });
+      const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      await settle();
+      const record = recordStatus();
+
+      await go(router, { q: "docs" });
+      await advancePastDelay();
+      expect(status()).toBe("Searching for \"docs\".");
+
+      const start2 = Date.now();
+      await go(router, { q: "release" });
+      await advanceToBeforeDelay(start2);
+      expect(status()).toBe("Searching for \"docs\".");
+
+      await advancePastDelay();
+      expect(status()).toBe("Searching for \"release\".");
+      expect(textsFrom(record(), "Searching for \"docs\".")).toEqual([
+        "Searching for \"docs\".",
+        "Searching for \"release\".",
+      ]);
+    });
+
+    it("goes from the busy sentence to the failure sentence with no old sentence between", async () => {
+      const held = heldBack();
+      const { transport } = searchDaemon({ [DOCS]: held.reply });
+      const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      await settle();
+      const record = recordStatus();
+
+      await go(router, { q: "docs" });
+      await advancePastDelay();
+      await act(async () => {
+        held.answer(REFUSED);
+      });
+      await settle();
+
+      expect(status()).toBe(FAILED_LINE);
+      expect(textsFrom(record(), "Searching for \"docs\".")).toEqual(["Searching for \"docs\".", FAILED_LINE]);
+    });
+
+    it("goes from the busy sentence to silence on Escape, with no old sentence between", async () => {
+      const user = setUser();
+      const { transport } = searchDaemon({ [DOCS]: heldBack().reply });
+      const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      await settle();
+      const record = recordStatus();
+
+      await go(router, { q: "docs" });
+      await advancePastDelay();
+      act(() => {
+        screen.getByRole("searchbox").focus();
+      });
+      await user.keyboard("{Escape}");
+      await settle();
+
+      expect(router.state.location.search).toEqual({ projects: "SAGA" });
+      expect(status()).toBe("");
+      expect(textsFrom(record(), "Searching for \"docs\".")).toEqual(["Searching for \"docs\".", ""]);
+    });
+
+    it("starts the delay again for a new text in the first part of the wait", async () => {
+      const { transport } = searchDaemon({ [DOCS]: heldBack().reply, [RELEASE]: heldBack().reply });
+      const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      await settle();
+
+      const start = Date.now();
+      await go(router, { q: "docs" });
+      await advanceTo(start + BUSY_ANNOUNCE_DELAY / 2);
+      const start2 = Date.now();
+      await go(router, { q: "release" });
+      await advanceToBeforeDelay(start2);
+      expect(status()).toBe("2 of 4 tasks match \"parser\".");
+
+      await advancePastDelay();
+      expect(status()).toBe("Searching for \"release\".");
+    });
+
     it("keeps the result it shows and turns the spinner while the request for a new text runs", async () => {
       const held = heldBack();
       const { transport } = searchDaemon({ [DOCS]: held.reply });
@@ -239,6 +448,7 @@ describe("the search", () => {
 
       expect(spinning()).toBe(false);
       expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2"]);
+      expect(status()).not.toContain("Searching");
     });
 
     it("turns no spinner while a poll of a failed text runs", async () => {
@@ -251,6 +461,7 @@ describe("the search", () => {
 
       expect(spinning()).toBe(false);
       expect(screen.getByText(FAILED_LINE, { selector: "p" })).toBeTruthy();
+      expect(status()).not.toContain("Searching");
     });
 
     it("turns the spinner and keeps the shown result while a text that failed before is asked again", async () => {
@@ -260,12 +471,18 @@ describe("the search", () => {
 
       await go(router, { q: "docs" });
       replies[PARSER] = heldBack().reply;
+      const start = Date.now();
       await go(router, { q: "parser" });
 
       expect(spinning()).toBe(true);
       expect(screen.queryByText(FAILED_LINE, { selector: "p" })).toBeNull();
       expect(titlesIn("Backlog")).toEqual(["Task 2"]);
       expect(status()).toBe("1 of 4 tasks match \"docs\".");
+
+      await advanceToBeforeDelay(start);
+      expect(status()).toBe("1 of 4 tasks match \"docs\".");
+      await advancePastDelay();
+      expect(status()).toBe("Searching for \"parser\".");
     });
   });
 

@@ -1,7 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Client, Success, TaskList } from "@tasma/protocol";
-import { useDeferredValue, useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 import { POLL_INTERVAL, taskSearchQuery } from "../api/queries";
+
+/** How long a search request runs before the live region says that it runs, in ms. */
+export const BUSY_ANNOUNCE_DELAY = 1000;
 
 /** A search result, and the trimmed text it answers. */
 export type SearchResult = { text: string; read: Success<TaskList> };
@@ -15,6 +18,8 @@ export type BoardSearch = {
   busy: boolean;
   /** The search for `searchText` failed while it was the board's text, and has no result. */
   failed: boolean;
+  /** The text the busy sentence names, deferred with `applied`; `null` while the region says no busy sentence. */
+  searching: string | null;
   /** The result the rendered columns apply, `null` while they apply none. */
   applied: SearchResult | null;
   /** The ids of `applied`, `null` while every card shows. */
@@ -72,6 +77,32 @@ export function useBoardSearch(client: Client, tag: string, q: string | undefine
   const settled = searchRequested
     ? (applied !== null && applied.read === searchRead.data) || (failed && applied === null)
     : applied === null;
+  // The wait that has lasted BUSY_ANNOUNCE_DELAY. A new text restarts the timer
+  // and keeps the mark, so the region keeps the earlier sentence until the new
+  // text has also run for BUSY_ANNOUNCE_DELAY.
+  const [mark, setMark] = useState<{ tag: string; text: string } | null>(null);
 
-  return { searchText, searchRequested, busy, failed, applied, ids: idsOf(applied?.read), settled };
+  if (mark !== null && (!busy || mark.tag !== tag)) {
+    setMark(null);
+  }
+
+  useEffect(() => {
+    if (!busy) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setMark({ tag, text: searchText });
+    }, BUSY_ANNOUNCE_DELAY);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [busy, tag, searchText]);
+
+  const announced = busy && mark !== null && mark.tag === tag ? mark.text : null;
+  // Deferred with `applied`, so the region never says a result older than the busy sentence.
+  const searching = useDeferredValue(announced);
+
+  return { searchText, searchRequested, busy, failed, searching, applied, ids: idsOf(applied?.read), settled };
 }
