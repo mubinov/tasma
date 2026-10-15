@@ -22,7 +22,7 @@ function segmentClass(owner: StepOwner, index: number, current: number): string 
   if (index === current) {
     return "size-[9px] rounded-full border-[1.5px] border-signal bg-signal";
   }
-  return `size-[7px] rounded-full border-[1.5px] ${index < current ? "border-graphic" : "border-line"}`;
+  return `size-[7px] rounded-full border-[1.5px] ${index < current ? "border-graphic bg-graphic" : "border-line"}`;
 }
 
 /** The owner's dot, the step name and what a screen reader says, as siblings for the caller's flex row. */

@@ -246,7 +246,7 @@ describe("the flow row", () => {
     expect(classesOf(segments)).toContain("ml-auto");
   });
 
-  it("draws one segment per step: a bar for an agent, a ring for a human, by position", async () => {
+  it("draws one segment per step: a bar for an agent, a ring for a human, filled once passed, by position", async () => {
     const { card } = await renderCard(entry(), {
       kind: "step",
       name: "approve",
@@ -258,7 +258,7 @@ describe("the flow row", () => {
     const segments = [...card.querySelectorAll("i")].map((segment) => segment.getAttribute("class"));
     expect(segments).toEqual([
       "h-[3px] w-2 rounded-[2px] bg-graphic",
-      "size-[7px] rounded-full border-[1.5px] border-graphic",
+      "size-[7px] rounded-full border-[1.5px] border-graphic bg-graphic",
       "size-[9px] rounded-full border-[1.5px] border-signal bg-signal",
       "h-[3px] w-2 rounded-[2px] bg-line",
       "size-[7px] rounded-full border-[1.5px] border-line",
