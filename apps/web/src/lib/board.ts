@@ -1,8 +1,16 @@
 import type { Config, Diagnostic, Frontmatter, StepOwner, TaskEntry, TaskInput, Workflow } from "@tasma/protocol";
 
+/** A project of the board, in board order. */
+export type BoardProject = {
+  tag: string;
+  config: Pick<Config, "statuses" | "final_statuses">;
+};
+
 export type ColumnData = {
-  /** As configured. */
+  /** The spelling of the first project that has the status. */
   status: string;
+  /** Each project that has the status, with its own spelling of it. */
+  byTag: Readonly<Record<string, string>>;
   final: boolean;
   /** After the label filter and the search, in column order. */
   matching: TaskEntry[];
@@ -20,13 +28,30 @@ export function idNumber(id: string): number {
   return Number(id.slice(id.lastIndexOf("-") + 1));
 }
 
-/** Tasks with an `order` first, by `order`, equal values by id number; `null` when neither has one. */
+/** The listing index guarantees every id is `PROJ-N`, and a tag holds no `-`. */
+export function tagOf(id: string): string {
+  return id.slice(0, id.indexOf("-"));
+}
+
+/** By code unit: a tag holds only `A-Z` and `0-9`, so no locale changes the result. */
+function byProjectTag(a: TaskEntry, b: TaskEntry): number {
+  const left = tagOf(a.id);
+  const right = tagOf(b.id);
+
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function byId(a: TaskEntry, b: TaskEntry): number {
+  return idNumber(a.id) - idNumber(b.id) || byProjectTag(a, b);
+}
+
+/** Tasks with an `order` first, by `order`, equal values by id; `null` when neither has one. */
 function byOrder(a: TaskEntry, b: TaskEntry): number | null {
   const left = a.frontmatter.order;
   const right = b.frontmatter.order;
 
   if (typeof left === "number" && typeof right === "number") {
-    return left === right ? idNumber(a.id) - idNumber(b.id) : left - right;
+    return left === right ? byId(a, b) : left - right;
   }
   if (typeof left === "number") {
     return -1;
@@ -38,7 +63,7 @@ function byOrder(a: TaskEntry, b: TaskEntry): number | null {
 }
 
 function openOrder(a: TaskEntry, b: TaskEntry): number {
-  return byOrder(a, b) ?? idNumber(a.id) - idNumber(b.id);
+  return byOrder(a, b) ?? byId(a, b);
 }
 
 function finalOrder(a: TaskEntry, b: TaskEntry): number {
@@ -58,7 +83,7 @@ function byUpdated(a: TaskEntry, b: TaskEntry): number {
   if (leftParsed && left !== right) {
     return right - left;
   }
-  return idNumber(b.id) - idNumber(a.id);
+  return idNumber(b.id) - idNumber(a.id) || byProjectTag(a, b);
 }
 
 export function isFinalStatus(status: string, finalStatuses: readonly string[]): boolean {
@@ -71,30 +96,93 @@ function carriesLabel(entry: TaskEntry, selected: ReadonlySet<string>): boolean 
   return selected.size === 0 || (entry.frontmatter.labels ?? []).some((label) => selected.has(label.toLowerCase()));
 }
 
+type RowColumn = { status: string; byTag: Record<string, string>; final: boolean; tasks: TaskEntry[] };
+
 /**
+ * A status joins the first column of its name, without case, that its project
+ * is not in yet. A status with no such column makes one, directly before the
+ * column of its project's next joined status, else at the end.
+ */
+function mergedRow(projects: readonly BoardProject[]): RowColumn[] {
+  const row: RowColumn[] = [];
+
+  for (const { tag, config } of projects) {
+    let made: RowColumn[] = [];
+
+    for (const status of config.statuses) {
+      const key = status.toLowerCase();
+      const final = isFinalStatus(status, config.final_statuses);
+      const index = row.findIndex((column) => column.byTag[tag] === undefined && column.status.toLowerCase() === key);
+      const joined = row[index];
+
+      if (joined === undefined) {
+        made.push({ status, byTag: { [tag]: status }, final, tasks: [] });
+        continue;
+      }
+
+      joined.byTag[tag] = status;
+      joined.final &&= final;
+      row.splice(index, 0, ...made);
+      made = [];
+    }
+
+    row.push(...made);
+  }
+
+  return row;
+}
+
+/** The first column that holds `status` of the project `tag`, without case, or `-1`. */
+export function statusColumn(
+  columns: readonly Pick<ColumnData, "byTag">[],
+  tag: string,
+  status: string,
+): number {
+  const key = status.toLowerCase();
+
+  return columns.findIndex((column) => column.byTag[tag]?.toLowerCase() === key);
+}
+
+/** The column of `status` in the project `tag`, else of that project's first status, else `-1`. */
+function taskColumn(
+  columns: readonly Pick<ColumnData, "byTag">[],
+  projects: readonly BoardProject[],
+  tag: string,
+  status: string,
+): number {
+  const index = statusColumn(columns, tag, status);
+  if (index >= 0) {
+    return index;
+  }
+
+  const first = projects.find((project) => project.tag === tag)?.config.statuses[0];
+  return first === undefined ? -1 : statusColumn(columns, tag, first);
+}
+
+/**
+ * One row of columns for the projects, in board order. A task whose tag names
+ * no project of the board is in no column.
+ *
  * @param labels A task matches when it carries any of them, or always when none is given.
  * @param ids The tasks a search gives back. A task matches only when its id is here; `null` is no search.
  */
 export function buildColumns(
-  config: Pick<Config, "statuses" | "final_statuses">,
+  projects: readonly BoardProject[],
   entries: readonly TaskEntry[],
   labels: readonly string[],
   ids: ReadonlySet<string> | null = null,
 ): ColumnData[] {
-  const statuses = config.statuses.map((status) => status.toLowerCase());
   const selected = new Set(labels.map((label) => label.toLowerCase()));
-  const columns = config.statuses.map((status) => ({ status, tasks: [] as TaskEntry[] }));
+  const row = mergedRow(projects);
 
   for (const entry of entries) {
-    const index = statuses.indexOf(entry.frontmatter.status.toLowerCase());
-    columns[Math.max(index, 0)]?.tasks.push(entry);
+    row[taskColumn(row, projects, tagOf(entry.id), entry.frontmatter.status)]?.tasks.push(entry);
   }
 
-  return columns.map(({ status, tasks }) => {
-    const final = isFinalStatus(status, config.final_statuses);
+  return row.map(({ status, byTag, final, tasks }) => {
     const matching = tasks.filter((entry) => carriesLabel(entry, selected) && (ids === null || ids.has(entry.id)));
 
-    return { status, final, matching: matching.sort(final ? finalOrder : openOrder), total: tasks.length };
+    return { status, byTag, final, matching: matching.sort(final ? finalOrder : openOrder), total: tasks.length };
   });
 }
 
@@ -274,7 +362,7 @@ export function joinList(values: readonly string[]): string | undefined {
  * @param index The target column's position in the board's row.
  */
 export function moveTarget(
-  config: Pick<Config, "statuses" | "final_statuses">,
+  projects: readonly BoardProject[],
   entries: readonly TaskEntry[],
   columns: readonly ColumnData[],
   index: number,
@@ -283,7 +371,7 @@ export function moveTarget(
   const others = (entry: TaskEntry): boolean => entry.id !== id;
 
   return {
-    unfiltered: buildColumns(config, entries, [])[index]!.matching.filter(others),
+    unfiltered: buildColumns(projects, entries, [])[index]!.matching.filter(others),
     visible: columns[index]!.matching.filter(others),
     card: entries.find((entry) => entry.id === id)!,
   };
@@ -298,36 +386,32 @@ export type CreatedTarget = { kind: "card" } | { kind: "column"; column: number;
  * Where focus goes after a create: the new card while the board shows it, else
  * the heading of the column that holds it. The listing decides the column, as
  * the daemon can correct the case of a status. A task the listing does not hold
- * goes to the column of the status the receipt names, else to the first column.
+ * goes to the column of the status the receipt names in the task's project,
+ * else to the column of that project's first status, else to the first column.
  */
 export function createdTarget(
-  config: Pick<Config, "statuses" | "final_statuses">,
+  projects: readonly BoardProject[],
   entries: readonly TaskEntry[],
   labels: readonly string[],
   ids: ReadonlySet<string> | null,
   id: string,
   status: string,
 ): CreatedTarget {
-  if (cardPlace(buildColumns(config, entries, labels, ids), id) !== null) {
+  if (cardPlace(buildColumns(projects, entries, labels, ids), id) !== null) {
     return { kind: "card" };
   }
 
-  const place = cardPlace(buildColumns(config, entries, []), id);
+  const unfiltered = buildColumns(projects, entries, []);
+  const place = cardPlace(unfiltered, id);
   if (place !== null) {
-    const byLabels = cardPlace(buildColumns(config, entries, labels), id) === null;
+    const byLabels = cardPlace(buildColumns(projects, entries, labels), id) === null;
     const bySearch = ids !== null && !ids.has(id);
     const hiddenBy = byLabels && bySearch ? "both" : byLabels ? "labels" : "search";
 
     return { kind: "column", column: place.column, hiddenBy };
   }
 
-  const key = status.toLowerCase();
-
-  return {
-    kind: "column",
-    column: Math.max(config.statuses.findIndex((candidate) => candidate.toLowerCase() === key), 0),
-    hiddenBy: null,
-  };
+  return { kind: "column", column: Math.max(taskColumn(unfiltered, projects, tagOf(id), status), 0), hiddenBy: null };
 }
 
 /** Where a card stands on the board: its column, and its place in that column's visible list. */

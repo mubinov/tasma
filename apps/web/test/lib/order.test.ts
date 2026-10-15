@@ -28,7 +28,7 @@ function ids(entries: readonly TaskEntry[]): string[] {
 
 /** The entries as a column of the board shows them. */
 function display(entries: readonly TaskEntry[], final: boolean): TaskEntry[] {
-  const [column] = buildColumns({ statuses: [STATUS], final_statuses: final ? [STATUS] : [] }, entries, []);
+  const [column] = buildColumns([{ tag: "T", config: { statuses: [STATUS], final_statuses: final ? [STATUS] : [] } }], entries, []);
 
   return column!.matching;
 }
@@ -175,6 +175,21 @@ describe("placeWrites", () => {
   it("keeps the walk's writes when the moved card already holds its order", () => {
     expect(placeWrites([entry("T-1"), entry("T-2")], entry("T-99", { order: 1000 }), 1)).toEqual([
       { id: "T-1", change: { order: 0 } },
+    ]);
+  });
+
+  it("places a card between two cards of another project: their writes first, its own last, in its project's spelling", () => {
+    const projects = [
+      { tag: "ALPHA", config: { statuses: [STATUS], final_statuses: [] } },
+      { tag: "BETA", config: { statuses: [STATUS.toUpperCase(), "Done"], final_statuses: ["Done"] } },
+    ];
+    const moved = entry("BETA-5", { status: "Done" });
+    const columns = buildColumns(projects, [entry("ALPHA-1", { order: 0 }), entry("ALPHA-2", { order: 1 }), moved], []);
+    const target = columns[0]!;
+
+    expect(placeWrites(target.matching, moved, 1, target.byTag.BETA)).toEqual([
+      { id: "ALPHA-2", change: { order: 2000 } },
+      { id: "BETA-5", change: { status: "OPEN", order: 1000 } },
     ]);
   });
 });

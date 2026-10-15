@@ -32,7 +32,7 @@ function frontmatter(fields: Partial<Frontmatter> = {}): Frontmatter {
   };
 }
 
-function renderProperties(entries: readonly TaskEntry[] = []) {
+function renderProperties(entries: readonly TaskEntry[] = [], config: Config = CONFIG) {
   const replies: Record<string, TransportReply> = { [`PATCH ${TASK_PATH}`]: successReply({ id: "NOTE-3" }) };
   const { transport, requests } = stubTransport(replies);
   const queryClient = createAppQueryClient();
@@ -46,7 +46,7 @@ function renderProperties(entries: readonly TaskEntry[] = []) {
       tag: TAG,
       id: "NOTE-3",
       frontmatter: frontmatter(),
-      config: CONFIG,
+      config,
       entries,
       workflow: null,
     }),
@@ -95,6 +95,22 @@ describe("the Status row", () => {
     });
 
     expect(writes()).toEqual([{ status: "Done", order: 0 }]);
+  });
+
+  it("places the task at the top of the column that shows the status, for two statuses that differ only in case", async () => {
+    const top: TaskEntry = {
+      id: "NOTE-1",
+      path: "/projects/NOTE/tasks/NOTE-1",
+      frontmatter: frontmatter({ id: "NOTE-1", status: "Open", order: 500 }),
+      blocked: false,
+    };
+    const { result, pick, writes } = renderProperties([top], { ...CONFIG, statuses: ["Open", "open", "Done"] });
+
+    await pick(() => {
+      result.current.status.onPick("open");
+    });
+
+    expect(writes()).toEqual([{ status: "open", order: -500 }]);
   });
 
   // Status is required, so its menu offers no "None" and a null never arrives.

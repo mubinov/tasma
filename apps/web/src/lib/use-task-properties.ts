@@ -1,7 +1,7 @@
 import { useMutation, type QueryClient } from "@tanstack/react-query";
 import type { Client, Config, Frontmatter, TaskEntry, TaskInput, Workflow } from "@tasma/protocol";
 import { taskWriteOptions, usePendingTaskWrites } from "../api/mutations";
-import { applyPending, buildColumns, type TaskWrite } from "./board";
+import { applyPending, buildColumns, statusColumn, type TaskWrite } from "./board";
 import { placeWrites } from "./order";
 import {
   applyPendingFrontmatter,
@@ -76,9 +76,9 @@ export function useTaskProperties(options: TaskPropertiesOptions): TaskPropertie
       return;
     }
 
-    const overlaid = applyPending(entries, pending.writes);
+    const columns = buildColumns([{ tag, config }], applyPending(entries, pending.writes), []);
     // The menu offers only configured statuses, and each of them has a column.
-    const column = buildColumns(config, overlaid, [])[config.statuses.indexOf(value)]!.matching;
+    const column = columns[statusColumn(columns, tag, value)]!.matching;
     // The page's own read, never the listing: the unchanged-values guard of
     // placeWrites answers against the value the menu fired on, so a listing
     // that lags behind the file cannot drop the write.

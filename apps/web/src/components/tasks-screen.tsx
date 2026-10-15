@@ -23,8 +23,11 @@ import {
   isTopPriority,
   moveTarget,
   splitList,
+  statusColumn,
   stepView,
+  tagOf,
   workflowNames,
+  type BoardProject,
   type HiddenBy,
   type TaskWrite,
 } from "../lib/board";
@@ -208,6 +211,7 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
   useBoardReturn(tag, labels, q, settled);
 
   const { name, live, config } = project;
+  const boardProjects: BoardProject[] = [{ tag, config }];
   const title = name ?? tag;
   const workflows = new Map<string, Workflow | null | undefined>(
     names.map((workflowName, index) => {
@@ -218,7 +222,7 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
   const liveEntries = applyPending(listed, pending.writes);
   const liveBoard: BoardSnapshot = {
     entries: liveEntries,
-    columns: buildColumns(config, liveEntries, deferredSelected, ids),
+    columns: buildColumns(boardProjects, liveEntries, deferredSelected, ids),
     pendingIds: new Set(pending.writes.map(({ id }) => id)),
     movedIds: pending.movedIds,
   };
@@ -270,7 +274,7 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
     const searchIds = idsOf(searchRequested
       ? queryClient.getQueryData(taskSearchQuery(client, tag, searchText).queryKey)
       : undefined);
-    const target = createdTarget(config, read.entries, selected, searchIds, result.id, result.status);
+    const target = createdTarget(boardProjects, read.entries, selected, searchIds, result.id, result.status);
 
     // Inside a promise continuation these would commit after the notice store's
     // update, and the warning notice would show for a frame under the scrim.
@@ -307,17 +311,16 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
   }
 
   function move(id: string, status: string): void {
-    const key = status.toLowerCase();
-    // The menu offers only configured statuses, and each of them has a column.
-    const index = config.statuses.findIndex((candidate) => candidate.toLowerCase() === key);
-    const { unfiltered, card } = moveTarget(config, entries, columns, index, id);
+    // The menu offers only the statuses of the card's project, and each of them has a column.
+    const index = statusColumn(columns, tagOf(id), status);
+    const { unfiltered, card } = moveTarget(boardProjects, entries, columns, index, id);
 
     // The top of the column, the tasks the filters hide counted in.
     moveFromMenu(id, placeWrites(unfiltered, card, 0, status));
   }
 
   function moveBy(index: number, id: string, by: -1 | 1): void {
-    const { unfiltered, visible, card } = moveTarget(config, entries, columns, index, id);
+    const { unfiltered, visible, card } = moveTarget(boardProjects, entries, columns, index, id);
     const at = columns[index]!.matching.findIndex((entry) => entry.id === id);
 
     moveFromMenu(id, placeWrites(unfiltered, card, fullIndex(unfiltered, visible, at + by)));
@@ -355,10 +358,20 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
    * have moved the card since. It moves no focus.
    */
   function dropCard(id: string, place: DropPlace, snapshot: BoardSnapshot): void {
-    const { unfiltered, visible, card } = moveTarget(config, snapshot.entries, snapshot.columns, place.column, id);
-    const from = cardPlace(snapshot.columns, id)!;
-    const status = from.column === place.column ? undefined : snapshot.columns[place.column]!.status;
+    const changesColumn = cardPlace(snapshot.columns, id)!.column !== place.column;
+    const status = changesColumn ? snapshot.columns[place.column]!.byTag[tagOf(id)] : undefined;
+    // A column that the card's project has no status for takes no card of it.
+    if (changesColumn && status === undefined) {
+      return;
+    }
 
+    const { unfiltered, visible, card } = moveTarget(
+      boardProjects,
+      snapshot.entries,
+      snapshot.columns,
+      place.column,
+      id,
+    );
     sendMove(id, placeWrites(unfiltered, card, fullIndex(unfiltered, visible, place.index), status));
   }
 

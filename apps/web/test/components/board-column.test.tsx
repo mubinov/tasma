@@ -41,7 +41,7 @@ const WORKFLOW: Workflow = {
 type ColumnProps = Omit<ComponentProps<typeof BoardColumn>, "column">;
 
 async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnProps> = {}) {
-  const data: ColumnData = { status: "In Progress", final: false, matching: [], total: 0, ...column };
+  const data: ColumnData = { status: "In Progress", byTag: { SAGA: "In Progress" }, final: false, matching: [], total: 0, ...column };
 
   return renderBesideTaskRoute(
     <BoardColumn

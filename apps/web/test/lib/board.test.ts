@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyPending,
   boardWarnings,
+  type BoardProject,
   type CardClick,
   buildColumns,
   cardPlace,
@@ -15,11 +16,23 @@ import {
   moveTarget,
   opensTask,
   splitList,
+  statusColumn,
   stepView,
+  tagOf,
   workflowNames,
 } from "../../src/lib/board";
 
 const CONFIG = { statuses: ["Backlog", "To Do", "Done"], final_statuses: ["Done"] };
+
+const PROJECTS: BoardProject[] = [{ tag: "T", config: CONFIG }];
+
+function project(tag: string, statuses: string[], finalStatuses: string[] = []): BoardProject {
+  return { tag, config: { statuses, final_statuses: finalStatuses } };
+}
+
+const ALPHA = project("ALPHA", ["Backlog", "To Do", "In Progress", "Done"], ["Done"]);
+
+const BETA = project("BETA", ["TO DO", "Review", "Done"], ["Done"]);
 
 function entry(id: string, fields: Partial<Frontmatter> = {}, blocked = false): TaskEntry {
   return {
@@ -93,7 +106,7 @@ describe("isFinalStatus", () => {
 
 describe("buildColumns", () => {
   it("gives one column per status, in the configured order", () => {
-    const columns = buildColumns(CONFIG, [], []);
+    const columns = buildColumns(PROJECTS, [], []);
 
     expect(columns.map((column) => [column.status, column.final, column.total])).toEqual([
       ["Backlog", false, 0],
@@ -103,37 +116,37 @@ describe("buildColumns", () => {
   });
 
   it("gives no column when no status is configured", () => {
-    expect(buildColumns({ statuses: [], final_statuses: [] }, [entry("T-1")], [])).toEqual([]);
+    expect(buildColumns([project("T", [])], [entry("T-1")], [])).toEqual([]);
   });
 
   it("puts a task in the column its status names, ignoring case", () => {
-    const columns = buildColumns(CONFIG, [entry("T-1", { status: "to do" })], []);
+    const columns = buildColumns(PROJECTS, [entry("T-1", { status: "to do" })], []);
 
     expect(ids(columns[1]!.matching)).toEqual(["T-1"]);
   });
 
   it("puts a task whose status matches no column in the first column", () => {
-    const columns = buildColumns(CONFIG, [entry("T-1", { status: "Waiting" })], []);
+    const columns = buildColumns(PROJECTS, [entry("T-1", { status: "Waiting" })], []);
 
     expect(ids(columns[0]!.matching)).toEqual(["T-1"]);
     expect(columns[0]!.total).toBe(1);
   });
 
   it("puts a task in the first of two equal statuses", () => {
-    const columns = buildColumns({ statuses: ["Backlog", "Backlog"], final_statuses: [] }, [entry("T-1")], []);
+    const columns = buildColumns([project("T", ["Backlog", "Backlog"])], [entry("T-1")], []);
 
     expect(columns.map((column) => column.total)).toEqual([1, 0]);
   });
 
   it("marks a column final ignoring case", () => {
-    const columns = buildColumns({ statuses: ["Open", "Done"], final_statuses: ["done"] }, [], []);
+    const columns = buildColumns([project("T", ["Open", "Done"], ["done"])], [], []);
 
     expect(columns.map((column) => column.final)).toEqual([false, true]);
   });
 
   it("orders an open column by order, then by id number, then the tasks with no order", () => {
     const columns = buildColumns(
-      CONFIG,
+      PROJECTS,
       [
         entry("T-9"),
         entry("T-4", { order: 2 }),
@@ -150,7 +163,7 @@ describe("buildColumns", () => {
 
   it("orders a final column by order, then by id number, then the tasks with no order by update time", () => {
     const columns = buildColumns(
-      CONFIG,
+      PROJECTS,
       [
         entry("T-9", { status: "Done", updated: "2026-09-01T09:00:00Z" }),
         entry("T-4", { status: "Done", order: 2, updated: "2026-08-01T10:00:00Z" }),
@@ -167,7 +180,7 @@ describe("buildColumns", () => {
 
   it("orders the tasks with no order in a final column by the parsed update time, newest first", () => {
     const columns = buildColumns(
-      CONFIG,
+      PROJECTS,
       [
         // 10:00Z, written with an offset that sorts it after T-2 as a string.
         entry("T-1", { status: "Done", updated: "2026-09-01T12:00:00+02:00" }),
@@ -183,7 +196,7 @@ describe("buildColumns", () => {
   it("orders equal times in a final column by id number, highest first", () => {
     const updated = "2026-09-01T10:00:00Z";
     const columns = buildColumns(
-      CONFIG,
+      PROJECTS,
       [entry("T-2", { status: "Done", updated }), entry("T-10", { status: "Done", updated }), entry("T-3", { status: "Done", updated })],
       [],
     );
@@ -193,7 +206,7 @@ describe("buildColumns", () => {
 
   it("puts a final task whose update time does not parse after every task whose time parses", () => {
     const columns = buildColumns(
-      CONFIG,
+      PROJECTS,
       [
         entry("T-1", { status: "Done", updated: "yesterday" }),
         entry("T-2", { status: "Done", updated: "2026-09-01T10:00:00Z" }),
@@ -207,14 +220,14 @@ describe("buildColumns", () => {
   });
 
   it("matches every task when no label is selected", () => {
-    const columns = buildColumns(CONFIG, [entry("T-1", { labels: ["web"] }), entry("T-2")], []);
+    const columns = buildColumns(PROJECTS, [entry("T-1", { labels: ["web"] }), entry("T-2")], []);
 
     expect(ids(columns[0]!.matching)).toEqual(["T-1", "T-2"]);
   });
 
   it("matches a task that carries any selected label, ignoring case", () => {
     const columns = buildColumns(
-      CONFIG,
+      PROJECTS,
       [entry("T-1", { labels: ["Web"] }), entry("T-2", { labels: ["infra", "docs"] }), entry("T-3", { labels: ["ui"] }), entry("T-4")],
       ["web", "DOCS"],
     );
@@ -224,7 +237,7 @@ describe("buildColumns", () => {
   });
 
   it("matches a task whose id is in the id set, and counts every task in the total", () => {
-    const columns = buildColumns(CONFIG, [entry("T-1"), entry("T-2"), entry("T-3", { status: "Done" })], [], new Set(["T-2", "T-3"]));
+    const columns = buildColumns(PROJECTS, [entry("T-1"), entry("T-2"), entry("T-3", { status: "Done" })], [], new Set(["T-2", "T-3"]));
 
     expect(ids(columns[0]!.matching)).toEqual(["T-2"]);
     expect(columns[0]!.total).toBe(2);
@@ -232,7 +245,7 @@ describe("buildColumns", () => {
   });
 
   it("matches no task for an empty id set", () => {
-    const columns = buildColumns(CONFIG, [entry("T-1")], [], new Set());
+    const columns = buildColumns(PROJECTS, [entry("T-1")], [], new Set());
 
     expect(columns[0]!.matching).toEqual([]);
     expect(columns[0]!.total).toBe(1);
@@ -240,7 +253,7 @@ describe("buildColumns", () => {
 
   it("matches a task only when it carries a selected label and its id is in the id set", () => {
     const columns = buildColumns(
-      CONFIG,
+      PROJECTS,
       [entry("T-1", { labels: ["web"] }), entry("T-2", { labels: ["web"] }), entry("T-3")],
       ["web"],
       new Set(["T-2", "T-3"]),
@@ -248,6 +261,120 @@ describe("buildColumns", () => {
 
     expect(ids(columns[0]!.matching)).toEqual(["T-2"]);
     expect(columns[0]!.total).toBe(3);
+  });
+});
+
+describe("tagOf", () => {
+  it("gives the tag of an id", () => {
+    expect(tagOf("ALPHA-12")).toBe("ALPHA");
+  });
+});
+
+describe("buildColumns over several projects", () => {
+  function row(projects: readonly BoardProject[]): [string, Readonly<Record<string, string>>][] {
+    return buildColumns(projects, [], []).map(({ status, byTag }) => [status, byTag]);
+  }
+
+  it("gives one column per status of all the projects, statuses that differ in case joined", () => {
+    expect(row([ALPHA, BETA])).toEqual([
+      ["Backlog", { ALPHA: "Backlog" }],
+      ["To Do", { ALPHA: "To Do", BETA: "TO DO" }],
+      ["In Progress", { ALPHA: "In Progress" }],
+      ["Review", { BETA: "Review" }],
+      ["Done", { ALPHA: "Done", BETA: "Done" }],
+    ]);
+  });
+
+  it.each([
+    { case: "the first project's order wins a conflict", alpha: ["A", "B", "C"], beta: ["C", "X", "A"], statuses: ["X", "A", "B", "C"] },
+    { case: "consecutive new statuses keep their order", alpha: ["A", "B"], beta: ["X", "Y", "B"], statuses: ["A", "X", "Y", "B"] },
+    { case: "a new status with no later joined status goes at the end", alpha: ["A", "B"], beta: ["A", "X"], statuses: ["A", "B", "X"] },
+  ])("places a new status where $case", ({ alpha, beta, statuses }) => {
+    expect(row([project("ALPHA", alpha), project("BETA", beta)]).map(([status]) => status)).toEqual(statuses);
+  });
+
+  it("gives a column to each status of one project, when two of them differ only in case", () => {
+    expect(row([project("ALPHA", ["Open", "Closed", "open"])])).toEqual([
+      ["Open", { ALPHA: "Open" }],
+      ["Closed", { ALPHA: "Closed" }],
+      ["open", { ALPHA: "open" }],
+    ]);
+  });
+
+  it("joins a status to the first matching column that its project is not in yet", () => {
+    expect(row([project("ALPHA", ["Open", "open"]), project("BETA", ["open", "OPEN"])])).toEqual([
+      ["Open", { ALPHA: "Open", BETA: "open" }],
+      ["open", { ALPHA: "open", BETA: "OPEN" }],
+    ]);
+  });
+
+  it.each([
+    { case: "final in one project and open in the other", betaFinal: [], final: false },
+    { case: "final in both projects", betaFinal: ["done"], final: true },
+  ])("marks a column final only when its status is $case", ({ betaFinal, final }) => {
+    const columns = buildColumns([project("ALPHA", ["Open", "Done"], ["Done"]), project("BETA", ["DONE"], betaFinal)], [], []);
+
+    expect(columns.map((column) => column.final)).toEqual([false, final]);
+  });
+
+  it("puts a task in the column of its own project's status, else of its project's first status", () => {
+    const columns = buildColumns(
+      [ALPHA, BETA],
+      [entry("BETA-1", { status: "review" }), entry("BETA-2", { status: "Waiting" }), entry("ALPHA-1", { status: "Waiting" })],
+      [],
+    );
+
+    expect(columns.map((column) => ids(column.matching))).toEqual([["ALPHA-1"], ["BETA-2"], [], ["BETA-1"], []]);
+  });
+
+  it("puts a task whose tag names no project of the board in no column", () => {
+    const columns = buildColumns([ALPHA, BETA], [entry("GAMMA-1")], []);
+
+    expect(columns.map((column) => column.total)).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  it.each([
+    {
+      case: "an open column with order",
+      tasks: [entry("BETA-3", { order: 5 }), entry("ALPHA-3", { order: 5 }), entry("ALPHA-4", { order: 5 })],
+      sorted: ["ALPHA-3", "BETA-3", "ALPHA-4"],
+    },
+    {
+      case: "an open column without order",
+      tasks: [entry("BETA-3"), entry("ALPHA-3"), entry("BETA-2")],
+      sorted: ["BETA-2", "ALPHA-3", "BETA-3"],
+    },
+    {
+      case: "a final column with order",
+      tasks: [entry("BETA-3", { status: "Done", order: 5 }), entry("ALPHA-3", { status: "Done", order: 5 })],
+      sorted: ["ALPHA-3", "BETA-3"],
+    },
+    {
+      case: "a final column without order",
+      tasks: [entry("BETA-3", { status: "Done" }), entry("ALPHA-3", { status: "Done" }), entry("BETA-4", { status: "Done" })],
+      sorted: ["BETA-4", "ALPHA-3", "BETA-3"],
+    },
+  ])("sorts by tag after every other rule in $case, whatever the input order", ({ tasks, sorted }) => {
+    const projects = [project("ALPHA", ["Backlog", "Done"], ["Done"]), project("BETA", ["Backlog", "Done"], ["Done"])];
+    const shown = (input: TaskEntry[]): string[] =>
+      buildColumns(projects, input, []).flatMap((column) => ids(column.matching));
+
+    expect(shown(tasks)).toEqual(sorted);
+    expect(shown(tasks.toReversed())).toEqual(sorted);
+  });
+});
+
+describe("statusColumn", () => {
+  const COLUMNS = buildColumns([ALPHA, BETA], [], []);
+
+  it("gives the first column that holds the project's status, without case", () => {
+    expect(statusColumn(COLUMNS, "BETA", "to do")).toBe(1);
+    expect(statusColumn(COLUMNS, "ALPHA", "DONE")).toBe(4);
+  });
+
+  it("gives -1 for a status that the project does not have", () => {
+    expect(statusColumn(COLUMNS, "BETA", "Backlog")).toBe(-1);
+    expect(statusColumn(COLUMNS, "GAMMA", "Done")).toBe(-1);
   });
 });
 
@@ -512,7 +639,7 @@ describe("applyPending", () => {
 
 describe("cardPlace", () => {
   const COLUMNS = buildColumns(
-    CONFIG,
+    PROJECTS,
     [entry("T-1"), entry("T-2", { status: "Done", order: 1 }), entry("T-3", { status: "Done", order: 2 })],
     [],
   );
@@ -537,8 +664,8 @@ describe("moveTarget", () => {
   ];
 
   it("reads the target column with the filtered tasks and without them, and never with the moved card", () => {
-    const columns = buildColumns(CONFIG, ENTRIES, ["web"]);
-    const { unfiltered, visible, card } = moveTarget(CONFIG, ENTRIES, columns, 1, "T-1");
+    const columns = buildColumns(PROJECTS, ENTRIES, ["web"]);
+    const { unfiltered, visible, card } = moveTarget(PROJECTS, ENTRIES, columns, 1, "T-1");
 
     expect(ids(unfiltered)).toEqual(["T-2", "T-3"]);
     expect(ids(visible)).toEqual(["T-3"]);
@@ -546,16 +673,28 @@ describe("moveTarget", () => {
   });
 
   it("reads a card moving into a column it is no part of yet", () => {
-    const columns = buildColumns(CONFIG, ENTRIES, []);
-    const { unfiltered, visible, card } = moveTarget(CONFIG, ENTRIES, columns, 1, "T-4");
+    const columns = buildColumns(PROJECTS, ENTRIES, []);
+    const { unfiltered, visible, card } = moveTarget(PROJECTS, ENTRIES, columns, 1, "T-4");
 
     expect(ids(unfiltered)).toEqual(["T-1", "T-2", "T-3"]);
     expect(ids(visible)).toEqual(["T-1", "T-2", "T-3"]);
     expect(card.id).toBe("T-4");
   });
+
+  it("reads a merged column with the cards of each project in it", () => {
+    const entries = [entry("ALPHA-1", { status: "To Do", order: 1 }), entry("BETA-1", { status: "TO DO", order: 2 }), entry("BETA-2", { status: "Review" })];
+    const columns = buildColumns([ALPHA, BETA], entries, []);
+    const { unfiltered, visible, card } = moveTarget([ALPHA, BETA], entries, columns, 1, "BETA-2");
+
+    expect(ids(unfiltered)).toEqual(["ALPHA-1", "BETA-1"]);
+    expect(ids(visible)).toEqual(["ALPHA-1", "BETA-1"]);
+    expect(card.id).toBe("BETA-2");
+  });
 });
 
 describe("createdTarget", () => {
+  const LISTING_PROJECTS: BoardProject[] = [{ tag: "P", config: CONFIG }];
+
   const LISTING = [
     entry("P-1"),
     entry("P-2", { status: "to do", labels: ["web"] }),
@@ -564,13 +703,13 @@ describe("createdTarget", () => {
   ];
 
   it("is the card when the board shows it", () => {
-    expect(createdTarget(CONFIG, LISTING, [], null, "P-2", "to do")).toEqual({ kind: "card" });
-    expect(createdTarget(CONFIG, LISTING, ["WEB"], null, "P-2", "to do")).toEqual({ kind: "card" });
-    expect(createdTarget(CONFIG, LISTING, ["web"], new Set(["P-2"]), "P-2", "to do")).toEqual({ kind: "card" });
+    expect(createdTarget(LISTING_PROJECTS, LISTING, [], null, "P-2", "to do")).toEqual({ kind: "card" });
+    expect(createdTarget(LISTING_PROJECTS, LISTING, ["WEB"], null, "P-2", "to do")).toEqual({ kind: "card" });
+    expect(createdTarget(LISTING_PROJECTS, LISTING, ["web"], new Set(["P-2"]), "P-2", "to do")).toEqual({ kind: "card" });
   });
 
   it("is the heading of the column that holds the card when the label filter hides it", () => {
-    expect(createdTarget(CONFIG, LISTING, ["web"], null, "P-4", "Done")).toEqual({
+    expect(createdTarget(LISTING_PROJECTS, LISTING, ["web"], null, "P-4", "Done")).toEqual({
       kind: "column",
       column: 2,
       hiddenBy: "labels",
@@ -578,12 +717,12 @@ describe("createdTarget", () => {
   });
 
   it("names the search when the id set hides the card and the labels do not", () => {
-    expect(createdTarget(CONFIG, LISTING, [], new Set(["P-1"]), "P-4", "Done")).toEqual({
+    expect(createdTarget(LISTING_PROJECTS, LISTING, [], new Set(["P-1"]), "P-4", "Done")).toEqual({
       kind: "column",
       column: 2,
       hiddenBy: "search",
     });
-    expect(createdTarget(CONFIG, LISTING, ["web"], new Set(["P-1"]), "P-2", "to do")).toEqual({
+    expect(createdTarget(LISTING_PROJECTS, LISTING, ["web"], new Set(["P-1"]), "P-2", "to do")).toEqual({
       kind: "column",
       column: 1,
       hiddenBy: "search",
@@ -591,7 +730,7 @@ describe("createdTarget", () => {
   });
 
   it("names both filters when each of them hides the card", () => {
-    expect(createdTarget(CONFIG, LISTING, ["web"], new Set(["P-1"]), "P-4", "Done")).toEqual({
+    expect(createdTarget(LISTING_PROJECTS, LISTING, ["web"], new Set(["P-1"]), "P-4", "Done")).toEqual({
       kind: "column",
       column: 2,
       hiddenBy: "both",
@@ -599,7 +738,7 @@ describe("createdTarget", () => {
   });
 
   it("names the labels when the id set holds the card", () => {
-    expect(createdTarget(CONFIG, LISTING, ["web"], new Set(["P-4"]), "P-4", "Done")).toEqual({
+    expect(createdTarget(LISTING_PROJECTS, LISTING, ["web"], new Set(["P-4"]), "P-4", "Done")).toEqual({
       kind: "column",
       column: 2,
       hiddenBy: "labels",
@@ -607,7 +746,7 @@ describe("createdTarget", () => {
   });
 
   it("takes the column from the listing, not from the status the receipt names", () => {
-    expect(createdTarget(CONFIG, LISTING, ["web"], null, "P-3", "Done")).toEqual({
+    expect(createdTarget(LISTING_PROJECTS, LISTING, ["web"], null, "P-3", "Done")).toEqual({
       kind: "column",
       column: 0,
       hiddenBy: "labels",
@@ -615,10 +754,18 @@ describe("createdTarget", () => {
   });
 
   it("is the heading of the column of the receipt's status, without case, when the listing holds no such task", () => {
-    expect(createdTarget(CONFIG, LISTING, [], null, "P-9", "done")).toEqual({ kind: "column", column: 2, hiddenBy: null });
+    expect(createdTarget(LISTING_PROJECTS, LISTING, [], null, "P-9", "done")).toEqual({ kind: "column", column: 2, hiddenBy: null });
   });
 
   it("is the heading of the first column when no column names the receipt's status either", () => {
-    expect(createdTarget(CONFIG, LISTING, [], null, "P-9", "Gone")).toEqual({ kind: "column", column: 0, hiddenBy: null });
+    expect(createdTarget(LISTING_PROJECTS, LISTING, [], null, "P-9", "Gone")).toEqual({ kind: "column", column: 0, hiddenBy: null });
+  });
+
+  it.each([
+    { case: "the column of the status in the task's project", id: "BETA-9", status: "review", column: 3 },
+    { case: "the column of the first status of the task's project", id: "BETA-9", status: "Gone", column: 1 },
+    { case: "the first column for a tag that is not on the board", id: "GAMMA-9", status: "Done", column: 0 },
+  ])("is the heading of $case when the listing holds no such task", ({ id, status, column }) => {
+    expect(createdTarget([ALPHA, BETA], [], [], null, id, status)).toEqual({ kind: "column", column, hiddenBy: null });
   });
 });
