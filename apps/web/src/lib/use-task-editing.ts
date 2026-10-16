@@ -84,7 +84,7 @@ export function useTaskEditing(
   const diskLineRef = useRef<HTMLParagraphElement>(null);
   const discardFocusRef = useRef<FinalFocus>(null);
   const focusLater = usePendingFocus();
-  const { mutateAsync: write, isPending: saving } = useMutation(taskWriteOptions(queryClient, client, tag));
+  const { mutateAsync: write, isPending: saving } = useMutation(taskWriteOptions(queryClient, client));
   const [draft, setDraft] = useState<Draft | null>(null);
   const [start, setStart] = useState<Draft>({ title: "", body: "" });
   const [titleError, setTitleError] = useState<string | undefined>(undefined);

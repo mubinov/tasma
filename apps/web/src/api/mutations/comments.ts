@@ -8,7 +8,7 @@ import {
   openWarnings,
   openWriteNotice,
   refusalWords,
-  taskWriteScope,
+  TASK_WRITE_SCOPE,
   usePendingVariables,
   WriteError,
   type WriteFailure,
@@ -56,9 +56,9 @@ export function commentFailureKey({ id, ...write }: CommentWrite): string {
 }
 
 /**
- * Every write of one task's comments, in the queue of the project's task
- * writes. The card shows a pending write from the mutation variables, so the
- * query cache holds only what the daemon said.
+ * Every write of one task's comments, in the one queue of the task writes of
+ * all projects. The card shows a pending write from the mutation variables, so
+ * the query cache holds only what the daemon said.
  */
 export function commentWriteOptions(queryClient: QueryClient, client: Client, tag: string) {
   return mutationOptions<CommentWritten, WriteError, CommentWrite>({
@@ -79,7 +79,7 @@ export function commentWriteOptions(queryClient: QueryClient, client: Client, ta
     },
     // A write whose answer is lost may have been carried out.
     retry: 0,
-    scope: taskWriteScope(tag),
+    scope: TASK_WRITE_SCOPE,
     onSuccess: ({ id, diagnostics }, variables) => {
       // A write reports what the daemon found in the file before it, so the
       // page would repeat every warning its own read already shows.

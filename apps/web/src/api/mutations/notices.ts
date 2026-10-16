@@ -38,14 +38,13 @@ export const COMMENT_FAILURE_KEY_PREFIX = "comment-write-failure:";
 export const WARNING_KEY_PREFIX = "task-write-warnings:";
 
 /**
- * The one queue of a project's writes, so a create waits for a move or an edit
- * in flight. The comment writes share it: the daemon queues per task file too,
- * so without one client queue two writes would be ordered there rather than in
- * the order the reader saw.
+ * The one queue of the writes of all projects: a sequence can write tasks of
+ * several projects, and a create waits for a move or an edit in flight. The
+ * comment writes share it: the daemon queues per task file too, so without one
+ * client queue two writes would be ordered there rather than in the order the
+ * reader saw.
  */
-export function taskWriteScope(tag: string) {
-  return { id: `task-write:${tag}` };
-}
+export const TASK_WRITE_SCOPE = { id: "task-write" };
 
 /** Opens the warning notice of a write, for the diagnostics the reader's screen does not already show. */
 export function openWarnings(id: string, fresh: readonly Diagnostic[]): void {

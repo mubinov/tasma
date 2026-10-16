@@ -48,8 +48,8 @@ export type TaskProperties = {
  */
 export function useTaskProperties(options: TaskPropertiesOptions): TaskProperties {
   const { queryClient, client, tag, id, frontmatter, config, entries, workflow } = options;
-  const { mutate: write } = useMutation(taskWriteOptions(queryClient, client, tag));
-  const pending = usePendingTaskWrites(tag);
+  const { mutate: write } = useMutation(taskWriteOptions(queryClient, client));
+  const pending = usePendingTaskWrites([tag]);
   const live = applyPendingFrontmatter(frontmatter, pending.writes);
 
   function busy(key: string): boolean {

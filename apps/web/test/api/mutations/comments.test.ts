@@ -158,9 +158,9 @@ describe("commentWriteOptions", () => {
     const { queryClient, client } = setup({ [`PATCH ${commentPath(3)}`]: held.reply });
     const wrapper = ({ children }: { children: ReactNode }) =>
       createElement(QueryClientProvider, { client: queryClient }, children);
-    const { result } = renderHook(() => usePendingTaskWrites(TAG), { wrapper });
+    const { result } = renderHook(() => usePendingTaskWrites([TAG]), { wrapper });
 
-    expect(commentWriteKey(TAG)).not.toEqual(taskWriteKey(TAG));
+    expect(commentWriteKey(TAG)).not.toEqual(taskWriteKey());
 
     let done: Promise<unknown> = Promise.resolve();
     await act(async () => {
@@ -183,7 +183,7 @@ describe("commentWriteOptions", () => {
       [`PATCH ${TASK_PATH}`]: successReply({ id: TASK }),
     });
     const comment = new MutationObserver(queryClient, commentWriteOptions(queryClient, client, TAG));
-    const task = new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+    const task = new MutationObserver(queryClient, taskWriteOptions(queryClient, client));
 
     const first = comment.mutate(UPDATE);
     const second = task.mutate({
@@ -200,6 +200,34 @@ describe("commentWriteOptions", () => {
     await second;
 
     expect(writes(requests).map(({ path }) => path)).toEqual([commentPath(3), TASK_PATH]);
+  });
+
+  it("waits for a task write of another project in flight", async () => {
+    const write = heldBack();
+    const betaTask = "/projects/BETA/tasks/BETA-7";
+    const alphaComments = "/projects/ALPHA/tasks/ALPHA-4/comments";
+    const { queryClient, client, requests } = setup({
+      [`PATCH ${betaTask}`]: write.reply,
+      [`POST ${alphaComments}`]: successReply({ id: "ALPHA-4", commentId: 1 }),
+    });
+    const task = new MutationObserver(queryClient, taskWriteOptions(queryClient, client));
+    const comment = new MutationObserver(queryClient, commentWriteOptions(queryClient, client, "ALPHA"));
+
+    const first = task.mutate({
+      id: "BETA-7",
+      writes: [{ id: "BETA-7", change: { title: "Renamed" } }],
+      failure: { title: "BETA-7 was not saved", line: () => "not saved" },
+    });
+    const second = comment.mutate({ ...ADD, id: "ALPHA-4" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(writes(requests).map(({ path }) => path)).toEqual([betaTask]);
+
+    write.answer(successReply({ id: "BETA-7" }));
+    await first;
+    await second;
+
+    expect(writes(requests).map(({ path }) => path)).toEqual([betaTask, alphaComments]);
   });
 
   it("stays pending after the answer until the task is read again", async () => {

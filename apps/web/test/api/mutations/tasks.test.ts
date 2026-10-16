@@ -36,8 +36,8 @@ const TAG = "NOTE";
 
 const LISTING = "/projects/NOTE/tasks";
 
-function taskPath(id: string): string {
-  return `/projects/NOTE/tasks/${id}`;
+function taskPath(id: string, tag = TAG): string {
+  return `/projects/${tag}/tasks/${id}`;
 }
 
 function written(id: string, diagnostics: Diagnostic[] = []): TransportReply {
@@ -88,14 +88,14 @@ function setup(replies: Record<string, TransportReply | Promise<TransportReply>>
   const stub = stubTransport({ [LISTING]: successReply({ entries: [], excluded: [] }), ...replies });
   const client = createClient(transport ?? stub.transport);
   const queryClient = createAppQueryClient();
-  const observer = new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+  const observer = new MutationObserver(queryClient, taskWriteOptions(queryClient, client));
 
   return { ...stub, client, queryClient, observer };
 }
 
 /** An observed listing, so an invalidation refetches it. */
-function watchListing(queryClient: QueryClient, client: Client): () => void {
-  return new QueryObserver(queryClient, tasksQuery(client, TAG)).subscribe(() => {});
+function watchListing(queryClient: QueryClient, client: Client, tag = TAG): () => void {
+  return new QueryObserver(queryClient, tasksQuery(client, tag)).subscribe(() => {});
 }
 
 function writes(requests: readonly TransportRequest[]): TransportRequest[] {
@@ -193,7 +193,7 @@ describe("taskWriteOptions", () => {
       [`PATCH ${taskPath("NOTE-1")}`]: first.reply,
       [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2"),
     });
-    const second = new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+    const second = new MutationObserver(queryClient, taskWriteOptions(queryClient, client));
 
     const done = [observer.mutate(moveOf("NOTE-1")), second.mutate(moveOf("NOTE-2"))];
     await vi.waitFor(() => {
@@ -216,7 +216,7 @@ describe("taskWriteOptions", () => {
       [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2"),
       [`PATCH ${taskPath("NOTE-3")}`]: written("NOTE-3"),
     });
-    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client));
 
     const done = [observer.mutate(moveOf("NOTE-1")), another().mutate(moveOf("NOTE-2")), another().mutate(moveOf("NOTE-3"))]
       .map((sent) => sent.catch((error: unknown) => error));
@@ -243,7 +243,7 @@ describe("taskWriteOptions", () => {
       [`PATCH ${taskPath("NOTE-1")}`]: first.reply,
       [`PATCH ${taskPath("NOTE-2")}`]: REFUSAL,
     });
-    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client));
 
     const done = [observer.mutate(moveOf("NOTE-1")), another().mutate(pageSave("NOTE-2"))]
       .map((sent) => sent.catch((error: unknown) => error));
@@ -264,7 +264,7 @@ describe("taskWriteOptions", () => {
       [`PATCH ${taskPath("NOTE-1")}`]: first.reply,
       [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2"),
     });
-    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client));
 
     const done = [observer.mutate(pageSave("NOTE-1")), another().mutate(moveOf("NOTE-2"))]
       .map((sent) => sent.catch((error: unknown) => error));
@@ -285,7 +285,7 @@ describe("taskWriteOptions", () => {
       [`PATCH ${taskPath("NOTE-1")}`]: first.reply,
       [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2"),
     });
-    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client));
 
     const done = [observer.mutate(moveOf("NOTE-1")), another().mutate(pagePlace("NOTE-2"))]
       .map((sent) => sent.catch((error: unknown) => error));
@@ -305,7 +305,7 @@ describe("taskWriteOptions", () => {
       [`PATCH ${taskPath("NOTE-1")}`]: first.reply,
       [`PATCH ${taskPath("NOTE-2")}`]: written("NOTE-2"),
     });
-    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client));
 
     const done = [observer.mutate(pagePlace("NOTE-1")), another().mutate(moveOf("NOTE-2"))]
       .map((sent) => sent.catch((error: unknown) => error));
@@ -334,8 +334,8 @@ describe("taskWriteOptions", () => {
     }
   });
 
-  it("keys the writes of a project under its tasks", () => {
-    expect(taskWriteKey(TAG)).toEqual(["daemon", "projects", TAG, "tasks", "write"]);
+  it("keys the writes of all projects under one key", () => {
+    expect(taskWriteKey()).toEqual(["daemon", "projects", "task-write"]);
   });
 });
 
@@ -356,7 +356,7 @@ describe("the error of a write", () => {
     const { queryClient } = setup();
     // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a thrown value need not be an Error
     const client = { updateTask: () => Promise.reject("socket closed") } as unknown as Client;
-    const observer = new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG));
+    const observer = new MutationObserver(queryClient, taskWriteOptions(queryClient, client));
 
     const error = await observer.mutate(moveOf("NOTE-1")).catch((thrown: unknown) => thrown);
 
@@ -389,9 +389,9 @@ describe("the failure notice", () => {
     {
       kind: "a write that could not start",
       reply: null,
-      id: "..",
+      id: "NOTE-1/2",
       cause: "unsent",
-      words: "/projects/{project}/tasks/{id} cannot take \"..\" as the path parameter \"id\": it is not one path component",
+      words: "/projects/{project}/tasks/{id} cannot take \"NOTE-1/2\" as the path parameter \"id\": it is not one path component",
     },
   ];
 
@@ -601,14 +601,14 @@ describe("usePendingTaskWrites", () => {
     const { queryClient, client } = setup(replies);
     const wrapper = ({ children }: { children: ReactNode }) =>
       createElement(QueryClientProvider, { client: queryClient }, children);
-    const rendered = renderHook(({ tag }) => usePendingTaskWrites(tag), { wrapper, initialProps: { tag: TAG } });
+    const rendered = renderHook(({ tags }) => usePendingTaskWrites(tags), { wrapper, initialProps: { tags: [TAG] } });
 
     /** Starts the writes and waits until they are sent or queued. */
-    async function send(...sent: [string, TaskWrites][]): Promise<Promise<unknown>[]> {
+    async function send(...sent: TaskWrites[]): Promise<Promise<unknown>[]> {
       let done: Promise<unknown>[] = [];
       await act(async () => {
-        done = sent.map(([tag, variables]) =>
-          new MutationObserver(queryClient, taskWriteOptions(queryClient, client, tag)).mutate(variables));
+        done = sent.map((variables) =>
+          new MutationObserver(queryClient, taskWriteOptions(queryClient, client)).mutate(variables));
         await new Promise((resolve) => setTimeout(resolve, 10));
       });
 
@@ -628,7 +628,7 @@ describe("usePendingTaskWrites", () => {
       "PATCH /projects/ELSE/tasks/ELSE-1": other.reply,
     });
 
-    const done = await send([TAG, moveOf("NOTE-1")], ["ELSE", ELSE_WRITE], [TAG, moveOf("NOTE-2", "NOTE-3")]);
+    const done = await send(moveOf("NOTE-1"), ELSE_WRITE, moveOf("NOTE-2", "NOTE-3"));
 
     expect(result.current.writes.map(({ id, change }) => [id, change])).toEqual([
       ["NOTE-1", { status: "Done", order: 0 }],
@@ -655,7 +655,7 @@ describe("usePendingTaskWrites", () => {
       [`PATCH ${taskPath("NOTE-2")}`]: below.reply,
     });
 
-    const done = await send([TAG, moveOf("NOTE-1", "NOTE-2")], [TAG, BELOW_ONLY]);
+    const done = await send(moveOf("NOTE-1", "NOTE-2"), BELOW_ONLY);
 
     expect(result.current.writes.map(({ id }) => id)).toEqual(["NOTE-1", "NOTE-2", "NOTE-2"]);
     expect([...result.current.movedIds]).toEqual(["NOTE-2", "NOTE-1"]);
@@ -677,14 +677,14 @@ describe("usePendingTaskWrites", () => {
       [`PATCH ${taskPath("NOTE-1")}`]: first.reply,
       "PATCH /projects/ELSE/tasks/ELSE-1": other.reply,
     });
-    const done = await send([TAG, moveOf("NOTE-1")], ["ELSE", ELSE_WRITE]);
+    const done = await send(moveOf("NOTE-1"), ELSE_WRITE);
     const ids = () => result.current.writes.map(({ id }) => id);
     expect(ids()).toEqual(["NOTE-1"]);
 
-    rerender({ tag: "ELSE" });
+    rerender({ tags: ["ELSE"] });
     expect(ids()).toEqual(["ELSE-1"]);
 
-    rerender({ tag: TAG });
+    rerender({ tags: [TAG] });
     expect(ids()).toEqual(["NOTE-1"]);
 
     await act(async () => {
@@ -812,7 +812,7 @@ describe("taskCreateOptions", () => {
     const { queryClient, client } = createSetup({ [CREATE]: held.reply });
     const wrapper = ({ children }: { children: ReactNode }) =>
       createElement(QueryClientProvider, { client: queryClient }, children);
-    const { result } = renderHook(() => usePendingTaskWrites(TAG), { wrapper });
+    const { result } = renderHook(() => usePendingTaskWrites([TAG]), { wrapper });
     const options = taskCreateOptions(queryClient, client, TAG);
     let done: Promise<unknown> = Promise.resolve();
 
@@ -903,7 +903,7 @@ describe("taskDeleteOptions", () => {
   function deleteSetup(replies: Record<string, TransportReply | Promise<TransportReply>> = {}, transport?: Transport) {
     const context = setup(replies, transport);
     const { queryClient, client } = context;
-    const deleter = new MutationObserver(queryClient, taskDeleteOptions(queryClient, client, TAG));
+    const deleter = new MutationObserver(queryClient, taskDeleteOptions(queryClient, client));
 
     return { ...context, deleter };
   }
@@ -970,7 +970,7 @@ describe("taskDeleteOptions", () => {
     const done = [
       deleter.mutate({ id: "NOTE-1" }),
       observer.mutate(moveOf("NOTE-2")),
-      new MutationObserver(queryClient, taskWriteOptions(queryClient, client, TAG)).mutate(pagePlace("NOTE-3")),
+      new MutationObserver(queryClient, taskWriteOptions(queryClient, client)).mutate(pagePlace("NOTE-3")),
     ].map((sent) => sent.catch((error: unknown) => error));
     await vi.waitFor(() => {
       expect(deletes(requests)).toHaveLength(1);
@@ -1098,9 +1098,9 @@ describe("taskDeleteOptions", () => {
     {
       kind: "a delete that could not start",
       reply: null,
-      id: "..",
+      id: "NOTE-1/2",
       line: "The delete did not start, so the task is still there.",
-      words: "/projects/{project}/tasks/{id} cannot take \"..\" as the path parameter \"id\": it is not one path component",
+      words: "/projects/{project}/tasks/{id} cannot take \"NOTE-1/2\" as the path parameter \"id\": it is not one path component",
     },
   ];
 
@@ -1199,7 +1199,7 @@ describe("taskDeleteOptions", () => {
     });
   });
 
-  it("is keyed under the tasks of its project, apart from the writes the board lays over its cards", async () => {
+  it("is keyed under one key for all projects, apart from the writes the board lays over its cards", async () => {
     const held = heldBack();
     const other = heldBack();
     const { queryClient, client } = deleteSetup({
@@ -1209,21 +1209,21 @@ describe("taskDeleteOptions", () => {
     const wrapper = ({ children }: { children: ReactNode }) =>
       createElement(QueryClientProvider, { client: queryClient }, children);
     const { result } = renderHook(
-      () => ({ deletes: usePendingTaskDeletes(TAG), writes: usePendingTaskWrites(TAG) }),
+      () => ({ deletes: usePendingTaskDeletes([TAG]), writes: usePendingTaskWrites([TAG]) }),
       { wrapper },
     );
-    const options = taskDeleteOptions(queryClient, client, TAG);
+    const options = taskDeleteOptions(queryClient, client);
     let done: Promise<unknown>[] = [];
 
     await act(async () => {
       done = [
         new MutationObserver(queryClient, options).mutate({ id: "NOTE-1" }),
-        new MutationObserver(queryClient, taskDeleteOptions(queryClient, client, "ELSE")).mutate({ id: "ELSE-1" }),
+        new MutationObserver(queryClient, options).mutate({ id: "ELSE-1" }),
       ];
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
 
-    expect(options.mutationKey).toEqual(["daemon", "projects", TAG, "tasks", "delete"]);
+    expect(options.mutationKey).toEqual(["daemon", "projects", "task-delete"]);
     expect([...result.current.deletes]).toEqual(["NOTE-1"]);
     expect(result.current.writes.writes).toEqual([]);
 
@@ -1235,5 +1235,256 @@ describe("taskDeleteOptions", () => {
     });
 
     expect([...result.current.deletes]).toEqual([]);
+  });
+});
+
+describe("the writes and deletes of several projects", () => {
+  const ALPHA_LISTING = "/projects/ALPHA/tasks";
+  const BETA_LISTING = "/projects/BETA/tasks";
+
+  function severalSetup(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
+    const context = setup({
+      [ALPHA_LISTING]: successReply({ entries: [], excluded: [] }),
+      [BETA_LISTING]: successReply({ entries: [], excluded: [] }),
+      ...replies,
+    });
+    const { queryClient, client } = context;
+    const another = () => new MutationObserver(queryClient, taskWriteOptions(queryClient, client));
+    const deleter = () => new MutationObserver(queryClient, taskDeleteOptions(queryClient, client));
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+
+    /** Both listings observed and read, and the requests of the reads forgotten. */
+    async function watchBoth(): Promise<() => void> {
+      const stops = ["ALPHA", "BETA"].map((tag) => watchListing(queryClient, client, tag));
+      await queryClient.query(tasksQuery(client, "ALPHA"));
+      await queryClient.query(tasksQuery(client, "BETA"));
+      context.requests.length = 0;
+
+      return () => {
+        for (const stop of stops) {
+          stop();
+        }
+      };
+    }
+
+    return { ...context, another, deleter, wrapper, watchBoth };
+  }
+
+  function sent(requests: readonly TransportRequest[]): string[] {
+    return requests.filter(({ method }) => method !== "GET").map(({ method, path }) => `${method} ${path}`);
+  }
+
+  it("sends each write of a sequence to the project of its task, the neighbour first", async () => {
+    const { observer, requests } = severalSetup({
+      [`PATCH ${taskPath("BETA-7", "BETA")}`]: written("BETA-7"),
+      [`PATCH ${taskPath("ALPHA-4", "ALPHA")}`]: written("ALPHA-4"),
+    });
+
+    await observer.mutate(moveOf("BETA-7", "ALPHA-4"));
+
+    expect(writes(requests)).toEqual([
+      { method: "PATCH", path: taskPath("BETA-7", "BETA"), body: { status: "Done", order: 0 } },
+      { method: "PATCH", path: taskPath("ALPHA-4", "ALPHA"), body: { status: "Done", order: 1 } },
+    ]);
+  });
+
+  it("stops at a refused first write, and reads the listing of each project it touched again", async () => {
+    const { observer, requests, watchBoth } = severalSetup({
+      [`PATCH ${taskPath("BETA-7", "BETA")}`]: REFUSAL,
+      [`PATCH ${taskPath("ALPHA-4", "ALPHA")}`]: written("ALPHA-4"),
+    });
+    const stop = await watchBoth();
+
+    const error = await observer.mutate(moveOf("BETA-7", "ALPHA-4")).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(TaskWriteError);
+    expect(error).toMatchObject({ completed: 0 });
+    expect(observer.getCurrentResult().status).toBe("error");
+    expect(writes(requests).map(({ path }) => path)).toEqual([taskPath("BETA-7", "BETA")]);
+    await vi.waitFor(() => {
+      expect(reads(requests).toSorted()).toEqual([ALPHA_LISTING, BETA_LISTING]);
+    });
+    stop();
+  });
+
+  it("stays pending after its writes until the listing of each project it touched is read again", async () => {
+    const betaListing = heldBack();
+    const { observer, replies, queryClient, client, requests, watchBoth } = severalSetup({
+      [`PATCH ${taskPath("BETA-7", "BETA")}`]: written("BETA-7"),
+      [`PATCH ${taskPath("ALPHA-4", "ALPHA")}`]: written("ALPHA-4"),
+    });
+    const stop = await watchBoth();
+    replies[BETA_LISTING] = betaListing.reply;
+
+    const done = observer.mutate(moveOf("BETA-7", "ALPHA-4"));
+    await vi.waitFor(() => {
+      expect(reads(requests)).toContain(ALPHA_LISTING);
+      expect(queryClient.getQueryState(tasksQuery(client, "ALPHA").queryKey)?.fetchStatus).toBe("idle");
+      expect(queryClient.getQueryState(tasksQuery(client, "BETA").queryKey)?.fetchStatus).toBe("fetching");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(observer.getCurrentResult().status).toBe("pending");
+
+    betaListing.answer(successReply({ entries: [], excluded: [] }));
+    await done;
+
+    expect(observer.getCurrentResult().status).toBe("success");
+    stop();
+  });
+
+  it("leaves out of each task's warnings what the reads of its own project show, not of the other project", async () => {
+    const ALPHA_KNOWN: Diagnostic = { code: "config-key-unknown", message: "unknown key: colour" };
+    const BETA_KNOWN: Diagnostic = { code: "blocked-by-unresolved", message: "BETA-9 names no task" };
+    const { observer, queryClient, client } = severalSetup({
+      "/projects/ALPHA": successReply({ tag: "ALPHA" }, [ALPHA_KNOWN]),
+      [BETA_LISTING]: successReply({ entries: [], excluded: [] }, [BETA_KNOWN]),
+      [`PATCH ${taskPath("BETA-7", "BETA")}`]: written("BETA-7", [ALPHA_KNOWN, BETA_KNOWN]),
+      [`PATCH ${taskPath("ALPHA-4", "ALPHA")}`]: written("ALPHA-4", [ALPHA_KNOWN, BETA_KNOWN]),
+    });
+    await queryClient.query(projectQuery(client, "ALPHA"));
+    await queryClient.query(tasksQuery(client, "BETA"));
+
+    await observer.mutate(moveOf("BETA-7", "ALPHA-4"));
+
+    expect(notices().map(({ key, words }) => [key, words])).toEqual([
+      ["task-write-warnings:BETA-7", [`${ALPHA_KNOWN.code} · ${ALPHA_KNOWN.message}`]],
+      ["task-write-warnings:ALPHA-4", [`${BETA_KNOWN.code} · ${BETA_KNOWN.message}`]],
+    ]);
+  });
+
+  it("queues a write, a create and a delete of one project behind a write of another in flight", async () => {
+    const first = heldBack();
+    const { observer, queryClient, client, requests, another, deleter } = severalSetup({
+      [`PATCH ${taskPath("ALPHA-4", "ALPHA")}`]: first.reply,
+      [`PATCH ${taskPath("BETA-7", "BETA")}`]: written("BETA-7"),
+      [`POST ${BETA_LISTING}`]: successReply({ id: "BETA-8", status: "To Do" }),
+      [`DELETE ${taskPath("BETA-2", "BETA")}`]: written("BETA-2"),
+    });
+
+    const done = [
+      observer.mutate(moveOf("ALPHA-4")),
+      another().mutate(pageSave("BETA-7")),
+      new MutationObserver(queryClient, taskCreateOptions(queryClient, client, "BETA"))
+        .mutate({ input: { title: "Draw the map", status: "To Do" } }),
+      deleter().mutate({ id: "BETA-2" }),
+    ];
+    await vi.waitFor(() => {
+      expect(sent(requests)).toHaveLength(1);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(sent(requests)).toEqual([`PATCH ${taskPath("ALPHA-4", "ALPHA")}`]);
+
+    first.answer(written("ALPHA-4"));
+    await Promise.all(done);
+
+    expect(sent(requests)).toEqual([`PATCH ${taskPath("ALPHA-4", "ALPHA")}`, `PATCH ${taskPath("BETA-7", "BETA")}`, `POST ${BETA_LISTING}`, `DELETE ${taskPath("BETA-2", "BETA")}`]);
+  });
+
+  it("drops a placement of one project queued behind a failed placement of another", async () => {
+    const first = heldBack();
+    const { observer, requests, another } = severalSetup({
+      [`PATCH ${taskPath("ALPHA-4", "ALPHA")}`]: first.reply,
+      [`PATCH ${taskPath("BETA-7", "BETA")}`]: written("BETA-7"),
+    });
+
+    const done = [observer.mutate(moveOf("ALPHA-4")), another().mutate(moveOf("BETA-7"))]
+      .map((sending) => sending.catch((error: unknown) => error));
+    await vi.waitFor(() => {
+      expect(writes(requests)).toHaveLength(1);
+    });
+    first.answer(REFUSAL);
+    await Promise.all(done);
+
+    expect(writes(requests).map(({ path }) => path)).toEqual([taskPath("ALPHA-4", "ALPHA")]);
+    expect(notices().map(({ key }) => key)).toEqual(["task-write-failure:ALPHA-4"]);
+  });
+
+  it("drops a placement of one project queued behind a refused delete of another", async () => {
+    const first = heldBack();
+    const { observer, requests, deleter } = severalSetup({
+      [`DELETE ${taskPath("ALPHA-2", "ALPHA")}`]: first.reply,
+      [`PATCH ${taskPath("BETA-7", "BETA")}`]: written("BETA-7"),
+    });
+
+    const done = [deleter().mutate({ id: "ALPHA-2" }), observer.mutate(moveOf("BETA-7"))]
+      .map((sending) => sending.catch((error: unknown) => error));
+    await vi.waitFor(() => {
+      expect(sent(requests)).toHaveLength(1);
+    });
+    first.answer(REFUSAL);
+    await Promise.all(done);
+
+    expect(sent(requests)).toEqual([`DELETE ${taskPath("ALPHA-2", "ALPHA")}`]);
+    expect(notices().map(({ key }) => key)).toEqual(["task-write-failure:ALPHA-2"]);
+  });
+
+  it("sends a delete to the project of its task, and reads that project alone again", async () => {
+    const { queryClient, client, requests, deleter, watchBoth } = severalSetup({
+      [`DELETE ${taskPath("BETA-2", "BETA")}`]: written("BETA-2"),
+      [taskPath("BETA-2", "BETA")]: successReply({ id: "BETA-2" }),
+    });
+    const stop = await watchBoth();
+    await queryClient.query(taskQuery(client, "BETA", "BETA-2"));
+    requests.length = 0;
+
+    await deleter().mutate({ id: "BETA-2" });
+
+    expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([`DELETE ${taskPath("BETA-2", "BETA")}`, `GET ${BETA_LISTING}`]);
+    expect(queryClient.getQueryState(taskQuery(client, "BETA", "BETA-2").queryKey)).toBeUndefined();
+    stop();
+  });
+
+  it("gives the pending writes of the projects asked for, in the order they were sent, and the tasks they move", async () => {
+    const first = heldBack();
+    const { requests, another, wrapper } = severalSetup({
+      [`PATCH ${taskPath("ALPHA-4", "ALPHA")}`]: first.reply,
+      [`PATCH ${taskPath("GAMMA-1", "GAMMA")}`]: written("GAMMA-1"),
+      [`PATCH ${taskPath("GAMMA-2", "GAMMA")}`]: written("GAMMA-2"),
+      [`PATCH ${taskPath("BETA-7", "BETA")}`]: written("BETA-7"),
+    });
+    const { result } = renderHook(() => usePendingTaskWrites(["ALPHA", "BETA"]), { wrapper });
+    let done: Promise<unknown>[] = [];
+
+    await act(async () => {
+      done = [moveOf("ALPHA-4"), moveOf("GAMMA-1"), moveOf("GAMMA-2", "BETA-7")]
+        .map((variables) => another().mutate(variables));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(writes(requests)).toHaveLength(1);
+    expect(result.current.writes.map(({ id }) => id)).toEqual(["ALPHA-4", "BETA-7"]);
+    expect([...result.current.movedIds]).toEqual(["ALPHA-4", "BETA-7"]);
+
+    await act(async () => {
+      first.answer(written("ALPHA-4"));
+      await Promise.all(done);
+    });
+  });
+
+  it("gives the pending deletes of the projects asked for", async () => {
+    const first = heldBack();
+    const { requests, deleter, wrapper } = severalSetup({
+      [`DELETE ${taskPath("ALPHA-2", "ALPHA")}`]: first.reply,
+      [`DELETE ${taskPath("GAMMA-2", "GAMMA")}`]: written("GAMMA-2"),
+      [`DELETE ${taskPath("BETA-2", "BETA")}`]: written("BETA-2"),
+    });
+    const { result } = renderHook(() => usePendingTaskDeletes(["ALPHA", "BETA"]), { wrapper });
+    let done: Promise<unknown>[] = [];
+
+    await act(async () => {
+      done = ["ALPHA-2", "GAMMA-2", "BETA-2"].map((id) => deleter().mutate({ id }));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(sent(requests)).toHaveLength(1);
+    expect([...result.current]).toEqual(["ALPHA-2", "BETA-2"]);
+
+    await act(async () => {
+      first.answer(written("ALPHA-2"));
+      await Promise.all(done);
+    });
   });
 });

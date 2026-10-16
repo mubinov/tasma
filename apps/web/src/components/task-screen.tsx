@@ -397,7 +397,7 @@ export function TaskScreen(): ReactNode {
   const scrolled = useScrolledPast(scrolledRef, barHeight);
   const outline = useOutline(bodyRef, list.listRef, task, draft !== null);
   const navigate = route.useNavigate();
-  const { mutate: sendDelete } = useMutation(taskDeleteOptions(queryClient, client, tag));
+  const { mutate: sendDelete } = useMutation(taskDeleteOptions(queryClient, client));
   const [deleteAsked, setDeleteAsked] = useState(false);
   const deleteFocusRef = useRef<FinalFocus>(null);
 

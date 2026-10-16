@@ -1,6 +1,6 @@
 import { hashKey, mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { ProtocolError, type Client, type Diagnostic } from "@tasma/protocol";
-import { boardWarnings, type PendingWrite, type TaskWrite } from "../../lib/board";
+import { boardWarnings, tagOf, type PendingWrite, type TaskWrite } from "../../lib/board";
 import type { CreateInput } from "../../lib/task-draft";
 import { useNoticeStore } from "../../store/notices";
 import { daemonKeys, projectQuery, taskQuery, tasksQuery } from "../queries";
@@ -11,7 +11,7 @@ import {
   openWarnings,
   openWriteNotice,
   refusalWords,
-  taskWriteScope,
+  TASK_WRITE_SCOPE,
   usePendingVariables,
   WriteError,
   type FailureKind,
@@ -32,8 +32,9 @@ export type TaskWrites = {
   failure: WriteFailure<TaskWriteError>;
 };
 
-export function taskWriteKey(tag: string) {
-  return [...daemonKeys.tasks(tag), "write"] as const;
+/** Under the prefix `usePendingVariables` reads. A tag is uppercase, so no project key is the same. */
+export function taskWriteKey() {
+  return [...daemonKeys.projects(), "task-write"] as const;
 }
 
 /** A write of `TaskWrites` failed. `completed` is the count of the writes before it that succeeded. */
@@ -48,10 +49,11 @@ export class TaskWriteError extends WriteError {
 }
 
 /**
- * The writes that were queued behind a failed write of the board's arrangement.
- * Each was computed from an arrangement that showed the failed write, so none
- * of them is sent. The editor's Save states no `order`: it stands on the text
- * in its own editor, and is neither dropped nor drops one.
+ * The placements that were queued, in any project, behind a failed write of the
+ * board's arrangement. Any of them may have been computed from an arrangement
+ * that showed the failed write, so none of them is sent. The editor's Save
+ * states no `order`: it stands on the text in its own editor, and is neither
+ * dropped nor drops one.
  */
 const dropped = new WeakSet<TaskWrites>();
 
@@ -65,17 +67,29 @@ function placesCards({ writes }: TaskWrites): boolean {
 }
 
 /**
- * Drops every pending write of the project that places a card, but `failed`.
+ * Drops every pending write of all projects that places a card, but `failed`.
  * Called while the failed mutation is still pending, so the others are all
  * queued behind it.
  */
-function dropQueuedPlacements(queryClient: QueryClient, tag: string, failed?: TaskWrites): void {
-  for (const { state } of queryClient.getMutationCache().findAll({ mutationKey: taskWriteKey(tag), status: "pending" })) {
+function dropQueuedPlacements(queryClient: QueryClient, failed?: TaskWrites): void {
+  for (const { state } of queryClient.getMutationCache().findAll({ mutationKey: taskWriteKey(), status: "pending" })) {
     const queued = state.variables as TaskWrites;
     if (queued !== failed && placesCards(queued)) {
       dropped.add(queued);
     }
   }
+}
+
+/**
+ * The projects of the writes, and of the task the notice is about, so a
+ * sequence with no write still reads its project again.
+ */
+function touchedTags({ id, writes }: TaskWrites): string[] {
+  return [...new Set([...writes.map((write) => tagOf(write.id)), tagOf(id)])];
+}
+
+function invalidateListings(queryClient: QueryClient, tags: readonly string[]): Promise<void[]> {
+  return Promise.all(tags.map((tag) => queryClient.invalidateQueries({ queryKey: daemonKeys.tasks(tag) })));
 }
 
 function closeFailureNotices(): void {
@@ -87,13 +101,13 @@ function closeFailureNotices(): void {
 }
 
 /**
- * Every write to the tasks of one project, in one queue per project. The board
- * shows a write from the variables of the pending mutation, so the query cache
- * holds only what the daemon said.
+ * Every write to the tasks of all projects, each to the project of its task, in
+ * one queue. The board shows a write from the variables of the pending
+ * mutation, so the query cache holds only what the daemon said.
  */
-export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: string) {
+export function taskWriteOptions(queryClient: QueryClient, client: Client) {
   return mutationOptions<Written[], TaskWriteError, TaskWrites>({
-    mutationKey: taskWriteKey(tag),
+    mutationKey: taskWriteKey(),
     mutationFn: async (variables) => {
       if (dropped.has(variables)) {
         throw new TaskWriteError(new Error("an earlier write of the queue failed"), 0);
@@ -103,7 +117,7 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
 
       for (const [completed, { id, change }] of variables.writes.entries()) {
         try {
-          const written = await client.updateTask(tag, id, change);
+          const written = await client.updateTask(tagOf(id), id, change);
           results.push({ id, diagnostics: written.diagnostics });
         } catch (cause) {
           throw new TaskWriteError(cause, completed);
@@ -114,20 +128,19 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
     },
     // A write whose answer is lost may have been carried out.
     retry: 0,
-    scope: taskWriteScope(tag),
-    onSuccess: (results) => {
-      const board = boardWarnings(
-        queryClient.getQueryData(projectQuery(client, tag).queryKey)?.diagnostics ?? [],
-        queryClient.getQueryData(tasksQuery(client, tag).queryKey)?.diagnostics ?? [],
-      );
-
+    scope: TASK_WRITE_SCOPE,
+    onSuccess: (results, variables) => {
       // A notice per written task: a sequence writes the cards a move passes
       // too, and the daemon's words are about the task of their own write.
       for (const { id, diagnostics } of results) {
+        const tag = tagOf(id);
         // A write reports what the daemon found in the file before it, so the
-        // task page would repeat every warning its own read already shows.
+        // board and the task page would repeat every warning their reads already show.
         const known = [
-          ...board,
+          ...boardWarnings(
+            queryClient.getQueryData(projectQuery(client, tag).queryKey)?.diagnostics ?? [],
+            queryClient.getQueryData(tasksQuery(client, tag).queryKey)?.diagnostics ?? [],
+          ),
           ...(queryClient.getQueryData(taskQuery(client, tag, id).queryKey)?.diagnostics ?? []),
         ];
 
@@ -139,12 +152,12 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
         closeFailureNotices();
       }
 
-      // Returned, so the write stays pending until the listing shows it.
-      return queryClient.invalidateQueries({ queryKey: daemonKeys.tasks(tag) });
+      // Returned, so the write stays pending until every listing it touched shows it.
+      return invalidateListings(queryClient, touchedTags(variables));
     },
     onError: (error, variables) => {
       if (placesCards(variables)) {
-        dropQueuedPlacements(queryClient, tag, variables);
+        dropQueuedPlacements(queryClient, variables);
       }
       // A dropped write opens no notice, so the notice of the failure that dropped it stays.
       if (dropped.has(variables)) {
@@ -162,7 +175,7 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client, tag: 
 
       // Not returned, so the card goes back at once. A write whose answer could
       // not be read may still have been carried out.
-      void queryClient.invalidateQueries({ queryKey: daemonKeys.tasks(tag) });
+      void invalidateListings(queryClient, touchedTags(variables));
     },
   });
 }
@@ -191,9 +204,9 @@ export function createRefusal(error: unknown): { line: string; words: string } {
 }
 
 /**
- * The create of a task, in the queue of the project's other writes. It opens no
- * notice: the dialog shows a refusal, and the board opens the warnings once the
- * dialog has closed, where no scrim covers them.
+ * The create of a task, in the one queue of the writes of all projects. It
+ * opens no notice: the dialog shows a refusal, and the board opens the warnings
+ * once the dialog has closed, where no scrim covers them.
  */
 export function taskCreateOptions(queryClient: QueryClient, client: Client, tag: string) {
   return mutationOptions<Created, WriteError, CreateTask>({
@@ -208,7 +221,7 @@ export function taskCreateOptions(queryClient: QueryClient, client: Client, tag:
       }
     },
     retry: 0,
-    scope: taskWriteScope(tag),
+    scope: TASK_WRITE_SCOPE,
     onSuccess: () => {
       closeFailureNotices();
 
@@ -228,8 +241,9 @@ export function openCreateWarnings(created: Created, known: readonly Diagnostic[
 
 export type DeleteTask = { id: string };
 
-function taskDeleteKey(tag: string) {
-  return [...daemonKeys.tasks(tag), "delete"] as const;
+/** Under the prefix `usePendingVariables` reads. A tag is uppercase, so no project key is the same. */
+function taskDeleteKey() {
+  return [...daemonKeys.projects(), "task-delete"] as const;
 }
 
 /** A delete is one request, so it has no partial form. */
@@ -247,15 +261,16 @@ function isNotFound(cause: unknown): boolean {
 }
 
 /**
- * The delete of a task, in the queue of the project's other writes. The board
- * hides the card from the pending variables.
+ * The delete of a task, sent to the project of the task, in the one queue of
+ * the writes of all projects. The board hides the card from the pending
+ * variables.
  */
-export function taskDeleteOptions(queryClient: QueryClient, client: Client, tag: string) {
+export function taskDeleteOptions(queryClient: QueryClient, client: Client) {
   return mutationOptions<Written, WriteError, DeleteTask>({
-    mutationKey: taskDeleteKey(tag),
+    mutationKey: taskDeleteKey(),
     mutationFn: async ({ id }) => {
       try {
-        const { diagnostics } = await client.deleteTask(tag, id);
+        const { diagnostics } = await client.deleteTask(tagOf(id), id);
 
         return { id, diagnostics };
       } catch (cause) {
@@ -267,8 +282,9 @@ export function taskDeleteOptions(queryClient: QueryClient, client: Client, tag:
     },
     // A delete whose answer is lost may have been carried out.
     retry: 0,
-    scope: taskWriteScope(tag),
+    scope: TASK_WRITE_SCOPE,
     onSuccess: ({ id, diagnostics }) => {
+      const tag = tagOf(id);
       // No task page of the deleted task is left to show its own warnings.
       const known = boardWarnings(
         queryClient.getQueryData(projectQuery(client, tag).queryKey)?.diagnostics ?? [],
@@ -286,8 +302,9 @@ export function taskDeleteOptions(queryClient: QueryClient, client: Client, tag:
       useNoticeStore.getState().closeNotice(`${FAILURE_KEY_PREFIX}${id}`);
       useNoticeStore.getState().announce(`${id} was deleted.`);
 
-      // Every other task, because the delete clears its id from the tasks that
-      // name it. Returned, so the delete stays pending until the listing drops the card.
+      // Every other task of its project, because the delete clears its id from
+      // the tasks of its own project that name it. Returned, so the delete
+      // stays pending until the listing drops the card.
       return queryClient.invalidateQueries({
         queryKey: daemonKeys.tasks(tag),
         predicate: ({ queryHash }) => queryHash !== deletedHash,
@@ -295,7 +312,7 @@ export function taskDeleteOptions(queryClient: QueryClient, client: Client, tag:
     },
     onError: (error, { id }) => {
       // The board placed them in a column that did not show the card.
-      dropQueuedPlacements(queryClient, tag);
+      dropQueuedPlacements(queryClient);
       openWriteNotice({
         key: `${FAILURE_KEY_PREFIX}${id}`,
         form: "failure",
@@ -305,31 +322,36 @@ export function taskDeleteOptions(queryClient: QueryClient, client: Client, tag:
       });
 
       // Not returned, so the card comes back at once.
-      void queryClient.invalidateQueries({ queryKey: daemonKeys.tasks(tag) });
+      void queryClient.invalidateQueries({ queryKey: daemonKeys.tasks(tagOf(id)) });
     },
   });
 }
 
-/** The ids of the tasks of a project with a delete pending or queued. */
-export function usePendingTaskDeletes(tag: string): Set<string> {
-  return new Set(usePendingVariables<DeleteTask>(taskDeleteKey(tag)).map(({ variables }) => variables.id));
+/** The ids of the tasks of the projects of `tags` with a delete pending or queued. */
+export function usePendingTaskDeletes(tags: readonly string[]): Set<string> {
+  return new Set(
+    usePendingVariables<DeleteTask>(taskDeleteKey())
+      .map(({ variables }) => variables.id)
+      .filter((id) => tags.includes(tagOf(id))),
+  );
 }
 
-/** The pending and queued task writes of a project. */
+/** The pending and queued task writes of the projects of `tags`. */
 export type PendingTaskWrites = {
-  /** Every write they carry, in the order they were sent. */
+  /** Every write they carry to a task of those projects, in the order they were sent. */
   writes: PendingWrite[];
   /** The tasks they move, which is fewer than the tasks they write: a move renumbers its neighbours. */
   movedIds: Set<string>;
 };
 
-export function usePendingTaskWrites(tag: string): PendingTaskWrites {
-  const mine = usePendingVariables<TaskWrites>(taskWriteKey(tag));
+export function usePendingTaskWrites(tags: readonly string[]): PendingTaskWrites {
+  const pending = usePendingVariables<TaskWrites>(taskWriteKey());
+  const isAsked = (id: string) => tags.includes(tagOf(id));
 
   return {
-    writes: mine.flatMap(({ variables, submittedAt }) =>
-      variables.writes.map(({ id, change }) => ({ id, change, submittedAt })),
+    writes: pending.flatMap(({ variables, submittedAt }) =>
+      variables.writes.filter(({ id }) => isAsked(id)).map(({ id, change }) => ({ id, change, submittedAt })),
     ),
-    movedIds: new Set(mine.map(({ variables }) => variables.id)),
+    movedIds: new Set(pending.map(({ variables }) => variables.id).filter(isAsked)),
   };
 }

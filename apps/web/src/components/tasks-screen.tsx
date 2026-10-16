@@ -181,10 +181,10 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
   });
   const setLastTasksProject = useUiStore((state) => state.setLastTasksProject);
   const setBoardReturn = useUiStore((state) => state.setBoardReturn);
-  const { mutateAsync: write } = useMutation(taskWriteOptions(queryClient, client, tag));
-  const pending = usePendingTaskWrites(tag);
-  const { mutate: sendDelete } = useMutation(taskDeleteOptions(queryClient, client, tag));
-  const deletingIds = usePendingTaskDeletes(tag);
+  const { mutateAsync: write } = useMutation(taskWriteOptions(queryClient, client));
+  const pending = usePendingTaskWrites([tag]);
+  const { mutate: sendDelete } = useMutation(taskDeleteOptions(queryClient, client));
+  const deletingIds = usePendingTaskDeletes([tag]);
   const [deleteAsk, setDeleteAsk] = useState<DeleteAsk | null>(null);
   const deleteFocusRef = useRef<FinalFocus>(null);
   const [focusCard, setFocusCard] = useState<CardFocus | null>(null);
