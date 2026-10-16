@@ -249,14 +249,22 @@ describe("the Labels row", () => {
 
 describe("the relation rows", () => {
   function pencil(label: string): HTMLElement {
-    return within(field(label)).getByRole("combobox");
+    return within(sidebar()).getByRole("combobox", { name: `Edit ${label}` });
   }
 
-  it("carries a pencil named by Edit and the row", () => {
-    renderSidebar();
+  function term(label: string): HTMLElement {
+    return field(label).previousElementSibling as HTMLElement;
+  }
 
-    expect(screen.getByRole("combobox", { name: "Edit Blocked by" })).toBe(pencil("Blocked by"));
-    expect(screen.getByRole("combobox", { name: "Edit Parent" })).toBe(pencil("Parent"));
+  it("puts a pencil named by Edit and the row on the label line, after the label", () => {
+    renderSidebar({ fields: { blocked_by: ["SAGA-8"], parent: "SAGA-9" } });
+
+    for (const label of ["Blocked by", "Parent"]) {
+      expect(pencil(label).parentElement).toBe(term(label));
+      expect(pencil(label).previousElementSibling?.textContent).toBe(label);
+      expect(field(label).querySelector("button, [role=combobox]")).toBeNull();
+      expect(field(label).textContent).toContain("[Not found]");
+    }
   });
 
   // The reveal on hover and focus is a CSS rule; what jsdom can hold is that the
@@ -267,19 +275,32 @@ describe("the relation rows", () => {
     for (const label of ["Blocked by", "Parent"]) {
       expect(pencil(label).tabIndex).toBe(0);
       expect(pencil(label).classList.contains("opacity-0")).toBe(true);
+      expect(pencil(label).classList.contains("group-hover:opacity-100")).toBe(true);
       expect(pencil(label).classList.contains("group-focus-within:opacity-100")).toBe(true);
       expect(pencil(label).classList.contains("data-[popup-open]:opacity-100")).toBe(true);
-      expect(field(label).classList.contains("group")).toBe(true);
+      expect(field(label).parentElement?.classList.contains("group")).toBe(true);
     }
   });
 
-  it("puts the pencil before the relation list in the DOM and after it on screen", () => {
+  it("wraps each row in a div, the only kind of child of its list", () => {
+    renderSidebar();
+
+    const list = field("Blocked by").parentElement!.parentElement!;
+
+    expect(list.tagName).toBe("DL");
+    expect([...list.children].map((child) => child.tagName)).toEqual(["DIV", "DIV"]);
+    for (const label of ["Blocked by", "Parent"]) {
+      expect(field(label).parentElement!.parentElement).toBe(list);
+      expect([...field(label).parentElement!.children].map((child) => child.tagName)).toEqual(["DT", "DD"]);
+    }
+  });
+
+  it("puts the pencil before the relation list in the DOM, as on screen", () => {
     renderSidebar({ fields: { blocked_by: ["SAGA-8"], parent: "SAGA-9" } });
 
     for (const label of ["Blocked by", "Parent"]) {
-      expect(field(label).firstElementChild).toBe(pencil(label));
-      expect(pencil(label).classList.contains("order-last")).toBe(true);
-      expect(field(label).lastElementChild?.textContent).toContain("[Not found]");
+      expect(pencil(label).classList.contains("order-last")).toBe(false);
+      expect(pencil(label).compareDocumentPosition(field(label)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
   });
 });

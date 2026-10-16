@@ -21,15 +21,11 @@ const TEXT_CLASS = "min-w-0 flex-1";
 
 const ID_CLASS = "font-mono text-xs-plus leading-5";
 
-/** A relation row: the pencil keeps its place at the top right, whatever the list holds. */
-const RELATION_DD_CLASS = "group flex items-start gap-2";
-
 /*
- * First in the DOM and last on screen, so Tab reaches it before the links of a
- * long list. Base UI marks the trigger itself while its popup is open, and the
- * popup renders through a portal, where focus leaves the row.
+ * Base UI marks the trigger itself while its popup is open, and the popup
+ * renders through a portal, where focus leaves the row.
  */
-const REVEALED_PENCIL_CLASS = `${PENCIL_BUTTON_CLASS} order-last opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 data-[popup-open]:opacity-100`;
+const REVEALED_PENCIL_CLASS = `${PENCIL_BUTTON_CLASS} opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 data-[popup-open]:opacity-100`;
 
 const STATE_CLASS: Record<RelationRow["state"], { row: string; status?: string }> = {
   blocking: { row: "text-text", status: "text-signal" },
@@ -60,20 +56,38 @@ function None(): ReactNode {
 type FieldProps = {
   label: string;
   labelId?: string;
-  wide?: boolean;
-  /** Added to the value's own classes. */
-  ddClass?: string;
   children: ReactNode;
 };
 
-function Field({ label, labelId, wide = false, ddClass = "", children }: FieldProps): ReactNode {
-  const spanClass = wide ? "col-span-full" : "";
-
+function Field({ label, labelId, children }: FieldProps): ReactNode {
   return (
     <>
-      <dt id={labelId} className={`${spanClass} text-dim`}>{label}</dt>
-      <dd className={`${spanClass} min-w-0 wrap-anywhere ${ddClass}`}>{children}</dd>
+      <dt id={labelId} className="text-dim">{label}</dt>
+      <dd className="min-w-0 wrap-anywhere">{children}</dd>
     </>
+  );
+}
+
+type RelationFieldProps = {
+  label: string;
+  labelId: string;
+  picker: ReactNode;
+  children: ReactNode;
+};
+
+/**
+ * The label id is on the label text, not on the `dt`: the picker's popup and
+ * list take their names from it, and the pencil in the `dt` holds text of its own.
+ */
+function RelationField({ label, labelId, picker, children }: RelationFieldProps): ReactNode {
+  return (
+    <div className="group col-span-full flex flex-col gap-y-2.5">
+      <dt className="flex items-center justify-between gap-2 text-dim">
+        <span id={labelId}>{label}</span>
+        {picker}
+      </dt>
+      <dd className="min-w-0 wrap-anywhere">{children}</dd>
+    </div>
   );
 }
 
@@ -258,34 +272,40 @@ export function TaskSidebar(props: TaskSidebarProps): ReactNode {
         </Field>
       </dl>
       <dl className={NEXT_GROUP_CLASS}>
-        <Field label="Blocked by" labelId={blockedById} wide ddClass={RELATION_DD_CLASS}>
-          <TaskPicker
-            multiple
-            labelId={blockedById}
-            className={REVEALED_PENCIL_CLASS}
-            entries={properties.entries}
-            id={id}
-            value={blockedBy}
-            row={properties.blockedBy}
-          />
-          <div className="min-w-0 flex-1">
-            <RelationList tag={tag} rows={relations.blockers} />
-          </div>
-        </Field>
-        <Field label="Parent" labelId={parentId} wide ddClass={RELATION_DD_CLASS}>
-          <TaskPicker
-            multiple={false}
-            labelId={parentId}
-            className={REVEALED_PENCIL_CLASS}
-            entries={properties.entries}
-            id={id}
-            value={parent}
-            row={properties.parent}
-          />
-          <div className="min-w-0 flex-1">
-            <RelationList tag={tag} rows={relations.parent === null ? [] : [relations.parent]} />
-          </div>
-        </Field>
+        <RelationField
+          label="Blocked by"
+          labelId={blockedById}
+          picker={(
+            <TaskPicker
+              multiple
+              labelId={blockedById}
+              className={REVEALED_PENCIL_CLASS}
+              entries={properties.entries}
+              id={id}
+              value={blockedBy}
+              row={properties.blockedBy}
+            />
+          )}
+        >
+          <RelationList tag={tag} rows={relations.blockers} />
+        </RelationField>
+        <RelationField
+          label="Parent"
+          labelId={parentId}
+          picker={(
+            <TaskPicker
+              multiple={false}
+              labelId={parentId}
+              className={REVEALED_PENCIL_CLASS}
+              entries={properties.entries}
+              id={id}
+              value={parent}
+              row={properties.parent}
+            />
+          )}
+        >
+          <RelationList tag={tag} rows={relations.parent === null ? [] : [relations.parent]} />
+        </RelationField>
       </dl>
       <dl className={NEXT_GROUP_CLASS}>
         <Field label="Created">

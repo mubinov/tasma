@@ -88,9 +88,11 @@ export function sidebar(): HTMLElement {
   return screen.getByRole("complementary", { name: "Task details" });
 }
 
-/** The value of a sidebar row. */
+/** The value of a sidebar row. A relation row holds its label in a span, beside its pencil. */
 export function field(label: string): HTMLElement {
-  return within(sidebar()).getByText(label, { selector: "dt" }).nextElementSibling as HTMLElement;
+  const text = within(sidebar()).getByText(label, { selector: "dt, dt > span" });
+
+  return text.closest("dt")!.nextElementSibling as HTMLElement;
 }
 
 export function backLink(): HTMLElement {

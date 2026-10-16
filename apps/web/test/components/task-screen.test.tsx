@@ -483,7 +483,9 @@ describe("the sidebar", () => {
 
     const groups = [...aside.querySelectorAll("dl")];
     expect(groups[0]?.className).toContain("grid-cols-[5.25rem_minmax(0,1fr)]");
-    expect(groups.map((group) => [...group.querySelectorAll("dt")].map((term) => term.textContent))).toEqual([
+    // A relation row's label stands in a span, beside its pencil.
+    const labelText = (term: Element) => (term.firstElementChild ?? term).textContent;
+    expect(groups.map((group) => [...group.querySelectorAll("dt")].map(labelText))).toEqual([
       ["Status", "Priority", "Labels"],
       ["Workflow", "Step"],
       ["Blocked by", "Parent"],
@@ -498,7 +500,7 @@ describe("the sidebar", () => {
     expect(field("Workflow").textContent).toBe("dev");
     expect(field("Step").textContent).toBe("research, step 1 of 2, an agent's step");
     expect(field("Step").querySelectorAll("i")).toHaveLength(2);
-    expect(field("Blocked by").className).toContain("col-span-full");
+    expect(field("Blocked by").parentElement?.className).toContain("col-span-full");
 
     const created = field("Created").querySelector("time");
     expect(created?.getAttribute("dateTime")).toBe(CREATED);
@@ -586,13 +588,7 @@ describe("the sidebar", () => {
 
     for (const label of ["Priority", "Labels", "Workflow", "Step", "Blocked by", "Parent"]) {
       expect(within(field(label)).getByText("None").className).toBe("text-dim");
-    }
-    for (const label of ["Priority", "Labels", "Workflow", "Step"]) {
       expect(field(label).textContent).toBe("None");
-    }
-    // The pencil stands first in a relation row, and the list after it.
-    for (const label of ["Blocked by", "Parent"]) {
-      expect(field(label).lastElementChild?.textContent).toBe("None");
     }
     // Priority is a control, so its None stands inside the trigger. The task
     // names no workflow and holds no step, so Step offers nothing and stays text.

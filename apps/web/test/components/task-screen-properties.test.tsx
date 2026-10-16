@@ -14,6 +14,7 @@ import {
   frontmatter,
   listing,
   metaLine,
+  sidebar,
   task,
   topBar,
 } from "../task-screen-fixtures";
@@ -242,8 +243,11 @@ describe("editing labels and relations in the sidebar", () => {
     return { id, path: `/repos/saga/tasks/${id}.md`, blocked: false, frontmatter: frontmatter({ id, labels }) };
   }
 
+  /** The Labels control is the row's value; a relation row's pencil stands on its label line. */
   function picker(label: string): HTMLElement {
-    return within(field(label)).getByRole("combobox");
+    return label === "Labels"
+      ? within(field(label)).getByRole("combobox")
+      : within(sidebar()).getByRole("combobox", { name: `Edit ${label}` });
   }
 
   function patches(requests: readonly { method: string; path: string; body?: unknown }[]) {
@@ -429,6 +433,21 @@ describe("editing labels and relations in the sidebar", () => {
     await user.tab();
 
     expect(document.activeElement).toBe(within(field("Blocked by")).getAllByRole("link")[0]);
+  });
+
+  it("returns focus to the pencil when Esc closes its picker", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon({ [LISTING_PATH]: listing([entry("SAGA-1", "Backlog", "Draft")]) });
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    await open(user, "Blocked by");
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(screen.queryByRole("listbox")).toBeNull();
+    });
+    expect(document.activeElement).toBe(picker("Blocked by"));
+    expect(picker("Blocked by").hasAttribute("data-popup-open")).toBe(false);
   });
 
   it("closes a picker with Esc and leaves the open text editor alone", async () => {

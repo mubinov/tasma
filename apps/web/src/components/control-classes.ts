@@ -58,7 +58,7 @@ export const PROPERTY_TRIGGER_CLASS = { row: PROPERTY_BUTTON_CLASS, field: FIELD
 export type PropertyLook = keyof typeof PROPERTY_TRIGGER_CLASS;
 
 /*
- * The icon control that edits a value beside it. Written out for the reason
+ * The icon control that edits the value of its row. Written out for the reason
  * `PROPERTY_BUTTON_CLASS` is, and 24x24 on a 20px line box the same way. A
  * control using it carries a text accessible name and an aria-hidden icon.
  */
