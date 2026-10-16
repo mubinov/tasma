@@ -1,21 +1,40 @@
 import type { Stats } from "node:fs";
 import { type Frontmatter, parseFrontmatter, TaskFormatError } from "../format/index.js";
 import { isPlainMapping } from "../format/values.js";
-import { entryAt } from "../store/atomic.js";
+import { entryAt, type FileIdentity, sameIdentity } from "../store/atomic.js";
 import { causeOf } from "../store/errors.js";
 import type { ProjectPaths, StoreDiagnostic } from "../store/index.js";
 import { type ScanDiagnostic, scanTasks, type TaskEntry, taskNumber } from "../store/paths.js";
 import { openProjectDirectory } from "../store/store.js";
-import { type ChunkSource, openTaskFile, readFrontmatterText } from "./frontmatter.js";
+import { openTaskFile, readFrontmatterText, type TaskFileSource } from "./frontmatter.js";
 import { REASON_LIMIT, short } from "./message.js";
 import { Gate, PathQueue } from "./queue.js";
-import type { ExcludedFile, ExclusionCode, IndexEntry, QueryResult } from "./types.js";
+import type { ExcludedFile, ExclusionCode, IndexChange, IndexEntry, IndexOptions, QueryResult } from "./types.js";
 
-/** What one file turned out to be: an entry, a file that holds none, or nothing at all. */
-type Loaded = { entry: IndexEntry } | { excluded: Exclusion } | "gone";
+/**
+ * What one file turned out to be: an entry, a file that holds none, or nothing
+ * at all. A read that opened no regular file leaves no identity.
+ */
+type Loaded
+  = | { entry: IndexEntry; identity: FileIdentity }
+    | { excluded: Exclusion; identity: FileIdentity | undefined }
+    | "gone";
 
 /** An exclusion as the index builds it: the `line` reaches the listener alone. */
 type Exclusion = { code: ExclusionCode; message: string; line?: number };
+
+/** What one held path stands as: the bytes it was read from, and what they held. */
+type State = { kind: "entry" | ExclusionCode; identity: FileIdentity | undefined };
+
+/**
+ * Two states are equal when their kinds and their identities are equal. Two
+ * missing identities are equal.
+ */
+function sameState(a: State, b: State): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.identity === undefined || b.identity === undefined) return a.identity === b.identity;
+  return sameIdentity(a.identity, b.identity);
+}
 
 /**
  * Why the index may answer for no task of this project: the project directory
@@ -36,7 +55,7 @@ type Holding = { identity: string } | { lost: Lost };
  * How one task file is opened. It is a parameter so that a test can hold a read
  * open and decide what happens to the project while it stands there.
  */
-export type OpenTaskFile = (path: string) => Promise<ChunkSource | "absent" | "irregular">;
+export type OpenTaskFile = (path: string) => Promise<TaskFileSource | "absent" | "irregular">;
 
 /**
  * How many task files the index reads at one time, and how many applies a scan a
@@ -68,8 +87,13 @@ function deepFreeze<T>(value: T): T {
 export class TaskIndex {
   readonly #paths: ProjectPaths;
   readonly #onDiagnostic: ((diagnostic: StoreDiagnostic) => void) | undefined;
-  readonly #entries = new Map<string, { file: TaskEntry; entry: IndexEntry }>();
-  readonly #excluded = new Map<string, { file: TaskEntry; excluded: ExcludedFile }>();
+  readonly #onChange: ((change: IndexChange) => void) | undefined;
+  readonly #entries = new Map<string, { file: TaskEntry; entry: IndexEntry; identity: FileIdentity }>();
+  readonly #excluded = new Map<
+    string,
+    { file: TaskEntry; excluded: ExcludedFile; identity: FileIdentity | undefined }
+  >();
+
   /** The directory-level findings of the last scan, which have no entry to compare against. */
   #lastScanFindings = new Map<string, string>();
   /**
@@ -98,17 +122,29 @@ export class TaskIndex {
   readonly #readers: number;
   /** Whether the index still answers for its project: nothing it finds is reported once it does not. */
   #closed = false;
+  /**
+   * Whether a change reaches the listener of changes. It is one switch for the
+   * index rather than a flag of `apply`, because an `apply` can join one already
+   * queued for its path.
+   */
+  #reportsChanges = false;
 
   constructor(
     paths: ProjectPaths,
-    onDiagnostic?: (diagnostic: StoreDiagnostic) => void,
+    options: IndexOptions = {},
     open: OpenTaskFile = openTaskFile,
     readers: number = READ_LIMIT,
   ) {
     this.#paths = paths;
-    this.#onDiagnostic = onDiagnostic;
+    this.#onDiagnostic = options.onDiagnostic;
+    this.#onChange = options.onChange;
     this.#open = open;
     this.#readers = readers;
+  }
+
+  /** Hands every change it finds from here on to the listener of changes. */
+  startChangeReports(): void {
+    this.#reportsChanges = true;
   }
 
   /**
@@ -298,6 +334,16 @@ export class TaskIndex {
     }
   }
 
+  /** Hands a change of one task file to its listener, under the rules `report` holds. */
+  #reportChange(id: string, change: IndexChange["change"]): void {
+    if (this.#closed || !this.#reportsChanges) return;
+    try {
+      this.#onChange?.({ id, change });
+    } catch {
+      // A listener that throws harms neither the map nor the write that led here.
+    }
+  }
+
   /**
    * Drops everything the index held for a project it can no longer answer for,
    * once per state it lands in: a project that stands lost for the reason it
@@ -307,14 +353,17 @@ export class TaskIndex {
     if (this.#lostCause === lost.cause) return;
     this.#lostCause = lost.cause;
     this.#lostStanding = true;
+    const ids = [...this.#entries.values(), ...this.#excluded.values()].map((held) => held.file.id);
     this.#entries.clear();
     this.#excluded.clear();
     this.#lastScanFindings = new Map();
     this.report({ code: "tasks-directory-lost", message: lost.message, path: lost.path });
+    for (const id of ids) this.#reportChange(id, "deleted");
   }
 
   /** The frontmatter of one file, or the reason it holds no entry. */
   async #read(file: TaskEntry): Promise<Loaded> {
+    let identity: FileIdentity | undefined;
     let frontmatter: Frontmatter;
     try {
       const source = await this.#open(file.path);
@@ -322,8 +371,12 @@ export class TaskIndex {
       // other, not an anomaly.
       if (source === "absent") return "gone";
       if (source === "irregular") {
-        return { excluded: { code: "task-file-unreadable", message: "this name holds no regular file" } };
+        return {
+          identity: undefined,
+          excluded: { code: "task-file-unreadable", message: "this name holds no regular file" },
+        };
       }
+      identity = source.identity;
       frontmatter = parseFrontmatter(await readFrontmatterText(source, file.path), { filename: file.path });
     } catch (error) {
       // A fault of the file, and a fault of the filesystem the open did not
@@ -332,12 +385,13 @@ export class TaskIndex {
       // The reason quotes what the file holds — a key of any length, in any
       // bytes — so it is cut the way a value the file supplied is.
       const message = `this file cannot be read: ${short(causeOf(error), REASON_LIMIT)}`;
-      return { excluded: { code: "task-file-unreadable", message, line } };
+      return { identity, excluded: { code: "task-file-unreadable", message, line } };
     }
     const id = frontmatter.id;
-    if (id === file.id) return { entry: deepFreeze({ id: file.id, path: file.path, frontmatter }) };
+    if (id === file.id) return { identity, entry: deepFreeze({ id: file.id, path: file.path, frontmatter }) };
     if (taskNumber(this.#paths.project, `${id}.md`) === undefined) {
       return {
+        identity,
         excluded: {
           code: "task-file-foreign",
           message: `the id "${short(id)}" names no task of project ${this.#paths.project}, so this file holds no entry`,
@@ -345,6 +399,7 @@ export class TaskIndex {
       };
     }
     return {
+      identity,
       excluded: {
         code: "task-file-misnamed",
         message: `this file carries the id "${short(id)}", which names another task of this project`,
@@ -352,26 +407,41 @@ export class TaskIndex {
     };
   }
 
+  /** What one path stands as in the map, or `undefined` for a path it does not hold. */
+  #stateOf(path: string): State | undefined {
+    const held = this.#entries.get(path);
+    if (held !== undefined) return { kind: "entry", identity: held.identity };
+    const excluded = this.#excluded.get(path);
+    if (excluded !== undefined) return { kind: excluded.excluded.code, identity: excluded.identity };
+    return undefined;
+  }
+
   /** Puts what one read found into the map, and reports a state that changed. */
   #record(file: TaskEntry, loaded: Loaded): void {
     const path = file.path;
+    const before = this.#stateOf(path);
     if (loaded === "gone") {
       this.#entries.delete(path);
       this.#excluded.delete(path);
+      if (before !== undefined) this.#reportChange(file.id, "deleted");
       return;
     }
+    let kind: State["kind"];
     if ("entry" in loaded) {
+      kind = "entry";
       this.#excluded.delete(path);
-      this.#entries.set(path, { file, entry: loaded.entry });
-      return;
+      this.#entries.set(path, { file, entry: loaded.entry, identity: loaded.identity });
+    } else {
+      const { code, message, line } = loaded.excluded;
+      kind = code;
+      this.#entries.delete(path);
+      this.#excluded.set(path, { file, excluded: Object.freeze({ path, code, message }), identity: loaded.identity });
+      // A file that stands broken for the reason it already stood broken for is
+      // not reported again: a report states that the state has just changed.
+      if (before?.kind !== code) this.report({ code, message, path, line });
     }
-    const { code, message, line } = loaded.excluded;
-    this.#entries.delete(path);
-    // A file that stands broken for the reason it already stood broken for is
-    // not reported again: a report states that the state has just changed.
-    const known = this.#excluded.get(path)?.excluded.code === code;
-    this.#excluded.set(path, { file, excluded: Object.freeze({ path, code, message }) });
-    if (!known) this.report({ code, message, path, line });
+    if (before === undefined) this.#reportChange(file.id, "created");
+    else if (!sameState(before, { kind, identity: loaded.identity })) this.#reportChange(file.id, "changed");
   }
 
   /**

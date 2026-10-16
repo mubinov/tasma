@@ -247,13 +247,15 @@ export async function openIndexed(
   // The same check every store call makes, so a project nobody registered is
   // refused here rather than at the first query.
   await openProjectDirectory(project.paths);
-  const indexed = new IndexedProjectStore(project, new TaskIndex(project.paths, options.onDiagnostic), watching);
+  const cache = new TaskIndex(project.paths, options);
+  const indexed = new IndexedProjectStore(project, cache, watching);
   try {
     await indexed.rescan();
   } catch (error) {
     await indexed.close();
     throw error;
   }
+  cache.startChangeReports();
   return indexed;
 }
 

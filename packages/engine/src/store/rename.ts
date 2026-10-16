@@ -1,4 +1,4 @@
-import type { Dirent, Stats } from "node:fs";
+import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parseTask, serializeTask, TaskFormatError } from "../format/index.js";
@@ -19,6 +19,7 @@ import {
   removeFile,
   removeTree,
   replaceFile,
+  sameIdentity,
   syncDirectory,
 } from "./atomic.js";
 import { causeOf, errnoOf, fail } from "./errors.js";
@@ -102,11 +103,6 @@ async function listTaskDirectory(paths: ProjectPaths): Promise<Dirent[]> {
   }
 }
 
-/** Whether the bytes behind a name are still the ones a read recorded. */
-function unchanged(recorded: FileIdentity, entry: Stats): boolean {
-  return entry.ino === recorded.ino && entry.size === recorded.size && entry.mtimeMs === recorded.mtimeMs;
-}
-
 /** Takes a file away, tolerating one another writer already removed. */
 async function removeIfPresent(path: string): Promise<void> {
   try {
@@ -161,7 +157,7 @@ export async function reconcile(
     listed.add(name);
     const recorded = identities.get(name);
     const current = await entryAt(entry.path);
-    if (recorded !== undefined && current !== undefined && unchanged(recorded, current)) continue;
+    if (recorded !== undefined && current !== undefined && sameIdentity(recorded, current)) continue;
     const read = await readWithIdentity(entry.path);
     if (typeof read === "string") continue;
 

@@ -18,7 +18,7 @@ import {
   tempRoot,
 } from "../store/helpers.js";
 import { plantSteps } from "../workflow/helpers.js";
-import { BOM, ids, listener, taskEntry, unwatched, until } from "./helpers.js";
+import { BOM, ids, listener, taskEntry, unwatched, until, wired } from "./helpers.js";
 
 describe("a write made through the index", () => {
   it("is in the index by the time the call returns", async () => {
@@ -284,23 +284,9 @@ describe("rescanning behind the index", () => {
 });
 
 describe("what the index does with what a watch reports", () => {
-  /** An index whose watch reports nothing on its own, so the test reports in its place. */
-  async function wired(
-    root: string,
-    seen: ReturnType<typeof listener>,
-  ): Promise<{ indexed: IndexedProject; handlers: WatchHandlers }> {
-    let handlers: WatchHandlers | undefined;
-    const indexed = await openIndexed(project(root), { onDiagnostic: seen.on }, (given) => {
-      handlers = given;
-      return { ensure: async () => {}, close: async () => {} };
-    });
-    onTestFinished(() => indexed.close());
-    return { indexed, handlers: handlers! };
-  }
-
   it("reads the file a watch names", async () => {
     const root = await tempRoot();
-    const { indexed, handlers } = await wired(root, listener());
+    const { indexed, handlers } = await wired(root);
     await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
     handlers.onTask(taskEntry(root, "SAGA-1"));
@@ -311,7 +297,7 @@ describe("what the index does with what a watch reports", () => {
   it("reports a watch that failed", async () => {
     const root = await tempRoot();
     const seen = listener();
-    const { handlers } = await wired(root, seen);
+    const { handlers } = await wired(root, { onDiagnostic: seen.on });
 
     handlers.onFailure({ code: "index-watch-failed", message: "the watch failed", path: tasksDir(root) });
 
@@ -321,7 +307,7 @@ describe("what the index does with what a watch reports", () => {
   it("reads nothing more once it is closed", async () => {
     const root = await tempRoot();
     const seen = listener();
-    const { indexed, handlers } = await wired(root, seen);
+    const { indexed, handlers } = await wired(root, { onDiagnostic: seen.on });
     await indexed.close();
     // A file the index would report on if it read it at all.
     await plant(taskFile(root, "SAGA-1"), "Not a task file.\n");
@@ -337,7 +323,7 @@ describe("what the index does with what a watch reports", () => {
   it("hands the listener nothing a watch found after it closed", async () => {
     const root = await tempRoot();
     const seen = listener();
-    const { indexed, handlers } = await wired(root, seen);
+    const { indexed, handlers } = await wired(root, { onDiagnostic: seen.on });
     await indexed.close();
 
     // A debounce that fired just before the close is reading a name of its own,
@@ -350,7 +336,7 @@ describe("what the index does with what a watch reports", () => {
   it("waits for a read a watch started before it closed", async () => {
     const root = await tempRoot();
     const seen = listener();
-    const { indexed, handlers } = await wired(root, seen);
+    const { indexed, handlers } = await wired(root, { onDiagnostic: seen.on });
     await plant(taskFile(root, "SAGA-1"), "Not a task file.\n");
 
     // The read holds the file open and reaches the listener, so a close that
@@ -364,7 +350,7 @@ describe("what the index does with what a watch reports", () => {
   it("reports a read a watch started and nobody awaits, rather than letting it escape", async () => {
     const root = await tempRoot();
     const seen = listener();
-    const { handlers } = await wired(root, seen);
+    const { handlers } = await wired(root, { onDiagnostic: seen.on });
 
     // A directory nobody may read: the scan the event starts fails, and the
     // event has no caller to fail.
@@ -404,7 +390,7 @@ describe("what the index does with what a watch reports", () => {
 
   it("reads the whole directory when the tasks directory moved", async () => {
     const root = await tempRoot();
-    const { indexed, handlers } = await wired(root, listener());
+    const { indexed, handlers } = await wired(root);
     await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
 
     handlers.onTasksDirectory();

@@ -5,6 +5,7 @@ export { removedStepNotesOfTree } from "./removed-steps.js";
 export type {
   ExcludedFile,
   ExclusionCode,
+  IndexChange,
   IndexedProject,
   IndexEntry,
   IndexOptions,

@@ -1,5 +1,5 @@
 import { FrontmatterScanner } from "../format/region.js";
-import { openRegularFile } from "../store/atomic.js";
+import { type FileIdentity, identityOf, openRegularEntry } from "../store/atomic.js";
 
 /**
  * The most one frontmatter region may take. Without a cap, a file whose closing
@@ -77,12 +77,24 @@ export async function readFrontmatterText(source: ChunkSource, filename?: string
   }
 }
 
-/** A source over one task file, opened under the rules the store reads a task file by. */
-export async function openTaskFile(path: string): Promise<ChunkSource | "absent" | "irregular"> {
-  const handle = await openRegularFile(path);
-  if (typeof handle === "string") return handle;
+/** The bytes of one task file, and the identity of the file they are read from. */
+export type TaskFileSource = ChunkSource & { identity: FileIdentity };
+
+/**
+ * A source over one task file, opened under the rules the store reads a task
+ * file by.
+ *
+ * The identity is the stat taken before the first chunk, so a write that lands
+ * during the read shows as a change at the next read. A stat taken after the
+ * read would name the new bytes and hide that write.
+ */
+export async function openTaskFile(path: string): Promise<TaskFileSource | "absent" | "irregular"> {
+  const opened = await openRegularEntry(path);
+  if (typeof opened === "string") return opened;
+  const { handle } = opened;
   const buffer = new Uint8Array(CHUNK_SIZE);
   return {
+    identity: identityOf(opened.entry),
     async next() {
       const { bytesRead } = await handle.read(buffer, 0, buffer.length);
       return buffer.subarray(0, bytesRead);

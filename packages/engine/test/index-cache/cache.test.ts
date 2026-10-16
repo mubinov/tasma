@@ -9,7 +9,7 @@ import { plant, PROJECT, projectDir, taskFile, tasksDir, taskText, tempRoot } fr
 import { BOM, ids, listener, taskEntry } from "./helpers.js";
 
 function index(root: string, on?: (diagnostic: StoreDiagnostic) => void): TaskIndex {
-  return new TaskIndex(projectPaths({ project: PROJECT, root }), on);
+  return new TaskIndex(projectPaths({ project: PROJECT, root }), { onDiagnostic: on });
 }
 
 /**
@@ -30,7 +30,7 @@ function holding(
   let started!: () => void;
   const held = new Promise<void>((resolve) => (release = resolve));
   const reading = new Promise<void>((resolve) => (started = resolve));
-  const cache = new TaskIndex(projectPaths({ project: PROJECT, root }), on, async (path) => {
+  const cache = new TaskIndex(projectPaths({ project: PROJECT, root }), { onDiagnostic: on }, async (path) => {
     if (stop === "open") {
       started();
       await held;
@@ -64,7 +64,7 @@ function counting(root: string, readers?: number): { cache: TaskIndex; peak: () 
   let peak = 0;
   const cache = new TaskIndex(
     projectPaths({ project: PROJECT, root }),
-    undefined,
+    {},
     async (path) => {
       open += 1;
       peak = Math.max(peak, open);

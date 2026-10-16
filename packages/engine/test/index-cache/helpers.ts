@@ -1,8 +1,10 @@
+import { onTestFinished } from "vitest";
 import type { IndexedProject, IndexOptions, Project, QueryResult, StoreDiagnostic } from "@tasma/engine";
 import type { ChunkSource } from "../../src/index-cache/frontmatter.js";
 import { openIndexed } from "../../src/index-cache/project.js";
+import type { WatchHandlers } from "../../src/index-cache/watch.js";
 import { type TaskEntry, taskNumber } from "../../src/store/paths.js";
-import { PROJECT, taskFile } from "../store/helpers.js";
+import { project, PROJECT, taskFile } from "../store/helpers.js";
 
 /** The byte-order mark an editor may put in front of a file it writes as UTF-8. */
 export const BOM = "\uFEFF";
@@ -83,4 +85,22 @@ export function unwatched(project: Project, options: IndexOptions = {}): Promise
     ensure: async () => {},
     close: async () => {},
   }));
+}
+
+/**
+ * An index over the temp project whose watch reports nothing on its own, so the
+ * test reports in its place. `close()` waits for the work a reported event
+ * started, so a test awaits it rather than a fixed interval.
+ */
+export async function wired(
+  root: string,
+  options: IndexOptions = {},
+): Promise<{ indexed: IndexedProject; handlers: WatchHandlers }> {
+  let handlers: WatchHandlers | undefined;
+  const indexed = await openIndexed(project(root), options, (given) => {
+    handlers = given;
+    return { ensure: async () => {}, close: async () => {} };
+  });
+  onTestFinished(() => indexed.close());
+  return { indexed, handlers: handlers! };
 }

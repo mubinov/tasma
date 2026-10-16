@@ -46,11 +46,12 @@ export async function entryAt(path: string): Promise<Stats | undefined> {
 }
 
 /**
- * An open handle on one file: `absent` when the name does not exist, `irregular`
- * when it holds a directory, a device or a pipe — and, unless `follow` is set, a
- * symbolic link. The type comes from the open handle rather than from a stat of
- * the name, so a name replaced between the two decides nothing, and `O_NONBLOCK`
- * keeps the open of a pipe from waiting for a writer while holding a thread.
+ * An open handle on one file with the stat of that handle, taken before anything
+ * is read from it: `absent` when the name does not exist, `irregular` when it
+ * holds a directory, a device or a pipe — and, unless `follow` is set, a symbolic
+ * link. The type comes from the open handle rather than from a stat of the name,
+ * so a name replaced between the two decides nothing, and `O_NONBLOCK` keeps the
+ * open of a pipe from waiting for a writer while holding a thread.
  *
  * `follow` is set for the files the user places: the two configuration files, a
  * `workflow.yml`, the file of a step and an instruction document. The user chose
@@ -62,7 +63,10 @@ export async function entryAt(path: string): Promise<Stats | undefined> {
  * A handle it returns belongs to the caller, which closes it. This is the one
  * place the rules above are stated, so every read of this engine holds them.
  */
-export async function openRegularFile(path: string, follow = false): Promise<FileHandle | "absent" | "irregular"> {
+export async function openRegularEntry(
+  path: string,
+  follow = false,
+): Promise<{ handle: FileHandle; entry: Stats } | "absent" | "irregular"> {
   let flags = constants.O_RDONLY | constants.O_NONBLOCK;
   if (!follow) flags |= constants.O_NOFOLLOW;
   let handle;
@@ -77,15 +81,22 @@ export async function openRegularFile(path: string, follow = false): Promise<Fil
   }
   let kept = false;
   try {
-    if (!(await handle.stat()).isFile()) return "irregular";
+    const entry = await handle.stat();
+    if (!entry.isFile()) return "irregular";
     kept = true;
-    return handle;
+    return { handle, entry };
   } finally {
     if (!kept) await handle.close();
   }
 }
 
-/** The whole text of one file, under the rules `openRegularFile` opens it by. */
+/** `openRegularEntry` without the stat. */
+export async function openRegularFile(path: string, follow = false): Promise<FileHandle | "absent" | "irregular"> {
+  const opened = await openRegularEntry(path, follow);
+  return typeof opened === "string" ? opened : opened.handle;
+}
+
+/** The whole text of one file, under the rules `openRegularEntry` opens it by. */
 export async function readRegularFile(
   path: string,
   follow = false,
@@ -106,9 +117,17 @@ export async function readRegularFile(
  */
 export type FileIdentity = { ino: number; size: number; mtimeMs: number };
 
+export function identityOf(entry: Stats): FileIdentity {
+  return { ino: entry.ino, size: entry.size, mtimeMs: entry.mtimeMs };
+}
+
+export function sameIdentity(a: FileIdentity, b: FileIdentity): boolean {
+  return a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
+}
+
 /**
  * The whole text of one file with the identity of the bytes it returned, under
- * the rules `openRegularFile` opens it by.
+ * the rules `openRegularEntry` opens it by.
  *
  * Both come off the one open handle. An `lstat` by name after the read would
  * name whatever stands there by then: a `replaceFile` landing between the two
@@ -118,16 +137,12 @@ export type FileIdentity = { ino: number; size: number; mtimeMs: number };
 export async function readWithIdentity(
   path: string,
 ): Promise<{ text: string; identity: FileIdentity } | "absent" | "irregular"> {
-  const handle = await openRegularFile(path);
-  if (typeof handle === "string") return handle;
+  const opened = await openRegularEntry(path);
+  if (typeof opened === "string") return opened;
   try {
-    const entry = await handle.stat();
-    return {
-      text: await handle.readFile("utf8"),
-      identity: { ino: entry.ino, size: entry.size, mtimeMs: entry.mtimeMs },
-    };
+    return { text: await opened.handle.readFile("utf8"), identity: identityOf(opened.entry) };
   } finally {
-    await handle.close();
+    await opened.handle.close();
   }
 }
 

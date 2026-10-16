@@ -22,7 +22,32 @@ export type IndexOptions = {
    * diagnostics a store call returns stand under.
    */
   onDiagnostic?: (diagnostic: StoreDiagnostic) => void;
+  /**
+   * Every change of a task file the index finds after its build: a write made
+   * through it, and an edit of the disk the watcher or a rescan finds. A change
+   * is a new identity of the file (`ino`, `size`, `mtimeMs`) or a new kind of
+   * what it holds, so a read that finds the same file reports nothing, and an
+   * edit of the body alone reports a change.
+   *
+   * The build reports nothing. A loss of the tasks directory reports every file
+   * the index held as deleted, and its recovery every file it finds as created.
+   *
+   * An in-place write that keeps the size and lands in the same timestamp tick
+   * as the read before it is not reported: the tick is a nanosecond on APFS and
+   * up to two seconds on some other filesystems. The index still holds the new
+   * frontmatter from that read.
+   *
+   * What the listener throws is caught and dropped, and nothing reaches it once
+   * `close()` has returned.
+   */
+  onChange?: (change: IndexChange) => void;
 };
+
+/**
+ * One change of a task file. `id` is the id the file name states, also for a
+ * file that holds no entry.
+ */
+export type IndexChange = { id: string; change: "created" | "changed" | "deleted" };
 
 /**
  * One task as the index holds it: the frontmatter alone, never the body.

@@ -1,4 +1,4 @@
-import { mkdir, symlink } from "node:fs/promises";
+import { lstat, mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { TaskParseError } from "@tasma/engine";
@@ -133,6 +133,18 @@ describe("openTaskFile", () => {
     if (typeof source === "string") throw new Error(`the file did not open: ${source}`);
 
     expect(await readFrontmatterText(source)).toContain("id: SAGA-1");
+  });
+
+  it("carries the identity of the file it opened", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+
+    const source = await openTaskFile(taskFile(root, "SAGA-1"));
+    if (typeof source === "string") throw new Error(`the file did not open: ${source}`);
+    await source.close();
+
+    const entry = await lstat(taskFile(root, "SAGA-1"));
+    expect(source.identity).toEqual({ ino: entry.ino, size: entry.size, mtimeMs: entry.mtimeMs });
   });
 
   it("reports a name that holds nothing as absent", async () => {
