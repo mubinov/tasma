@@ -136,11 +136,14 @@ describe("the lines", () => {
 });
 
 describe("activating a line", () => {
-  it("scrolls its target to the top with motion and moves focus to it", async () => {
+  it("moves focus to its target, and then scrolls the target to the top with motion", async () => {
     const user = userEvent.setup();
     stubReducedMotion(false);
     const entry = comment("Note 1");
-    const scrollIntoView = vi.fn();
+    const focusedAtScroll: (Element | null)[] = [];
+    const scrollIntoView = vi.fn(() => {
+      focusedAtScroll.push(document.activeElement);
+    });
     entry.target.scrollIntoView = scrollIntoView;
     const focus = vi.spyOn(entry.target, "focus");
     renderOutline([heading("Plan")], [entry]);
@@ -150,6 +153,7 @@ describe("activating a line", () => {
     expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: "start", behavior: "smooth" });
     expect(entry.target.tabIndex).toBe(-1);
     expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+    expect(focusedAtScroll).toEqual([entry.target]);
     expect(document.activeElement).toBe(entry.target);
   });
 

@@ -225,7 +225,8 @@ export function CommentEditor({
         {/* A sticky header needs every box around it without overflow clipping, the card included. */}
         <div
           ref={headerRef}
-          className="sticky top-top-bar z-(--layer-comment-header) rounded-t-card border-b border-line bg-surface px-4 pt-3 pb-2"
+          data-comment-header=""
+          className="sticky top-under-bar z-(--layer-comment-header) rounded-t-card border-b border-line bg-surface px-4 pt-3 pb-2"
         >
           <Field.Root name="title" invalid={titleError !== undefined}>
             <Field.Label className="sr-only">{labels.title}</Field.Label>
@@ -252,7 +253,7 @@ export function CommentEditor({
           </Field.Root>
           {meta}
         </div>
-        <div className="px-4 pt-2.5 pb-3.5 [&_*]:scroll-mt-(--comment-header-height)">
+        <div data-comment-text="" className="px-4 pt-2.5 pb-3.5 [&_*]:scroll-mt-(--comment-header-height)">
           {removed && (
             <p
               ref={removedLineRef}

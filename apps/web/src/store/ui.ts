@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { create } from "zustand";
 
 export const THEME_PREFERENCES = ["system", "light", "dark"] as const;
@@ -127,6 +127,12 @@ type UiState = {
   updateDialog: UpdateDialog | null;
   openUpdateDialog: (dialog: UpdateDialog) => void;
   closeUpdateDialog: () => void;
+  /**
+   * Counts the Cmd+F presses on a screen that has a find. A screen reacts to a
+   * change after it mounts, never to the value it mounts with.
+   */
+  findRequest: number;
+  requestFind: () => void;
 };
 
 export type EditRequest = { tag: string; id: string };
@@ -213,7 +219,24 @@ export const useUiStore = create<UiState>((set, get) => ({
   closeUpdateDialog: () => {
     set({ updateDialog: null });
   },
+  findRequest: 0,
+  requestFind: () => {
+    set((state) => ({ findRequest: state.findRequest + 1 }));
+  },
 }));
+
+/** Runs `onRequest` after each Cmd+F press that comes after the caller mounts. */
+export function useFindRequest(onRequest: () => void): void {
+  const request = useUiStore((state) => state.findRequest);
+  const [requestAtMount] = useState(request);
+  const run = useEffectEvent(onRequest);
+
+  useEffect(() => {
+    if (request !== requestAtMount) {
+      run();
+    }
+  }, [request, requestAtMount]);
+}
 
 /** Counts a dialog while it is open. */
 export function useModalDialog(open: boolean): void {

@@ -1,3 +1,4 @@
+import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   browserPreferenceStorage,
@@ -6,6 +7,7 @@ import {
   setPreferenceStorage,
   THEME_PREFERENCE_LABELS,
   THEME_PREFERENCES,
+  useFindRequest,
   useUiStore,
 } from "../../src/store/ui";
 
@@ -315,5 +317,36 @@ describe("what an update restart reads", () => {
 
     store.closeUpdateDialog();
     expect(useUiStore.getState().updateDialog).toBeNull();
+  });
+});
+
+describe("the Cmd+F request", () => {
+  it("starts at zero and counts each press", () => {
+    useUiStore.setState({ findRequest: 0 });
+
+    useUiStore.getState().requestFind();
+    useUiStore.getState().requestFind();
+
+    expect(useUiStore.getState().findRequest).toBe(2);
+  });
+
+  it("runs a screen's find for each press after the screen mounts, never for a press before it", () => {
+    useUiStore.setState({ findRequest: 0 });
+    useUiStore.getState().requestFind();
+    const onRequest = vi.fn();
+    const { unmount } = renderHook(() => {
+      useFindRequest(onRequest);
+    });
+    expect(onRequest).not.toHaveBeenCalled();
+
+    act(() => {
+      useUiStore.getState().requestFind();
+    });
+    act(() => {
+      useUiStore.getState().requestFind();
+    });
+
+    expect(onRequest).toHaveBeenCalledTimes(2);
+    unmount();
   });
 });

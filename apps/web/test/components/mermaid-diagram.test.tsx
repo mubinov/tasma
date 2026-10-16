@@ -83,7 +83,7 @@ afterEach(() => {
 
 describe("while the diagram loads", () => {
   it("shows the source in the block, with its line breaks", () => {
-    render(<MermaidDiagram source={SOURCE} />);
+    render(<MermaidDiagram source={SOURCE} draw />);
 
     expect(block().querySelector("pre > code")?.textContent).toBe(SOURCE);
     expect(block().querySelector("pre")?.classList.contains("whitespace-pre")).toBe(true);
@@ -91,7 +91,7 @@ describe("while the diagram loads", () => {
   });
 
   it("renders into an empty, hidden element of no height across the block's content", () => {
-    render(<MermaidDiagram source={SOURCE} />);
+    render(<MermaidDiagram source={SOURCE} draw />);
 
     const container = vi.mocked(renderMermaid).mock.calls[0]?.[2];
     expect(container?.childNodes).toHaveLength(0);
@@ -100,8 +100,25 @@ describe("while the diagram loads", () => {
     expect([...container!.classList]).toEqual(expect.arrayContaining(["invisible", "absolute", "inset-x-3.5", "h-0"]));
   });
 
+  it("marks the source for the find of the task page to skip", () => {
+    render(<MermaidDiagram source={SOURCE} draw />);
+
+    expect(block().querySelector("pre")?.hasAttribute("data-find-skip")).toBe(true);
+  });
+
+  it("shows the source and draws nothing while it is not to be drawn, and draws when it is", () => {
+    const { rerender } = render(<MermaidDiagram source={SOURCE} draw={false} />);
+
+    expect(block().querySelector("pre > code")?.textContent).toBe(SOURCE);
+    expect(renderMermaid).not.toHaveBeenCalled();
+
+    rerender(<MermaidDiagram source={SOURCE} draw />);
+
+    expect(renderMermaid).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the render element when the diagram replaces the source", async () => {
-    render(<MermaidDiagram source={SOURCE} />);
+    render(<MermaidDiagram source={SOURCE} draw />);
     const container = vi.mocked(renderMermaid).mock.calls[0]?.[2];
 
     await settle(0, { markup: markup("one") });
@@ -114,7 +131,7 @@ describe("while the diagram loads", () => {
 
 describe("the diagram", () => {
   it("is a figure named Diagram, described by the source when the author wrote no description", async () => {
-    render(<MermaidDiagram source={SOURCE} />);
+    render(<MermaidDiagram source={SOURCE} draw />);
     await settle(0, { markup: markup("one") });
 
     const figure = screen.getByRole("figure", { name: "Diagram" });
@@ -127,7 +144,7 @@ describe("the diagram", () => {
   });
 
   it("is named by the author's title and keeps the author's description", async () => {
-    render(<MermaidDiagram source={SOURCE} />);
+    render(<MermaidDiagram source={SOURCE} draw />);
     await settle(0, { markup: markup("one", { title: "Watering plan", hasDescription: true }) });
 
     const figure = screen.getByRole("figure", { name: "Watering plan" });
@@ -136,7 +153,7 @@ describe("the diagram", () => {
   });
 
   it("adopts its CSS as a stylesheet", async () => {
-    render(<MermaidDiagram source={SOURCE} />);
+    render(<MermaidDiagram source={SOURCE} draw />);
     await settle(0, { markup: markup("one") });
 
     expect(adoptedCss()).toEqual(["#svg-one { fill: none; }"]);
@@ -145,7 +162,7 @@ describe("the diagram", () => {
 
 describe("a source that Mermaid rejects", () => {
   it("shows the source, the note and Mermaid's message", async () => {
-    render(<MermaidDiagram source={SOURCE} />);
+    render(<MermaidDiagram source={SOURCE} draw />);
     await settle(0, { failure: new Error("Parse error on line 2:\n---^") });
 
     expect(block().querySelector("pre > code")?.textContent).toBe(SOURCE);
@@ -156,7 +173,7 @@ describe("a source that Mermaid rejects", () => {
   });
 
   it("shows a failure that is not an Error as its text", async () => {
-    render(<MermaidDiagram source={SOURCE} />);
+    render(<MermaidDiagram source={SOURCE} draw />);
     await settle(0, { failure: "No diagram type detected" });
 
     expect(screen.getByText("No diagram type detected")).toBeTruthy();
@@ -165,7 +182,7 @@ describe("a source that Mermaid rejects", () => {
 
 describe("the block", () => {
   it("is the same element, and keeps focus, from loading to the diagram to an error", async () => {
-    const { rerender } = render(<MermaidDiagram source={SOURCE} />);
+    const { rerender } = render(<MermaidDiagram source={SOURCE} draw />);
     const loading = block();
     loading.focus();
 
@@ -173,13 +190,13 @@ describe("the block", () => {
     expect(block()).toBe(loading);
     expect(document.activeElement).toBe(loading);
 
-    rerender(<MermaidDiagram source="flowchart ->" />);
+    rerender(<MermaidDiagram source="flowchart ->" draw />);
     await settle(1, { failure: new Error("Parse error") });
     expect(block()).toBe(loading);
     expect(document.activeElement).toBe(loading);
     expect(adoptedCss()).toEqual([]);
 
-    rerender(<MermaidDiagram source={SOURCE} />);
+    rerender(<MermaidDiagram source={SOURCE} draw />);
     await settle(2, { markup: markup("two") });
     expect(block()).toBe(loading);
     expect(block().hasAttribute("aria-describedby")).toBe(false);
@@ -189,7 +206,7 @@ describe("the block", () => {
 
 describe("a new render", () => {
   it("follows a theme change and keeps the old diagram until the new one is ready", async () => {
-    render(<MermaidDiagram source={SOURCE} />);
+    render(<MermaidDiagram source={SOURCE} draw />);
     await settle(0, { markup: markup("light") });
 
     act(() => {
@@ -204,7 +221,7 @@ describe("a new render", () => {
   });
 
   it("replaces the old stylesheet, and unmounting removes the last one", async () => {
-    const { unmount } = render(<MermaidDiagram source={SOURCE} />);
+    const { unmount } = render(<MermaidDiagram source={SOURCE} draw />);
     await settle(0, { markup: markup("light") });
     act(() => {
       useUiStore.setState({ themePreference: "dark" });
@@ -217,9 +234,9 @@ describe("a new render", () => {
   });
 
   it("discards the result of a render that the source changed after", async () => {
-    const { rerender } = render(<MermaidDiagram source={SOURCE} />);
-    rerender(<MermaidDiagram source="sequenceDiagram" />);
-    rerender(<MermaidDiagram source="flowchart TD" />);
+    const { rerender } = render(<MermaidDiagram source={SOURCE} draw />);
+    rerender(<MermaidDiagram source="sequenceDiagram" draw />);
+    rerender(<MermaidDiagram source="flowchart TD" draw />);
 
     await settle(0, { markup: markup("stale") });
     await settle(1, { failure: new Error("Parse error") });
@@ -233,8 +250,8 @@ describe("a new render", () => {
   });
 
   it("aborts the old render when the source changes, and the last one on unmount", () => {
-    const { rerender, unmount } = render(<MermaidDiagram source={SOURCE} />);
-    rerender(<MermaidDiagram source="flowchart TD" />);
+    const { rerender, unmount } = render(<MermaidDiagram source={SOURCE} draw />);
+    rerender(<MermaidDiagram source="flowchart TD" draw />);
     const signals = vi.mocked(renderMermaid).mock.calls.map(([, , , signal]) => signal);
 
     expect(signals.map((signal) => signal.aborted)).toEqual([true, false]);
@@ -243,8 +260,8 @@ describe("a new render", () => {
   });
 
   it("does not run when the source and the theme stay the same", () => {
-    const { rerender } = render(<MermaidDiagram source={SOURCE} />);
-    rerender(<MermaidDiagram source={SOURCE} />);
+    const { rerender } = render(<MermaidDiagram source={SOURCE} draw />);
+    rerender(<MermaidDiagram source={SOURCE} draw />);
 
     expect(renderMermaid).toHaveBeenCalledOnce();
   });
@@ -255,7 +272,7 @@ describe("the theme", () => {
     document.documentElement.className = "light";
     useUiStore.setState({ themePreference: "dark" });
 
-    render(<MermaidDiagram source={SOURCE} />);
+    render(<MermaidDiagram source={SOURCE} draw />);
 
     expect(call(0).theme).toBe("dark");
     expect(document.documentElement.className).toBe("light");

@@ -4,6 +4,7 @@ import { ArrowLeftIcon } from "@phosphor-icons/react/ArrowLeft";
 import { ArrowUpIcon } from "@phosphor-icons/react/ArrowUp";
 import { CaretDownIcon } from "@phosphor-icons/react/CaretDown";
 import { CaretRightIcon } from "@phosphor-icons/react/CaretRight";
+import { CaretUpIcon } from "@phosphor-icons/react/CaretUp";
 import { CheckIcon } from "@phosphor-icons/react/Check";
 import { CircleNotchIcon } from "@phosphor-icons/react/CircleNotch";
 import { DotsThreeVerticalIcon } from "@phosphor-icons/react/DotsThreeVertical";
@@ -32,6 +33,7 @@ export {
   ArrowUpIcon,
   CaretDownIcon,
   CaretRightIcon,
+  CaretUpIcon,
   CheckIcon,
   CircleNotchIcon,
   DotsThreeVerticalIcon,

@@ -44,7 +44,61 @@ export type CommentCardProps = {
   onCloseEditor: (close: CommentClose) => void;
   /** The write that removed the comment landed. The caller lands the caret. */
   onDeleted: () => void;
+  /** The find of the page runs, so a closed comment keeps its text in the page for it. */
+  findActive: boolean;
+  /** A new number opens the comment, as its caret does. */
+  revealRequest: number | undefined;
 };
+
+type CommentFoldProps = {
+  id: number;
+  titleId: string;
+  startOpen: boolean;
+  findActive: boolean;
+  revealRequest: number | undefined;
+  header: ReactNode;
+  /** The comment text, `null` for a comment that has none. */
+  text: string | null;
+};
+
+function CommentFold({ id, titleId, startOpen, findActive, revealRequest, header, text }: CommentFoldProps): ReactNode {
+  const [open, setOpen] = useState(startOpen);
+  const [seenRequest, setSeenRequest] = useState(revealRequest);
+
+  if (seenRequest !== revealRequest) {
+    setSeenRequest(revealRequest);
+    if (revealRequest !== undefined) {
+      setOpen(true);
+    }
+  }
+
+  return (
+    <Collapsible.Root
+      render={<article />}
+      data-comment-id={id}
+      aria-labelledby={titleId}
+      open={open}
+      onOpenChange={setOpen}
+      className="group/comment mt-3 rounded-card border border-line bg-surface"
+    >
+      {/* The top of the comment for the contents outline: the sticky header does not move with it. */}
+      <span data-outline-sentinel="" className="block" />
+      {header}
+      {text !== null && (
+        // A focus scroll stops at the page's scroll padding, which clears the top bar and the focus ring but not the
+        // stuck header.
+        <Collapsible.Panel
+          keepMounted={findActive}
+          data-find-hidden={findActive && !open ? "" : undefined}
+          data-comment-text=""
+          className="px-4 pt-2.5 pb-3.5 [&_*]:scroll-mt-(--comment-header-height)"
+        >
+          <Markdown text={text} base={4} diagrams={open} />
+        </Collapsible.Panel>
+      )}
+    </Collapsible.Root>
+  );
+}
 
 /** The caret folds the comment for this reader alone and writes nothing. */
 export function CommentCard({
@@ -61,6 +115,8 @@ export function CommentCard({
   onEdit,
   onCloseEditor,
   onDeleted,
+  findActive,
+  revealRequest,
 }: CommentCardProps): ReactNode {
   const titleId = useId();
   const itemRef = useRef<HTMLLIElement>(null);
@@ -168,102 +224,96 @@ export function CommentCard({
   return (
     <li ref={itemRef}>
       {/* The open state starts again when a poll gives the comment text or takes it away. */}
-      <Collapsible.Root
+      <CommentFold
         key={hasBody ? "text" : "marker"}
-        render={<article />}
-        data-comment-id={id}
-        aria-labelledby={titleId}
-        defaultOpen={hasBody && collapsed !== true}
-        className="group/comment mt-3 rounded-card border border-line bg-surface"
-      >
-        {/* The top of the comment for the contents outline: the sticky header does not move with it. */}
-        <span data-outline-sentinel="" className="block" />
-        {/* A sticky header needs every box around it without overflow clipping, the card included. */}
-        <div
-          ref={headerRef}
-          className="sticky top-top-bar z-(--layer-comment-header) rounded-t-card bg-surface px-4 pt-3 group-data-closed/comment:rounded-b-card group-data-closed/comment:pb-3 group-data-open/comment:border-b group-data-open/comment:border-line group-data-open/comment:pb-2"
-        >
-          <div className="flex items-center gap-1">
-            {/* The heading is what names the card, so a comment with no title carries its id here. */}
-            <h3 id={titleId} className="mr-2 min-w-0 flex-1 font-chrome text-base font-medium wrap-anywhere">
-              {name}
-            </h3>
-            {/* Always visible, unlike the board's: a comment card carries no
+        id={id}
+        titleId={titleId}
+        startOpen={hasBody && collapsed !== true}
+        findActive={findActive}
+        revealRequest={revealRequest}
+        text={hasBody ? body : null}
+        // A sticky header needs every box around it without overflow clipping, the card included.
+        header={(
+          <div
+            ref={headerRef}
+            data-comment-header=""
+            className="sticky top-under-bar z-(--layer-comment-header) rounded-t-card bg-surface px-4 pt-3 group-data-closed/comment:rounded-b-card group-data-closed/comment:pb-3 group-data-open/comment:border-b group-data-open/comment:border-line group-data-open/comment:pb-2"
+          >
+            <div className="flex items-center gap-1">
+              {/* The heading is what names the card, so a comment with no title carries its id here. */}
+              <h3 id={titleId} className="mr-2 min-w-0 flex-1 font-chrome text-base font-medium wrap-anywhere">
+                {name}
+              </h3>
+              {/* Always visible, unlike the board's: a comment card carries no
                 other affordance, and the sticky header it sits in is often the
                 only part of a long comment on the screen. */}
-            <Menu.Root highlightItemOnHover={false}>
-              <Menu.Trigger
-                data-comment-menu=""
-                aria-label={`${headWords} actions`}
-                aria-describedby={titleId}
-                className="flex size-6 shrink-0 items-center justify-center rounded-control text-dim hover:text-text data-[popup-open]:bg-surface-2 data-[popup-open]:text-text"
-              >
-                <DotsThreeVerticalIcon size={16} aria-hidden="true" />
-              </Menu.Trigger>
-              <Menu.Portal>
-                <Menu.Positioner align="end" sideOffset={4} className={POSITIONER_CLASS}>
-                  <Menu.Popup className={`min-w-52 ${POPUP_CLASS}`}>
-                    <Menu.Item onClick={onEdit} className={MENU_ITEM_CLASS}>
-                      <span className="w-3.5 shrink-0" />
-                      Edit
-                    </Menu.Item>
-                    {/* The item keeps focus, which is what lets the native state
+              <Menu.Root highlightItemOnHover={false}>
+                <Menu.Trigger
+                  data-comment-menu=""
+                  aria-label={`${headWords} actions`}
+                  aria-describedby={titleId}
+                  className="flex size-6 shrink-0 items-center justify-center rounded-control text-dim hover:text-text data-[popup-open]:bg-surface-2 data-[popup-open]:text-text"
+                >
+                  <DotsThreeVerticalIcon size={16} aria-hidden="true" />
+                </Menu.Trigger>
+                <Menu.Portal>
+                  <Menu.Positioner align="end" sideOffset={4} className={POSITIONER_CLASS}>
+                    <Menu.Popup className={`min-w-52 ${POPUP_CLASS}`}>
+                      <Menu.Item onClick={onEdit} className={MENU_ITEM_CLASS}>
+                        <span className="w-3.5 shrink-0" />
+                        Edit
+                      </Menu.Item>
+                      {/* The item keeps focus, which is what lets the native state
                         change be heard; so the flag needs no spoken message. */}
-                    <Menu.CheckboxItem
-                      closeOnClick={false}
-                      checked={checked}
-                      onCheckedChange={toggleCollapsed}
-                      className={MENU_ITEM_CLASS}
-                    >
-                      {/* Forced colours overrides a colour but not `visibility`,
+                      <Menu.CheckboxItem
+                        closeOnClick={false}
+                        checked={checked}
+                        onCheckedChange={toggleCollapsed}
+                        className={MENU_ITEM_CLASS}
+                      >
+                        {/* Forced colours overrides a colour but not `visibility`,
                           so the check keeps its box either way. */}
-                      <Menu.CheckboxItemIndicator keepMounted className="flex w-3.5 shrink-0 data-[unchecked]:invisible">
-                        <CheckIcon size={14} aria-hidden="true" />
-                      </Menu.CheckboxItemIndicator>
-                      Collapsed by default
-                    </Menu.CheckboxItem>
-                    <Menu.Separator className="my-1.5 h-px bg-line" />
-                    <Menu.Item
-                      onClick={() => {
+                        <Menu.CheckboxItemIndicator keepMounted className="flex w-3.5 shrink-0 data-[unchecked]:invisible">
+                          <CheckIcon size={14} aria-hidden="true" />
+                        </Menu.CheckboxItemIndicator>
+                        Collapsed by default
+                      </Menu.CheckboxItem>
+                      <Menu.Separator className="my-1.5 h-px bg-line" />
+                      <Menu.Item
+                        onClick={() => {
                         // A refusal that landed after the last dialog was cancelled is not this one's.
-                        setDeleteRefusal(undefined);
-                        // A Cancel on the last dialog handed focus back to Base UI.
-                        deleteFocusRef.current = "keep";
-                        setDeleteAsked(true);
-                      }}
-                      className={MENU_ITEM_CLASS}
-                    >
-                      <span className="w-3.5 shrink-0" />
-                      Delete
-                    </Menu.Item>
-                  </Menu.Popup>
-                </Menu.Positioner>
-              </Menu.Portal>
-            </Menu.Root>
-            {hasBody && (
-              <Collapsible.Trigger
-                aria-label={`${headWords} text`}
-                aria-describedby={titleId}
-                className="flex size-6 shrink-0 items-center justify-center rounded-control text-dim hover:text-text"
-              >
-                <CaretDownIcon
-                  size={14}
-                  aria-hidden="true"
-                  className="transition-transform duration-(--duration-fast) group-data-closed/comment:-rotate-90"
-                />
-              </Collapsible.Trigger>
-            )}
+                          setDeleteRefusal(undefined);
+                          // A Cancel on the last dialog handed focus back to Base UI.
+                          deleteFocusRef.current = "keep";
+                          setDeleteAsked(true);
+                        }}
+                        className={MENU_ITEM_CLASS}
+                      >
+                        <span className="w-3.5 shrink-0" />
+                        Delete
+                      </Menu.Item>
+                    </Menu.Popup>
+                  </Menu.Positioner>
+                </Menu.Portal>
+              </Menu.Root>
+              {hasBody && (
+                <Collapsible.Trigger
+                  aria-label={`${headWords} text`}
+                  aria-describedby={titleId}
+                  className="flex size-6 shrink-0 items-center justify-center rounded-control text-dim hover:text-text"
+                >
+                  <CaretDownIcon
+                    size={14}
+                    aria-hidden="true"
+                    className="transition-transform duration-(--duration-fast) group-data-closed/comment:-rotate-90"
+                  />
+                </Collapsible.Trigger>
+              )}
+            </div>
+            <CommentMeta id={id} author={author} created={created} />
           </div>
-          <CommentMeta id={id} author={author} created={created} />
-        </div>
-        {hasBody && (
-          // A focus scroll stops at the page's scroll padding, which clears the top bar and the focus ring but not the
-          // stuck header.
-          <Collapsible.Panel className="px-4 pt-2.5 pb-3.5 [&_*]:scroll-mt-(--comment-header-height)">
-            <Markdown text={body} base={4} />
-          </Collapsible.Panel>
         )}
-      </Collapsible.Root>
+      />
       <ConfirmDialog
         open={deleteAsked}
         title={`Delete ${words}?`}

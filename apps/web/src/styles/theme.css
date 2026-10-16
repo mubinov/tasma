@@ -31,6 +31,8 @@
   --color-line: var(--palette-line);
   --color-focus: var(--palette-focus);
   --color-scrim: var(--palette-scrim);
+  --color-match: var(--palette-match);
+  --color-match-current: var(--palette-match-current);
   --color-chart-1: var(--palette-chart-1);
   --color-chart-2: var(--palette-chart-2);
   --color-chart-3: var(--palette-chart-3);
@@ -78,6 +80,8 @@
 
   /* Lengths that more than one component places its elements by. */
   --spacing-top-bar: 3.3125rem;
+  /* The bottom of the task page's top bar, with its find row while that is open. */
+  --spacing-under-bar: calc(var(--spacing-top-bar) + var(--find-row-height, 0px));
   --spacing-task-sidebar: 18rem;
 
   /*
@@ -151,6 +155,9 @@
   --palette-line: light-dark(#e2e4e8, #343a43);
   /* Focus alone: never hover, selection, a link or a state. */
   --palette-focus: light-dark(#2563eb, #6ea8fe);
+  /* The fills of the find matches under `text`. The current match takes the stronger one. */
+  --palette-match: light-dark(#fde68a, #4f4012);
+  --palette-match-current: light-dark(#f5b83d, #7d5f00);
 
   /*
    * Categorical fills for diagrams, in order: blue, orange, green, red,

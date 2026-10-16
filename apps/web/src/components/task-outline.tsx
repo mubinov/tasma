@@ -27,10 +27,12 @@ const LINE_CLASS = "block w-full truncate border-l-2 py-0.5 pl-2.5 text-left tex
 
 const LIST_CLASS = "mt-1.5 space-y-0.5";
 
+// Focus moves first: a click on a line leaves focus where it was, and the page has no scroll padding while the top bar
+// holds focus.
 function activate(target: HTMLElement): void {
   target.tabIndex = -1;
-  target.scrollIntoView({ block: "start", behavior: scrollBehavior() });
   target.focus({ preventScroll: true });
+  target.scrollIntoView({ block: "start", behavior: scrollBehavior() });
 }
 
 type LinesProps = {

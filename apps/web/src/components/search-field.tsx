@@ -3,6 +3,7 @@ import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode } from "react";
 import { splitList } from "../lib/board";
 import { CircleNotchIcon, MagnifyingGlassIcon, XIcon } from "../lib/icons";
+import { useFindRequest } from "../store/ui";
 import { GROUP_CLASS, LABEL_CLASS } from "./control-classes";
 
 export const SEARCH_DELAY = 300;
@@ -81,6 +82,11 @@ export function SearchField({ tag, q, busy, describedBy }: SearchFieldProps): Re
       clearTimeout(timer);
     };
   }, [pending]);
+
+  useFindRequest(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  });
 
   function clear(): void {
     setText("");

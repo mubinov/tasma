@@ -44,3 +44,25 @@ it("draws the focus ring in the focus role, inside a layer so a control can drop
   expect(GLOBAL_CSS).toMatch(/:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--color-focus\)[^}]*outline-offset:\s*2px/);
   expect(unlayered(GLOBAL_CSS)).not.toContain(":focus-visible");
 });
+
+it("fills every find match in the match role with a dotted underline, and the current one in the stronger role with a solid one", () => {
+  expect(GLOBAL_CSS).toMatch(
+    /::highlight\(task-find\)\s*\{[^}]*background-color:\s*var\(--color-match\);[^}]*color:\s*var\(--color-text\);[^}]*text-decoration:\s*underline dotted 1px var\(--color-text\)/,
+  );
+  expect(GLOBAL_CSS).toMatch(
+    /::highlight\(task-find-current\)\s*\{[^}]*background-color:\s*var\(--color-match-current\);[^}]*color:\s*var\(--color-text\);[^}]*text-decoration:\s*underline 2px/,
+  );
+});
+
+it("unsticks the comment headers and their scroll margin in a short window while the find row is open, outside every layer", () => {
+  const css = unlayered(GLOBAL_CSS);
+
+  expect(css).toMatch(/@media \(max-height: 30rem\)\s*\{\s*html:has\(\[data-find-row\]\) \[data-comment-header\]\s*\{\s*position:\s*static;/);
+  expect(css).toMatch(/html:has\(\[data-find-row\]\) \[data-comment-text\] \*\s*\{\s*scroll-margin-top:\s*0;/);
+});
+
+it("registers the page's scroll padding as a length that starts at 0, so script reads it in px", () => {
+  expect(GLOBAL_CSS).toMatch(
+    /@property --page-scroll-padding\s*\{\s*syntax:\s*"<length>";\s*inherits:\s*false;\s*initial-value:\s*0px;\s*\}/,
+  );
+});

@@ -25,24 +25,28 @@ import type { FinalFocus } from "../lib/final-focus";
 import {
   ArrowLeftIcon,
   DotsThreeVerticalIcon,
+  MagnifyingGlassIcon,
   PencilSimpleIcon,
   PlusIcon,
   ProhibitIcon,
   TrashIcon,
 } from "../lib/icons";
+import { HIDDEN_TEXT } from "../lib/page-find";
 import { blockingRows, relationRows, type RelationRow } from "../lib/task-page";
 import { useCommentList } from "../lib/use-comment-list";
 import { useScrolledPast } from "../lib/use-scrolled-past";
 import { useTaskEditing } from "../lib/use-task-editing";
+import { useTaskFind } from "../lib/use-task-find";
 import { useTaskProperties } from "../lib/use-task-properties";
 import { useTopBarLengths } from "../lib/use-top-bar-lengths";
 import { useUnsavedGuard } from "../lib/use-unsaved-guard";
 import { warningCount } from "../lib/warning-count";
 import { noticeWords, useNotice } from "../store/notices";
-import { useUiStore } from "../store/ui";
+import { useFindRequest, useUiStore } from "../store/ui";
 import { CommentCard } from "./comment-card";
 import { EditingComment } from "./comment-editor";
 import { ConfirmDialog } from "./confirm-dialog";
+import { FindBar } from "./find-bar";
 import {
   BUTTON_CLASS,
   BUTTON_FILLED_CLASS,
@@ -60,18 +64,16 @@ import { ChangedOnDisk } from "./changed-on-disk";
 import { TaskEditor } from "./task-editor";
 import type { Outline } from "./task-outline";
 import { TaskSidebar } from "./task-sidebar";
+import { Tooltip } from "./tooltip";
 
 // The route is reached by id rather than imported: the tree in routes.tsx names
 // this component, so importing the route back would close a cycle.
 const route = getRouteApi("/tasks/$project/$task");
 
-/**
- * The text of the element that is on the screen, without the words only a
- * screen reader hears, and without hidden or decorative text.
- */
+/** The text of the element that is on the screen. */
 function visibleText(element: Element): string {
   const copy = element.cloneNode(true) as Element;
-  for (const hidden of copy.querySelectorAll('.sr-only, [hidden], [aria-hidden="true"]')) {
+  for (const hidden of copy.querySelectorAll(HIDDEN_TEXT)) {
     hidden.remove();
   }
   return copy.textContent;
@@ -140,7 +142,13 @@ function Comments({
   return (
     <section aria-labelledby={headingId} className="mt-10 max-w-2xl">
       {/* The space separates the words in speech; flex drops it from the layout. */}
-      <h2 ref={headingRef} id={headingId} tabIndex={-1} className="flex items-baseline font-chrome text-lg font-semibold">
+      <h2
+        ref={headingRef}
+        id={headingId}
+        tabIndex={-1}
+        data-find-scope="comments"
+        className="flex items-baseline font-chrome text-lg font-semibold"
+      >
         Comments
         {" "}
         <span className="ml-1.5 text-xs-plus font-normal text-dim">{count}</span>
@@ -189,12 +197,37 @@ function BlockedSummary({ tag, blocking }: { tag: string; blocking: readonly Rel
   );
 }
 
-type ReadingControlsProps = { buttonRef: Ref<HTMLButtonElement>; onEdit: () => void; onDelete: () => void };
+type ReadingControlsProps = {
+  editButtonRef: Ref<HTMLButtonElement>;
+  findButtonRef: Ref<HTMLButtonElement>;
+  /** The id of the find row, which renders only while it is open. */
+  findRowId: string;
+  findOpen: boolean;
+  onFind: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+};
 
-function ReadingControls({ buttonRef, onEdit, onDelete }: ReadingControlsProps): ReactNode {
+function ReadingControls(
+  { editButtonRef, findButtonRef, findRowId, findOpen, onFind, onEdit, onDelete }: ReadingControlsProps,
+): ReactNode {
   return (
     <>
-      <Button ref={buttonRef} type="button" onClick={onEdit} className={BUTTON_CLASS}>
+      <Tooltip content="Find in task ⌘F">
+        <Button
+          ref={findButtonRef}
+          type="button"
+          aria-label="Find in task"
+          aria-keyshortcuts="Meta+F"
+          aria-expanded={findOpen}
+          aria-controls={findOpen ? findRowId : undefined}
+          onClick={onFind}
+          className={ICON_BUTTON_CLASS}
+        >
+          <MagnifyingGlassIcon size={16} aria-hidden="true" />
+        </Button>
+      </Tooltip>
+      <Button ref={editButtonRef} type="button" onClick={onEdit} className={BUTTON_CLASS}>
         <PencilSimpleIcon size={14} aria-hidden="true" />
         Edit
       </Button>
@@ -349,7 +382,18 @@ export function TaskScreen(): ReactNode {
   // The bar's scroll check and the scroll-to-top control read the same row: the
   // heading while the page reads, the title input while it is edited.
   const scrolledRef = draft === null ? headingRef : editing.titleRef;
-  const { barHeight, scrollPaddingTop } = useTopBarLengths(barRef);
+  const findRootRef = useRef<HTMLDivElement>(null);
+  const findButtonRef = useRef<HTMLButtonElement>(null);
+  const findRowId = useId();
+  const { barHeight, scrollPaddingTop, readScrollPadding } = useTopBarLengths(barRef);
+  const find = useTaskFind({
+    rootRef: findRootRef,
+    buttonRef: findButtonRef,
+    comments,
+    editing: draft !== null,
+    onRowResize: readScrollPadding,
+  });
+  useFindRequest(find.request);
   const scrolled = useScrolledPast(scrolledRef, barHeight);
   const outline = useOutline(bodyRef, list.listRef, task, draft !== null);
   const navigate = route.useNavigate();
@@ -380,7 +424,7 @@ export function TaskScreen(): ReactNode {
   const idLine = <p className="font-mono text-sm text-dim">{id}</p>;
 
   const metaLine = (
-    <div className="mt-2.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-sm text-subtle">
+    <div data-find-scope="header" className="mt-2.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-sm text-subtle">
       <span className="inline-flex min-h-5.5 items-center rounded-control border border-line bg-surface-2 px-2 text-text">
         {status}
       </span>
@@ -405,61 +449,77 @@ export function TaskScreen(): ReactNode {
       {/* A sticky bar stays only inside its parent box, so under lg the column
           gives up its box and the bar stays over the sidebar too. */}
       <div className="contents lg:block lg:min-w-0 lg:flex-1">
-        {/* The page's scroll padding keeps a focus scroll's target and its ring clear of the bar. */}
-        <div ref={barRef} className="sticky top-0 z-(--layer-top-bar) flex h-top-bar items-center gap-4 border-b border-line bg-bg px-6 sm:px-10 [html:has(&)]:scroll-pt-16">
-          <Link
-            to="/tasks"
-            search={boardSearch}
-            className="inline-flex items-center gap-1.5 text-sm text-dim hover:text-text"
-          >
-            <ArrowLeftIcon size={16} aria-hidden="true" />
-            Tasks
-          </Link>
-          {/* It repeats the h1, so a screen reader skips it. */}
-          <span
-            aria-hidden="true"
-            className={`inline-flex min-w-0 items-center gap-3 transition-[opacity,visibility] duration-(--duration-fast) ${scrolled ? "opacity-100" : "invisible opacity-0"}`}
-          >
-            <span className="shrink-0 font-mono text-sm text-dim">{id}</span>
-            <span className="truncate font-chrome text-base font-medium">{title}</span>
-          </span>
-          <div className="ml-auto flex shrink-0 items-center gap-2">
-            {draft === null
-              ? (
-                  <ReadingControls
-                    buttonRef={editing.editRef}
-                    onEdit={editing.openEditor}
-                    onDelete={() => {
-                      setDeleteAsked(true);
-                    }}
-                  />
-                )
-              : (
-                  <EditControls
-                    formId={formId}
-                    saving={editing.saving}
-                    cancelButtonRef={editing.cancelRef}
-                    saveButtonRef={editing.saveRef}
-                    onCancel={editing.cancel}
-                    onKeyDown={editing.onKeyDown}
-                  />
-                )}
+        {/*
+          The page's scroll padding keeps a focus scroll's target and its ring clear of the bar. WebKit applies it to
+          the bar's own controls too, so each focus move and keystroke in them would scroll the page: the page has no
+          scroll padding while the bar holds focus. WebKit's scroll anchoring scrolls the page by each change of the
+          scroll padding; a change of the root's min-height, which never limits the root's height, suppresses it.
+        */}
+        <div
+          ref={barRef}
+          className="sticky top-0 z-(--layer-top-bar) border-b border-line bg-bg [html:has(&)]:[--page-scroll-padding:calc(--spacing(16)+var(--find-row-height,0px))] [html:has(&:not(:focus-within))]:scroll-pt-(--page-scroll-padding) [html:has(&:focus-within)]:min-h-px"
+        >
+          <div className="flex h-top-bar items-center gap-4 px-6 sm:px-10">
+            <Link
+              to="/tasks"
+              search={boardSearch}
+              className="inline-flex items-center gap-1.5 text-sm text-dim hover:text-text"
+            >
+              <ArrowLeftIcon size={16} aria-hidden="true" />
+              {/* At 320 CSS px the word does not fit beside the bar's controls. */}
+              <span className="max-sm:sr-only">Tasks</span>
+            </Link>
+            {/* It repeats the h1, so a screen reader skips it. */}
+            <span
+              aria-hidden="true"
+              className={`inline-flex min-w-0 items-center gap-3 transition-[opacity,visibility] duration-(--duration-fast) ${scrolled ? "opacity-100" : "invisible opacity-0"}`}
+            >
+              <span className="shrink-0 font-mono text-sm text-dim">{id}</span>
+              <span className="truncate font-chrome text-base font-medium">{title}</span>
+            </span>
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {draft === null
+                ? (
+                    <ReadingControls
+                      editButtonRef={editing.editRef}
+                      findButtonRef={findButtonRef}
+                      findRowId={findRowId}
+                      findOpen={find.open}
+                      onFind={find.toggle}
+                      onEdit={editing.openEditor}
+                      onDelete={() => {
+                        setDeleteAsked(true);
+                      }}
+                    />
+                  )
+                : (
+                    <EditControls
+                      formId={formId}
+                      saving={editing.saving}
+                      cancelButtonRef={editing.cancelRef}
+                      saveButtonRef={editing.saveRef}
+                      onCancel={editing.cancel}
+                      onKeyDown={editing.onKeyDown}
+                    />
+                  )}
+            </div>
           </div>
+          {find.open && <FindBar id={findRowId} find={find} />}
         </div>
 
-        <div className="px-6 pb-12 sm:px-10 lg:pb-[calc(--spacing(12)+var(--notice-stack-height,0px))]">
+        <div ref={findRootRef} className="px-6 pb-12 sm:px-10 lg:pb-[calc(--spacing(12)+var(--notice-stack-height,0px))]">
           {draft === null
             ? (
                 <>
                   {/* The title comes first in the DOM, so the h1 opens the content and is
                       read before the id shown above it. */}
-                  <div className="mt-6 flex flex-col-reverse gap-1">
+                  <div data-find-scope="header" className="mt-6 flex flex-col-reverse gap-1">
                     <ScreenHeading ref={headingRef} tabIndex={-1} className="max-w-2xl wrap-anywhere">{title}</ScreenHeading>
                     {idLine}
                   </div>
                   {metaLine}
                   {body.trim() !== "" && (
-                    <div ref={bodyRef} className="mt-8 max-w-2xl">
+                    <div ref={bodyRef} data-find-scope="body" className="mt-8 max-w-2xl">
                       <Markdown text={body} base={2} title={title} />
                     </div>
                   )}
@@ -546,6 +606,8 @@ export function TaskScreen(): ReactNode {
                 onDeleted={() => {
                   list.deleted(place);
                 }}
+                findActive={find.findActive}
+                revealRequest={find.reveal?.commentId === comment.id ? find.reveal.count : undefined}
               />
             ))}
           </Comments>

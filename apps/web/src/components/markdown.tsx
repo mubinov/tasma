@@ -16,7 +16,11 @@ import {
 import { MermaidDiagram } from "./mermaid-diagram";
 import { Tooltip } from "./tooltip";
 
-type MarkdownProps = TaskHeadingsOptions & { text: string };
+type MarkdownProps = TaskHeadingsOptions & {
+  text: string;
+  /** Draws the Mermaid blocks. False shows their source, for a text that has no layout yet. */
+  diagrams?: boolean;
+};
 
 type HeadingTag = "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
 
@@ -99,6 +103,22 @@ function MarkdownLink({ node, href, children }: ChildrenProps & ExtraProps & { h
   );
 }
 
+function CodeBlock({ node, children, diagrams }: ChildrenProps & ExtraProps & { diagrams: boolean }): ReactNode {
+  const source = mermaidSource(node);
+  if (source !== null) {
+    return <MermaidDiagram source={source} draw={diagrams} />;
+  }
+  return (
+    // A scroll container with nothing focusable inside is a tab stop only in some engines.
+    <pre
+      tabIndex={0}
+      className="mt-3 overflow-x-auto rounded-card bg-surface-2 px-3.5 py-3 font-mono text-xs-plus [&>code]:bg-transparent [&>code]:p-0"
+    >
+      {children}
+    </pre>
+  );
+}
+
 const components: Components = {
   h1: MarkdownHeading,
   h2: MarkdownHeading,
@@ -125,21 +145,7 @@ const components: Components = {
   code: ({ children }) => (
     <code className="rounded-[4px] bg-surface-2 px-[5px] py-px font-mono text-xs-plus">{children}</code>
   ),
-  pre: ({ node, children }) => {
-    const source = mermaidSource(node);
-    if (source !== null) {
-      return <MermaidDiagram source={source} />;
-    }
-    return (
-      // A scroll container with nothing focusable inside is a tab stop only in some engines.
-      <pre
-        tabIndex={0}
-        className="mt-3 overflow-x-auto rounded-card bg-surface-2 px-3.5 py-3 font-mono text-xs-plus [&>code]:bg-transparent [&>code]:p-0"
-      >
-        {children}
-      </pre>
-    );
-  },
+  pre: (props) => <CodeBlock {...props} diagrams />,
   table: ({ children }) => (
     // A tab stop for the same reason as `pre`.
     <div tabIndex={0} className="mt-3 overflow-x-auto">
@@ -160,12 +166,15 @@ const components: Components = {
   a: MarkdownLink,
 };
 
+// Kept at module level: a map built on each render gives each renderer a new identity, which remounts the whole text.
+const sourceComponents: Components = { ...components, pre: (props) => <CodeBlock {...props} diagrams={false} /> };
+
 /**
  * Renders the markdown of a task body or a comment body: GitHub-flavoured, raw
  * HTML shown as source, links opened in a new tab, no image loaded, Mermaid
  * blocks drawn as diagrams.
  */
-export function Markdown({ text, base, title }: MarkdownProps): ReactNode {
+export function Markdown({ text, base, title, diagrams = true }: MarkdownProps): ReactNode {
   return (
     <div className="wrap-anywhere [&>:first-child]:mt-0">
       <ReactMarkdown
@@ -179,7 +188,7 @@ export function Markdown({ text, base, title }: MarkdownProps): ReactNode {
         rehypePlugins={[rehypeLinkText]}
         remarkRehypeOptions={{ footnoteLabelTagName: "p" }}
         urlTransform={markdownUrl}
-        components={components}
+        components={diagrams ? components : sourceComponents}
       >
         {text}
       </ReactMarkdown>

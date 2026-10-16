@@ -2,7 +2,11 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } f
 import { renderMermaid, type MermaidMarkup } from "../lib/mermaid";
 import { useResolvedTheme } from "../lib/theme";
 
-type MermaidDiagramProps = { source: string };
+type MermaidDiagramProps = {
+  source: string;
+  /** False shows the source alone: Mermaid measures the labels in the page, so a hidden block cannot be drawn. */
+  draw: boolean;
+};
 
 function messageOf(failure: unknown): string {
   return failure instanceof Error ? failure.message : String(failure);
@@ -13,7 +17,7 @@ function messageOf(failure: unknown): string {
  * It shows the source until the diagram is ready, and the source with
  * Mermaid's message when Mermaid rejects it.
  */
-export function MermaidDiagram({ source }: MermaidDiagramProps): ReactNode {
+export function MermaidDiagram({ source, draw }: MermaidDiagramProps): ReactNode {
   const theme = useResolvedTheme();
   const [diagram, setDiagram] = useState<MermaidMarkup | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -22,6 +26,9 @@ export function MermaidDiagram({ source }: MermaidDiagramProps): ReactNode {
   const sourceId = useId();
 
   useEffect(() => {
+    if (!draw) {
+      return;
+    }
     const job = new AbortController();
     renderMermaid(source, theme, containerRef.current!, job.signal).then(
       (rendered) => {
@@ -40,7 +47,7 @@ export function MermaidDiagram({ source }: MermaidDiagramProps): ReactNode {
     return () => {
       job.abort();
     };
-  }, [source, theme]);
+  }, [source, theme, draw]);
 
   // Before paint, so the SVG never shows without its rules.
   useLayoutEffect(() => {
@@ -57,7 +64,7 @@ export function MermaidDiagram({ source }: MermaidDiagramProps): ReactNode {
 
   const content = diagram === null
     ? (
-        <pre className="font-mono text-xs-plus whitespace-pre">
+        <pre data-find-skip="" className="font-mono text-xs-plus whitespace-pre">
           <code>{source}</code>
         </pre>
       )

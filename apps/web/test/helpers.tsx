@@ -264,3 +264,84 @@ export async function renderWithRouter(initialPath = "/", transport?: Transport)
 
   return router;
 }
+
+/** Replaces ResizeObserver with one that reports a target only when a test asks. */
+export function stubResizeObservers() {
+  const callbacks = new Map<Element, () => void>();
+
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      readonly callback: () => void;
+      readonly targets: Element[] = [];
+
+      constructor(callback: () => void) {
+        this.callback = callback;
+      }
+
+      observe(target: Element) {
+        this.targets.push(target);
+        callbacks.set(target, this.callback);
+      }
+
+      unobserve() {}
+
+      disconnect() {
+        for (const target of this.targets) {
+          callbacks.delete(target);
+        }
+      }
+    },
+  );
+
+  return {
+    observed: (target: Element) => callbacks.has(target),
+    report(target: Element) {
+      act(() => {
+        callbacks.get(target)?.();
+      });
+    },
+  };
+}
+
+/**
+ * Gives jsdom the CSS Custom Highlight API it lacks: `CSS.highlights` as a map,
+ * and a `Highlight` that keeps its ranges, so a test reads what is highlighted.
+ */
+export function stubHighlights() {
+  const highlights = new Map<string, { ranges: Range[] }>();
+
+  vi.stubGlobal("CSS", { highlights });
+  vi.stubGlobal(
+    "Highlight",
+    class {
+      readonly ranges: Range[];
+
+      constructor(...ranges: Range[]) {
+        this.ranges = ranges;
+      }
+    },
+  );
+
+  return {
+    /** The text of each range the highlight holds, or undefined while there is no such highlight. */
+    texts: (name: string) => highlights.get(name)?.ranges.map((range) => range.toString()),
+    ranges: (name: string) => highlights.get(name)?.ranges ?? [],
+  };
+}
+
+/**
+ * Gives Range the box jsdom does not compute. The default box is 20px tall at
+ * 100px from the top; `box` changes it for the ranges it names.
+ */
+export function stubRangeBoxes(box: (range: Range) => Partial<DOMRect> = () => ({})) {
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value(this: Range) {
+      return { top: 100, bottom: 120, height: 20, left: 0, right: 40, width: 40, ...box(this) } as DOMRect;
+    },
+  });
+  onTestFinished(() => {
+    Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
+  });
+}

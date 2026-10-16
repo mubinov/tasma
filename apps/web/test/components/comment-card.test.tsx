@@ -1,7 +1,11 @@
-import type { Comment, Frontmatter, TaskEntry, TransportReply } from "@tasma/protocol";
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { createClient, type Comment, type Frontmatter, type TaskEntry, type TransportReply } from "@tasma/protocol";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createAppQueryClient } from "../../src/api/client";
+import { CommentCard } from "../../src/components/comment-card";
+import type { UnsavedGuard } from "../../src/lib/use-unsaved-guard";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
 import { heldBack, refusalReply, renderWithRouter, stubTransport, successReply } from "../helpers";
@@ -488,5 +492,93 @@ describe("Edit on a card the reader cannot unfold", () => {
       expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Comment #3 title" }));
     });
     expect(screen.getByRole("button", { name: "Cancel editing comment #3" })).toBeTruthy();
+  });
+});
+
+describe("the find of the page", () => {
+  const queryClient = createAppQueryClient();
+  const client = createClient(stubTransport().transport);
+
+  function cardElement(fields: Partial<Comment>, findActive: boolean, revealRequest?: number) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <ol>
+          <CommentCard
+            comment={comment(4, fields)}
+            queryClient={queryClient}
+            client={client}
+            tag="SAGA"
+            taskId="SAGA-3"
+            taskUpdated="2026-09-01T10:15:00Z"
+            lineEndRestored={false}
+            editing={false}
+            removed={false}
+            guard={{} as UnsavedGuard}
+            onEdit={() => {}}
+            onCloseEditor={() => {}}
+            onDeleted={() => {}}
+            findActive={findActive}
+            revealRequest={revealRequest}
+          />
+        </ol>
+      </QueryClientProvider>
+    );
+  }
+
+  function caret(): HTMLElement {
+    return within(card("Note 4")).getByRole("button", { name: "Comment #4 text" });
+  }
+
+  function panel(): Element | null {
+    return card("Note 4").querySelector("[data-comment-text]");
+  }
+
+  it("keeps the text of a closed comment in the page, hidden and marked for the find, only while the find runs", () => {
+    const view = render(cardElement({ collapsed: true }, false));
+    expect(panel()).toBeNull();
+
+    view.rerender(cardElement({ collapsed: true }, true));
+    expect(panel()?.hasAttribute("hidden")).toBe(true);
+    expect(panel()?.hasAttribute("data-find-hidden")).toBe(true);
+    expect(panel()?.textContent).toBe("Body of note 4.");
+
+    view.rerender(cardElement({ collapsed: true }, false));
+    expect(panel()).toBeNull();
+  });
+
+  it("does not mark an open comment for the find", () => {
+    render(cardElement({}, true));
+
+    expect(panel()?.hasAttribute("data-find-hidden")).toBe(false);
+  });
+
+  it("opens for a new reveal number, and not again for the same number after the caret closed it", async () => {
+    const user = userEvent.setup();
+    const view = render(cardElement({ collapsed: true }, true));
+
+    view.rerender(cardElement({ collapsed: true }, true, 1));
+    expect(caret().getAttribute("aria-expanded")).toBe("true");
+    expect(panel()?.hasAttribute("data-find-hidden")).toBe(false);
+
+    await user.click(caret());
+    view.rerender(cardElement({ collapsed: true }, true, 1));
+    expect(caret().getAttribute("aria-expanded")).toBe("false");
+
+    view.rerender(cardElement({ collapsed: true }, true, undefined));
+    view.rerender(cardElement({ collapsed: true }, true, 2));
+    expect(caret().getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("starts the open state again from the file when a poll takes the text and gives it back", () => {
+    const view = render(cardElement({ collapsed: true }, true, 1));
+    expect(caret().getAttribute("aria-expanded")).toBe("false");
+    view.rerender(cardElement({ collapsed: true }, true, 2));
+    expect(caret().getAttribute("aria-expanded")).toBe("true");
+
+    view.rerender(cardElement({ collapsed: true, body: "" }, true, 2));
+    expect(within(card("Note 4")).queryByRole("button", { name: "Comment #4 text" })).toBeNull();
+
+    view.rerender(cardElement({ collapsed: true }, true, 2));
+    expect(caret().getAttribute("aria-expanded")).toBe("false");
   });
 });

@@ -6,7 +6,7 @@ import { ICON_BUTTON_CLASS } from "../../src/components/control-classes";
 import { formatClock } from "../../src/lib/clock";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { refusalReply, renderWithRouter, stubIntersectionObserver, successReply } from "../helpers";
+import { refusalReply, renderWithRouter, stubIntersectionObserver, stubResizeObservers, successReply } from "../helpers";
 import {
   LISTING_PATH,
   TASK_PATH,
@@ -26,45 +26,6 @@ import {
   topBar,
 } from "../task-screen-fixtures";
 
-/** Replaces ResizeObserver with one that reports a target only when a test asks. */
-function stubResizeObservers() {
-  const callbacks = new Map<Element, () => void>();
-
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      readonly callback: () => void;
-      readonly targets: Element[] = [];
-
-      constructor(callback: () => void) {
-        this.callback = callback;
-      }
-
-      observe(target: Element) {
-        this.targets.push(target);
-        callbacks.set(target, this.callback);
-      }
-
-      unobserve() {}
-
-      disconnect() {
-        for (const target of this.targets) {
-          callbacks.delete(target);
-        }
-      }
-    },
-  );
-
-  return {
-    observed: (target: Element) => callbacks.has(target),
-    report(target: Element) {
-      act(() => {
-        callbacks.get(target)?.();
-      });
-    },
-  };
-}
-
 beforeEach(() => {
   window.localStorage.clear();
   useUiStore.setState({
@@ -79,7 +40,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  document.documentElement.style.scrollPaddingTop = "";
+  document.documentElement.style.removeProperty("--page-scroll-padding");
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -116,12 +77,17 @@ describe("the page", () => {
 
     const back = backLink();
     expect(back.getAttribute("href")).toBe("/tasks?projects=SAGA");
-    expect(back.parentElement?.className).toContain("sticky");
-    expect(back.parentElement?.className).toContain("z-(--layer-top-bar)");
+    expect(within(back).getByText("Tasks").className).toBe("max-sm:sr-only");
+    const bar = topBar();
+    expect(back.parentElement?.parentElement).toBe(bar);
     expect(back.parentElement?.classList.contains("h-top-bar")).toBe(true);
-    expect(back.parentElement?.classList.contains("[html:has(&)]:scroll-pt-16")).toBe(true);
-    expect(back.parentElement?.parentElement?.className).toBe("contents lg:block lg:min-w-0 lg:flex-1");
-    expect(back.parentElement?.parentElement?.nextElementSibling).toBe(sidebar());
+    expect(bar.className).toContain("sticky");
+    expect(bar.className).toContain("z-(--layer-top-bar)");
+    expect(bar.classList.contains("border-b")).toBe(true);
+    expect(bar.classList.contains("[html:has(&:not(:focus-within))]:scroll-pt-(--page-scroll-padding)")).toBe(true);
+    expect(bar.childElementCount).toBe(1);
+    expect(bar.parentElement?.className).toBe("contents lg:block lg:min-w-0 lg:flex-1");
+    expect(bar.parentElement?.nextElementSibling).toBe(sidebar());
     const current = screen.getAllByRole("link").filter((link) => link.getAttribute("aria-current") === "page");
     expect(current.map((link) => link.textContent)).toEqual(["Tasks"]);
   });
@@ -285,7 +251,7 @@ describe("the comments", () => {
       expect(sentinel?.childNodes).toHaveLength(0);
       for (const name of [
         "sticky",
-        "top-top-bar",
+        "top-under-bar",
         "z-(--layer-comment-header)",
         "rounded-t-card",
         "bg-surface",
@@ -340,7 +306,7 @@ describe("the title in the top bar and scroll to top", () => {
     const resize = stubResizeObservers();
     // The bar's rem height at an 18px root font size.
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      return { height: this.classList.contains("h-top-bar") ? 59.625 : 0 } as DOMRect;
+      return { height: this.classList.contains("top-0") ? 59.625 : 0 } as DOMRect;
     });
     const { transport } = daemon();
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
@@ -379,9 +345,9 @@ describe("the title in the top bar and scroll to top", () => {
     const resize = stubResizeObservers();
     let barHeight = 53;
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      return { height: this.classList.contains("h-top-bar") ? barHeight : 0 } as DOMRect;
+      return { height: this.classList.contains("top-0") ? barHeight : 0 } as DOMRect;
     });
-    document.documentElement.style.scrollPaddingTop = "64px";
+    document.documentElement.style.setProperty("--page-scroll-padding", "64px");
     const { transport } = daemon({ [TASK_PATH]: task({ body: "## Plan" }) });
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
     const heading = screen.getByRole("heading", { level: 1 });
@@ -396,7 +362,7 @@ describe("the title in the top bar and scroll to top", () => {
 
     // The root font size goes from 16px to 18px on the open page.
     barHeight = 59.625;
-    document.documentElement.style.scrollPaddingTop = "72px";
+    document.documentElement.style.setProperty("--page-scroll-padding", "72px");
     resize.report(topBar());
     expect(rootMargins()).toEqual([["-59.625px 0px 0px 0px"], ["-80px 0px 10000000px 0px"]]);
 
@@ -414,7 +380,7 @@ describe("the title in the top bar and scroll to top", () => {
     resize.report(topBar());
     io.report({ target: screen.getByRole("heading", { level: 1 }), top: -40, bottom: -10 });
 
-    const column = backLink().parentElement!.parentElement!;
+    const column = topBar().parentElement!;
     expect(column.lastElementChild).toBe(screen.getByRole("button", { name: "Scroll to top" }));
   });
 });

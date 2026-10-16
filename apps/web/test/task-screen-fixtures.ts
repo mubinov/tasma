@@ -98,7 +98,7 @@ export function backLink(): HTMLElement {
 }
 
 export function topBar(): HTMLElement {
-  return backLink().parentElement!;
+  return backLink().parentElement!.parentElement!;
 }
 
 export function commentCard(title: string): HTMLElement {

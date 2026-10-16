@@ -34,7 +34,10 @@ const READABILITY_CONTRACT: readonly { role: string; minimum: number }[] = [
 
 const CHART_ROLES = Array.from({ length: 8 }, (_, index) => `chart-${String(index + 1)}`);
 
-const ROLES = [...SURFACES, ...READABILITY_CONTRACT.map(({ role }) => role), "line", ...CHART_ROLES];
+/** The fills of the find matches, which hold the page's text and no other foreground. */
+const MATCH_ROLES = ["match", "match-current"];
+
+const ROLES = [...SURFACES, ...READABILITY_CONTRACT.map(({ role }) => role), "line", ...CHART_ROLES, ...MATCH_ROLES];
 
 /** Both palettes, read from the light-dark() pair each role declares. */
 function readPalettes(css: string): Map<string, Map<string, string>> {
@@ -86,6 +89,10 @@ describe.each([...palettes])("the %s palette", (_theme, palette) => {
         minimum,
       );
     }
+  });
+
+  it.each(MATCH_ROLES)("keeps text readable on the %s fill at 4.5:1", (fill) => {
+    expect(contrast(palette.get("text")!, palette.get(fill)!)).toBeGreaterThanOrEqual(4.5);
   });
 });
 

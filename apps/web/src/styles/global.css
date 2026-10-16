@@ -23,6 +23,33 @@
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
+
+  /*
+   * A match in `dim`, `subtle` or `signal` text takes `text`, which the contrast
+   * test holds on both fills. The fills keep no 3:1 against the page, so each
+   * match also has an underline: dotted, and solid for the current match.
+   */
+  ::highlight(task-find) {
+    background-color: var(--color-match);
+    color: var(--color-text);
+    text-decoration: underline dotted 1px var(--color-text);
+  }
+
+  ::highlight(task-find-current) {
+    background-color: var(--color-match-current);
+    color: var(--color-text);
+    text-decoration: underline 2px var(--color-text);
+  }
+}
+
+/*
+ * The page's top scroll padding, which the task page's top bar sets. A length,
+ * so it computes to px for script, also while the page has no scroll padding.
+ */
+@property --page-scroll-padding {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
 }
 
 /*
@@ -32,4 +59,19 @@
  */
 html.cursor-grabbing * {
   cursor: grabbing;
+}
+
+/*
+ * Outside every layer, so it wins over the sticky and scroll margin utilities.
+ * In a short window the top bar, the find row and a stuck comment header would
+ * cover the whole page.
+ */
+@media (max-height: 30rem) {
+  html:has([data-find-row]) [data-comment-header] {
+    position: static;
+  }
+
+  html:has([data-find-row]) [data-comment-text] * {
+    scroll-margin-top: 0;
+  }
 }

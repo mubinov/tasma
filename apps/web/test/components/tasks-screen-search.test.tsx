@@ -607,6 +607,22 @@ describe("the search", () => {
       expect(document.activeElement).toBe(link);
     });
 
+    it("moves to the search field and selects its text on Cmd+F, and not for a press before the board", async () => {
+      useUiStore.getState().requestFind();
+      const { transport } = searchDaemon();
+      await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      await settle();
+      const field = screen.getByRole<HTMLInputElement>("searchbox");
+      expect(document.activeElement).not.toBe(field);
+
+      act(() => {
+        useUiStore.getState().requestFind();
+      });
+
+      expect(document.activeElement).toBe(field);
+      expect([field.selectionStart, field.selectionEnd]).toEqual([0, "parser".length]);
+    });
+
     it("stays in the search field when a new result hides a card", async () => {
       const { transport } = searchDaemon();
       const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);

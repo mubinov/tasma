@@ -466,8 +466,15 @@ describe("a Mermaid block", () => {
   it("renders as a diagram, and the code blocks beside it stay code", () => {
     const wrapper = renderMarkdown("```mermaid\nflowchart LR\n  seed --> sprout\n```\n\n```js\nwater()\n```");
 
-    expect(MermaidDiagram).toHaveBeenCalledWith({ source: "flowchart LR\n  seed --> sprout\n" }, undefined);
+    expect(MermaidDiagram).toHaveBeenCalledWith({ source: "flowchart LR\n  seed --> sprout\n", draw: true }, undefined);
     expect(wrapper.querySelector("[data-diagram]")?.textContent).toBe("flowchart LR\n  seed --> sprout\n");
     expect([...wrapper.querySelectorAll("pre > code")].map((code) => code.textContent)).toEqual(["water()\n"]);
+  });
+
+  it("is not drawn in a text without diagrams, and the code blocks beside it stay code", () => {
+    const { container } = render(<Markdown text={"```mermaid\nflowchart LR\n```\n\n```js\nwater()\n```"} base={2} diagrams={false} />);
+
+    expect(MermaidDiagram).toHaveBeenLastCalledWith({ source: "flowchart LR\n", draw: false }, undefined);
+    expect([...container.querySelectorAll("pre > code")].map((code) => code.textContent)).toEqual(["water()\n"]);
   });
 });
