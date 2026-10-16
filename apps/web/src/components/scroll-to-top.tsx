@@ -31,7 +31,7 @@ function Control({ headingRef, onFocusLost }: ControlProps): ReactNode {
         window.scrollTo({ top: 0, behavior: scrollBehavior() });
         headingRef.current?.focus({ preventScroll: true });
       }}
-      className="fixed right-6 bottom-6 z-(--layer-scroll-to-top) flex size-9 items-center justify-center rounded-full border border-line bg-surface text-muted shadow-float hover:border-graphic hover:text-text lg:right-[calc(var(--spacing-task-sidebar)+--spacing(6))]"
+      className="fixed right-6 bottom-6 z-(--layer-scroll-to-top) flex size-9 items-center justify-center rounded-full border border-line bg-surface text-subtle shadow-float hover:border-graphic hover:text-text lg:right-[calc(var(--spacing-task-sidebar)+--spacing(6))]"
     >
       <ArrowUpIcon size={16} aria-hidden="true" />
     </Button>

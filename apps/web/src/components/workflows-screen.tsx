@@ -54,7 +54,7 @@ function WorkflowRow({ name, read, refused }: WorkflowRowProps): ReactNode {
             {title !== name && <Tag>{name}</Tag>}
           </span>
           {refused && (
-            <span className="mt-0.5 block text-sm text-muted">
+            <span className="mt-0.5 block text-sm text-subtle">
               The daemon could not read this workflow. Open it to see why.
             </span>
           )}
@@ -94,7 +94,7 @@ export function WorkflowsScreen(): ReactNode {
       <Diagnostics items={warnings} subject="the workflows" className="mt-4" />
       {names.length === 0
         ? (
-            <p className="mt-2 text-base text-muted">
+            <p className="mt-2 text-base text-subtle">
               No workflows yet. The workflows directory holds none. Add one, and it is listed here.
             </p>
           )

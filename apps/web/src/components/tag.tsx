@@ -9,7 +9,7 @@ import type { ReactNode } from "react";
  */
 export function Tag({ children }: { children: ReactNode }): ReactNode {
   return (
-    <span className="inline-flex min-h-5 items-center rounded-control align-top border border-line bg-surface-2 px-1.5 font-mono text-xs wrap-anywhere text-muted">
+    <span className="inline-flex min-h-5 items-center rounded-control align-top border border-line bg-surface-2 px-1.5 font-mono text-xs wrap-anywhere text-subtle">
       {children}
     </span>
   );

@@ -60,13 +60,13 @@ function WarningsLine({ items, excluded = [], subject, className }: DiagnosticsP
             {warningCount(count)}
           </span>
           {" "}
-          <span id={subjectId} className="text-muted">
+          <span id={subjectId} className="text-subtle">
             {`about ${subject}`}
           </span>
         </h2>
         <Collapsible.Trigger
           aria-labelledby={`${actionId} ${countId} ${subjectId}`}
-          className="ml-1 inline-flex min-h-6 items-center text-muted underline underline-offset-2 hover:text-text"
+          className="ml-1 inline-flex min-h-6 items-center text-subtle underline underline-offset-2 hover:text-text"
         >
           <span id={actionId}>{open ? "Hide" : "Show"}</span>
         </Collapsible.Trigger>

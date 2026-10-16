@@ -165,7 +165,7 @@ export function TaskPicker(props: TaskPickerProps): ReactNode {
                   <span className="block">
                     <span className="font-mono text-xs-plus">{item.id}</span>
                     {" "}
-                    <span className="text-muted">{`[${item.status}]`}</span>
+                    <span className="text-subtle">{`[${item.status}]`}</span>
                   </span>
                   <span className="block">{item.title}</span>
                 </span>

@@ -380,7 +380,7 @@ export function TaskScreen(): ReactNode {
   const idLine = <p className="font-mono text-sm text-dim">{id}</p>;
 
   const metaLine = (
-    <div className="mt-2.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-sm text-muted">
+    <div className="mt-2.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-sm text-subtle">
       <span className="inline-flex min-h-5.5 items-center rounded-control border border-line bg-surface-2 px-2 text-text">
         {status}
       </span>

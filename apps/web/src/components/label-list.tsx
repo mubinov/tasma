@@ -10,7 +10,7 @@ type LabelListProps = {
 
 const LIST_CLASS = "flex flex-wrap gap-x-3 gap-y-1";
 
-const ROW_CLASS = "inline-flex items-center gap-1.5 text-muted";
+const ROW_CLASS = "inline-flex items-center gap-1.5 text-subtle";
 
 export function LabelMark({ label }: { label: string }): ReactNode {
   return (

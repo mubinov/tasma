@@ -319,7 +319,7 @@ export function BoardColumn({
           <button
             type="button"
             onClick={openMovingFocus}
-            className="text-muted underline underline-offset-2 hover:text-text"
+            className="text-subtle underline underline-offset-2 hover:text-text"
           >
             Show all
           </button>

@@ -50,7 +50,7 @@ export function SettingsScreen(): ReactNode {
               value={value}
               className="flex cursor-pointer items-center gap-3 rounded-card border border-line bg-surface px-4 py-3 hover:border-graphic data-[checked]:border-graphic"
             >
-              <Icon size={20} aria-hidden="true" className="shrink-0 text-muted" />
+              <Icon size={20} aria-hidden="true" className="shrink-0 text-subtle" />
               <span className="min-w-0 flex-1 font-chrome text-base font-medium">{THEME_PREFERENCE_LABELS[value]}</span>
               {/*
                * Forced-colors mode replaces every author colour, so the border

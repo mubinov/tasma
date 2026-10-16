@@ -13,7 +13,7 @@ export function LiveNotice({ className }: { className?: string }): ReactNode {
       <WarningIcon size={20} aria-hidden="true" className="mt-px shrink-0 text-signal" />
       <div>
         <p className="font-chrome text-base font-medium text-signal">The index is not following the disk</p>
-        <p className="mt-0.5 text-sm text-muted">
+        <p className="mt-0.5 text-sm text-subtle">
           The daemon could not repair the index of this project on this request. What it reports about this project
           can be older than the files on disk. Reload to try again.
         </p>

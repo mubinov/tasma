@@ -51,7 +51,7 @@ export function CardFace({ entry, view, top, title, menu }: CardFaceProps): Reac
           </span>
         )}
         {priority !== undefined && (
-          <span className={`ml-auto text-xs ${top ? "font-medium text-text" : "text-muted"}`}>{priority}</span>
+          <span className={`ml-auto text-xs ${top ? "font-medium text-text" : "text-subtle"}`}>{priority}</span>
         )}
       </div>
       {title}

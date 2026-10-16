@@ -32,7 +32,7 @@ function headingClass(depth: number): string {
   }
   return depth === 3
     ? "mt-6 font-chrome text-base font-semibold"
-    : "mt-5 font-chrome text-base font-medium text-muted";
+    : "mt-5 font-chrome text-base font-medium text-subtle";
 }
 
 function cellAlignClass(node: ExtraProps["node"]): string {
@@ -120,7 +120,7 @@ const components: Components = {
       <span className="sr-only">{checked === true ? "Done:" : "Not done:"}</span>
     </>
   ),
-  blockquote: ({ children }) => <blockquote className="mt-2.5 border-l-2 border-line pl-3 text-muted">{children}</blockquote>,
+  blockquote: ({ children }) => <blockquote className="mt-2.5 border-l-2 border-line pl-3 text-subtle">{children}</blockquote>,
   hr: () => <hr className="mt-5 border-line" />,
   code: ({ children }) => (
     <code className="rounded-[4px] bg-surface-2 px-[5px] py-px font-mono text-xs-plus">{children}</code>
@@ -149,7 +149,7 @@ const components: Components = {
   // Cells do not inherit `wrap-anywhere`: it lowers the min-content width of a cell to one character, so the table
   // squeezes its short columns in place of scrolling.
   th: ({ node, children }) => (
-    <th className={`border-b border-line py-2 pr-3 ${cellAlignClass(node)} align-top text-xs-plus font-medium text-muted wrap-normal`}>
+    <th className={`border-b border-line py-2 pr-3 ${cellAlignClass(node)} align-top text-xs-plus font-medium text-subtle wrap-normal`}>
       {children}
     </th>
   ),

@@ -66,7 +66,7 @@ const route = getRouteApi("/tasks");
 
 const { label: TITLE } = NAVIGATION_BY_PATH["/tasks"];
 
-const EMPTY_CLASS = "mt-2 max-w-2xl text-base text-muted";
+const EMPTY_CLASS = "mt-2 max-w-2xl text-base text-subtle";
 
 const HEADING_LINE_CLASS = "flex min-h-8 flex-wrap items-center gap-x-4 gap-y-3";
 
@@ -409,8 +409,8 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
           total,
         })}
       </div>
-      {/* Muted, not signal: a failed search needs no human. */}
-      {failed && <p id={failureId} className="mt-3 text-sm text-muted">{SEARCH_FAILED}</p>}
+      {/* Subtle, not signal: a failed search needs no human. */}
+      {failed && <p id={failureId} className="mt-3 text-sm text-subtle">{SEARCH_FAILED}</p>}
       {!live && <LiveNotice className="mt-6 max-w-2xl" />}
       {/* The board stays mounted when the project changes, so the key starts
           the line folded for the next project. */}

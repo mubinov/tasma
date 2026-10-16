@@ -57,7 +57,7 @@ function Lines({ entries, first, current }: LinesProps): ReactNode {
               onClick={() => {
                 activate(target);
               }}
-              className={`${LINE_CLASS} ${isCurrent ? "border-graphic font-medium text-text" : "border-transparent text-muted"}`}
+              className={`${LINE_CLASS} ${isCurrent ? "border-graphic font-medium text-text" : "border-transparent text-subtle"}`}
             >
               {label}
             </button>

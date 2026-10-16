@@ -87,7 +87,7 @@ describe("the headings", () => {
     ]);
     const large = "mt-7 font-chrome text-lg font-semibold";
     const medium = "mt-6 font-chrome text-base font-semibold";
-    const small = "mt-5 font-chrome text-base font-medium text-muted";
+    const small = "mt-5 font-chrome text-base font-medium text-subtle";
     expect(found.map((heading) => classOf(heading))).toEqual([large, large, medium, small, small]);
   });
 
@@ -410,14 +410,14 @@ describe("the styles", () => {
     expect(classOfFirst("ul")).toBe("mt-2.5 list-disc pl-5");
     expect(classOfFirst("ol")).toBe("mt-2.5 list-decimal pl-5");
     expect(classOfFirst("li")).toBe("mt-1");
-    expect(classOfFirst("blockquote")).toBe("mt-2.5 border-l-2 border-line pl-3 text-muted");
+    expect(classOfFirst("blockquote")).toBe("mt-2.5 border-l-2 border-line pl-3 text-subtle");
     expect(classOfFirst("hr")).toBe("mt-5 border-line");
     expect(classOfFirst("pre")).toBe(
       "mt-3 overflow-x-auto rounded-card bg-surface-2 px-3.5 py-3 font-mono text-xs-plus [&>code]:bg-transparent [&>code]:p-0",
     );
     expect(classOfFirst("table")).toBe("w-full border-collapse text-sm");
     expect(classOfFirst("th")).toBe(
-      "border-b border-line py-2 pr-3 text-left align-top text-xs-plus font-medium text-muted wrap-normal",
+      "border-b border-line py-2 pr-3 text-left align-top text-xs-plus font-medium text-subtle wrap-normal",
     );
     expect(classOfFirst("td")).toBe("border-b border-line py-2 pr-3 text-left align-top wrap-normal");
   });

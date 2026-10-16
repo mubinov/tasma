@@ -224,7 +224,7 @@ export function PropertyPicker<Item>(props: PropertyPickerProps<Item>): ReactNod
               {field}
             </Field.Root>
             {notice !== undefined && (
-              <p id={noticeId} className="mb-1.5 px-2 text-xs-plus text-muted wrap-anywhere">{notice}</p>
+              <p id={noticeId} className="mb-1.5 px-2 text-xs-plus text-subtle wrap-anywhere">{notice}</p>
             )}
             {/* Mounted with the popup, so a change of its text is announced. */}
             <Combobox.Status className="sr-only">{status}</Combobox.Status>

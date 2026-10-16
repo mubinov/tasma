@@ -13,7 +13,7 @@ export function PlaceholderScreen({ title, summary }: PlaceholderScreenProps): R
   return (
     <>
       <ScreenHeading>{title}</ScreenHeading>
-      <p className="mt-2 mb-7 text-base text-muted">{summary}</p>
+      <p className="mt-2 mb-7 text-base text-subtle">{summary}</p>
     </>
   );
 }

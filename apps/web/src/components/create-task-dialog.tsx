@@ -361,7 +361,7 @@ export function CreateTaskDialog({
                   <WarningIcon size={20} aria-hidden="true" className="mt-px shrink-0 text-signal" />
                   <div className="min-w-0 flex-1">
                     <p className="font-chrome text-base font-medium text-signal">The task was not created</p>
-                    <p className="mt-0.5 text-sm text-muted">{refusal.line}</p>
+                    <p className="mt-0.5 text-sm text-subtle">{refusal.line}</p>
                     <p className={WORDS_CLASS}>{refusal.words}</p>
                   </div>
                 </div>

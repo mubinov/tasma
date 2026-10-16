@@ -197,7 +197,7 @@ describe("the priority", () => {
     await renderCard(entry({ priority: "low" }), { kind: "none" }, false);
 
     const priority = classesOf(screen.getByText("low"));
-    expect(priority).toContain("text-muted");
+    expect(priority).toContain("text-subtle");
     expect(priority).not.toContain("font-medium");
   });
 

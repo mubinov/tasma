@@ -206,7 +206,7 @@ describe("the stack", () => {
     expect(title?.textContent).toBe(failure.title);
     expect(title?.className).toContain("text-signal");
     expect(line?.textContent).toBe(failure.line);
-    expect(line?.className).toContain("text-muted");
+    expect(line?.className).toContain("text-subtle");
     expect(words?.textContent).toBe(failure.words[0]);
     expect(words?.className).toContain("font-mono");
     expect(within(panel).queryByRole("list")).toBeNull();

@@ -52,7 +52,7 @@ export function ProjectsScreen(): ReactNode {
       <Diagnostics items={diagnostics} subject="the projects" className="mt-4" />
       {projects.length === 0
         ? (
-            <p className="mt-2 text-base text-muted">
+            <p className="mt-2 text-base text-subtle">
               No projects yet. Add one, and it is listed here.
             </p>
           )

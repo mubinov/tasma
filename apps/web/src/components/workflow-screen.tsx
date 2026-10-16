@@ -29,7 +29,7 @@ function StepRow({ step, position }: { step: WorkflowStep; position: number }): 
         <span className="block font-mono text-sm wrap-anywhere">{step.name}</span>
         <span className="mt-0.5 block font-mono text-xs text-dim wrap-anywhere">{step.file}</span>
       </span>
-      <span className="inline-flex shrink-0 items-center gap-1.5 text-sm text-muted">
+      <span className="inline-flex shrink-0 items-center gap-1.5 text-sm text-subtle">
         <span aria-hidden="true" className={`size-2 rounded-full ${OWNER_DOT_CLASS[step.owner]}`} />
         {step.owner}
       </span>
@@ -72,7 +72,7 @@ function FaultBody({ name, failure }: { name: string; failure: Failure }): React
         The daemon could not read this workflow
       </h2>
       <div className="mt-2 rounded-card border border-line bg-surface p-4">
-        <p className="text-sm text-muted">Its steps and its instruction documents are unknown until the file is valid.</p>
+        <p className="text-sm text-subtle">Its steps and its instruction documents are unknown until the file is valid.</p>
         <p className="mt-3 rounded-card bg-surface-2 px-3 py-2.5 font-mono text-xs text-dim wrap-anywhere">{failure.message}</p>
       </div>
       <AgentHint
@@ -125,7 +125,7 @@ export function WorkflowScreen(): ReactNode {
         <ScreenHeading>{title}</ScreenHeading>
         {title !== name && <Tag>{name}</Tag>}
       </div>
-      {path !== undefined && <p className="mt-2 font-mono text-sm text-muted wrap-anywhere">{path}</p>}
+      {path !== undefined && <p className="mt-2 font-mono text-sm text-subtle wrap-anywhere">{path}</p>}
 
       {/* Stands with no text, so a refetch that breaks the file or turns a warning up is announced. */}
       <div role="status" className="sr-only">

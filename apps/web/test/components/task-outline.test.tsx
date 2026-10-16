@@ -112,7 +112,7 @@ describe("the lines", () => {
     expect(plan.getAttribute("type")).toBe("button");
     expect(plan.hasAttribute("aria-current")).toBe(false);
     expect(plan.className).toBe(
-      "block w-full truncate border-l-2 py-0.5 pl-2.5 text-left text-xs-plus hover:text-text border-transparent text-muted",
+      "block w-full truncate border-l-2 py-0.5 pl-2.5 text-left text-xs-plus hover:text-text border-transparent text-subtle",
     );
   });
 

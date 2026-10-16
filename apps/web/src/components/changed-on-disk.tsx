@@ -42,7 +42,7 @@ export function ChangedOnDisk(
       <span id={wordsId}>
         <span className="text-signal">{`Changed on disk at ${at}, since you began.`}</span>
         {" "}
-        <span className="text-muted">Saving overwrites that change.</span>
+        <span className="text-subtle">Saving overwrites that change.</span>
       </span>
       <Button
         type="button"

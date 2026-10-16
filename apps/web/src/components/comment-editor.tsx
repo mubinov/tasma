@@ -264,7 +264,7 @@ export function CommentEditor({
               <span>
                 <span className="text-signal">This comment was removed on disk.</span>
                 {" "}
-                <span className="text-muted">It can no longer be saved.</span>
+                <span className="text-subtle">It can no longer be saved.</span>
               </span>
             </p>
           )}

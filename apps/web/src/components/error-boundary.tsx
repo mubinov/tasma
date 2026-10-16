@@ -70,7 +70,7 @@ function FailureDetail({ error }: { error: unknown }): ReactNode {
 
   return (
     <>
-      {head !== undefined && <span className="block text-muted">{head}</span>}
+      {head !== undefined && <span className="block text-subtle">{head}</span>}
       {message}
     </>
   );
@@ -121,7 +121,7 @@ export function ErrorPanel({ error, reset, retrying = false }: ErrorPanelProps):
       className="w-full max-w-lg rounded-panel border border-line bg-surface p-6"
     >
       <h1 className="font-chrome text-lg font-semibold">{heading}</h1>
-      <p className="mt-2 text-sm text-muted">{advice}</p>
+      <p className="mt-2 text-sm text-subtle">{advice}</p>
       <p className="mt-4 rounded-card bg-surface-2 p-3 font-mono text-xs text-dim wrap-anywhere">
         <FailureDetail error={error} />
       </p>

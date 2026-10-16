@@ -284,7 +284,7 @@ function NoticePanel({ toast, onFocusLost }: NoticePanelProps): ReactNode {
           {notice.title}
         </Toast.Title>
         <Toast.Description render={<div />}>
-          {notice.line !== undefined && <p className="mt-0.5 text-sm text-muted">{notice.line}</p>}
+          {notice.line !== undefined && <p className="mt-0.5 text-sm text-subtle">{notice.line}</p>}
           {notice.form === "failure"
             ? (
                 <div className={WORDS_CLASS}>

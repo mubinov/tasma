@@ -31,7 +31,7 @@ const CONTROL_BASE = "inline-flex min-h-8 items-center gap-1.5 rounded-control b
 export const BUTTON_CLASS = `${CONTROL_BASE} border-line bg-surface-2 px-3 text-text hover:border-graphic`;
 
 export const BUTTON_QUIET_CLASS
-  = `${CONTROL_BASE} border-transparent bg-transparent px-3 text-muted hover:border-line hover:text-text`;
+  = `${CONTROL_BASE} border-transparent bg-transparent px-3 text-subtle hover:border-line hover:text-text`;
 
 // No hover mark, as drawn. Its keyboard state is the application's focus ring.
 export const BUTTON_FILLED_CLASS = `${CONTROL_BASE} border-text bg-text px-3 text-bg`;
@@ -92,9 +92,9 @@ export const FIELD_KBD_CLASS = "rounded-control border border-line bg-surface-2 
 export const FIELD_ERROR_CLASS = "mt-1.5 text-sm text-signal";
 
 // One prop holds both a wait and a refusal, so the line takes no state colour.
-export const DIALOG_STATUS_CLASS = "mt-4 text-sm font-medium text-muted wrap-anywhere";
+export const DIALOG_STATUS_CLASS = "mt-4 text-sm font-medium text-subtle wrap-anywhere";
 
-export const DIALOG_BODY_CLASS = "mt-2 text-base text-muted wrap-anywhere";
+export const DIALOG_BODY_CLASS = "mt-2 text-base text-subtle wrap-anywhere";
 
 export const DIALOG_SCRIM_CLASS = "fixed inset-0 z-(--layer-dialog) bg-scrim";
 

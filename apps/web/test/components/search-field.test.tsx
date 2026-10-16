@@ -271,7 +271,7 @@ it("ties the failure line to the input while a search with no result fails", asy
 
   const line = screen.getByText("The search failed. The board shows all tasks.", { selector: "p" });
   expect(input().getAttribute("aria-describedby")).toBe(line.id);
-  expect(line.classList.contains("text-muted")).toBe(true);
+  expect(line.classList.contains("text-subtle")).toBe(true);
 });
 
 it("describes the input by nothing while the search has not failed", async () => {

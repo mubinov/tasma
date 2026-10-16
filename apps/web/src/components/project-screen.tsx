@@ -29,7 +29,7 @@ function ConfigurationRow({ term, children }: { term: string; children: ReactNod
     // it are wider than a 320px viewport leaves for the row, so the values would
     // be laid out in what is left and run off the side.
     <div className="grid grid-cols-1 gap-x-6 gap-y-1 px-4 py-3 sm:grid-cols-[9rem_1fr]">
-      <dt className="text-sm text-muted">{term}</dt>
+      <dt className="text-sm text-subtle">{term}</dt>
       <dd>{children}</dd>
     </div>
   );
@@ -134,7 +134,7 @@ export function ProjectScreen(): ReactNode {
         {/* Dropped where the heading is already the tag, so it is not shown twice. */}
         {name !== undefined && <Tag>{tag}</Tag>}
       </div>
-      {path !== undefined && <p className="mt-2 font-mono text-sm text-muted wrap-anywhere">{path}</p>}
+      {path !== undefined && <p className="mt-2 font-mono text-sm text-subtle wrap-anywhere">{path}</p>}
 
       {/*
        * The region stands whether or not it says anything: a refetch on window

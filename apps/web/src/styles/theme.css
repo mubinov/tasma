@@ -23,7 +23,7 @@
   --color-surface: var(--palette-surface);
   --color-surface-2: var(--palette-surface-2);
   --color-text: var(--palette-text);
-  --color-muted: var(--palette-muted);
+  --color-subtle: var(--palette-muted);
   --color-dim: var(--palette-dim);
   --color-signal: var(--palette-signal);
   --color-running: var(--palette-running);

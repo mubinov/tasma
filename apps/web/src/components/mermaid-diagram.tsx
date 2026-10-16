@@ -89,7 +89,7 @@ export function MermaidDiagram({ source }: MermaidDiagramProps): ReactNode {
         <div ref={containerRef} aria-hidden className="invisible absolute inset-x-3.5 top-0 h-0 overflow-hidden" />
       </div>
       {failure !== null && (
-        <div id={noteId} className="mt-1.5 text-xs-plus text-muted">
+        <div id={noteId} className="mt-1.5 text-xs-plus text-subtle">
           <p>The diagram cannot be shown.</p>
           <p className="mt-1 font-mono whitespace-pre-wrap">{failure}</p>
         </div>

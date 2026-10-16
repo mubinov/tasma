@@ -34,7 +34,7 @@ const REVEALED_PENCIL_CLASS = `${PENCIL_BUTTON_CLASS} order-last opacity-0 group
 const STATE_CLASS: Record<RelationRow["state"], { row: string; status?: string }> = {
   blocking: { row: "text-text", status: "text-signal" },
   resolved: { row: "text-dim" },
-  neutral: { row: "text-text", status: "text-muted" },
+  neutral: { row: "text-text", status: "text-subtle" },
 };
 
 type TaskSidebarProps = {

@@ -528,7 +528,7 @@ describe("the sidebar", () => {
     expect(field("Status").textContent).toBe("In Progress");
     expect(field("Priority").textContent).toBe("high");
     expect(field("Labels").textContent).toBe("web, infra");
-    expect(within(field("Labels")).getByText("web").parentElement?.className).toContain("text-muted");
+    expect(within(field("Labels")).getByText("web").parentElement?.className).toContain("text-subtle");
     expect(field("Workflow").textContent).toBe("dev");
     expect(field("Step").textContent).toBe("research, step 1 of 2, an agent's step");
     expect(field("Step").querySelectorAll("i")).toHaveLength(2);
@@ -728,7 +728,7 @@ describe("the relations", () => {
 
     expect(parent?.className).toContain("text-text");
     expect(parent?.querySelector("svg")).toBeNull();
-    expect(within(parent!).getByText("[Backlog]").className).toContain("text-muted");
+    expect(within(parent!).getByText("[Backlog]").className).toContain("text-subtle");
   });
 
   it("keeps the mark in its own column, and wraps the status, the id and the title as text beside it", async () => {
@@ -761,7 +761,7 @@ describe("the relations", () => {
     expect(parent?.textContent.trim()).toBe("[Not found] LOOM-9");
     expect(within(parent!).queryByRole("link")).toBeNull();
     expect(parent?.querySelector("svg")).toBeNull();
-    expect(within(parent!).getByText("[Not found]").className).toContain("text-muted");
+    expect(within(parent!).getByText("[Not found]").className).toContain("text-subtle");
   });
 });
 
