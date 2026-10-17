@@ -6,16 +6,22 @@ import { type TaskEntry, taskEntryOf } from "../store/paths.js";
 import { REASON_LIMIT, short } from "./message.js";
 
 /**
- * How long events for one path are collected before it is read. One editor save
- * often produces several of them; the queue behind the index makes correctness
- * independent of this, so it is a cost control and nothing more.
+ * How long events for one path, or for the sweep, are collected before it runs.
+ * One editor save often produces several of them; the queue behind the index
+ * makes correctness independent of this, so it is a cost control and nothing
+ * more.
  */
 const DEBOUNCE_MS = 20;
+
+/** The debounce key of the sweep, which no path can equal. */
+const SWEEP = Symbol("sweep");
 
 /** What the index does with what a watch reports. */
 export type WatchHandlers = {
   /** A task file of this project changed, whatever the change was. */
   onTask: (file: TaskEntry) => void;
+  /** A task file may have changed under a name that no event carried. */
+  onUnnamedChange: () => void;
   /** The tasks directory itself came, went, or was replaced by another one. */
   onTasksDirectory: () => void;
   /** A watch failed, so the index is no longer live. */
@@ -66,7 +72,7 @@ export class Watches implements Watching {
   readonly #open: WatchOpen;
   readonly #identity: ReadIdentity;
   readonly #watchers = new Map<Slot, FSWatcher>();
-  readonly #timers = new Map<string, NodeJS.Timeout>();
+  readonly #timers = new Map<string | typeof SWEEP, NodeJS.Timeout>();
   /** Which directory the watcher of each slot was taken on, or `undefined` for a name that held none. */
   readonly #identities = new Map<Slot, string | undefined>();
   /** The `ensure()` in flight, which the next one runs behind. */
@@ -233,22 +239,25 @@ export class Watches implements Watching {
   }
 
   /**
-   * The name rule of the scan is the rule the watcher filters by. A stray
-   * markdown file and a leftover temp file are findings of a scan, not of an
-   * event: they change no entry, and reporting them per event would fire over
-   * and over while an editor writes.
+   * A name that the scan accepts is read at once. Every event also asks for one
+   * sweep, because no event is sure to name each file it touched: Bun on macOS
+   * reports a rename under its source name alone, so the file that an atomic
+   * save or a move puts in place arrives under no name of its own, and a
+   * platform can report no name at all.
    *
-   * This is the one watch a name is needed for, because the name is the file to
-   * read. A platform that reports none says nothing about which file moved.
+   * A stray markdown file and a leftover temp file are findings of a scan, not
+   * of an event: they change no entry, and reporting them per event would fire
+   * over and over while an editor writes. The sweep reports no such finding.
    */
   #onTaskName(name: string | null): void {
+    this.#debounce(SWEEP, () => this.#handlers.onUnnamedChange());
     if (name === null) return;
     const file = taskEntryOf(this.#paths, name);
     if (file === undefined) return;
     this.#debounce(file.path, () => this.#handlers.onTask(file));
   }
 
-  #debounce(key: string, run: () => void): void {
+  #debounce(key: string | typeof SWEEP, run: () => void): void {
     clearTimeout(this.#timers.get(key));
     this.#timers.set(
       key,

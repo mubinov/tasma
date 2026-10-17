@@ -36,6 +36,7 @@ export const routes = {
   deleteWorkflow: { method: "DELETE", template: "/workflows/{workflow}" },
   readUserConfig: { method: "GET", template: "/config" },
   updateUserConfig: { method: "PATCH", template: "/config" },
+  readEvents: { method: "GET", template: "/events" },
 } as const satisfies Record<string, Route>;
 
 /**
@@ -47,6 +48,13 @@ export const OPEN_ROUTES: readonly Route[] = [routes.health];
 
 /** Which directory a resolution asks about, absolute or starting with `~/`. */
 export type ProjectQuery = { path: string };
+
+/**
+ * Where a read of the feed starts: after the event `after` names. A read with
+ * no `after` answers the current cursor and no events at once. A read whose
+ * cursor is the current one holds until the next event or the end of the hold.
+ */
+export type EventsQuery = { after?: string };
 
 /**
  * Which tasks a listing returns. The daemon applies the filter, so a caller
@@ -100,10 +108,10 @@ export type TaskTextOptions = { collapsed?: boolean; comment?: never } | { comme
 /**
  * What `buildPath` appends to a path, and what a client method may pass as one.
  *
- * Every type written to be passed as one — `ProjectQuery`, `TaskFilter`,
- * `TaskReadOptions`, `TaskTextOptions` — is a type alias rather than an
- * interface, because only an alias carries the implicit index signature a record
- * of this shape requires.
+ * Every type written to be passed as one — `ProjectQuery`, `EventsQuery`,
+ * `TaskFilter`, `TaskReadOptions`, `TaskTextOptions` — is a type alias rather
+ * than an interface, because only an alias carries the implicit index signature
+ * a record of this shape requires.
  */
 export type PathQuery = Record<string, string | string[] | boolean | number | undefined>;
 

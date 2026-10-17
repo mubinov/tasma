@@ -1,9 +1,11 @@
+import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import type { FSWatcher } from "node:fs";
-import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { existsSync, type FSWatcher } from "node:fs";
+import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { type IndexedProject, openIndexedProject, type StoreDiagnostic } from "@tasma/engine";
+import { type IndexChange, type IndexedProject, openIndexedProject, type StoreDiagnostic } from "@tasma/engine";
 import { type ReadIdentity, Watches, type WatchHandlers } from "../../src/index-cache/watch.js";
 import { projectPaths } from "../../src/store/paths.js";
 import { plant, project, projectDir, PROJECT, taskFile, tasksDir, taskText, tempRoot } from "../store/helpers.js";
@@ -14,6 +16,48 @@ async function watching(root: string, on?: (diagnostic: StoreDiagnostic) => void
   const indexed = await openIndexedProject(project(root), on === undefined ? {} : { onDiagnostic: on });
   onTestFinished(() => indexed.close());
   return indexed;
+}
+
+/** Whether a `bun` is on PATH to run the watcher under, as the compiled daemon runs it. */
+const HAS_BUN = spawnSync("bun", ["--version"]).error === undefined;
+
+/** A change the index under Bun reported, with the title it then held for the task. */
+type BunChange = IndexChange & { title?: string };
+
+/**
+ * An index that watches the temp tree inside a `bun` process, and the changes
+ * it has printed so far.
+ */
+async function watchingUnderBun(root: string): Promise<BunChange[]> {
+  const script = fileURLToPath(new URL("under-bun.ts", import.meta.url));
+  const child = spawn("bun", [script, root, PROJECT], { stdio: ["pipe", "pipe", "inherit"] });
+  onTestFinished(() => {
+    child.stdin.end();
+    child.kill();
+  });
+  const changes: BunChange[] = [];
+  let pending = "";
+  await new Promise<void>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("exit", (code) => reject(new Error(`bun exited with ${String(code)} before the index was open`)));
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      pending += chunk;
+      const lines = pending.split("\n");
+      pending = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line === "ready") resolve();
+        else changes.push(JSON.parse(line) as BunChange);
+      }
+    });
+  });
+  return changes;
+}
+
+/** Whether the changes hold one of this id and kind, and, where given, with this title. */
+function saw(changes: BunChange[], id: string, change: IndexChange["change"], title?: string): boolean {
+  return changes.some(
+    (seen) => seen.id === id && seen.change === change && (title === undefined || seen.title === title),
+  );
 }
 
 // The watcher is proved on events alone: that they arrive and are applied. Every
@@ -106,6 +150,55 @@ describe("the watcher of an open index", { timeout: 8000, retry: 3 }, () => {
   });
 });
 
+// Bun reports a rename under its source name alone on macOS, where Node reports
+// both names, so only a run under Bun shows that the file a rename put in place
+// is read.
+describe("the watcher under Bun", { timeout: 8000, retry: 3 }, () => {
+  it("takes up a task file that a rename replaced", async (ctx) => {
+    if (!HAS_BUN) ctx.skip("bun is not on PATH");
+    const root = await tempRoot();
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    const changes = await watchingUnderBun(root);
+    const temp = join(tasksDir(root), ".SAGA-1.md.tmp");
+
+    await until(() => saw(changes, "SAGA-1", "changed", "Saved"), "the replaced file was reported", async () => {
+      await writeFile(temp, taskText("SAGA-1").replace("Planted", "Saved"), "utf8");
+      await rename(temp, taskFile(root, "SAGA-1"));
+    });
+
+    expect(changes.every((change) => change.id === "SAGA-1" && change.change === "changed")).toBe(true);
+  });
+
+  it("takes up a task file that a rename created", async (ctx) => {
+    if (!HAS_BUN) ctx.skip("bun is not on PATH");
+    const root = await tempRoot();
+    await mkdir(tasksDir(root), { recursive: true });
+    const changes = await watchingUnderBun(root);
+    const temp = join(tasksDir(root), ".SAGA-1.md.tmp");
+
+    await until(() => saw(changes, "SAGA-1", "created", "Planted"), "the created file was reported", async () => {
+      await writeFile(temp, taskText("SAGA-1"), "utf8");
+      await rename(temp, taskFile(root, "SAGA-1"));
+    });
+  });
+
+  it("takes up a task file that a rename moved to another task name", async (ctx) => {
+    if (!HAS_BUN) ctx.skip("bun is not on PATH");
+    const root = await tempRoot();
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-2"));
+    const changes = await watchingUnderBun(root);
+
+    await until(
+      () => saw(changes, "SAGA-1", "deleted") && saw(changes, "SAGA-2", "created", "Planted"),
+      "the move was reported under both names",
+      async () => {
+        if (existsSync(taskFile(root, "SAGA-1"))) await rename(taskFile(root, "SAGA-1"), taskFile(root, "SAGA-2"));
+        else await rename(taskFile(root, "SAGA-2"), taskFile(root, "SAGA-1"));
+      },
+    );
+  });
+});
+
 describe("the two watches themselves", () => {
   /** A watch a test drives by hand, in place of one the operating system feeds. */
   class Fake extends EventEmitter {
@@ -127,6 +220,14 @@ describe("the two watches themselves", () => {
     }
   }
 
+  /** Handlers that do nothing, for a test that hears one of them at most. */
+  const QUIET: WatchHandlers = {
+    onTask: () => {},
+    onUnnamedChange: () => {},
+    onTasksDirectory: () => {},
+    onFailure: () => {},
+  };
+
   /**
    * The watches over a temp tree, and the fake watch each `ensure` took.
    *
@@ -143,6 +244,7 @@ describe("the two watches themselves", () => {
     const paths = projectPaths({ project: PROJECT, root });
     const all: WatchHandlers = {
       onTask: handlers.onTask ?? (() => {}),
+      onUnnamedChange: handlers.onUnnamedChange ?? (() => {}),
       onTasksDirectory: handlers.onTasksDirectory ?? (() => {}),
       onFailure: handlers.onFailure ?? (() => {}),
     };
@@ -190,7 +292,10 @@ describe("the two watches themselves", () => {
     const root = await tempRoot();
     await mkdir(tasksDir(root), { recursive: true });
     const applied: string[] = [];
-    const { watches, taken } = openWatches(root, { onTask: (file) => void applied.push(file.id) });
+    const { watches, taken } = openWatches(root, {
+      onTask: (file) => void applied.push(file.id),
+      onUnnamedChange: () => void applied.push("sweep"),
+    });
     await watches.ensure();
 
     taken.get(tasksDir(root))?.change("SAGA-1.md");
@@ -242,7 +347,7 @@ describe("the two watches themselves", () => {
     // watch is taken, which is while the tasks name is still being read.
     const watches: Watches = new Watches(
       paths,
-      { onTask: () => {}, onTasksDirectory: () => {}, onFailure: () => {} },
+      QUIET,
       (path, listener) => {
         const fake = new Fake(listener);
         taken.set(path, fake);
@@ -303,6 +408,23 @@ describe("the two watches themselves", () => {
     await until(() => applied.length > 0, "the task file was applied");
 
     expect(applied).toEqual(["SAGA-1"]);
+    await watches.close();
+  });
+
+  it("sweeps the directory once for a burst of events, whatever each one names", async () => {
+    const root = await tempRoot();
+    await mkdir(tasksDir(root), { recursive: true });
+    const applied: string[] = [];
+    const { watches, taken } = openWatches(root, {
+      onTask: (file) => void applied.push(file.id),
+      onUnnamedChange: () => void applied.push("sweep"),
+    });
+    await watches.ensure();
+
+    for (const name of [".SAGA-1.md.tmp", null, "notes.md", "SAGA-1.md"]) taken.get(tasksDir(root))?.change(name, "rename");
+    await until(() => applied.length === 2, "the event and the sweep were handed on");
+
+    expect(applied.sort()).toEqual(["SAGA-1", "sweep"]);
     await watches.close();
   });
 
@@ -538,7 +660,7 @@ describe("the two watches themselves", () => {
     const root = await tempRoot();
     const seen = listener();
     const paths = projectPaths({ project: PROJECT, root });
-    const watches = new Watches(paths, { onTask: () => {}, onTasksDirectory: () => {}, onFailure: seen.on }, () => {
+    const watches = new Watches(paths, { ...QUIET, onFailure: seen.on }, () => {
       throw new Error("too many open files");
     });
 
@@ -553,7 +675,7 @@ describe("the two watches themselves", () => {
     const root = await tempRoot();
     const seen = listener();
     const paths = projectPaths({ project: PROJECT, root });
-    const watches = new Watches(paths, { onTask: () => {}, onTasksDirectory: () => {}, onFailure: seen.on }, () => {
+    const watches = new Watches(paths, { ...QUIET, onFailure: seen.on }, () => {
       throw new Error(`one\ntwo${"x".repeat(4000)}`);
     });
 

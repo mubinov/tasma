@@ -12,6 +12,7 @@ import {
 import type { WorkflowChange as EngineWorkflowChange, WorkflowInput as EngineWorkflowInput } from "@tasma/engine";
 import { routes } from "@tasma/protocol";
 import type { Diagnostic, Success, Workflow, WorkflowReceipt } from "@tasma/protocol";
+import type { Publish } from "../events/feed.js";
 import type { RouteEntry } from "../http/router.js";
 import { assertNoQuery } from "../tasks/filter.js";
 import { toChange } from "../tasks/input.js";
@@ -47,8 +48,8 @@ async function removedStepNotes(root: string | undefined, workflow: string, remo
  * removing. It also takes the turn of the user's configuration, which places the
  * workflows directory.
  */
-export function workflowRoutes(options: { root?: string; writes: WriteQueue }): RouteEntry[] {
-  const { root, writes } = options;
+export function workflowRoutes(options: { root?: string; writes: WriteQueue; publish?: Publish }): RouteEntry[] {
+  const { root, writes, publish } = options;
   const inTurn = <T>(name: string, write: () => Promise<T>) => writes.runAll([CONFIG_KEY, workflowKey(name)], write);
 
   return [
@@ -78,11 +79,13 @@ export function workflowRoutes(options: { root?: string; writes: WriteQueue }): 
         // checked by the handle before it becomes a path.
         const { name: statedName, ...input } = toChange(request.body);
         const name = typeof statedName === "string" ? statedName : "";
-        return inTurn(name, async () => {
+        const created = await inTurn(name, async () => {
           const workflows = await openWritableWorkflows(root);
           const { workflow, diagnostics } = await createWorkflow(workflows, name, input as EngineWorkflowInput);
           return { data: workflow, diagnostics };
         });
+        publish?.({ kind: "workflow", name: created.data.name, change: "created" });
+        return created;
       },
     },
     {
@@ -93,12 +96,14 @@ export function workflowRoutes(options: { root?: string; writes: WriteQueue }): 
         const change = toChange(request.body) as EngineWorkflowChange;
         // The notes are read inside the turn, so they describe the file this
         // edit wrote.
-        return inTurn(name, async () => {
+        const updated = await inTurn(name, async () => {
           const workflows = await openWritableWorkflows(root);
           const { workflow, diagnostics, removedSteps } = await updateWorkflow(workflows, name, change);
           const notes = await removedStepNotes(root, name, removedSteps);
           return { data: workflow, diagnostics: [...diagnostics, ...notes] };
         });
+        publish?.({ kind: "workflow", name, change: "changed" });
+        return updated;
       },
     },
     {
@@ -106,10 +111,9 @@ export function workflowRoutes(options: { root?: string; writes: WriteQueue }): 
       handler: async (request): Promise<Success<WorkflowReceipt>> => {
         assertNoQuery(request.query);
         const name = request.params.workflow!;
-        return inTurn(name, async () => {
-          await removeWorkflow(name, { root });
-          return { data: { name }, diagnostics: [] };
-        });
+        await inTurn(name, () => removeWorkflow(name, { root }));
+        publish?.({ kind: "workflow", name, change: "deleted" });
+        return { data: { name }, diagnostics: [] };
       },
     },
   ];

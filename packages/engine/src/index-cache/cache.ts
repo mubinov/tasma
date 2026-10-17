@@ -1,7 +1,7 @@
 import type { Stats } from "node:fs";
 import { type Frontmatter, parseFrontmatter, TaskFormatError } from "../format/index.js";
 import { isPlainMapping } from "../format/values.js";
-import { entryAt, type FileIdentity, sameIdentity } from "../store/atomic.js";
+import { entryAt, type FileIdentity, identityOf, sameIdentity } from "../store/atomic.js";
 import { causeOf } from "../store/errors.js";
 import type { ProjectPaths, StoreDiagnostic } from "../store/index.js";
 import { type ScanDiagnostic, scanTasks, type TaskEntry, taskNumber } from "../store/paths.js";
@@ -26,14 +26,15 @@ type Exclusion = { code: ExclusionCode; message: string; line?: number };
 /** What one held path stands as: the bytes it was read from, and what they held. */
 type State = { kind: "entry" | ExclusionCode; identity: FileIdentity | undefined };
 
-/**
- * Two states are equal when their kinds and their identities are equal. Two
- * missing identities are equal.
- */
+/** Two missing identities are equal. */
+function sameHeldIdentity(a: FileIdentity | undefined, b: FileIdentity | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return sameIdentity(a, b);
+}
+
+/** Two states are equal when their kinds and their identities are equal. */
 function sameState(a: State, b: State): boolean {
-  if (a.kind !== b.kind) return false;
-  if (a.identity === undefined || b.identity === undefined) return a.identity === b.identity;
-  return sameIdentity(a.identity, b.identity);
+  return a.kind === b.kind && sameHeldIdentity(a.identity, b.identity);
 }
 
 /**
@@ -224,17 +225,57 @@ export class TaskIndex {
     if ((await this.#holds()) === undefined) return;
     const scan = await scanTasks(this.#paths);
     this.#reportScan(scan.diagnostics);
-    const files = new Map<string, TaskEntry>();
-    for (const held of [...this.#entries.values(), ...this.#excluded.values()]) files.set(held.file.path, held.file);
-    for (const file of scan.entries) files.set(file.path, file);
+    const files = this.#heldAnd(scan.entries);
     // Nobody waits on a reconcile a watch started, so it takes one file at a
     // time and leaves the gate to the writes and the events that a caller does
     // wait on.
     if (!awaited) {
-      for (const file of files.values()) await this.apply(file);
+      for (const file of files) await this.apply(file);
       return;
     }
     await this.#applyAll(files.values());
+  }
+
+  /**
+   * Reads again each file whose name or identity on disk differs from what the
+   * map holds. It costs one stat per file and reads no other file, so a watch can
+   * run it after each burst of events. Unlike `reconcile`, it reports no finding
+   * of the scan.
+   */
+  sweep(): Promise<void> {
+    return this.#queue.run(this.#paths.tasks, async () => {
+      if ((await this.#holds()) === undefined) return;
+      const scan = await scanTasks(this.#paths);
+      for (const file of this.#heldAnd(scan.entries)) {
+        if (await this.#differs(file)) await this.apply(file);
+      }
+    });
+  }
+
+  /** The files the map holds and the files a scan found, each once. */
+  #heldAnd(scanned: TaskEntry[]): TaskEntry[] {
+    const files = new Map<string, TaskEntry>();
+    for (const held of [...this.#entries.values(), ...this.#excluded.values()]) files.set(held.file.path, held.file);
+    for (const file of scanned) files.set(file.path, file);
+    return [...files.values()];
+  }
+
+  /**
+   * Whether one name may hold other bytes than the map holds for it. A name
+   * that holds no regular file has no identity, as the read records it.
+   */
+  async #differs(file: TaskEntry): Promise<boolean> {
+    const before = this.#stateOf(file.path);
+    if (before === undefined) return true;
+    let entry: Stats | undefined;
+    try {
+      entry = await entryAt(file.path);
+    } catch {
+      // The read answers for the fault.
+      return true;
+    }
+    if (entry === undefined) return true;
+    return !sameHeldIdentity(before.identity, entry.isFile() ? identityOf(entry) : undefined);
   }
 
   /**

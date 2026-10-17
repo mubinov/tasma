@@ -3,6 +3,7 @@ import type { Frontmatter, ListedEntry } from "@tasma/engine";
 import type { TaskFilter } from "@tasma/protocol";
 import {
   assertNoQuery,
+  readEventsQuery,
   readProjectQuery,
   readTaskFilter,
   readTaskOptions,
@@ -222,6 +223,30 @@ describe("readProjectQuery", () => {
 
     expect(error.code).toBe("malformed-request");
     expect(error.message).toContain("path");
+  });
+});
+
+describe("readEventsQuery", () => {
+  it("reads the cursor a read of the feed starts after", () => {
+    expect(readEventsQuery(query("after=4f0c9a1b2e3d-41"))).toEqual({ after: "4f0c9a1b2e3d-41" });
+  });
+
+  it.each([
+    ["states no cursor", ""],
+    ["states an empty cursor", "after="],
+  ])("reads a query that %s as a read with no cursor", (_name, search) => {
+    expect(readEventsQuery(query(search))).toEqual({ after: undefined });
+  });
+
+  it("refuses a key the route does not declare", () => {
+    const error = refused(() => readEventsQuery(query("since=4f0c9a1b2e3d-41")));
+
+    expect(error.code).toBe("malformed-request");
+    expect(error.message).toContain("since");
+  });
+
+  it("refuses the cursor stated twice", () => {
+    expect(refused(() => readEventsQuery(query("after=a-1&after=a-2"))).code).toBe("malformed-request");
   });
 });
 

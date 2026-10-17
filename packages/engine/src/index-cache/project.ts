@@ -43,6 +43,9 @@ class IndexedProjectStore implements IndexedProject {
       onTask: (file) => {
         if (!this.#closed) this.#detached(this.#cache.apply(file), file.path);
       },
+      onUnnamedChange: () => {
+        if (!this.#closed) this.#detached(this.#cache.sweep(), this.paths.tasks);
+      },
       onTasksDirectory: () => this.#detached(this.#reconcile(false), this.paths.tasks),
       onFailure: (diagnostic) => this.#cache.report(diagnostic),
     });

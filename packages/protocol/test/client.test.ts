@@ -217,6 +217,18 @@ const invocations: Invocation[] = [
     path: "/config",
     body: { statuses: ["New", "Done"], workflows_path: null },
   },
+  {
+    name: "readEvents",
+    send: (client) => client.readEvents("4f0c9a1b2e3d-41"),
+    method: "GET",
+    path: "/events?after=4f0c9a1b2e3d-41",
+  },
+  {
+    name: "readEvents with no cursor",
+    send: (client) => client.readEvents(),
+    method: "GET",
+    path: "/events",
+  },
 ];
 
 /** The client method one invocation calls, which its name states before the case it covers. */

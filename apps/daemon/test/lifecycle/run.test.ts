@@ -1,14 +1,32 @@
 import { once } from "node:events";
 import { chmod } from "node:fs/promises";
+import { Agent, request as httpRequest } from "node:http";
+import type { IncomingHttpHeaders } from "node:http";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import type { DaemonRecord } from "@tasma/protocol";
+import type { DaemonRecord, EventsReply } from "@tasma/protocol";
 import { daemonAnswers } from "../../src/lifecycle/probe.js";
 import { readRecord, recordPath } from "../../src/lifecycle/record.js";
 import { runDaemon, startDaemon } from "../../src/lifecycle/run.js";
 import type { DaemonIo, Start } from "../../src/lifecycle/run.js";
-import { bearer, foreignPort, freePort, projectsRoot, seedRecord, startTestServer, until } from "../helpers.js";
+import {
+  bearer,
+  foreignPort,
+  freePort,
+  get,
+  plant,
+  projectsRoot,
+  seedRecord,
+  send,
+  startTestServer,
+  success,
+  target,
+  taskFile,
+  taskText,
+  until,
+} from "../helpers.js";
+import type { TestServer } from "../helpers.js";
 
 type Serving = Extract<Start, { started: true }>;
 
@@ -44,6 +62,30 @@ function installedOn(event: string): Handler[] {
 
 function installed(): Handler[] {
   return HANDLED.flatMap(installedOn);
+}
+
+type Reply = { headers: IncomingHttpHeaders; body: string };
+
+/**
+ * One read through an agent, so a test controls which connection carries it.
+ * `sent` resolves when the request has left the client.
+ */
+function call(agent: Agent, url: string, token: string, path: string): Promise<Reply> & { sent: Promise<void> } {
+  let markSent!: () => void;
+  const sent = new Promise<void>((resolve) => (markSent = resolve));
+  const reply = new Promise<Reply>((resolve, reject) => {
+    const outgoing = httpRequest(`${url}${path}`, { agent, headers: bearer(token) }, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => (body += chunk));
+      response.on("end", () => resolve({ headers: response.headers, body }));
+    });
+    outgoing.on("error", reject);
+    outgoing.on("finish", markSent);
+    outgoing.end();
+  });
+
+  return Object.assign(reply, { sent });
 }
 
 /** The streams the daemon wrote to, collected as a test can assert on them. */
@@ -135,6 +177,33 @@ describe("starting a daemon", () => {
     // built over the root rather than over the host.
     const response = await fetch(`${start.url}/workflows`, { headers: bearer(await tokenOf(root)) });
     await expect(response.json()).resolves.toMatchObject({ ok: true, data: [] });
+  });
+
+  it("serves a feed that the host, the workflow routes and the configuration route publish to", async () => {
+    const root = await projectsRoot();
+    const file = join(root, "docs", "one.md");
+    await plant(file, "Do one.\n");
+    const start = await daemonOn(root);
+    const server: TestServer = { url: start.url, token: await tokenOf(root), close: start.stop };
+    const read = async (path: string) => (await success<EventsReply>(await get(server, path))).data;
+    const { cursor } = await read("/events");
+
+    const writes: [string, string, unknown][] = [
+      ["POST", "/projects", { path: await target(), tag: "BETA" }],
+      ["POST", "/projects/BETA/tasks", { title: "New" }],
+      ["POST", "/workflows", { name: "flow-a", steps: [{ name: "one", owner: "agent", file }] }],
+      ["PATCH", "/config", { priorities: ["urgent", "later"] }],
+    ];
+    for (const [method, path, body] of writes) expect((await send(server, method, path, body)).status).toBe(200);
+
+    await expect(read(`/events?after=${cursor}`)).resolves.toMatchObject({
+      events: [
+        { kind: "project", tag: "BETA", change: "created" },
+        { kind: "task", tag: "BETA", id: "BETA-1", change: "created" },
+        { kind: "workflow", name: "flow-a", change: "created" },
+        { kind: "config" },
+      ],
+    });
   });
 
   it("finds the daemon already serving this tree and binds nothing", async () => {
@@ -270,6 +339,74 @@ describe("stopping a daemon", () => {
     await start.stop();
 
     expect(performance.now() - began).toBeGreaterThanOrEqual(50);
+  });
+
+  it("answers every held read of the feed and closes its connection, well before the drain deadline", async () => {
+    const root = await projectsRoot();
+    const start = await daemonOn(root, { drainMs: 30_000 });
+    const token = await tokenOf(root);
+    const agent = new Agent({ keepAlive: true });
+    onTestFinished(() => agent.destroy());
+    const { body } = await call(agent, start.url, token, "/events");
+    const { cursor } = (JSON.parse(body) as { data: { cursor: string } }).data;
+
+    const held = [0, 1].map(() => call(agent, start.url, token, `/events?after=${cursor}`));
+    await Promise.all(held.map((reply) => reply.sent));
+    // A round trip on another connection, so the daemon has read the two above.
+    expect(await daemonAnswers(portOf(start.url))).toBe(true);
+
+    const began = performance.now();
+    await start.stop();
+
+    expect(performance.now() - began).toBeLessThan(1000);
+    for (const reply of await Promise.all(held)) {
+      expect(reply.headers.connection).toBe("close");
+      expect(JSON.parse(reply.body)).toMatchObject({ ok: true, data: { cursor, events: [] } });
+    }
+    await expect(call(agent, start.url, token, "/events")).rejects.toMatchObject({ code: "ECONNREFUSED" });
+  });
+
+  it("stops with a reply part way out, which it leaves to the drain deadline", async () => {
+    const root = await projectsRoot("ONE");
+    // Larger than the socket buffers, so the reply cannot leave while the client reads nothing.
+    await plant(taskFile(root, "ONE", "ONE-1"), taskText("ONE-1").replace("Body.", "x".repeat(32 * 1024 * 1024)));
+    const start = await daemonOn(root, { drainMs: 50 });
+    const port = portOf(start.url);
+    const socket = connect(port, "127.0.0.1");
+    onTestFinished(() => void socket.destroy());
+    await once(socket, "connect");
+
+    const textPath = "/projects/ONE/tasks/ONE-1/text";
+    socket.write(`GET ${textPath} HTTP/1.1\r\nhost: 127.0.0.1:${port}\r\nauthorization: Bearer ${await tokenOf(root)}\r\n\r\n`);
+    const [head] = (await once(socket, "data")) as [Buffer];
+    socket.pause();
+    expect(head.toString("latin1")).toMatch(/^HTTP\/1\.1 200 /);
+
+    await expect(start.stop()).resolves.toBeUndefined();
+  });
+
+  it("closes the connection of a request that arrives during the stop", async () => {
+    const root = await projectsRoot();
+    const start = await daemonOn(root, { drainMs: 30_000 });
+    const port = portOf(start.url);
+    const socket = connect(port, "127.0.0.1");
+    onTestFinished(() => void socket.destroy());
+    await once(socket, "connect");
+    let reply = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => (reply += chunk));
+    const ended = once(socket, "end");
+
+    // A request begun and not ended: the drain does not close its connection as idle.
+    await new Promise<void>((resolve) => socket.write(`GET /health HTTP/1.1\r\nhost: 127.0.0.1:${port}\r\n`, () => resolve()));
+    expect(await daemonAnswers(port)).toBe(true);
+    const stopping = start.stop();
+    socket.write("\r\n");
+    await ended;
+    await stopping;
+
+    expect(reply).toMatch(/^HTTP\/1\.1 200 /);
+    expect(reply.toLowerCase()).toContain("\r\nconnection: close\r\n");
   });
 });
 

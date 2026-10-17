@@ -1,10 +1,11 @@
 // What a route was asked for in its query, and which entries the front matter of
 // a listing keeps. Every route that reads a query reads it here — the task listing its
 // filter, the read of one task its options, the read of a task's text its
-// selection, the resolution of a project the directory it asks about, and every
-// route over the store that takes no query the assertion that none was sent — so
-// one set of rules covers them all. The liveness route stands outside them: the
-// server answers it ahead of every table and reads no request to answer it.
+// selection, the resolution of a project the directory it asks about, the read of
+// the feed its cursor, and every route over the store that takes no query the
+// assertion that none was sent — so one set of rules covers them all. The
+// liveness route stands outside them: the server answers it ahead of every table
+// and reads no request to answer it.
 //
 // A route declares the query keys it takes, and a key it does not declare is
 // refused rather than passed over: a mistyped `?stauts=To+Do` that silently
@@ -13,7 +14,7 @@
 // apply to a daemon and a client that ship from one repository at one version.
 
 import type { ListedEntry, TextSelection } from "@tasma/engine";
-import type { ProjectQuery, TaskFilter, TaskReadOptions, TaskTextOptions } from "@tasma/protocol";
+import type { EventsQuery, ProjectQuery, TaskFilter, TaskReadOptions, TaskTextOptions } from "@tasma/protocol";
 import { DaemonError } from "../http/failure.js";
 import { commentIdOf } from "./input.js";
 
@@ -38,6 +39,8 @@ const READ_KEYS = Object.keys({ comments: true } satisfies Record<keyof TaskRead
 const TEXT_KEYS = Object.keys({ collapsed: true, comment: true } satisfies Record<keyof TaskTextOptions, true>);
 
 const RESOLVE_KEYS = Object.keys({ path: true } satisfies Record<keyof ProjectQuery, true>);
+
+const EVENTS_KEYS = Object.keys({ after: true } satisfies Record<keyof EventsQuery, true>);
 
 /**
  * Refuses every key the route does not declare. The key is named, because the
@@ -142,6 +145,12 @@ export function readProjectQuery(query: URLSearchParams): string {
     throw new DaemonError("malformed-request", 'this route requires the query key "path"');
   }
   return path;
+}
+
+/** The cursor a read of the feed starts after. `?after=` reads as no cursor, the rule of `text`. */
+export function readEventsQuery(query: URLSearchParams): EventsQuery {
+  assertDeclared(query, EVENTS_KEYS);
+  return { after: text(query, "after") };
 }
 
 /**

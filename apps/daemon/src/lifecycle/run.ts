@@ -8,13 +8,15 @@
 
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
-import type { Server } from "node:http";
+import type { Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { parseArgs } from "node:util";
 import { DAEMON_NAME, DEFAULT_DAEMON_HOST, printable } from "@tasma/protocol";
 import type { DaemonRecord } from "@tasma/protocol";
 import manifest from "../../../../package.json" with { type: "json" };
 import { configRoutes } from "../config/routes.js";
+import { createFeed } from "../events/feed.js";
+import { eventRoutes } from "../events/routes.js";
 import { causeOf } from "../http/failure.js";
 import { createDaemonServer } from "../http/server.js";
 import { createProjectHost } from "../projects/host.js";
@@ -111,6 +113,39 @@ async function drain(server: Server, drainMs: number): Promise<void> {
 }
 
 /**
+ * The connections of the server. After `closeAfterEachReply`, every reply
+ * whose head is not written yet closes its connection, the replies of the
+ * released held reads among them.
+ *
+ * A released held read writes its reply after `drain` has closed the idle
+ * connections, and a kept-alive connection takes new requests after
+ * `server.close()`; under Bun, `drain` finds no connection to close at all. A
+ * reply that closes its own connection ends it in both runtimes.
+ *
+ * The header goes on as the head is written, so nothing keeps a reference to a
+ * reply: Bun emits no `close` for a reply whose client left before the answer.
+ * The listener runs before the server's own, so it also sees the replies the
+ * server writes before a handler runs.
+ */
+function connectionsOf(server: Server): { closeAfterEachReply(): void } {
+  let closing = false;
+
+  server.prependListener("request", (_request, response: ServerResponse) => {
+    const writeHead = response.writeHead.bind(response) as (...args: unknown[]) => ServerResponse;
+    response.writeHead = (...args: unknown[]) => {
+      if (closing) response.setHeader("connection", "close");
+      return writeHead(...args);
+    };
+  });
+
+  return {
+    closeAfterEachReply() {
+      closing = true;
+    },
+  };
+}
+
+/**
  * One daemon over one tree.
  *
  * The order is the design. The probe precedes the bind, so a daemon holding
@@ -144,19 +179,26 @@ export async function startDaemon(options: {
   // New at each start: a listener that took a free port and was sent the token
   // of a run holds nothing once the next run starts.
   const token = randomBytes(TOKEN_BYTES).toString("hex");
-  const host = createProjectHost({ root });
+  const feed = createFeed();
+  const { publish } = feed;
+  const host = createProjectHost({ root, publish });
   const writes = new WriteQueue();
   const server = createDaemonServer(
     [
       ...projectRoutes(host, writes),
       ...taskRoutes(host),
-      ...workflowRoutes({ root, writes }),
-      ...configRoutes({ root, writes }),
+      ...workflowRoutes({ root, writes, publish }),
+      ...configRoutes({ root, writes, publish }),
+      ...eventRoutes(feed),
     ],
     { token },
   );
+  const connections = connectionsOf(server);
 
   async function closeServing(): Promise<void> {
+    // Before `feed.close()`, so the reply of each released held read closes its connection.
+    connections.closeAfterEachReply();
+    feed.close();
     await drain(server, drainMs);
     // The daemon never calls process.exit, so an index left open would hold its
     // watch handle and the process would never end.

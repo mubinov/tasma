@@ -2,7 +2,7 @@ import { chmod, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { TaskStoreError } from "@tasma/engine";
-import type { ProjectInput } from "@tasma/protocol";
+import type { FeedEvent, ProjectInput } from "@tasma/protocol";
 import { createProjectHost } from "../../src/projects/host.js";
 import type { ProjectHost } from "../../src/projects/host.js";
 import {
@@ -15,6 +15,7 @@ import {
   taskFile,
   tasksDir,
   taskText,
+  until,
   userConfig,
 } from "../helpers.js";
 
@@ -24,6 +25,22 @@ function host(root: string, repairInterval?: number): ProjectHost {
   onTestFinished(() => created.close());
   return created;
 }
+
+/** A host closed when the test ends, with the `project` events it publishes. */
+function publishing(root: string, repairInterval?: number): { opened: ProjectHost; projectEvents: FeedEvent[] } {
+  const projectEvents: FeedEvent[] = [];
+  const opened = createProjectHost({
+    root,
+    repairInterval,
+    publish: (event) => {
+      if (event.kind === "project") projectEvents.push(event);
+    },
+  });
+  onTestFinished(() => opened.close());
+  return { opened, projectEvents };
+}
+
+const SAGA_CHANGED: FeedEvent = { kind: "project", tag: "SAGA", change: "changed" };
 
 /** Runs a call and returns the `TaskStoreError` it must reject with. */
 async function storeError(call: Promise<unknown>): Promise<TaskStoreError> {
@@ -464,6 +481,51 @@ describe("the live flag", { timeout: 20000, retry: 3 }, () => {
 
     expect(first).toMatchObject({ status: "rejected", reason: { code: "EACCES" } });
     expect(second).toMatchObject({ status: "rejected", reason: { code: "EACCES" } });
+  });
+
+  it("publishes a project event when the index stops following the disk, and none for a repair that does not take", async () => {
+    const root = await projectsRoot("SAGA");
+    await plant(join(tasksDir(root, "SAGA"), "SAGA-1.md"), taskText("SAGA-1"));
+    const { opened, projectEvents } = publishing(root);
+    const { index } = await opened.open("SAGA");
+
+    await loseTasks(root, "SAGA", index);
+    await until(() => projectEvents.length > 0, "the loss was published");
+    await expect(opened.open("SAGA")).resolves.toMatchObject({ live: false });
+
+    expect(projectEvents).toEqual([SAGA_CHANGED]);
+  });
+
+  it("publishes no project event for a loss inside a repair, and one when a repair takes", async () => {
+    const root = await projectsRoot("SAGA");
+    const directory = projectDir(root, "SAGA");
+    // The watch is refused at the open and again inside the repair the open runs.
+    await chmod(directory, 0o111);
+    onTestFinished(() => chmod(directory, 0o755));
+    const { opened, projectEvents } = publishing(root, 0);
+
+    await expect(opened.open("SAGA")).resolves.toMatchObject({ live: false });
+    expect(projectEvents).toEqual([SAGA_CHANGED]);
+    await chmod(directory, 0o755);
+    await expect(opened.open("SAGA")).resolves.toMatchObject({ live: true });
+
+    expect(projectEvents).toEqual([SAGA_CHANGED, SAGA_CHANGED]);
+  });
+
+  it("publishes no project event for a second loss while the flag is down", async () => {
+    const root = await projectsRoot("SAGA");
+    const tasks = tasksDir(root, "SAGA");
+    await plant(join(tasks, "SAGA-1.md"), taskText("SAGA-1"));
+    const { opened, projectEvents } = publishing(root);
+    const { index } = await opened.open("SAGA");
+    await loseTasks(root, "SAGA", index);
+
+    // The index takes the tasks directory back by itself; only a repair raises the flag.
+    const back = () => plant(join(tasks, "SAGA-2.md"), taskText("SAGA-2"));
+    await until(() => index.query().entries.length > 0, "the index took the tasks directory back", back);
+    await loseTasks(root, "SAGA", index);
+
+    expect(projectEvents).toEqual([SAGA_CHANGED]);
   });
 });
 

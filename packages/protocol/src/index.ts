@@ -15,6 +15,7 @@ export type { Client, Transport, TransportReply, TransportRequest } from "./clie
 export type { UserConfig, UserConfigChange, UserSetting } from "./config.js";
 export type { Diagnostic, DiagnosticCode } from "./diagnostics.js";
 export { ProtocolError, TransportError } from "./errors.js";
+export type { EventsReply, FeedEvent } from "./events.js";
 export type {
   DaemonErrorCode,
   Envelope,
@@ -29,7 +30,16 @@ export type { Health } from "./health.js";
 export { printable } from "./printable.js";
 export type { Config, Project, ProjectChange, ProjectInput, ProjectRename, ProjectSummary } from "./project.js";
 export { buildPath, OPEN_ROUTES, routes, UNSAFE_IN_SEGMENT } from "./routes.js";
-export type { Method, PathQuery, ProjectQuery, Route, TaskFilter, TaskReadOptions, TaskTextOptions } from "./routes.js";
+export type {
+  EventsQuery,
+  Method,
+  PathQuery,
+  ProjectQuery,
+  Route,
+  TaskFilter,
+  TaskReadOptions,
+  TaskTextOptions,
+} from "./routes.js";
 export type {
   Comment,
   CommentFields,

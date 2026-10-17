@@ -5,6 +5,7 @@ import type {
   ExcludedFile as EngineExcludedFile,
   ExclusionCode as EngineExclusionCode,
   Frontmatter as EngineFrontmatter,
+  IndexChange,
   ListedEntry,
   LocatedProject,
   ProjectChange as EngineProjectChange,
@@ -39,6 +40,7 @@ import type {
   DiagnosticCode,
   ExcludedFile,
   ExclusionCode,
+  FeedEvent,
   Frontmatter,
   ParseErrorCode,
   ProjectChange,
@@ -130,6 +132,10 @@ describe("the wire contract", () => {
     expectTypeOf<Flat<Comment>>().toEqualTypeOf<Omit<EngineComment, typeof SNAPSHOT>>();
     expectTypeOf<WriteResult>().toEqualTypeOf<Omit<EngineWriteResult, "diagnostics">>();
     expectTypeOf<TaskText>().toEqualTypeOf<Omit<TextResult, "diagnostics">>();
+  });
+
+  it("carries every change the engine index reports in a task event", () => {
+    expectTypeOf<Extract<FeedEvent, { kind: "task" }>["change"]>().toEqualTypeOf<IndexChange["change"]>();
   });
 
   it("refuses a text selection that states both of its keys", () => {

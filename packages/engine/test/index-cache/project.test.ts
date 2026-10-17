@@ -314,6 +314,7 @@ describe("what the index does with what a watch reports", () => {
 
     handlers.onTasksDirectory();
     handlers.onTask(taskEntry(root, "SAGA-1"));
+    handlers.onUnnamedChange();
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(() => indexed.query()).toThrow(TaskStoreError);

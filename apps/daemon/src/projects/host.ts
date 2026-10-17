@@ -19,6 +19,7 @@ import {
 } from "@tasma/engine";
 import type { IndexedProject, LocateResult } from "@tasma/engine";
 import type { Diagnostic, ProjectChange, ProjectInput, ProjectRename, ProjectSummary } from "@tasma/protocol";
+import type { Publish } from "../events/feed.js";
 
 /**
  * How many projects one listing reads the configuration of at a time. A tree
@@ -90,12 +91,19 @@ class Held {
    */
   repairedAt: number | undefined;
   readonly index: Promise<IndexedProject>;
+  /** As `project changed`: a client that reads nothing learns of the flag only from the feed. */
+  readonly publishLiveChange: () => void;
 
-  constructor(tag: string, root: string | undefined) {
+  constructor(tag: string, root: string | undefined, publish: Publish | undefined) {
+    this.publishLiveChange = () => publish?.({ kind: "project", tag, change: "changed" });
     this.index = openIndexedProject(openProject({ project: tag, root }), {
       onDiagnostic: (diagnostic) => {
-        if (endsLiveness(diagnostic.code)) this.live = false;
+        if (!endsLiveness(diagnostic.code)) return;
+        // A repair raises the flag before its rescan, so a loss inside one is no change.
+        if (this.live && this.repair === undefined) this.publishLiveChange();
+        this.live = false;
       },
+      onChange: ({ id, change }) => publish?.({ kind: "task", tag, id, change }),
     });
   }
 }
@@ -121,6 +129,8 @@ async function runRepair(entry: Held, index: IndexedProject): Promise<void> {
     await index.rescan();
     if (!index.followsDisk()) entry.live = false;
     entry.repairedAt = entry.live ? undefined : performance.now();
+    // A repair runs only on a flag that is down, so a repair that took raised it.
+    if (entry.live) entry.publishLiveChange();
   } catch (error) {
     // A rescan that rejects took no watch and read no directory, and the
     // listener heard nothing of it, so the flag has to state that failure
@@ -159,8 +169,13 @@ export function createProjectHost(options: {
    * inside the interval or after it, rather than waiting one out.
    */
   repairInterval?: number;
+  /**
+   * Receives a `task` event for each change an open index finds, and a
+   * `project` event after each write and at each change of the live flag.
+   */
+  publish?: Publish;
 }): ProjectHost {
-  const root = options.root;
+  const { root, publish } = options;
   const repairInterval = options.repairInterval ?? REPAIR_INTERVAL_MS;
   const held = new Map<string, Held>();
   let closing = false;
@@ -307,7 +322,7 @@ export function createProjectHost(options: {
 
       let entry = held.get(tag);
       if (entry === undefined) {
-        const started = new Held(tag, root);
+        const started = new Held(tag, root, publish);
         held.set(tag, started);
         // An open that failed holds nothing, so the next request opens again.
         void started.index.catch(() => {
@@ -348,7 +363,9 @@ export function createProjectHost(options: {
       // The route runs every create in the path turn, which orders the path
       // check and keeps two creates apart. The engine's exclusive create of the
       // directory guards the tag only against the writes that turn does not order.
-      return (await createProject({ ...input, root })).tag;
+      const { tag } = await createProject({ ...input, root });
+      publish?.({ kind: "project", tag, change: "created" });
+      return tag;
     },
 
     async update(tag, change) {
@@ -359,6 +376,7 @@ export function createProjectHost(options: {
       // The engine reads the project back after the write; the route answers
       // through the index instead, so that read-back is discarded.
       await updateProject({ project: tag, root }, change);
+      publish?.({ kind: "project", tag, change: "changed" });
     },
 
     async remove(tag) {
@@ -373,6 +391,8 @@ export function createProjectHost(options: {
       // An open that lands after this one meets a directory that is gone, and
       // the catch on `Held.index` takes its entry back out.
       await dropHeld(tag);
+      // After the close of the old index, so its `task deleted` events come first.
+      publish?.({ kind: "project", tag, change: "deleted" });
       return summary;
     },
 
@@ -385,6 +405,7 @@ export function createProjectHost(options: {
       // The old watcher may already have reported that its tasks directory is
       // gone; closing the index is what stops it either way.
       await dropHeld(tag);
+      publish?.({ kind: "project", tag, change: "renamed", to: rename.tag });
       return diagnostics;
     },
 

@@ -1,12 +1,13 @@
-import { chmod, rm, writeFile } from "node:fs/promises";
+import { chmod, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { type IndexChange, type IndexedProject, openIndexedProject } from "@tasma/engine";
 import { type OpenTaskFile, TaskIndex } from "../../src/index-cache/cache.js";
 import { openTaskFile } from "../../src/index-cache/frontmatter.js";
 import { openIndexed } from "../../src/index-cache/project.js";
 import { projectPaths } from "../../src/store/paths.js";
-import { plant, project, PROJECT, taskFile, tasksDir, taskText, tempRoot } from "../store/helpers.js";
-import { ids, taskEntry, unwatched, until, wired } from "./helpers.js";
+import { bareRoot, plant, project, PROJECT, taskFile, tasksDir, taskText, tempRoot } from "../store/helpers.js";
+import { ids, listener, taskEntry, unwatched, until, wired } from "./helpers.js";
 
 /** A listener that keeps every change the index hands it. */
 function changes(): { seen: IndexChange[]; on: (change: IndexChange) => void; sorted(): IndexChange[] } {
@@ -111,6 +112,152 @@ describe("a direct edit of a task file on disk", () => {
     );
 
     expect(new Set(seen.seen.map((change) => `${change.id} ${change.change}`))).toEqual(new Set(["SAGA-1 changed"]));
+  });
+});
+
+describe("a sweep after a watch event", () => {
+  /** Writes a temp file beside the task file and renames it over that name, as an atomic save does. */
+  async function save(root: string, id: string, text: string): Promise<void> {
+    const temp = join(tasksDir(root), `.${id}.md.tmp`);
+    await writeFile(temp, text, "utf8");
+    await rename(temp, taskFile(root, id));
+  }
+
+  /** An open that counts the files it opened. */
+  function counted(): { open: OpenTaskFile; opened: string[] } {
+    const opened: string[] = [];
+    return {
+      opened,
+      open: (path) => {
+        opened.push(path);
+        return openTaskFile(path);
+      },
+    };
+  }
+
+  it("reports a task file that a rename replaced, and holds what it holds now", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    const seen = changes();
+    const { indexed, handlers } = await wired(root, { onChange: seen.on });
+
+    await save(root, "SAGA-1", taskText("SAGA-1").replace("Planted", "Saved"));
+    handlers.onUnnamedChange();
+    await until(() => seen.seen.length > 0, "the replaced file was reported");
+
+    expect(seen.seen).toEqual([{ id: "SAGA-1", change: "changed" }]);
+    expect(indexed.query().entries[0]?.frontmatter.title).toBe("Saved");
+  });
+
+  it("reports a task file that a rename created", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    const seen = changes();
+    const { indexed, handlers } = await wired(root, { onChange: seen.on });
+
+    await save(root, "SAGA-2", taskText("SAGA-2"));
+    handlers.onUnnamedChange();
+    await indexed.close();
+
+    expect(seen.seen).toEqual([{ id: "SAGA-2", change: "created" }]);
+  });
+
+  it("reports a task file moved to another task name under both names", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-2"));
+    const seen = changes();
+    const { indexed, handlers } = await wired(root, { onChange: seen.on });
+
+    await rename(taskFile(root, "SAGA-1"), taskFile(root, "SAGA-2"));
+    handlers.onUnnamedChange();
+    await indexed.close();
+
+    expect(seen.seen).toEqual([
+      { id: "SAGA-1", change: "deleted" },
+      { id: "SAGA-2", change: "created" },
+    ]);
+  });
+
+  it("opens no file whose name and identity did not change", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    await plant(taskFile(root, "SAGA-2"), "Not a task file.\n");
+    const seen = changes();
+    const { open, opened } = counted();
+    const cache = await reporting(root, seen.on, open);
+    opened.length = 0;
+
+    await cache.sweep();
+
+    expect(opened).toEqual([]);
+    expect(seen.seen).toEqual([]);
+  });
+
+  it("opens no file again that holds no regular file", async () => {
+    const root = await tempRoot();
+    const elsewhere = await bareRoot();
+    await plant(join(elsewhere, "target.md"), taskText("SAGA-1"));
+    await plant(taskFile(root, "SAGA-2"), taskText("SAGA-2"));
+    await symlink(join(elsewhere, "target.md"), taskFile(root, "SAGA-1"));
+    const seen = changes();
+    const { open, opened } = counted();
+    const cache = await reporting(root, seen.on, open);
+    await cache.apply(taskEntry(root, "SAGA-1"));
+    opened.length = 0;
+
+    await cache.sweep();
+
+    expect(cache.query().excluded.map((file) => file.code)).toEqual(["task-file-unreadable"]);
+    expect(opened).toEqual([]);
+  });
+
+  it("reads a file whose name it cannot stat, and the read decides", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    const seen = changes();
+    const { indexed, handlers } = await wired(root, { onChange: seen.on });
+
+    // Read access without search access: the names can be listed, and no file
+    // under them can be stated or opened.
+    await chmod(tasksDir(root), 0o444);
+    onTestFinished(() => chmod(tasksDir(root), 0o755));
+    handlers.onUnnamedChange();
+    await until(() => seen.seen.length > 0, "the unreadable file was reported");
+
+    expect(seen.seen).toEqual([{ id: "SAGA-1", change: "changed" }]);
+    expect(indexed.query().excluded.map((file) => file.code)).toEqual(["task-file-unreadable"]);
+  });
+
+  it("drops every task when the tasks directory is gone", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    const seen = changes();
+    const diagnostics = listener();
+    const { indexed, handlers } = await wired(root, { onChange: seen.on, onDiagnostic: diagnostics.on });
+
+    await rm(tasksDir(root), { recursive: true });
+    handlers.onUnnamedChange();
+    await indexed.close();
+
+    expect(seen.seen).toEqual([{ id: "SAGA-1", change: "deleted" }]);
+    expect(diagnostics.codes()).toEqual(["tasks-directory-lost"]);
+  });
+
+  it("reports no finding of the scan", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    const seen = changes();
+    const diagnostics = listener();
+    const { indexed, handlers } = await wired(root, { onChange: seen.on, onDiagnostic: diagnostics.on });
+
+    await plant(join(tasksDir(root), "notes.md"), "Notes.\n");
+    await plant(join(tasksDir(root), ".SAGA-1.md.abcd.tmp"), "Left over.\n");
+    await save(root, "SAGA-1", taskText("SAGA-1").replace("Planted", "Saved"));
+    handlers.onUnnamedChange();
+    await indexed.close();
+
+    expect(seen.seen).toEqual([{ id: "SAGA-1", change: "changed" }]);
+    expect(diagnostics.codes()).toEqual([]);
   });
 });
 

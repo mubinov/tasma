@@ -7,6 +7,7 @@ import { resolveConfig } from "vite";
 import { describe, expect, it } from "vitest";
 import { PROBE_BODY_LIMIT, PROBE_TIMEOUT_MS } from "../apps/cli/src/daemon/record.js";
 import { DAEMON_BIN, START_BUDGET_MS, TICK_MS } from "../apps/cli/src/daemon/start.js";
+import { HOLD_MS } from "../apps/daemon/src/events/hold.js";
 import { TASK_LINK_PREFIX } from "../apps/daemon/src/http/task-link.js";
 import { APP_PATH_PREFIX, DAEMON_PATH_PREFIX, UPDATE_EVENT } from "../apps/web/src/api/paths.js";
 import { readManifest, workspaceRoot } from "../workspace.js";
@@ -123,6 +124,12 @@ describe("the macOS shell", () => {
 
   it("forwards the prefix the renderer writes", () => {
     expect(rustConstant("protocol.rs", "PREFIX")).toBe(DAEMON_PATH_PREFIX);
+  });
+
+  // The forward's timeout counts from the start of the request, so a held read
+  // that comes close to it ends in a 502.
+  it("waits on a forward at least 5 s longer than the daemon holds a read of the feed", () => {
+    expect(HOLD_MS + 5000).toBeLessThanOrEqual(rustDuration("daemon.rs", "TIMEOUT"));
   });
 
   it("answers its own routes under the prefix the renderer writes", () => {
