@@ -1,5 +1,9 @@
 @import "tailwindcss";
+/* theme.css clears the Tailwind namespaces, so each import after it adds tokens. */
 @import "./theme.css";
+@import "tw-animate-css";
+@import "../kit/kit.css";
+@import "./kit-theme.css";
 
 /* Self-hosted and bundled from node_modules: no CDN, so the app works offline. */
 @import "@fontsource/inter/400.css";

@@ -15,6 +15,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
+    "@assistant-ui/react": "catalog:",
+    "@assistant-ui/react-markdown": "catalog:",
     "@base-ui/react": "catalog:",
     "@fontsource/inter": "catalog:",
     "@fontsource/inter-tight": "catalog:",
@@ -24,12 +26,17 @@
     "@tanstack/react-router": "catalog:",
     "@tanstack/react-virtual": "catalog:",
     "@tasma/protocol": "workspace:*",
+    "class-variance-authority": "catalog:",
+    "cn": "catalog:",
+    "lucide-react": "catalog:",
     "mermaid": "catalog:",
     "micromark-util-sanitize-uri": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "catalog:",
     "remark-gfm": "catalog:",
+    "tw-animate-css": "catalog:",
+    "tw-shimmer": "catalog:",
     "zustand": "catalog:"
   },
   "devDependencies": {
@@ -45,6 +52,7 @@
     "eslint": "catalog:",
     "jsdom": "catalog:",
     "oxc-transform-react": "catalog:",
+    "shadcn": "catalog:",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",

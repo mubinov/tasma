@@ -99,6 +99,16 @@ export function isExpectedCompilerSkip(message: string): boolean {
   return message.includes("react-compiler(IncompatibleLibrary)") && message.includes(`${VIRTUAL_LIST}:`);
 }
 
+/*
+ * The files the React plugin leaves alone. The kit in src/kit is copied code
+ * with its own memo and useCallback, and the compiler skips parts of it with a
+ * warning on each build. A custom list replaces the plugin's default, which is
+ * node_modules alone, so the list repeats it.
+ */
+export const REACT_EXCLUDE = [/\/node_modules\//, /\/src\/kit\//];
+
+const KIT = join(import.meta.dirname, "src", "kit");
+
 // The compiler skips VirtualList on purpose and reports the skip as a warning,
 // also for a function that carries "use no memo".
 function expectedCompilerSkips(): Plugin {
@@ -298,9 +308,10 @@ export default defineConfig({
   // protocol or from file://. Coupled to the router's hash history; the
   // coupling is stated and enforced in test/router.test.tsx.
   base: "./",
+  resolve: { alias: { "@kit": KIT } },
   // compiler: true runs React Compiler through oxc, so nothing memoizes by hand.
   plugins: [
-    react({ compiler: true }),
+    react({ compiler: true, exclude: REACT_EXCLUDE }),
     expectedCompilerSkips(),
     tailwindcss(),
     contentSecurityPolicy(),

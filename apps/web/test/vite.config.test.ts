@@ -14,9 +14,12 @@ import config, {
   isExpectedCompilerSkip,
   isLoopbackAddress,
   proxiesHost,
+  REACT_EXCLUDE,
   resolveDaemonUrl,
   stripLegacyFontSources,
 } from "../vite.config";
+import { COLOR_PREFIX, OPACITY, RADIUS_SIDE, stringWords, utilityOf } from "./kit/class-words";
+import { KIT, sourceFiles } from "./source-files";
 
 const root = join(import.meta.dirname, "..");
 
@@ -100,6 +103,97 @@ describe("the built bundle", () => {
 
   it("prints no warning for the component the compiler skips on purpose", () => {
     expect(warnings.filter((message) => message.includes("IncompatibleLibrary"))).toEqual([]);
+  });
+});
+
+/** The text of each .ts and .tsx file in src/kit. */
+function kitSources(): string[] {
+  return sourceFiles(KIT).map((file) => readFileSync(file, "utf8"));
+}
+
+const SHADCN_COLOR = "(?:background|foreground|card|popover|primary|secondary|muted|accent|destructive|border|input|ring|chart-\\d|sidebar(?:-[a-z]+)?)(?:-foreground)?";
+const HUE = "(?:red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|slate|gray|zinc|neutral|stone|mauve|olive|mist|taupe)-\\d{2,3}";
+
+/** Utilities whose rule comes from a theme token, which a missing token leaves without a rule. */
+const THEMED_UTILITY = new RegExp([
+  `^${COLOR_PREFIX}-(?:${SHADCN_COLOR}|${HUE}|black|white)${OPACITY}$`,
+  `^rounded${RADIUS_SIDE}-(?:xs|sm|md|lg|xl|[2-4]xl)$`,
+  "^ease-(?:in|out|in-out)$",
+  "^animate-[a-z0-9-]+$",
+  "^text-(?:xs|sm|base|lg|xl|[2-9]xl)$",
+  "^font-(?:sans|serif|mono)$",
+].join("|"));
+
+const BARE_COLOR_VALUE = new RegExp(
+  `\\b${COLOR_PREFIX}-(?:(?:oklch|oklab|rgba?|hsla?|lab|lch|hwb|color)\\(|#[0-9a-f]{3,8}\\b)`,
+  "gi",
+);
+
+/** A colour value written where a name belongs, with no brackets: the form the CLI writes with cssVariables false. */
+function bareColorValues(text: string): string[] {
+  return [...text.matchAll(BARE_COLOR_VALUE)].map((match) => match[0]);
+}
+
+// Names the kit's inline styles, Base UI and Radix set on elements at run time.
+const RUNTIME_PROPERTY = /^--(?:composer-[\w-]+|animation-duration|thread-max-width|tw-[\w-]+|radix-[\w-]+|collapsible-panel-height|transform-origin)$/;
+
+/** The custom properties `source` reads with no fallback value, as var(--name) or the shorthand -(--name). */
+function readProperties(source: string): string[] {
+  return [...source.matchAll(/var\(\s*(--[\w-]+)\s*\)|-\((--[\w-]+)\)/g)].map((match) => (match[1] ?? match[2])!);
+}
+
+/*
+ * The kit is styled by token names that theme.css clears, and kit-theme.css
+ * puts back. Tailwind emits no rule and no error for a name it does not know,
+ * so a kit release that uses a new shade or radius renders unstyled. Tailwind
+ * scans src/kit also while no module imports it.
+ */
+describe("the kit in the built bundle", () => {
+  const escaped = (token: string) => `.${token.replace(/[^\w-]/g, (char) => `\\${char}`)}`;
+
+  it("has a rule for each class that depends on a theme token", () => {
+    const tokens = new Set(kitSources().flatMap(stringWords).filter((token) => THEMED_UTILITY.test(utilityOf(token))));
+
+    expect(tokens.size).toBeGreaterThan(0);
+    expect([...tokens].filter((token) => !css.includes(escaped(token)))).toEqual([]);
+  });
+
+  it("holds no colour value in place of a colour name", () => {
+    expect(kitSources().flatMap(bareColorValues)).toEqual([]);
+  });
+
+  it("finds a colour value in place of a name, and passes one in brackets", () => {
+    const classes = "bg-oklch(0.97 0 0)/50 text-rgb(0,0,0) ring-#3366ff border-x-oklch(1 0 0) ring-offset-#fff "
+      + "bg-[#000] text-[oklch(1_0_0)]";
+
+    expect(bareColorValues(classes))
+      .toEqual(["bg-oklch(", "text-rgb(", "ring-#3366ff", "border-x-oklch(", "ring-offset-#fff"]);
+  });
+
+  it("declares each custom property that a kit file reads with no fallback", () => {
+    const read = new Set(kitSources().flatMap(readProperties).filter((name) => !RUNTIME_PROPERTY.test(name)));
+
+    expect(read.size).toBeGreaterThan(0);
+    expect([...read].filter((name) => !css.includes(`${name}:`))).toEqual([]);
+  });
+
+  it("reads var(--name) and -(--name), and skips a var() with a fallback", () => {
+    expect(readProperties("var(--a) w-(--b) var(--c, 1px) var( --d )")).toEqual(["--a", "--b", "--d"]);
+  });
+
+  it("finds the classes behind the variants of a token", () => {
+    expect(utilityOf("dark:data-[state=open]:hover:bg-muted/50")).toBe("bg-muted/50");
+    expect(utilityOf("rounded-lg")).toBe("rounded-lg");
+  });
+});
+
+describe("REACT_EXCLUDE", () => {
+  const excluded = (file: string) => REACT_EXCLUDE.some((pattern) => pattern.test(file));
+
+  it("keeps the React plugin off the kit and node_modules, and on Tasma code", () => {
+    expect(excluded(join(root, "src", "kit", "components", "ui", "button.tsx"))).toBe(true);
+    expect(excluded(join(root, "node_modules", "@base-ui", "react", "index.js"))).toBe(true);
+    expect(excluded(join(root, "src", "components", "board.tsx"))).toBe(false);
   });
 });
 

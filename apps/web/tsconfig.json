@@ -11,7 +11,8 @@
     "jsx": "react-jsx",
     // Renderer code gets no Node type definitions, so a Node API fails to
     // typecheck here. vite/client is also what declares the *.css module.
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "paths": { "@kit/*": ["./src/kit/*"] }
   },
   "include": ["src"]
 }

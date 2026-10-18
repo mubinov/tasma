@@ -3,7 +3,9 @@
   "compilerOptions": {
     "target": "ES2023",
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    // test/kit-update.test.ts imports the script by its .ts path, the path Node runs.
+    "allowImportingTsExtensions": true
   },
-  "include": ["*.config.ts", "workspace.ts", "test"]
+  "include": ["*.config.ts", "workspace.ts", "scripts", "test"]
 }

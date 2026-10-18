@@ -117,3 +117,7 @@ Rules in this chapter are for the `apps/web` application alone.
 - Mount a document-wide subscription above the router and outside the error boundary.
 - No Node APIs in renderer code.
 - The proxy in `vite.config.ts` owns the daemon address. Renderer code builds no absolute URL, so `connect-src` stays `'self'`.
+- `src/kit/` holds files that `pnpm kit:update` copies from assistant-ui. Change them only with that script, or inside a block between `tasma-edit: <reason>` and `tasma-edit end` comments.
+- The rules of this chapter apply to Tasma files, not to `src/kit/`.
+- Never fix a problem inside `src/kit/` in place unless the task asks for a marked edit; report it. To review a change to `src/kit/`, run `pnpm kit:check`, and read the diff of `src/kit/components/ui/` and `src/kit/lib/utils.ts`: the check cannot verify them.
+- The kit's colour names (`background`, `primary`, `muted`, `accent`, hue shades like `red-600`) are for `src/kit/` only. Tasma files use Tasma roles.

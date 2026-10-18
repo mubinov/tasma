@@ -35,6 +35,8 @@ export default tseslint.config(
       "**/coverage/",
       "**/.playwright-cli/",
       "apps/macos/target/",
+      // Copied by pnpm kit:update; pnpm kit:check reviews it.
+      "apps/web/src/kit/",
     ],
   },
   // First, so that the typescript-eslint presets below can switch off the core

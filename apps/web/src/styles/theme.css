@@ -7,7 +7,9 @@
  * Tailwind ships 288 colours, 31 text sizes and its own families, radii,
  * shadows and easings, and leaving them in place keeps `bg-gray-800` and
  * `text-4xl` valid utilities. Clearing the namespace is what makes the token
- * list exhaustive rather than advisory. `--spacing` is deliberately not reset:
+ * list exhaustive rather than advisory for Tasma code. The kit stylesheets
+ * that global.css loads after this file add tokens back for src/kit alone;
+ * Tasma code does not use them. `--spacing` is deliberately not reset:
  * Tailwind's 4px scale is the spacing system.
  *
  * `static` emits every token even when no utility references it yet, which is
@@ -107,11 +109,12 @@
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
 
   --animate-*: initial;
-  --animate-enter: enter var(--duration-base) var(--ease-standard);
+  --animate-enter: rise var(--duration-base) var(--ease-standard);
   /* No duration token: the reduced-motion durations would make it spin faster. */
   --animate-spin: spin 1s linear infinite;
 
-  @keyframes enter {
+  /* Not `enter`: tw-animate-css defines a keyframe of that name. */
+  @keyframes rise {
     from {
       opacity: 0;
       transform: translateY(8px);
