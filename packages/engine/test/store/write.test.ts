@@ -1,13 +1,25 @@
-import { readdir } from "node:fs/promises";
+import { mkdir, readdir, symlink } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { type Frontmatter, parseTask, type Project, TaskParseError } from "@tasma/engine";
+import {
+  createChat,
+  type Frontmatter,
+  listChats,
+  parseTask,
+  type Project,
+  TaskParseError,
+} from "@tasma/engine";
 import { fixture } from "../format/fixtures.js";
 import { afterFrontmatter } from "../format/tasks.js";
 import { plantWorkflow, stepsOnly } from "../workflow/helpers.js";
 import {
+  CHAT_INPUT,
+  chatDir,
+  chatsDir,
   codes,
   plant,
   project,
+  PROJECT,
   projectConfig,
   read,
   storeError,
@@ -303,6 +315,53 @@ describe("deleteTask", () => {
     await project(root).deleteTask("SAGA-1");
 
     await expect(readdir(tasksDir(root))).resolves.toEqual([]);
+  });
+
+  it("removes the chats of the task and keeps the chats of other tasks", async () => {
+    const root = await tempRoot();
+    const handle = project(root);
+    await handle.createTask({ title: "First" });
+    await handle.createTask({ title: "Second" });
+    for (const id of ["SAGA-1", "SAGA-1", "SAGA-2"]) await createChat({ project: PROJECT, root }, id, CHAT_INPUT);
+
+    await handle.deleteTask("SAGA-1");
+
+    await expect(readdir(chatsDir(root))).resolves.toEqual(["2"]);
+    await expect(listChats({ project: PROJECT, root }, "SAGA-2")).resolves.toMatchObject({ chats: [{ chat: 1 }] });
+  });
+
+  it("refuses a task that does not exist, and keeps the chats it finds under that number", async () => {
+    const root = await tempRoot();
+    await plant(join(chatDir(root, "1", 1), "chat.json"), "{}\n");
+
+    expect((await storeError(project(root).deleteTask("SAGA-1"))).code).toBe("task-not-found");
+
+    await expect(read(join(chatDir(root, "1", 1), "chat.json"))).resolves.toBe("{}\n");
+  });
+
+  it("refuses a directory at the name of the task, and keeps it and the chats under that number", async () => {
+    const root = await tempRoot();
+    await mkdir(taskFile(root, "SAGA-1"), { recursive: true });
+    await plant(join(chatDir(root, "1", 1), "chat.json"), "{}\n");
+
+    expect((await storeError(project(root).deleteTask("SAGA-1"))).code).toBe("task-not-found");
+
+    await expect(readdir(tasksDir(root))).resolves.toEqual(["SAGA-1.md"]);
+    await expect(read(join(chatDir(root, "1", 1), "chat.json"))).resolves.toBe("{}\n");
+  });
+
+  it("removes a symbolic link at the name of the task and its chats, and leaves the file it points at", async () => {
+    const root = await tempRoot();
+    await plant(join(root, "outside.md"), taskText("SAGA-1"));
+    await mkdir(tasksDir(root));
+    await symlink(join(root, "outside.md"), taskFile(root, "SAGA-1"));
+    await plant(join(chatDir(root, "1", 1), "chat.json"), "{}\n");
+
+    await project(root).deleteTask("SAGA-1");
+
+    await expect(readdir(tasksDir(root))).resolves.toEqual([]);
+    await expect(readdir(chatsDir(root))).resolves.toEqual([]);
+    await expect(read(join(root, "outside.md"))).resolves.toContain("id: SAGA-1");
   });
 });
 

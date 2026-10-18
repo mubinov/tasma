@@ -194,7 +194,8 @@ export async function reconcile(
 }
 
 /**
- * Everything of the project directory but `tasks/`, under the staging name.
+ * Everything of the project directory but `tasks/` and `chats/`, under the
+ * staging name.
  *
  * The two files this layer writes itself are read and written again rather than
  * copied: `cp` flushes nothing it writes, and a crash after the publish would
@@ -208,7 +209,7 @@ export async function reconcile(
  */
 async function stageDirectory(source: ProjectPaths, staging: ProjectPaths): Promise<void> {
   for (const entry of await readdir(source.directory, { withFileTypes: true })) {
-    if (entry.name === basename(source.tasks)) continue;
+    if (entry.name === basename(source.tasks) || entry.name === basename(source.chats)) continue;
     const from = join(source.directory, entry.name);
     const to = join(staging.directory, entry.name);
     if (from !== source.projectConfig && from !== source.state) {
@@ -247,9 +248,9 @@ type Staged = {
 
 /**
  * Builds the whole new project under a hidden name beside the old one: every
- * file of the project directory but `tasks/` carried as it stands, every task
- * file rewritten under its new name, and every other entry of `tasks/` carried
- * under its own.
+ * file of the project directory but `tasks/` and `chats/` carried as it stands,
+ * every task file rewritten under its new name, and every other entry of
+ * `tasks/` carried under its own.
  *
  * A fault takes the staging directory with it, so the old project is left as it
  * was and the tree holds nothing half made.
@@ -376,11 +377,42 @@ async function freeze(source: ProjectPaths, frozen: ProjectPaths): Promise<boole
 }
 
 /**
+ * Moves `chats/` of the frozen project into the published one with one
+ * directory rename, reconciles, and removes the frozen project.
+ *
+ * The rename is published by now, so a failed move refuses nothing: it is
+ * answered as a finding, the reconcile still runs so no task write of the copy
+ * window is lost, and the frozen directory, where the chats stay, is not
+ * removed.
+ */
+export async function settle(
+  frozen: ProjectPaths,
+  renamed: ProjectPaths,
+  identities: ReadonlyMap<string, FileIdentity>,
+  findings: Map<string, StoreDiagnostic>,
+): Promise<StoreDiagnostic[]> {
+  const chatFindings: StoreDiagnostic[] = [];
+  try {
+    if ((await entryAt(frozen.chats)) !== undefined) await moveEntry(frozen.chats, renamed.chats);
+  } catch (error) {
+    chatFindings.push({
+      code: "chat-file-unreadable",
+      message: `the chats could not be moved into project ${renamed.project} and stay here: ${causeOf(error)}`,
+      path: frozen.chats,
+    });
+  }
+  await reconcile(frozen, renamed, identities, findings);
+  if (chatFindings.length === 0) await removeTree(frozen.directory);
+  return chatFindings;
+}
+
+/**
  * Builds the new project beside the old one, then installs it under the new tag
  * and takes the old tag out of the tree. Each install is a single `rename(2)`
  * inside `projects/`, so a reader sees the old project or the new one and never
  * a mix, and a task write still in flight against the old paths fails rather
- * than landing on a project nothing serves.
+ * than landing on a project nothing serves. The chats are not copied: they move
+ * with one directory rename once the old project is frozen.
  *
  * An interruption leaves a directory under a hidden name, which no listing
  * reports and nothing here deletes — the rule this layer applies to a temp file.
@@ -420,17 +452,14 @@ export async function renameProject(
   await publish(staging, renamed);
 
   const frozen = pathsUnder({ project: source.project, root, directory: tempPath(source.directory) });
-  if (await freeze(source, frozen)) {
-    await reconcile(frozen, renamed, identities, findings);
-    await removeTree(frozen.directory);
-  }
+  const chatFindings = (await freeze(source, frozen)) ? await settle(frozen, renamed, identities, findings) : [];
 
   const diagnostics: StoreDiagnostic[] = scan.diagnostics.map((finding) => ({
     ...finding,
     // Where a reader finds the entry now; the old location is gone.
     path: join(renamed.tasks, basename(finding.path)),
   }));
-  diagnostics.push(...findings.values());
+  diagnostics.push(...findings.values(), ...chatFindings);
 
   // The findings of the read are dropped by that call's own rule: a finding
   // about one project's configuration belongs on the read of that project.

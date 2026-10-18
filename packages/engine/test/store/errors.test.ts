@@ -1,8 +1,8 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdir, symlink } from "node:fs/promises";
+import { chmod, mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { type Project, TaskParseError, TaskSerializeError, TaskStoreError } from "@tasma/engine";
 import { bareRoot, plant, project, projectDir, storeError, tasksDir, taskFile, taskText, tempRoot } from "./helpers.js";
 
@@ -188,9 +188,14 @@ describe("a tasks directory that is not a directory", () => {
 describe("a fault of the filesystem the store gives no meaning", () => {
   it("reaches the caller from a delete as it stands", async () => {
     const root = await tempRoot();
-    await mkdir(taskFile(root, "SAGA-1"), { recursive: true });
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    await chmod(tasksDir(root), 0o500);
+    onTestFinished(() => chmod(tasksDir(root), 0o700));
 
-    await expect(project(root).deleteTask("SAGA-1")).rejects.not.toBeInstanceOf(TaskStoreError);
+    const deleting = project(root).deleteTask("SAGA-1");
+
+    await expect(deleting).rejects.not.toBeInstanceOf(TaskStoreError);
+    await expect(deleting).rejects.toMatchObject({ code: "EACCES" });
   });
 });
 

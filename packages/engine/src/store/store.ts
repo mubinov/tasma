@@ -15,11 +15,19 @@ import {
 import { COMMENT, FRONTMATTER } from "../format/schema.js";
 import { deepEqual } from "../format/values.js";
 import type { InstructionsResult } from "../workflow/index.js";
-import { createExclusive, entryAt, makeDirectory, readRegularFile, removeFile, replaceFile } from "./atomic.js";
+import {
+  createExclusive,
+  entryAt,
+  makeDirectory,
+  readRegularFile,
+  removeFile,
+  removeTree,
+  replaceFile,
+} from "./atomic.js";
 import { resolveConfig, resolveWorkflowsPath } from "./config.js";
 import { errnoOf, fail } from "./errors.js";
 import { issueCommentId, issueTaskId, rebuildNextTaskId, writeState } from "./ids.js";
-import { type ProjectPaths, projectPaths, scanTasks, taskPath } from "./paths.js";
+import { type ProjectPaths, projectPaths, scanTasks, taskChatsPath, taskPath } from "./paths.js";
 import { withoutTask } from "./references.js";
 import type {
   CommentChange,
@@ -94,7 +102,7 @@ export function timestamp(at: Date, offset: number): string {
   return `${date}T${time}${offset < 0 ? "-" : "+"}${pad(Math.floor(size / 60))}:${pad(size % 60)}`;
 }
 
-function now(): string {
+export function now(): string {
   const at = new Date();
   return timestamp(at, -at.getTimezoneOffset());
 }
@@ -251,13 +259,39 @@ export async function checkProjectDirectory(paths: ProjectPaths): Promise<void> 
  * component of its path alone — cannot see.
  */
 function checkTasksDirectory(paths: ProjectPaths, entry: Stats | undefined): void {
+  checkStorageDirectory(paths.tasks, entry, "the tasks directory of this project");
+}
+
+function checkStorageDirectory(path: string, entry: Stats | undefined, subject: string): void {
   if (entry === undefined) return;
-  if (entry.isSymbolicLink()) {
-    fail("project-invalid", "the tasks directory of this project is a symbolic link", paths.tasks);
-  }
-  if (!entry.isDirectory()) {
-    fail("project-invalid", "the tasks directory of this project is not a directory", paths.tasks);
-  }
+  if (entry.isSymbolicLink()) fail("project-invalid", `${subject} is a symbolic link`, path);
+  if (!entry.isDirectory()) fail("project-invalid", `${subject} is not a directory`, path);
+}
+
+/**
+ * `chats/` and the directory of one task's chats under the rule of
+ * `checkTasksDirectory`, so a recursive delete or an append never leaves the
+ * tree. Answers whether the directory of the task's chats stands.
+ */
+export async function checkChatDirectories(paths: ProjectPaths, taskChats: string): Promise<boolean> {
+  checkStorageDirectory(paths.chats, await entryAt(paths.chats), "the chats directory of this project");
+  const entry = await entryAt(taskChats);
+  checkStorageDirectory(taskChats, entry, "the chats directory of this task");
+  return entry !== undefined;
+}
+
+/**
+ * The file of one task, refused with `task-not-found` where its name holds no
+ * regular file. A delete passes `removable`, which also takes every other entry
+ * an unlink removes, so a name a hand broke can still be cleared. A directory is
+ * never a task.
+ */
+export async function checkTaskFile(paths: ProjectPaths, id: string, removable = false): Promise<string> {
+  const path = taskPath(paths, id);
+  const entry = await entryAt(path);
+  const found = removable ? entry !== undefined && !entry.isDirectory() : entry?.isFile() === true;
+  if (!found) fail("task-not-found", `there is no task ${id}`, path);
+  return path;
 }
 
 /**
@@ -499,13 +533,18 @@ class ProjectStore implements Project {
   }
 
   /**
-   * Removes the file of one task. It is the one operation that does not open the
-   * file first, so a file too corrupt to parse can still be deleted; the
-   * `id-mismatch` guard therefore does not run here.
+   * Removes the chats of one task, then its file. It is the one operation that
+   * does not open the file first, so a file too corrupt to parse can still be
+   * deleted; the `id-mismatch` guard therefore does not run here.
+   *
+   * The chats go first, so an interrupted delete leaves a task with no chats and
+   * never chats with no task.
    */
   async deleteTask(id: string): Promise<WriteResult> {
     await openProjectDirectory(this.paths);
-    const path = taskPath(this.paths, id);
+    const path = await checkTaskFile(this.paths, id, true);
+    const taskChats = taskChatsPath(this.paths, id);
+    if (await checkChatDirectories(this.paths, taskChats)) await removeTree(taskChats);
     try {
       await removeFile(path);
     } catch (error) {

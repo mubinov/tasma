@@ -7,11 +7,12 @@ import type { FileIdentity } from "../../src/store/atomic.js";
 import { readWithIdentity } from "../../src/store/atomic.js";
 import type { ProjectPaths } from "../../src/store/paths.js";
 import { pathsUnder, projectPaths } from "../../src/store/paths.js";
-import { publish, reconcile } from "../../src/store/rename.js";
+import { publish, reconcile, settle } from "../../src/store/rename.js";
 import type { StoreDiagnostic } from "../../src/store/types.js";
 import { fixture } from "../format/fixtures.js";
 import {
   bareRoot,
+  chatDir,
   codes,
   plant,
   plantProject,
@@ -212,6 +213,52 @@ describe("renaming a project", () => {
     await expect(renameProject({ project: PROJECT, root }, { tag: NEW })).resolves.toMatchObject({ tag: NEW });
 
     await expect(projectEntries(root)).resolves.toEqual([NEW]);
+  });
+});
+
+describe("the chats of a renamed project", () => {
+  it("stand in the new project with the same content, moved rather than copied", async () => {
+    const root = await bareRoot();
+    await planted(root);
+    await plant(join(chatDir(root, "1", 1), "chat.json"), '{"step":"build"}\n');
+    await plant(join(chatDir(root, "1", 1), "events.jsonl"), '{"seq":1}\n');
+    const before = await stat(join(chatDir(root, "1", 1), "events.jsonl"));
+
+    await renameProject({ project: PROJECT, root }, { tag: NEW });
+
+    await expect(projectEntries(root)).resolves.toEqual([NEW]);
+    await expect(read(join(chatDir(root, "1", 1, NEW), "chat.json"))).resolves.toBe('{"step":"build"}\n');
+    await expect(read(join(chatDir(root, "1", 1, NEW), "events.jsonl"))).resolves.toBe('{"seq":1}\n');
+    expect((await stat(join(chatDir(root, "1", 1, NEW), "events.jsonl"))).ino).toBe(before.ino);
+  });
+
+  it("leave a project with no chats renaming as before", async () => {
+    const root = await bareRoot();
+    await planted(root);
+
+    await renameProject({ project: PROJECT, root }, { tag: NEW });
+
+    await expect(entriesOf(projectDir(root, NEW))).resolves.toEqual(["config.yml", "state.yml", "tasks"]);
+  });
+
+  it("stay in the frozen project when the move fails, which the rename reports after the reconcile ran", async () => {
+    const root = await bareRoot();
+    const { frozen, renamed, identities } = await staged(root, { "SAGA-2.md": TASKS["SAGA-2.md"]! });
+    await plant(join(frozen.chats, "1", "1", "chat.json"), "{}\n");
+    await plant(join(frozen.tasks, "SAGA-2.md"), TASKS["SAGA-2.md"]!.replace("Second", "Rewritten"));
+    // A directory that is not empty, which no directory rename replaces.
+    await plant(join(renamed.chats, "9", "held"), "held");
+
+    await expect(settle(frozen, renamed, identities, new Map())).resolves.toEqual([
+      {
+        code: "chat-file-unreadable",
+        message: expect.stringMatching(/^the chats could not be moved into project NEW and stay here: .*(?:ENOTEMPTY|EEXIST)/) as string,
+        path: frozen.chats,
+      },
+    ]);
+
+    expect(await read(join(renamed.tasks, "NEW-2.md"))).toContain("title: Rewritten");
+    await expect(read(join(frozen.chats, "1", "1", "chat.json"))).resolves.toBe("{}\n");
   });
 });
 

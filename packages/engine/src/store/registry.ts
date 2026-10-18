@@ -260,9 +260,9 @@ export async function updateProject(options: ProjectOptions, change: ProjectChan
 }
 
 /**
- * Deletes a project directory and everything in it: its file, its state and its
- * tasks. Nothing guards what it holds, and the folder the project stands for is
- * left alone.
+ * Deletes a project directory and everything in it: its file, its state, its
+ * tasks and their chats. Nothing guards what it holds, and the folder the
+ * project stands for is left alone.
  *
  * The two directory checks keep the recursive delete inside the root the caller
  * named: a symbolic link at either level is refused rather than followed out of

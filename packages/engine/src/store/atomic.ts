@@ -126,6 +126,21 @@ export function sameIdentity(a: FileIdentity, b: FileIdentity): boolean {
 }
 
 /**
+ * What names one file whatever it holds, so a caller that keeps a file across
+ * calls can tell when its name came to stand for another file. A rename on one
+ * filesystem keeps it.
+ */
+export type FileNode = { dev: number; ino: number };
+
+export function nodeOf(entry: Stats): FileNode {
+  return { dev: entry.dev, ino: entry.ino };
+}
+
+export function sameNode(a: FileNode, b: FileNode): boolean {
+  return a.dev === b.dev && a.ino === b.ino;
+}
+
+/**
  * The whole text of one file with the identity of the bytes it returned, under
  * the rules `openRegularEntry` opens it by.
  *
@@ -300,6 +315,48 @@ export async function replaceFile(path: string, text: string): Promise<void> {
     if (!renamed) await discard(temp);
   }
   await syncDirectory(dirname(path));
+}
+
+/**
+ * Adds `text` after the end of the file `node` names, flushes it, and answers
+ * the size of the file after the write. `absent` and `irregular` mean that
+ * nothing was written, under the rules `openRegularEntry` reads by, and
+ * `replaced` that nothing was written because the name holds another file.
+ * `O_NOFOLLOW` checks the last component alone, so the node check is what
+ * keeps a link put in the place of a directory above from taking the write.
+ *
+ * A file with a second name is `irregular` too. `link(2)` asks the owner of the
+ * file for nothing, so the other name can stand outside the tree, and this is
+ * the one write of the layer that changes a file in place.
+ *
+ * The write states no position: on macOS a positioned write ignores
+ * `O_APPEND`, in Node and in Bun.
+ */
+export async function appendLine(
+  path: string,
+  text: string,
+  node: FileNode,
+): Promise<{ end: number } | "absent" | "irregular" | "replaced"> {
+  const flags = constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+  let handle;
+  try {
+    handle = await open(path, flags);
+  } catch (error) {
+    const code = errnoOf(error);
+    if (code === "ENOENT") return "absent";
+    if (code === "ELOOP" || code === "EISDIR") return "irregular";
+    throw error;
+  }
+  try {
+    const entry = await handle.stat();
+    if (!entry.isFile() || entry.nlink !== 1) return "irregular";
+    if (!sameNode(nodeOf(entry), node)) return "replaced";
+    await handle.writeFile(text, "utf8");
+    await handle.sync();
+    return { end: (await handle.stat()).size };
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function removeFile(path: string): Promise<void> {

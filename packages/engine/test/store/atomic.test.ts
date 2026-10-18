@@ -1,11 +1,14 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { constants } from "node:fs";
-import { chmod, lstat, mkdir, readdir, stat, symlink } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, readdir, stat, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { parseTask } from "@tasma/engine";
 import {
+  appendLine,
+  type FileNode,
+  nodeOf,
   carriedMode,
   checkOpenFlags,
   copyEntry,
@@ -363,6 +366,84 @@ describe("copyEntry", () => {
     await plant(join(root, "two.md"), "two");
 
     await expect(copyEntry(join(root, "one.md"), join(root, "two.md"))).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
+  });
+});
+
+describe("appendLine", () => {
+  /** A node for a call that refuses before it compares one. */
+  const ANY_NODE: FileNode = { dev: 0, ino: 0 };
+
+  it("adds the text after the end of the file, and answers where the file now ends", async () => {
+    const root = await tempRoot();
+    const path = join(root, "log");
+    await plant(path, "one\n");
+
+    await expect(appendLine(path, "two\n", nodeOf(await stat(path)))).resolves.toEqual({ end: 8 });
+
+    await expect(read(path)).resolves.toBe("one\ntwo\n");
+  });
+
+  it("answers absent for a missing file, and creates none", async () => {
+    const root = await tempRoot();
+    const path = join(root, "log");
+
+    await expect(appendLine(path, "one\n", ANY_NODE)).resolves.toBe("absent");
+
+    await expect(readdir(root)).resolves.toEqual(["projects"]);
+  });
+
+  it("answers irregular for a symbolic link, and leaves the file it points at alone", async () => {
+    const root = await tempRoot();
+    await plant(join(root, "outside"), "outside\n");
+    await symlink(join(root, "outside"), join(root, "log"));
+
+    await expect(appendLine(join(root, "log"), "one\n", ANY_NODE)).resolves.toBe("irregular");
+
+    await expect(read(join(root, "outside"))).resolves.toBe("outside\n");
+  });
+
+  it("answers irregular for a file with a second name, and leaves that file alone", async () => {
+    const root = await tempRoot();
+    const path = join(root, "log");
+    await plant(join(root, "outside"), "outside\n");
+    await link(join(root, "outside"), path);
+
+    await expect(appendLine(path, "one\n", nodeOf(await stat(path)))).resolves.toBe("irregular");
+
+    await expect(read(join(root, "outside"))).resolves.toBe("outside\n");
+  });
+
+  it.each([
+    ["a directory", async (root: string) => {
+      await mkdir(join(root, "log"));
+      return join(root, "log");
+    }],
+    ["a device, which opens for writing", async () => "/dev/null"],
+  ])("answers irregular for %s", async (_name, build) => {
+    const root = await tempRoot();
+
+    await expect(appendLine(await build(root), "one\n", ANY_NODE)).resolves.toBe("irregular");
+  });
+
+  it("answers replaced for another file under the name, and writes nothing", async () => {
+    const root = await tempRoot();
+    const path = join(root, "log");
+    await plant(join(root, "first"), "one\n");
+    const node = nodeOf(await stat(join(root, "first")));
+    await plant(path, "other\n");
+
+    await expect(appendLine(path, "two\n", node)).resolves.toBe("replaced");
+
+    await expect(read(path)).resolves.toBe("other\n");
+  });
+
+  it("lets a fault that is not a missing file or a link reach the caller", async () => {
+    const root = await tempRoot();
+    const path = join(root, "log");
+    await plant(path, "one\n");
+    await chmod(path, 0o400);
+
+    await expect(appendLine(path, "two\n", nodeOf(await stat(path)))).rejects.toMatchObject({ code: "EACCES" });
   });
 });
 

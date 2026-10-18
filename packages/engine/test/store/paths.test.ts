@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { pathsUnder, projectPaths, scanTasks, taskPath, tempPath } from "../../src/store/paths.js";
+import { pathsUnder, projectPaths, scanTasks, taskChatsPath, taskPath, tempPath } from "../../src/store/paths.js";
 import { plant, PROJECT, read, storeFault, tasksDir, taskText, tempRoot } from "./helpers.js";
 
 function paths(root: string) {
@@ -20,6 +20,7 @@ describe("pathsUnder", () => {
       projectConfig: "/tmp/tree/projects/.NEW.7.tmp/config.yml",
       state: "/tmp/tree/projects/.NEW.7.tmp/state.yml",
       tasks: "/tmp/tree/projects/.NEW.7.tmp/tasks",
+      chats: "/tmp/tree/projects/.NEW.7.tmp/chats",
     });
   });
 
@@ -74,6 +75,17 @@ describe("taskPath", () => {
       expect(storeFault(() => taskPath(paths("/tmp/tree"), id)).code).toBe("task-not-found");
     },
   );
+});
+
+describe("taskChatsPath", () => {
+  it("names the directory of a task's chats by the digits of its id as written", () => {
+    expect(taskChatsPath(paths("/tmp/tree"), "SAGA-7")).toBe("/tmp/tree/projects/SAGA/chats/7");
+    expect(taskChatsPath(paths("/tmp/tree"), "SAGA-007")).toBe("/tmp/tree/projects/SAGA/chats/007");
+  });
+
+  it("reports an id of another project as no task of this project", () => {
+    expect(storeFault(() => taskChatsPath(paths("/tmp/tree"), "OTHER-7")).code).toBe("task-not-found");
+  });
 });
 
 describe("tempPath", () => {

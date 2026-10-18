@@ -35,6 +35,7 @@ export type StoreDiagnosticCode
     | "task-file-foreign"
     | "task-file-unexpected"
     | "temp-file-left"
+    | "chat-file-unreadable"
     // What the index raises and no store call does.
     | "blocked-by-unresolved"
     | "task-file-misnamed"

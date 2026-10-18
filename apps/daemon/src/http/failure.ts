@@ -76,6 +76,7 @@ export function toFailure(error: unknown): Failure {
 const STORE_STATUS = {
   "task-not-found": 404,
   "comment-not-found": 404,
+  "chat-not-found": 404,
   "project-not-found": 404,
   // The file changed under a write, which a caller answers by reading again and
   // retrying rather than by sending something else.
@@ -95,6 +96,7 @@ const STORE_STATUS = {
   "config-invalid": 422,
   "workflow-invalid": 422,
   "step-file-unreadable": 422,
+  "chat-unreadable": 422,
   // Only a daemon on its way out refuses this way.
   "index-closed": 503,
   "status-unknown": 400,

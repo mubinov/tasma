@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { onTestFinished } from "vitest";
-import { openProject, type Project, type StoreDiagnostic, TaskStoreError } from "@tasma/engine";
+import { type ChatInput, openProject, type Project, type StoreDiagnostic, TaskStoreError } from "@tasma/engine";
 
 export const PROJECT = "SAGA";
 
@@ -39,6 +39,18 @@ export function projectDir(root: string, project: string = PROJECT): string {
 export function tasksDir(root: string, project: string = PROJECT): string {
   return join(projectDir(root, project), "tasks");
 }
+
+export function chatsDir(root: string, project: string = PROJECT): string {
+  return join(projectDir(root, project), "chats");
+}
+
+/** The directory of one chat: the digits of the task id as written, then the chat number. */
+export function chatDir(root: string, digits: string, chat: number, project: string = PROJECT): string {
+  return join(chatsDir(root, project), digits, String(chat));
+}
+
+/** What a create of a chat states, for a test that does not care which chat it makes. */
+export const CHAT_INPUT: ChatInput = { step: "build", agent: "claude", folder: "/srv/saga" };
 
 export function userConfig(root: string): string {
   return join(root, "config.yml");

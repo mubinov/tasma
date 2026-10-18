@@ -58,9 +58,10 @@ type Slot = "project" | "tasks";
 /**
  * Two flat watches, never one recursive watch. The watch that matters is on
  * `tasks/`; the one on the project directory exists to learn when `tasks/`
- * appears or disappears. Nothing else stands below the project directory, so
- * recursion would add nothing, while a flat watch is supported everywhere
- * without a platform caveat.
+ * appears or disappears. The only other directory the engine writes below the
+ * project directory is `chats/`, which no index reads, so recursion would add
+ * only events to drop, while a flat watch is supported everywhere without a
+ * platform caveat.
  *
  * A watch that fails is reported and not retried in a loop: the index stops
  * being live at that point, and the diagnostic is the caller's signal to

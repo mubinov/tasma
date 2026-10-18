@@ -83,7 +83,7 @@ describe("toFailure", () => {
 });
 
 describe("the status of a refusal", () => {
-  it.each<StoreErrorCode>(["task-not-found", "comment-not-found", "project-not-found"])(
+  it.each<StoreErrorCode>(["task-not-found", "comment-not-found", "chat-not-found", "project-not-found"])(
     "answers 404 for the store code %s",
     (code) => expect(statusOfStore(code)).toBe(404),
   );
@@ -101,7 +101,13 @@ describe("the status of a refusal", () => {
     (code) => expect(statusOfStore(code)).toBe(409),
   );
 
-  it.each<StoreErrorCode>(["project-invalid", "config-invalid", "workflow-invalid", "step-file-unreadable"])(
+  it.each<StoreErrorCode>([
+    "project-invalid",
+    "config-invalid",
+    "workflow-invalid",
+    "step-file-unreadable",
+    "chat-unreadable",
+  ])(
     "answers 422 for the store code %s, which is a file on disk rather than a bad call",
     (code) => expect(statusOfStore(code)).toBe(422),
   );

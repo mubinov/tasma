@@ -13,6 +13,8 @@ export type StoreErrorCode
     | "task-exists"
     | "comment-not-found"
     | "comment-exists"
+    | "chat-not-found"
+    | "chat-unreadable"
     | "project-not-found"
     | "project-invalid"
     | "project-exists"

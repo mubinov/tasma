@@ -25,6 +25,7 @@ export type ProjectPaths = {
   projectConfig: string;
   state: string;
   tasks: string;
+  chats: string;
 };
 
 /** A leading `~/` is the home directory; every other path is left as it stands. */
@@ -155,6 +156,7 @@ export function pathsUnder(stated: { project: string; root: string; directory: s
     projectConfig: join(directory, "config.yml"),
     state: join(directory, "state.yml"),
     tasks: join(directory, "tasks"),
+    chats: join(directory, "chats"),
   };
 }
 
@@ -192,6 +194,16 @@ export function taskPath(paths: ProjectPaths, id: string): string {
     fail("task-not-found", `"${id}" is not a task id of project ${paths.project}`);
   }
   return join(paths.tasks, `${id}.md`);
+}
+
+/**
+ * The directory of one task's chats, named by the digits of the id as written:
+ * the rule of the task file name, so `SAGA-007` and `SAGA-7` never share one.
+ * An id that is no task id of this project names no directory.
+ */
+export function taskChatsPath(paths: ProjectPaths, id: string): string {
+  taskPath(paths, id);
+  return join(paths.chats, id.slice(`${paths.project}-`.length));
 }
 
 /**

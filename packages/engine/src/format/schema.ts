@@ -10,7 +10,7 @@ function withinRange(part: string | undefined, limit: number): boolean {
 }
 
 /** An ISO 8601 date and time with a UTC offset, on a day the calendar has. */
-function isTimestamp(value: unknown): boolean {
+export function isTimestamp(value: unknown): boolean {
   if (typeof value !== "string") return false;
   const parts = TIMESTAMP_PATTERN.exec(value)?.groups;
   if (parts === undefined) return false;

@@ -28,6 +28,7 @@ export type DiagnosticCode
     | "task-file-foreign"
     | "task-file-unexpected"
     | "temp-file-left"
+    | "chat-file-unreadable"
     | "blocked-by-unresolved"
     | "task-file-misnamed"
     | "reference-not-removed"
