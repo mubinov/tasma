@@ -14,6 +14,7 @@ import { parseArgs } from "node:util";
 import { DAEMON_NAME, DEFAULT_DAEMON_HOST, printable } from "@tasma/protocol";
 import type { DaemonRecord } from "@tasma/protocol";
 import manifest from "../../../../package.json" with { type: "json" };
+import { createChatRegistry } from "../chats/registry.js";
 import { configRoutes } from "../config/routes.js";
 import { createFeed } from "../events/feed.js";
 import { eventRoutes } from "../events/routes.js";
@@ -183,10 +184,11 @@ export async function startDaemon(options: {
   const { publish } = feed;
   const host = createProjectHost({ root, publish });
   const writes = new WriteQueue();
+  const chats = createChatRegistry({ root, host, writes, publish });
   const server = createDaemonServer(
     [
-      ...projectRoutes(host, writes),
-      ...taskRoutes(host),
+      ...projectRoutes(host, writes, chats),
+      ...taskRoutes(host, { writes, chats }),
       ...workflowRoutes({ root, writes, publish }),
       ...configRoutes({ root, writes, publish }),
       ...eventRoutes(feed),

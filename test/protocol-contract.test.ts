@@ -1,5 +1,7 @@
 import { describe, expectTypeOf, it } from "vitest";
 import type {
+  ChatAgent as EngineChatAgent,
+  ChatRecord,
   CommentFields as EngineCommentFields,
   CreateProjectInput,
   ExcludedFile as EngineExcludedFile,
@@ -33,6 +35,8 @@ import type {
   WriteResult as EngineWriteResult,
 } from "@tasma/engine";
 import type {
+  Chat,
+  ChatAgent,
   Comment,
   CommentFields,
   Config,
@@ -90,6 +94,7 @@ describe("the wire contract", () => {
     expectTypeOf<SerializeErrorCode>().toEqualTypeOf<TaskSerializeErrorCode>();
     expectTypeOf<ExclusionCode>().toEqualTypeOf<EngineExclusionCode>();
     expectTypeOf<StepOwner>().toEqualTypeOf<EngineStepOwner>();
+    expectTypeOf<ChatAgent>().toEqualTypeOf<EngineChatAgent>();
   });
 
   it("repeats the engine's shapes", () => {
@@ -119,6 +124,8 @@ describe("the wire contract", () => {
     // The name is a separate argument of the engine create.
     expectTypeOf<Omit<WorkflowInput, "name">>().toEqualTypeOf<EngineWorkflowInput>();
     expectTypeOf<WorkflowChange>().toEqualTypeOf<EngineWorkflowChange>();
+    // A chat on the wire is the engine's record plus the last seq and the status the daemon folds.
+    expectTypeOf<Omit<Chat, "seq" | "state">>().toEqualTypeOf<Flat<ChatRecord>>();
   });
 
   it("keeps the task and the write result in step, less what JSON cannot carry", () => {

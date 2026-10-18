@@ -6,6 +6,7 @@
 import { pathMissing, USER_CONFIG_LINKED_KEYS } from "@tasma/engine";
 import { routes } from "@tasma/protocol";
 import type { Project, ProjectChange, ProjectInput, ProjectRename, ProjectSummary, Success } from "@tasma/protocol";
+import type { ChatRegistry } from "../chats/registry.js";
 import type { RouteEntry } from "../http/router.js";
 import { assertNoQuery, readProjectQuery } from "../tasks/filter.js";
 import { toChange } from "../tasks/input.js";
@@ -54,8 +55,11 @@ async function readOne(host: ProjectHost, tag: string): Promise<Success<Project>
  * the configuration turn as well, since a write of the user's file checks this
  * file and this write checks that one. A patch that states `workflows` takes the
  * turn of each workflow it names too, which a delete of that workflow takes.
+ *
+ * A rename and a delete tell the chat registry inside their turn, which every
+ * chat write and chat load of the project takes too.
  */
-export function projectRoutes(host: ProjectHost, writes: WriteQueue): RouteEntry[] {
+export function projectRoutes(host: ProjectHost, writes: WriteQueue, chats?: ChatRegistry): RouteEntry[] {
   return [
     {
       route: routes.listProjects,
@@ -117,7 +121,12 @@ export function projectRoutes(host: ProjectHost, writes: WriteQueue): RouteEntry
       handler: async (request): Promise<Success<ProjectSummary>> => {
         assertNoQuery(request.query);
         const tag = request.params.project!;
-        return { data: await writes.run(tag, () => host.remove(tag)), diagnostics: [] };
+        const summary = await writes.run(tag, async () => {
+          const removed = await host.remove(tag);
+          chats?.projectRemoved(tag);
+          return removed;
+        });
+        return { data: summary, diagnostics: [] };
       },
     },
     {
@@ -140,6 +149,7 @@ export function projectRoutes(host: ProjectHost, writes: WriteQueue): RouteEntry
         const keys = typeof statedTag === "string" ? [tag, statedTag, PATH_KEY] : [tag, PATH_KEY];
         return writes.runAll(keys, async () => {
           const findings = await host.rename(tag, rename);
+          chats?.projectRenamed(tag, rename.tag);
           // Read inside the turn, for the reason the patch reads inside its own.
           const answer = await readOne(host, rename.tag);
           return { data: answer.data, diagnostics: [...answer.diagnostics, ...findings] };

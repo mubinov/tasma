@@ -115,6 +115,11 @@ export function chatDirectory(taskChats: string, chat: number): string {
   return join(taskChats, String(chat));
 }
 
+/** The directory of one chat of a task, which a finding about that chat names. */
+export function chatPath(options: ProjectOptions, task: string, chat: number): string {
+  return chatDirectory(taskChatsPath(projectPaths(options), task), chat);
+}
+
 /**
  * The record of one chat as the file holds it, unknown keys included. A
  * directory with no record is what an interrupted create leaves, so it is no
@@ -191,7 +196,7 @@ export async function readChat(options: ProjectOptions, task: string, chat: numb
 }
 
 /** The finding that leaves one chat out of a list, for a refusal and for a fault of the filesystem alike. */
-function chatFinding(error: unknown, directory: string): StoreDiagnostic {
+export function chatFinding(error: unknown, directory: string): StoreDiagnostic {
   const message = error instanceof TaskStoreError ? error.description : `this chat cannot be read: ${causeOf(error)}`;
   return { code: "chat-file-unreadable", message, path: pathOf(error) ?? directory };
 }

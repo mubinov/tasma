@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   type ChatInput,
+  chatPath,
   createChat,
   listChats,
   readChat,
@@ -346,6 +347,14 @@ describe("readChat and listChats", () => {
 
     expect((await storeError(listChats(options(root), "SAGA-2"))).code).toBe("task-not-found");
     expect((await storeError(readChat(options(root), "SAGA-2", 1))).code).toBe("task-not-found");
+  });
+});
+
+describe("chatPath", () => {
+  it("names the directory of one chat by the digits of the task id as written", async () => {
+    const root = await tempRoot();
+
+    expect(chatPath(options(root), "SAGA-007", 2)).toBe(chatDir(root, "007", 2));
   });
 });
 

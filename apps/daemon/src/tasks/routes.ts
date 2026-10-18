@@ -10,6 +10,7 @@
 import { resolveBlocked } from "@tasma/engine";
 import { routes } from "@tasma/protocol";
 import type { Success, Task, TaskList, TaskText, WriteResult } from "@tasma/protocol";
+import type { ChatRegistry } from "../chats/registry.js";
 import type { RouteEntry } from "../http/router.js";
 import type { ProjectHost } from "../projects/host.js";
 import { commentRoutes } from "./comments.js";
@@ -23,12 +24,15 @@ import { blockerKeys, createKey, parentKeys, taskKey, WriteQueue } from "./seria
  * process passes the result to `createDaemonServer` along with the host it built
  * them over.
  *
- * The queue is built here and shared with the comment routes, because the writes
- * it orders are the writes of one task file and three of them are comment
- * writes.
+ * The queue is shared with the comment routes, because the writes it orders are
+ * the writes of one task file and three of them are comment writes. The daemon
+ * passes its one queue, which the chat writes of a task share; without one the
+ * routes build their own. A delete of a task tells the chat registry inside its
+ * turn.
  */
-export function taskRoutes(host: ProjectHost): RouteEntry[] {
-  const writes = new WriteQueue();
+export function taskRoutes(host: ProjectHost, options?: { writes?: WriteQueue; chats?: ChatRegistry }): RouteEntry[] {
+  const writes = options?.writes ?? new WriteQueue();
+  const chats = options?.chats;
 
   return [
     {
@@ -122,12 +126,31 @@ export function taskRoutes(host: ProjectHost): RouteEntry[] {
         assertNoQuery(request.query);
         const project = request.params.project!;
         const id = request.params.id!;
-        const { index } = await host.open(project);
+        let references = (await host.open(project)).index.referencesTo(id);
         // The delete rewrites every task that names the deleted one, so it takes
-        // the turn of each of them too.
-        const keys = [id, ...index.referencesTo(id)].map((ref) => taskKey(project, ref));
-        const { diagnostics, ...data } = await writes.runAll(keys, () => index.deleteTask(id));
-        return { data, diagnostics };
+        // the turn of each of them too. It takes the turn of the project as
+        // well: a rename publishes the new tag before it moves the chats.
+        for (;;) {
+          const covered = references;
+          const keys = [project, ...[id, ...covered].map((ref) => taskKey(project, ref))];
+          const outcome = await writes.runAll(keys, async () => {
+            // Opened again: a rename or a delete of the project that this turn
+            // waited for closed the first index, and a tag that is gone is a 404.
+            const { index } = await host.open(project);
+            // The turns are taken one by one, so a task can come to name the
+            // deleted one while the delete waits, and its turn is not held.
+            const now = index.referencesTo(id);
+            if (now.some((ref) => !covered.includes(ref))) return { references: now };
+            const deleted = await index.deleteTask(id);
+            chats?.taskRemoved(project, id);
+            return { deleted };
+          });
+          if (outcome.deleted !== undefined) {
+            const { diagnostics, ...data } = outcome.deleted;
+            return { data, diagnostics };
+          }
+          references = outcome.references;
+        }
       },
     },
     ...commentRoutes(host, writes),

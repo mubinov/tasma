@@ -10,6 +10,18 @@ export {
   TREE_DIRNAME,
 } from "./address.js";
 export type { DaemonRecord } from "./address.js";
+export { CHAT_START, foldChat } from "./chat.js";
+export type {
+  AcpObject,
+  Chat,
+  ChatAgent,
+  ChatEntry,
+  ChatEvent,
+  ChatFold,
+  ChatOutside,
+  ChatState,
+  ChatStatus,
+} from "./chat.js";
 export { createClient } from "./client.js";
 export type { Client, Transport, TransportReply, TransportRequest } from "./client.js";
 export type { UserConfig, UserConfigChange, UserSetting } from "./config.js";

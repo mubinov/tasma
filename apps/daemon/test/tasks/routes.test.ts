@@ -7,9 +7,11 @@ import type { TaskList, TaskText, WriteResult } from "@tasma/protocol";
 import type { HandlerRequest } from "../../src/http/router.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import type { ProjectHost } from "../../src/projects/host.js";
+import { projectRoutes } from "../../src/projects/routes.js";
 import { taskRoutes } from "../../src/tasks/routes.js";
-import { WriteQueue } from "../../src/tasks/serialize.js";
+import { taskKey, WriteQueue } from "../../src/tasks/serialize.js";
 import {
+  failure,
   plant,
   plantSteps,
   projectConfig,
@@ -787,5 +789,134 @@ describe("two writes to one project that arrive at once", () => {
     for (const id of ids) {
       await expect(readFile(taskFile(root, "SAGA", id), "utf8")).resolves.toContain("title: Task");
     }
+  });
+});
+
+describe("a delete of a task that waits behind a delete or a rename of its project", () => {
+  /**
+   * The project and task routes over one queue, as the daemon builds them, with
+   * a project delete and a rename that stop before the engine call until the
+   * test releases them.
+   */
+  async function heldProject(): Promise<{
+    server: TestServer;
+    reached: string[];
+    release: () => void;
+    projectTurns: () => number;
+  }> {
+    const root = await projectsRoot("SAGA");
+    await plant(taskFile(root, "SAGA", "SAGA-1"), taskText("SAGA-1"));
+    const inner = createProjectHost({ root });
+    onTestFinished(() => inner.close());
+    const reached: string[] = [];
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const host: ProjectHost = {
+      ...inner,
+      async remove(tag) {
+        reached.push("remove");
+        await released;
+        return inner.remove(tag);
+      },
+      async rename(tag, rename) {
+        reached.push("rename");
+        await released;
+        return inner.rename(tag, rename);
+      },
+    };
+    const writes = new WriteQueue();
+    const run = vi.spyOn(writes, "run");
+    const server = await startTestServer([...projectRoutes(host, writes), ...taskRoutes(host, { writes })]);
+    const projectTurns = () => run.mock.calls.filter(([key]) => key === "SAGA").length;
+    return { server, reached, release, projectTurns };
+  }
+
+  it("answers project-not-found after a delete of the project", async () => {
+    const { server, reached, release, projectTurns } = await heldProject();
+
+    const removing = send(server, "DELETE", "/projects/SAGA");
+    await until(() => reached.includes("remove"), "the project delete began");
+    const deleting = send(server, "DELETE", "/projects/SAGA/tasks/SAGA-1");
+    await until(() => projectTurns() === 2, "the task delete asked for the turn of its project");
+    release();
+
+    expect((await removing).status).toBe(200);
+    const response = await deleting;
+    expect(response.status).toBe(404);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "project-not-found" });
+  });
+
+  it("answers project-not-found after a rename of the project", async () => {
+    const { server, reached, release, projectTurns } = await heldProject();
+
+    const renaming = send(server, "POST", "/projects/SAGA/rename", { tag: "OMEGA" });
+    await until(() => reached.includes("rename"), "the rename began");
+    const deleting = send(server, "DELETE", "/projects/SAGA/tasks/SAGA-1");
+    await until(() => projectTurns() === 2, "the task delete asked for the turn of its project");
+    release();
+
+    expect((await renaming).status).toBe(200);
+    const response = await deleting;
+    expect(response.status).toBe(404);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "project-not-found" });
+  });
+
+  it("takes the turn of a task that came to name the deleted one during the wait", async () => {
+    const root = await projectsRoot("SAGA");
+    await plant(taskFile(root, "SAGA", "SAGA-1"), taskText("SAGA-1"));
+    await plant(taskFile(root, "SAGA", "SAGA-2"), taskText("SAGA-2"));
+    const host = createProjectHost({ root });
+    onTestFinished(() => host.close());
+    const { index } = await host.open("SAGA");
+    const reached: string[] = [];
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const removeReference = index.removeReference.bind(index);
+    vi.spyOn(index, "removeReference").mockImplementation(async (id, removed) => {
+      reached.push("rewrite");
+      await released;
+      const result = await removeReference(id, removed);
+      reached.push("rewrite done");
+      return result;
+    });
+    const addComment = index.addComment.bind(index);
+    vi.spyOn(index, "addComment").mockImplementation((id, input) => {
+      reached.push("comment");
+      return addComment(id, input);
+    });
+    const writes = new WriteQueue();
+    const run = vi.spyOn(writes, "run");
+    const turns = (key: string) => run.mock.calls.filter(([called]) => called === key).length;
+    const server = await startTestServer(taskRoutes(host, { writes }));
+    let endProjectTurn!: () => void;
+    const projectTurn = writes.run("SAGA", () => new Promise<void>((resolve) => {
+      endProjectTurn = resolve;
+    }));
+
+    const deleting = send(server, "DELETE", "/projects/SAGA/tasks/SAGA-2");
+    await until(() => turns("SAGA") === 2, "the task delete asked for the turn of its project");
+    const patched = await send(server, "PATCH", "/projects/SAGA/tasks/SAGA-1", { blocked_by: ["SAGA-2"] });
+    expect(patched.status).toBe(200);
+    endProjectTurn();
+    await projectTurn;
+    await until(() => reached.includes("rewrite"), "the delete began to take the reference out");
+    const asked = turns(taskKey("SAGA", "SAGA-1"));
+    const commenting = send(server, "POST", "/projects/SAGA/tasks/SAGA-1/comments", {
+      title: "Noted",
+      body: "text",
+    });
+    await until(() => turns(taskKey("SAGA", "SAGA-1")) > asked, "the comment asked for its turn");
+    release();
+
+    expect((await deleting).status).toBe(200);
+    expect((await commenting).status).toBe(200);
+    expect(reached).toEqual(["rewrite", "rewrite done", "comment"]);
+    const text = await readFile(taskFile(root, "SAGA", "SAGA-1"), "utf8");
+    expect(text).not.toContain("blocked_by");
+    expect(text).toContain("Noted");
   });
 });
