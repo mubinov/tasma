@@ -318,6 +318,25 @@ describe("the client", () => {
     expect(error).toMatchObject({ status: undefined, cause });
   });
 
+  it("puts the signal of a feed read on the request", async () => {
+    const { calls, transport } = recorder(ok({ cursor: "4f0c9a1b2e3d-42", events: [] }));
+    const { signal } = new AbortController();
+
+    await createClient(transport).readEvents("4f0c9a1b2e3d-41", { signal });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.signal).toBe(signal);
+  });
+
+  it("sends no signal key on a feed read with no options", async () => {
+    const { calls, transport } = recorder(ok({ cursor: "4f0c9a1b2e3d-42", events: [] }));
+
+    await createClient(transport).readEvents("4f0c9a1b2e3d-41");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toHaveProperty("signal");
+  });
+
   const hostile = { toString: 1 };
 
   const unusable: [string, unknown][] = [

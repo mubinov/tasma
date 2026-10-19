@@ -22,7 +22,11 @@ async function readJson(response: Response): Promise<unknown> {
  * and only a `fetch` that never reached a server rejects.
  */
 export function createFetchTransport(basePath: string): Transport {
-  return async ({ method, path, body }) => {
+  return async ({ method, path, body, signal }) => {
+    if (signal !== undefined && !(signal instanceof AbortSignal)) {
+      throw new Error(`${method} ${path} carries a signal that is not an AbortSignal`);
+    }
+
     const response = await fetch(`${basePath}${path}`, {
       method,
       // The daemon requires the media type on a write and ignores it on a read,
@@ -30,6 +34,7 @@ export function createFetchTransport(basePath: string): Transport {
       // same-origin.
       headers: body === undefined ? {} : { "content-type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
 
     return { status: response.status, body: await readJson(response) };

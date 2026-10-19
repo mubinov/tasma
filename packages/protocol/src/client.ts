@@ -19,6 +19,19 @@ import type { CommentHeader, CommentInput, Task, TaskInput, TaskList, TaskText, 
 import type { Workflow, WorkflowChange, WorkflowInput, WorkflowReceipt } from "./workflow.js";
 
 /**
+ * The part of an `AbortSignal` a transport reads. This package compiles with no
+ * host types, so it declares the shape itself; a DOM or a Node `AbortSignal`
+ * matches it.
+ */
+export type CallSignal = {
+  readonly aborted: boolean;
+  addEventListener(type: "abort", listener: () => void): void;
+  removeEventListener(type: "abort", listener: () => void): void;
+};
+
+export type CallOptions = { signal?: CallSignal };
+
+/**
  * One call, as the host that carries it sees it. `body` is a JavaScript value
  * rather than a string, and the reply's `body` is the parsed answer, so both
  * directions are symmetric and a host adapter is a few lines.
@@ -27,6 +40,7 @@ export type TransportRequest = {
   method: Method;
   path: string;
   body?: unknown;
+  signal?: CallSignal;
 };
 
 export type TransportReply = {
@@ -74,7 +88,7 @@ export type Client = {
    * With the current cursor the daemon holds the call until the next event, so
    * a transport timeout must be longer than the hold.
    */
-  readEvents(after?: string): Promise<Success<EventsReply>>;
+  readEvents(after?: string, options?: CallOptions): Promise<Success<EventsReply>>;
 };
 
 const FAILURE_KINDS: Failure["kind"][] = ["store", "parse", "serialize", "daemon"];
@@ -131,13 +145,14 @@ export function createClient(transport: Transport): Client {
   async function call<T>(
     route: Route,
     params: Record<string, string | number>,
-    options: { body?: unknown; query?: PathQuery } = {},
+    options: { body?: unknown; query?: PathQuery; signal?: CallSignal } = {},
   ): Promise<Success<T>> {
     const path = buildPath(route, params, options.query);
+    const { body, signal } = options;
 
     let reply: TransportReply;
     try {
-      reply = await transport({ method: route.method, path, body: options.body });
+      reply = await transport({ method: route.method, path, body, ...(signal === undefined ? {} : { signal }) });
     } catch (cause) {
       throw new TransportError(`${route.method} ${path} reached no daemon`, undefined, cause);
     }
@@ -181,6 +196,7 @@ export function createClient(transport: Transport): Client {
     deleteWorkflow: (name) => call<WorkflowReceipt>(routes.deleteWorkflow, { workflow: name }),
     readUserConfig: () => call<UserConfig>(routes.readUserConfig, {}),
     updateUserConfig: (change) => call<UserConfig>(routes.updateUserConfig, {}, { body: change }),
-    readEvents: (after) => call<EventsReply>(routes.readEvents, {}, { query: { after } satisfies EventsQuery }),
+    readEvents: (after, options) =>
+      call<EventsReply>(routes.readEvents, {}, { query: { after } satisfies EventsQuery, signal: options?.signal }),
   };
 }

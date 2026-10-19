@@ -200,6 +200,11 @@ it("nests a search of a project's tasks inside the tasks of the project", () => 
   expect(taskSearchQuery(createDaemonClient(), "SAGA", "fix parser").queryKey).toEqual([...tasks, "search", "fix parser"]);
 });
 
+it("nests every search of a project under one key of its searches", () => {
+  expect(daemonKeys.taskSearches("SAGA")).toEqual([...daemonKeys.tasks("SAGA"), "search"]);
+  expect(daemonKeys.taskSearch("SAGA", "fix parser")).toEqual([...daemonKeys.taskSearches("SAGA"), "fix parser"]);
+});
+
 describe("workflowQuery", () => {
   const WORKFLOW = { name: "dev", file: "/w/dev/workflow.yml", steps: [], instructions: [] };
 

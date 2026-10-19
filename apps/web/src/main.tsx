@@ -3,6 +3,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ErrorBoundary } from "./components/error-boundary";
+import { FeedSubscriber } from "./components/feed-subscriber";
 import { FindShortcut } from "./components/find-shortcut";
 import { ThemeSync } from "./components/theme-sync";
 import { UpdateEvents } from "./components/update-events";
@@ -29,6 +30,7 @@ createRoot(container).render(
   <StrictMode>
     <ThemeSync />
     <UpdateEvents queryClient={router.options.context.queryClient} />
+    <FeedSubscriber queryClient={router.options.context.queryClient} client={router.options.context.client} />
     <FindShortcut router={router} />
     <ErrorBoundary>
       <QueryClientProvider client={router.options.context.queryClient}>

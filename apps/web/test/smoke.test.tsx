@@ -1,7 +1,25 @@
-import { act, cleanup, screen } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { stubSystemTheme } from "./helpers";
+
+// The entry keeps no handle on its root. A root that stays mounted keeps its
+// feed loop alive, and the loop reads through the fetch stubs of later tests.
+const roots = vi.hoisted((): Root[] => []);
+
+vi.mock("react-dom/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-dom/client")>();
+
+  return {
+    ...actual,
+    createRoot: (...args: Parameters<typeof actual.createRoot>) => {
+      const root = actual.createRoot(...args);
+      roots.push(root);
+      return root;
+    },
+  };
+});
 
 // The stub is installed once and its handle kept, so a test that changes the
 // system appearance mid-run drives the same stub the entry subscribed to.
@@ -22,6 +40,11 @@ beforeEach(() => {
 
 afterEach(async () => {
   cleanup();
+  act(() => {
+    for (const root of roots.splice(0)) {
+      root.unmount();
+    }
+  });
   // The history patches window.history until it is destroyed and vi.resetModules()
   // gives every test a new one, so a layer left in place runs its own detached
   // router on the next test's navigation.
@@ -141,6 +164,31 @@ it("lists the daemon's projects through the wired entry path", async () => {
   expect(screen.getByRole("heading", { level: 1, name: "Projects" })).toBeTruthy();
   expect(row?.getAttribute("href")).toBe("/#/projects/SAGA");
   expect(row?.textContent).toBe("sagaSAGA");
+});
+
+it("reads the change feed through the wired entry path", async () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const requested: string[] = [];
+  vi.stubGlobal("fetch", (input: string) => {
+    requested.push(input);
+    if (input.endsWith("/daemon/events")) {
+      return Promise.resolve(Response.json({ ok: true, data: { cursor: "smoke-7", events: [] }, diagnostics: [] }));
+    }
+    // A read with a cursor is held. A stub that answers it at once makes the
+    // loop read again with no wait, without end.
+    if (input.includes("/daemon/events?after=")) {
+      return new Promise(() => {});
+    }
+    return Promise.reject(new Error(`no stub answers ${input}`));
+  });
+
+  await act(async () => {
+    await import("../src/main");
+  });
+
+  await waitFor(() => {
+    expect(requested).toContain("/daemon/events?after=smoke-7");
+  });
 });
 
 it("fails loudly when the document carries no #root", async () => {

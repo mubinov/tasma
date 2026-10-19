@@ -23,7 +23,7 @@ export type {
   ChatStatus,
 } from "./chat.js";
 export { createClient } from "./client.js";
-export type { Client, Transport, TransportReply, TransportRequest } from "./client.js";
+export type { CallOptions, CallSignal, Client, Transport, TransportReply, TransportRequest } from "./client.js";
 export type { UserConfig, UserConfigChange, UserSetting } from "./config.js";
 export type { Diagnostic, DiagnosticCode } from "./diagnostics.js";
 export { ProtocolError, TransportError } from "./errors.js";

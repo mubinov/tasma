@@ -31,7 +31,8 @@ export const daemonKeys = {
   tasks: (tag: string) => [...daemonKeys.project(tag), "tasks"] as const,
   task: (tag: string, id: string) => [...daemonKeys.tasks(tag), id] as const,
   // "search" is no task id, which is always `<TAG>-<number>`.
-  taskSearch: (tag: string, q: string) => [...daemonKeys.tasks(tag), "search", q] as const,
+  taskSearches: (tag: string) => [...daemonKeys.tasks(tag), "search"] as const,
+  taskSearch: (tag: string, q: string) => [...daemonKeys.taskSearches(tag), q] as const,
   workflows: () => [...daemonKeys.all, "workflows"] as const,
   workflow: (name: string) => [...daemonKeys.workflows(), name] as const,
   workflowList: () => [...daemonKeys.all, "workflow-list"] as const,

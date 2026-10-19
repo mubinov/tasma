@@ -1,3 +1,4 @@
+import { createClient, TransportError } from "@tasma/protocol";
 import { afterEach, expect, it, vi } from "vitest";
 import { DAEMON_PATH_PREFIX } from "../../src/api/paths";
 import { createFetchTransport, DAEMON_URL } from "../../src/api/transport";
@@ -75,6 +76,40 @@ it("reads a body that is not JSON as no body at all", async () => {
   const reply = await createFetchTransport(DAEMON_PATH_PREFIX)({ method: "GET", path: "/health" });
 
   expect(reply).toEqual({ status: 502, body: undefined });
+});
+
+it("gives the signal of a request to fetch", async () => {
+  const calls = stubFetch(Response.json({ ok: true, data: null, diagnostics: [] }));
+  const { signal } = new AbortController();
+
+  await createFetchTransport(DAEMON_PATH_PREFIX)({ method: "GET", path: "/events?after=c1", signal });
+
+  expect(calls[0]?.[1].signal).toBe(signal);
+});
+
+it("throws for a signal that is not an AbortSignal and calls no fetch", async () => {
+  const calls = stubFetch(Response.json({ ok: true, data: null, diagnostics: [] }));
+  const signal = { aborted: false, addEventListener: () => {}, removeEventListener: () => {} };
+
+  await expect(createFetchTransport(DAEMON_PATH_PREFIX)({ method: "GET", path: "/events", signal })).rejects.toThrow(
+    "AbortSignal",
+  );
+  expect(calls).toEqual([]);
+});
+
+it("rejects a call through the client with a transport fault when its signal aborts", async () => {
+  vi.stubGlobal("fetch", (_input: string, init: RequestInit) =>
+    new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => {
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+      });
+    }));
+  const controller = new AbortController();
+
+  const read = createClient(createFetchTransport(DAEMON_PATH_PREFIX)).readEvents("c1", { signal: controller.signal });
+  controller.abort();
+
+  await expect(read).rejects.toBeInstanceOf(TransportError);
 });
 
 // Only fetch itself rejecting means no daemon answered, and createClient turns
