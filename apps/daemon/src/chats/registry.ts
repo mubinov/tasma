@@ -1,5 +1,6 @@
 // The live chats of the daemon: one handle for each chat, loaded on first use,
-// which holds the one open log of the chat and the fold of that log.
+// which holds the one open log of the chat, the fold of that log, and the hold
+// that a long-poll read of the log waits on.
 //
 // Every write and every load of a chat runs in the turns of its project tag and
 // of its task in the daemon's one write queue. A rename or a delete of the
@@ -21,6 +22,8 @@ import type { ChatInput, ChatLog, ChatRecord, TaskStoreErrorCode } from "@tasma/
 import { CHAT_START, foldChat } from "@tasma/protocol";
 import type { Chat, ChatEntry, ChatEvent, ChatFold, ChatStatus, Diagnostic } from "@tasma/protocol";
 import type { Publish } from "../events/feed.js";
+import { createHold, HOLD_MS } from "../events/hold.js";
+import type { Hold } from "../events/hold.js";
 import type { ProjectHost } from "../projects/host.js";
 import { taskKey } from "../tasks/serialize.js";
 import type { WriteQueue } from "../tasks/serialize.js";
@@ -40,6 +43,11 @@ export type LiveChat = {
   setSession(session: string): Promise<void>;
   /** Takes no turn, so a read never waits for a write. */
   read(after: number, maxBytes?: number): Promise<ChatEntry[]>;
+  /**
+   * Resolves after the next entry, at a rename of the project, or at the end of
+   * the hold; at once for a chat that is gone and after the registry closes.
+   */
+  wait(): Promise<void>;
 };
 
 /**
@@ -56,10 +64,13 @@ export type ChatRegistry = {
   projectRenamed(from: string, to: string): void;
   projectRemoved(tag: string): void;
   taskRemoved(tag: string, task: string): void;
+  /** Releases every wait, and makes each later wait resolve at once. */
+  close(): void;
 };
 
 type Context = {
   root: string | undefined;
+  holdMs: number;
   writes: WriteQueue;
   publish: Publish | undefined;
   /** Takes a handle out of the registry for good. */
@@ -98,6 +109,7 @@ async function openFolded(root: string | undefined, tag: string, record: ChatRec
 
 class Live implements LiveChat {
   removed = false;
+  readonly hold: Hold;
   readonly #context: Context;
   #tag: string;
   #record: ChatRecord;
@@ -113,6 +125,7 @@ class Live implements LiveChat {
     this.#record = record;
     this.#log = opened.log;
     this.#fold = opened.fold;
+    this.hold = createHold({ holdMs: context.holdMs });
   }
 
   get tag(): string {
@@ -152,6 +165,10 @@ class Live implements LiveChat {
     return (await this.#log.read(after, { maxBytes })) as ChatEntry[];
   }
 
+  wait(): Promise<void> {
+    return this.hold.wait();
+  }
+
   /**
    * Writes one event; the caller holds the turns of the handle. The line is on
    * disk before the fold changes, so a failed write changes nothing.
@@ -171,6 +188,7 @@ class Live implements LiveChat {
     }
     this.#fold = next;
     this.#announce(before);
+    this.hold.notify();
     return entry as ChatEntry;
   }
 
@@ -232,11 +250,13 @@ class Live implements LiveChat {
   /** A new open reads what a failed append left on disk; a status it finds changed is published. */
   async #reopen(): Promise<void> {
     const before = this.#fold.status;
+    const last = this.#log.last;
     const opened = await openFolded(this.#context.root, this.#tag, this.#record);
     this.#log = opened.log;
     this.#fold = opened.fold;
     this.#stale = false;
     this.#announce(before);
+    if (this.#log.last !== last) this.hold.notify();
   }
 
   #announce(before: ChatStatus): void {
@@ -257,8 +277,11 @@ export function createChatRegistry(options: {
   writes: WriteQueue;
   /** Receives a `chat` event at the create of a chat and at each change of its status. */
   publish?: Publish;
+  holdMs?: number;
 }): ChatRegistry {
   const { root, host, writes, publish } = options;
+  const holdMs = options.holdMs ?? HOLD_MS;
+  let closed = false;
   /**
    * The loaded handles, by the place each one stands for now. Only `keep` adds
    * one, always inside the turn of its tag. A load looks here first, so two
@@ -269,6 +292,7 @@ export function createChatRegistry(options: {
 
   function forget(live: Live): void {
     live.removed = true;
+    live.hold.close();
     if (loaded.get(live.key) === live) loaded.delete(live.key);
   }
 
@@ -276,10 +300,11 @@ export function createChatRegistry(options: {
   function keep(live: Live): void {
     const replaced = loaded.get(live.key);
     if (replaced !== undefined) forget(replaced);
+    if (closed) live.hold.close();
     loaded.set(live.key, live);
   }
 
-  const context: Context = { root, writes, publish, forget };
+  const context: Context = { root, holdMs, writes, publish, forget };
 
   async function load(tag: string, record: ChatRecord): Promise<Live> {
     const present = loaded.get(chatKey(tag, record.task, record.chat));
@@ -313,6 +338,8 @@ export function createChatRegistry(options: {
 
     async get(tag, task, chat) {
       await host.open(tag);
+      // A malformed chat number gives chat-not-found also for a missing task; the engine checks the task first.
+      if (!Number.isSafeInteger(chat) || chat < 1) throw new TaskStoreError("chat-not-found", "this is not a chat number");
       return loaded.get(chatKey(tag, task, chat))
         ?? writes.runAll(turnsOf(tag, task), async () =>
           loaded.get(chatKey(tag, task, chat)) ?? load(tag, await readChat({ project: tag, root }, task, chat)));
@@ -343,6 +370,8 @@ export function createChatRegistry(options: {
         loaded.delete(key);
         live.relocate(to);
         keep(live);
+        // A wait under the old tag reads again, and finds no project of that tag.
+        live.hold.notify();
       }
     },
 
@@ -352,6 +381,11 @@ export function createChatRegistry(options: {
 
     taskRemoved(tag, task) {
       forgetWhere((live) => live.tag === tag && live.chat.task === task);
+    },
+
+    close() {
+      closed = true;
+      for (const live of loaded.values()) live.hold.close();
     },
   };
 }

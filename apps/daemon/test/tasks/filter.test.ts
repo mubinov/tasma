@@ -3,6 +3,7 @@ import type { Frontmatter, ListedEntry } from "@tasma/engine";
 import type { TaskFilter } from "@tasma/protocol";
 import {
   assertNoQuery,
+  readChatEventsQuery,
   readEventsQuery,
   readProjectQuery,
   readTaskFilter,
@@ -247,6 +248,50 @@ describe("readEventsQuery", () => {
 
   it("refuses the cursor stated twice", () => {
     expect(refused(() => readEventsQuery(query("after=a-1&after=a-2"))).code).toBe("malformed-request");
+  });
+});
+
+describe("readChatEventsQuery", () => {
+  it.each([
+    ["0", 0],
+    ["41", 41],
+    ["007", 7],
+    [String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER],
+  ])("reads after=%s as the seq %d", (value, after) => {
+    expect(readChatEventsQuery(query(`after=${value}`))).toEqual({ after });
+  });
+
+  it.each([
+    ["states no cursor", ""],
+    ["states an empty cursor", "after="],
+  ])("reads a query that %s as a read of the whole log", (_name, search) => {
+    expect(readChatEventsQuery(query(search))).toEqual({ after: 0 });
+  });
+
+  it.each([
+    ["a negative number", "-1"],
+    ["a fraction", "1.5"],
+    ["an exponent", "1e3"],
+    ["a sign", "+1"],
+    ["a space", " 1"],
+    ["a word", "last"],
+    ["a number above the safe-integer limit", "9007199254740992"],
+  ])("refuses %s with malformed-request", (_name, value) => {
+    const error = refused(() => readChatEventsQuery(query(`after=${encodeURIComponent(value)}`)));
+
+    expect(error.code).toBe("malformed-request");
+    expect(error.message).toContain("after");
+  });
+
+  it("refuses a key the route does not declare", () => {
+    const error = refused(() => readChatEventsQuery(query("since=1")));
+
+    expect(error.code).toBe("malformed-request");
+    expect(error.message).toContain("since");
+  });
+
+  it("refuses the cursor stated twice", () => {
+    expect(refused(() => readChatEventsQuery(query("after=1&after=2"))).code).toBe("malformed-request");
   });
 });
 

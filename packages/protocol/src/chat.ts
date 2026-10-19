@@ -54,6 +54,16 @@ export type Chat = {
 } & ChatStatus;
 
 /**
+ * The answer to a read of a chat log. `cursor` is the `seq` of the last entry
+ * of the answer, or the `after` of the read for an answer with no entries, and
+ * the next read passes it back as `after`. `reset` answers an `after` above the
+ * last `seq` of the log, and the client then reads the log again from 0.
+ */
+export type ChatEventsReply
+  = | { cursor: number; entries: ChatEntry[] }
+    | { reset: true; cursor: 0 };
+
+/**
  * What a fold of a chat log keeps: whether a turn runs, the requests that wait
  * for an answer, and the stop that holds the chat until a message or `resumed`.
  */

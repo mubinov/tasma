@@ -29,6 +29,9 @@ export const routes = {
   addComment: { method: "POST", template: "/projects/{project}/tasks/{id}/comments" },
   updateComment: { method: "PATCH", template: "/projects/{project}/tasks/{id}/comments/{commentId}" },
   deleteComment: { method: "DELETE", template: "/projects/{project}/tasks/{id}/comments/{commentId}" },
+  listChats: { method: "GET", template: "/projects/{project}/tasks/{id}/chats" },
+  readChat: { method: "GET", template: "/projects/{project}/tasks/{id}/chats/{chat}" },
+  readChatEvents: { method: "GET", template: "/projects/{project}/tasks/{id}/chats/{chat}/events" },
   listWorkflows: { method: "GET", template: "/workflows" },
   createWorkflow: { method: "POST", template: "/workflows" },
   readWorkflow: { method: "GET", template: "/workflows/{workflow}" },
@@ -55,6 +58,13 @@ export type ProjectQuery = { path: string };
  * cursor is the current one holds until the next event or the end of the hold.
  */
 export type EventsQuery = { after?: string };
+
+/**
+ * Where a read of a chat log starts: after the entry whose `seq` is `after`. An
+ * absent `after` is 0, the whole log. A read whose `after` is the `seq` of the
+ * last entry holds until the next entry or the end of the hold.
+ */
+export type ChatEventsQuery = { after?: number };
 
 /**
  * Which tasks a listing returns. The daemon applies the filter, so a caller
@@ -109,9 +119,9 @@ export type TaskTextOptions = { collapsed?: boolean; comment?: never } | { comme
  * What `buildPath` appends to a path, and what a client method may pass as one.
  *
  * Every type written to be passed as one — `ProjectQuery`, `EventsQuery`,
- * `TaskFilter`, `TaskReadOptions`, `TaskTextOptions` — is a type alias rather
- * than an interface, because only an alias carries the implicit index signature
- * a record of this shape requires.
+ * `ChatEventsQuery`, `TaskFilter`, `TaskReadOptions`, `TaskTextOptions` — is a
+ * type alias rather than an interface, because only an alias carries the
+ * implicit index signature a record of this shape requires.
  */
 export type PathQuery = Record<string, string | string[] | boolean | number | undefined>;
 

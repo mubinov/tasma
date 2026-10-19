@@ -12,9 +12,11 @@ import { runDaemon, startDaemon } from "../../src/lifecycle/run.js";
 import type { DaemonIo, Start } from "../../src/lifecycle/run.js";
 import {
   bearer,
+  chatFolder,
   foreignPort,
   freePort,
   get,
+  logFile,
   plant,
   projectsRoot,
   seedRecord,
@@ -24,6 +26,7 @@ import {
   target,
   taskFile,
   taskText,
+  TIMESTAMP,
   until,
 } from "../helpers.js";
 import type { TestServer } from "../helpers.js";
@@ -364,6 +367,31 @@ describe("stopping a daemon", () => {
       expect(JSON.parse(reply.body)).toMatchObject({ ok: true, data: { cursor, events: [] } });
     }
     await expect(call(agent, start.url, token, "/events")).rejects.toMatchObject({ code: "ECONNREFUSED" });
+  });
+
+  it("answers a held read of a chat log at a stop, well before the drain deadline", async () => {
+    const root = await projectsRoot("ONE");
+    await plant(taskFile(root, "ONE", "ONE-1"), taskText("ONE-1"));
+    const record = { step: "dev:build", agent: "claude", folder: "/srv/one", created: TIMESTAMP };
+    await plant(join(chatFolder(root, "ONE", "1", 1), "chat.json"), JSON.stringify(record));
+    await plant(logFile(root, "ONE", "1", 1), "");
+    const start = await daemonOn(root, { drainMs: 30_000 });
+    const token = await tokenOf(root);
+    const agent = new Agent({ keepAlive: true });
+    onTestFinished(() => agent.destroy());
+
+    const held = call(agent, start.url, token, "/projects/ONE/tasks/ONE-1/chats/1/events?after=0");
+    await held.sent;
+    // A round trip on another connection, so the daemon has read the one above.
+    expect(await daemonAnswers(portOf(start.url))).toBe(true);
+
+    const began = performance.now();
+    await start.stop();
+
+    expect(performance.now() - began).toBeLessThan(1000);
+    const reply = await held;
+    expect(reply.headers.connection).toBe("close");
+    expect(JSON.parse(reply.body)).toMatchObject({ ok: true, data: { cursor: 0, entries: [] } });
   });
 
   it("stops with a reply part way out, which it leaves to the drain deadline", async () => {

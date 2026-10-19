@@ -2,10 +2,10 @@
 // a listing keeps. Every route that reads a query reads it here — the task listing its
 // filter, the read of one task its options, the read of a task's text its
 // selection, the resolution of a project the directory it asks about, the read of
-// the feed its cursor, and every route over the store that takes no query the
-// assertion that none was sent — so one set of rules covers them all. The
-// liveness route stands outside them: the server answers it ahead of every table
-// and reads no request to answer it.
+// the feed and the read of a chat log their cursors, and every route over the
+// store that takes no query the assertion that none was sent — so one set of
+// rules covers them all. The liveness route stands outside them: the server
+// answers it ahead of every table and reads no request to answer it.
 //
 // A route declares the query keys it takes, and a key it does not declare is
 // refused rather than passed over: a mistyped `?stauts=To+Do` that silently
@@ -14,7 +14,14 @@
 // apply to a daemon and a client that ship from one repository at one version.
 
 import type { ListedEntry, TextSelection } from "@tasma/engine";
-import type { EventsQuery, ProjectQuery, TaskFilter, TaskReadOptions, TaskTextOptions } from "@tasma/protocol";
+import type {
+  ChatEventsQuery,
+  EventsQuery,
+  ProjectQuery,
+  TaskFilter,
+  TaskReadOptions,
+  TaskTextOptions,
+} from "@tasma/protocol";
 import { DaemonError } from "../http/failure.js";
 import { commentIdOf } from "./input.js";
 
@@ -41,6 +48,10 @@ const TEXT_KEYS = Object.keys({ collapsed: true, comment: true } satisfies Recor
 const RESOLVE_KEYS = Object.keys({ path: true } satisfies Record<keyof ProjectQuery, true>);
 
 const EVENTS_KEYS = Object.keys({ after: true } satisfies Record<keyof EventsQuery, true>);
+
+const CHAT_EVENTS_KEYS = Object.keys({ after: true } satisfies Record<keyof ChatEventsQuery, true>);
+
+const UNSIGNED_DECIMAL = /^\d+$/;
 
 /**
  * Refuses every key the route does not declare. The key is named, because the
@@ -151,6 +162,18 @@ export function readProjectQuery(query: URLSearchParams): string {
 export function readEventsQuery(query: URLSearchParams): EventsQuery {
   assertDeclared(query, EVENTS_KEYS);
   return { after: text(query, "after") };
+}
+
+/** The `seq` a read of a chat log starts after. No `after` and `?after=` read as 0, the whole log. */
+export function readChatEventsQuery(query: URLSearchParams): Required<ChatEventsQuery> {
+  assertDeclared(query, CHAT_EVENTS_KEYS);
+  const value = text(query, "after");
+  if (value === undefined) return { after: 0 };
+  const after = Number(value);
+  if (!UNSIGNED_DECIMAL.test(value) || !Number.isSafeInteger(after)) {
+    throw new DaemonError("malformed-request", 'the query key "after" takes a decimal integer from 0 to 2^53 - 1');
+  }
+  return { after };
 }
 
 /**

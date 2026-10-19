@@ -15,6 +15,7 @@ import { DAEMON_NAME, DEFAULT_DAEMON_HOST, printable } from "@tasma/protocol";
 import type { DaemonRecord } from "@tasma/protocol";
 import manifest from "../../../../package.json" with { type: "json" };
 import { createChatRegistry } from "../chats/registry.js";
+import { chatRoutes } from "../chats/routes.js";
 import { configRoutes } from "../config/routes.js";
 import { createFeed } from "../events/feed.js";
 import { eventRoutes } from "../events/routes.js";
@@ -189,6 +190,7 @@ export async function startDaemon(options: {
     [
       ...projectRoutes(host, writes, chats),
       ...taskRoutes(host, { writes, chats }),
+      ...chatRoutes(chats),
       ...workflowRoutes({ root, writes, publish }),
       ...configRoutes({ root, writes, publish }),
       ...eventRoutes(feed),
@@ -198,9 +200,10 @@ export async function startDaemon(options: {
   const connections = connectionsOf(server);
 
   async function closeServing(): Promise<void> {
-    // Before `feed.close()`, so the reply of each released held read closes its connection.
+    // Before the holds close, so the reply of each released held read closes its connection.
     connections.closeAfterEachReply();
     feed.close();
+    chats.close();
     await drain(server, drainMs);
     // The daemon never calls process.exit, so an index left open would hold its
     // watch handle and the process would never end.

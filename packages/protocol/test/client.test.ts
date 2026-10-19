@@ -173,6 +173,30 @@ const invocations: Invocation[] = [
     path: "/projects/SAGA/tasks/SAGA-3/comments/7",
   },
   {
+    name: "listChats",
+    send: (client) => client.listChats("SAGA", "SAGA-3"),
+    method: "GET",
+    path: "/projects/SAGA/tasks/SAGA-3/chats",
+  },
+  {
+    name: "readChat",
+    send: (client) => client.readChat("SAGA", "SAGA-3", 2),
+    method: "GET",
+    path: "/projects/SAGA/tasks/SAGA-3/chats/2",
+  },
+  {
+    name: "readChatEvents",
+    send: (client) => client.readChatEvents("SAGA", "SAGA-3", 2, 41),
+    method: "GET",
+    path: "/projects/SAGA/tasks/SAGA-3/chats/2/events?after=41",
+  },
+  {
+    name: "readChatEvents with no cursor",
+    send: (client) => client.readChatEvents("SAGA", "SAGA-3", 2),
+    method: "GET",
+    path: "/projects/SAGA/tasks/SAGA-3/chats/2/events",
+  },
+  {
     name: "listWorkflows",
     send: (client) => client.listWorkflows(),
     method: "GET",

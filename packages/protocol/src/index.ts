@@ -17,6 +17,7 @@ export type {
   ChatAgent,
   ChatEntry,
   ChatEvent,
+  ChatEventsReply,
   ChatFold,
   ChatOutside,
   ChatState,
@@ -43,6 +44,7 @@ export { printable } from "./printable.js";
 export type { Config, Project, ProjectChange, ProjectInput, ProjectRename, ProjectSummary } from "./project.js";
 export { buildPath, OPEN_ROUTES, routes, UNSAFE_IN_SEGMENT } from "./routes.js";
 export type {
+  ChatEventsQuery,
   EventsQuery,
   Method,
   PathQuery,

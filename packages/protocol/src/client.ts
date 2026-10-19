@@ -1,3 +1,4 @@
+import type { Chat, ChatEventsReply } from "./chat.js";
 import type { UserConfig, UserConfigChange } from "./config.js";
 import { ProtocolError, TransportError } from "./errors.js";
 import type { Envelope, Failure, Success } from "./errors.js";
@@ -5,6 +6,7 @@ import type { EventsReply } from "./events.js";
 import type { Health } from "./health.js";
 import type { Project, ProjectChange, ProjectInput, ProjectRename, ProjectSummary } from "./project.js";
 import type {
+  ChatEventsQuery,
   EventsQuery,
   Method,
   PathQuery,
@@ -77,6 +79,13 @@ export type Client = {
   addComment(tag: string, id: string, input: CommentInput): Promise<Success<WriteResult>>;
   updateComment(tag: string, id: string, commentId: number, change: CommentInput): Promise<Success<WriteResult>>;
   deleteComment(tag: string, id: string, commentId: number): Promise<Success<WriteResult>>;
+  listChats(tag: string, id: string): Promise<Success<Chat[]>>;
+  readChat(tag: string, id: string, chat: number): Promise<Success<Chat>>;
+  /**
+   * With `after` at the last `seq` of the log the daemon holds the call until
+   * the next entry, so a transport timeout must be longer than the hold.
+   */
+  readChatEvents(tag: string, id: string, chat: number, after?: number): Promise<Success<ChatEventsReply>>;
   listWorkflows(): Promise<Success<string[]>>;
   createWorkflow(input: WorkflowInput): Promise<Success<Workflow>>;
   readWorkflow(name: string): Promise<Success<Workflow>>;
@@ -189,6 +198,14 @@ export function createClient(transport: Transport): Client {
       call<WriteResult>(routes.updateComment, { project: tag, id, commentId }, { body: change }),
     deleteComment: (tag, id, commentId) =>
       call<WriteResult>(routes.deleteComment, { project: tag, id, commentId }),
+    listChats: (tag, id) => call<Chat[]>(routes.listChats, { project: tag, id }),
+    readChat: (tag, id, chat) => call<Chat>(routes.readChat, { project: tag, id, chat }),
+    readChatEvents: (tag, id, chat, after) =>
+      call<ChatEventsReply>(
+        routes.readChatEvents,
+        { project: tag, id, chat },
+        { query: { after } satisfies ChatEventsQuery },
+      ),
     listWorkflows: () => call<string[]>(routes.listWorkflows, {}),
     createWorkflow: (input) => call<Workflow>(routes.createWorkflow, {}, { body: input }),
     readWorkflow: (name) => call<Workflow>(routes.readWorkflow, { workflow: name }),

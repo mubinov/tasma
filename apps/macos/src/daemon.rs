@@ -17,10 +17,10 @@ use crate::record::{Address, DEFAULT_PORT, daemon_url, read_address, record_path
 use crate::supervisor::Supervisor;
 
 /// How long a forward waits, counted from the start of the request. The daemon
-/// answers at once, except a read of its change feed, which it holds for up to
-/// `HOLD_MS`; `test/macos.test.ts` keeps this at least 5 s above that hold. A
-/// listener that accepts and never answers would otherwise hold the call for as
-/// long as the window is open.
+/// answers at once, except a read of its change feed or of a chat log, which it
+/// holds for up to `HOLD_MS`; `test/macos.test.ts` keeps this at least 5 s above
+/// that hold. A listener that accepts and never answers would otherwise hold the
+/// call for as long as the window is open.
 const TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How much of a reply is read. The daemon reads at most 8 MiB of request but

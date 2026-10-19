@@ -151,6 +151,14 @@ export function taskFile(root: string, tag: string, id: string): string {
   return join(tasksDir(root, tag), `${id}.md`);
 }
 
+export function chatFolder(root: string, tag: string, digits: string, chat: number): string {
+  return join(projectDir(root, tag), "chats", digits, String(chat));
+}
+
+export function logFile(root: string, tag: string, digits: string, chat: number): string {
+  return join(chatFolder(root, tag, digits, chat), "events.jsonl");
+}
+
 /** Writes a file, creating the directories above it. */
 export async function plant(path: string, text: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
@@ -285,6 +293,13 @@ export async function until(holds: () => boolean, what: string, change?: () => P
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
+}
+
+/** Whether a promise is still pending after a short wait. */
+export async function stillPending(promise: Promise<unknown>): Promise<boolean> {
+  const marker = Symbol("pending");
+  const winner = await Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(marker), 50))]);
+  return winner === marker;
 }
 
 /**

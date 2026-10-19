@@ -12,7 +12,19 @@ import type { ProjectHost } from "../../src/projects/host.js";
 import { projectRoutes } from "../../src/projects/routes.js";
 import { taskRoutes } from "../../src/tasks/routes.js";
 import { taskKey, WriteQueue } from "../../src/tasks/serialize.js";
-import { plant, projectDir, projectsRoot, send, startTestServer, taskFile, taskText, TIMESTAMP, until } from "../helpers.js";
+import {
+  chatFolder,
+  logFile,
+  plant,
+  projectsRoot,
+  send,
+  startTestServer,
+  stillPending,
+  taskFile,
+  taskText,
+  TIMESTAMP,
+  until,
+} from "../helpers.js";
 import type { TestServer } from "../helpers.js";
 
 /**
@@ -92,14 +104,6 @@ async function world(root: string, wrap: (host: ProjectHost) => ProjectHost = (h
   const chats = createChatRegistry({ root, host, writes, publish: (event) => events.push(event) });
   const server = await startTestServer([...projectRoutes(host, writes, chats), ...taskRoutes(host, { writes, chats })]);
   return { chats, writes, events, server };
-}
-
-function chatFolder(root: string, tag: string, digits: string, chat: number): string {
-  return join(projectDir(root, tag), "chats", digits, String(chat));
-}
-
-function logFile(root: string, tag: string, digits: string, chat: number): string {
-  return join(chatFolder(root, tag, digits, chat), "events.jsonl");
 }
 
 /** Makes the next append fail as the disk fails, before its line is written. */
@@ -704,5 +708,55 @@ describe("a delete under a live chat", () => {
     await plant(taskFile(root, "ALPHA", "ALPHA-1"), taskText("ALPHA-1"));
     await createChat({ project: "ALPHA", root }, "ALPHA-1", { ...INPUT, step: "dev:again" });
     await expect(chats.get("ALPHA", "ALPHA-1", 1)).resolves.toMatchObject({ chat: { step: "dev:again", seq: 0 } });
+  });
+});
+
+describe("waiting for the next entry of a chat", () => {
+  it("ends a wait at an append, and holds a wait that starts after it", async () => {
+    const { chats } = await world(await tree());
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    // The append of the create releases in the next turn of the event loop.
+    await new Promise((resolve) => setImmediate(resolve));
+    const waited = live.wait();
+
+    expect(await stillPending(waited)).toBe(true);
+    await live.append(UPDATE);
+
+    expect(await stillPending(waited)).toBe(false);
+    expect(await stillPending(live.wait())).toBe(true);
+  });
+
+  it("ends a wait when a new open of the log finds the line of a failed append", async () => {
+    const root = await tree();
+    const { chats } = await world(root);
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    const log = logFile(root, "ALPHA", "1", 1);
+    await chmod(log, 0o400);
+    await expect(live.append(UPDATE)).rejects.toMatchObject({ code: "EACCES" });
+    await chmod(log, 0o600);
+    await appendFile(log, `${JSON.stringify({ seq: 2, at: TIMESTAMP, event: UPDATE })}\n`);
+    const waited = live.wait();
+    expect(await stillPending(waited)).toBe(true);
+
+    failNextAppend();
+    await expect(live.append(TURN_END)).rejects.toThrow("the disk is gone");
+
+    expect(await stillPending(waited)).toBe(false);
+    expect(live.chat.seq).toBe(2);
+  });
+
+  it("ends every wait at a close, and makes a wait resolve at once for a chat loaded after it", async () => {
+    const root = await tree();
+    const { chats } = await world(root);
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await createChat({ project: "ALPHA", root }, "ALPHA-2", INPUT);
+    const waited = live.wait();
+
+    chats.close();
+
+    expect(await stillPending(waited)).toBe(false);
+    expect(await stillPending(live.wait())).toBe(false);
+    const later = await chats.get("ALPHA", "ALPHA-2", 1);
+    expect(await stillPending(later.wait())).toBe(false);
   });
 });

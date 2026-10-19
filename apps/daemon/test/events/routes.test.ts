@@ -16,6 +16,7 @@ import {
   projectsRoot,
   send,
   startTestServer,
+  stillPending,
   success,
   target,
   taskFile,
@@ -63,13 +64,6 @@ function eventsOf(reply: EventsReply): FeedEvent[] {
   return reply.events;
 }
 
-/** Whether a read still holds after a short wait. */
-async function holds(reply: Promise<unknown>): Promise<boolean> {
-  const marker = Symbol("holds");
-  const winner = await Promise.race([reply, new Promise((resolve) => setTimeout(() => resolve(marker), 50))]);
-  return winner === marker;
-}
-
 function taskEvent(id: string, change: "created" | "changed" | "deleted"): FeedEvent {
   return { kind: "task", tag: "ALPHA", id, change };
 }
@@ -88,7 +82,7 @@ describe("GET /events", () => {
     const { cursor } = await read(server);
     const held = read(server, cursor);
 
-    expect(await holds(held)).toBe(true);
+    expect(await stillPending(held)).toBe(true);
     await write(server, "PATCH", "/projects/ALPHA/tasks/ALPHA-1", { title: "Renamed" });
 
     expect(eventsOf(await held)).toEqual([taskEvent("ALPHA-1", "changed")]);
