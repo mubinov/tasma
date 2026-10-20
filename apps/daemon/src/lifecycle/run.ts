@@ -2,9 +2,9 @@
 // one, and the wiring that turns a signal into an exit code.
 //
 // The two are split because the sequence and the process are separable: the
-// sequence takes its port and its tree as arguments, installs no handler and
-// writes to no stream, and the wiring around it owns the arguments, the streams
-// and the exit code.
+// sequence takes its port, its tree, its environment and its error stream as
+// arguments and installs no handler, and the wiring around it owns the
+// arguments, the streams and the exit code.
 
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
@@ -14,8 +14,11 @@ import { parseArgs } from "node:util";
 import { DAEMON_NAME, DEFAULT_DAEMON_HOST, printable } from "@tasma/protocol";
 import type { DaemonRecord } from "@tasma/protocol";
 import manifest from "../../../../package.json" with { type: "json" };
+import type { AgentEnv } from "../agents/adapter.js";
+import { claudeAdapter } from "../agents/claude.js";
 import { createChatRegistry } from "../chats/registry.js";
 import { chatRoutes } from "../chats/routes.js";
+import { createChatRunner } from "../chats/runner.js";
 import { configRoutes } from "../config/routes.js";
 import { createFeed } from "../events/feed.js";
 import { eventRoutes } from "../events/routes.js";
@@ -165,8 +168,12 @@ export async function startDaemon(options: {
   root?: string;
   /** How long the shutdown waits for requests already running, in milliseconds. */
   drainMs?: number;
+  /** The environment of the daemon, which the agent of each chat inherits. */
+  env?: AgentEnv;
+  /** Where a fault of a chat log is reported. */
+  stderr?: Sink;
 }): Promise<Start> {
-  const { port, root } = options;
+  const { port, root, env = {}, stderr } = options;
   const drainMs = options.drainMs ?? DRAIN_MS;
   const pid = process.pid;
 
@@ -186,6 +193,7 @@ export async function startDaemon(options: {
   const host = createProjectHost({ root, publish });
   const writes = new WriteQueue();
   const chats = createChatRegistry({ root, host, writes, publish });
+  const runner = createChatRunner({ root, chats, adapters: [claudeAdapter], env, stderr });
   const server = createDaemonServer(
     [
       ...projectRoutes(host, writes, chats),
@@ -205,8 +213,10 @@ export async function startDaemon(options: {
     feed.close();
     chats.close();
     await drain(server, drainMs);
-    // The daemon never calls process.exit, so an index left open would hold its
-    // watch handle and the process would never end.
+    // The daemon never calls process.exit, so an agent process or an index left
+    // open would hold its pipes or its watch handle and the process would never
+    // end.
+    await runner.close();
     await host.close();
   }
 
@@ -341,7 +351,7 @@ export async function runDaemon(
     return 1;
   }
 
-  const start = await startDaemon({ port, root });
+  const start = await startDaemon({ port, root, env, stderr: io.stderr });
 
   if (!start.started) {
     io.stderr.write(line(start.message));

@@ -5,6 +5,10 @@ packages:
 # Single source of truth for shared dependency versions; packages reference
 # them with "catalog:".
 catalog:
+  # Exact, and they move together: the adapter pins the ACP SDK and zod to
+  # these exact versions, so the daemon shares one copy of each with it.
+  "@agentclientprotocol/claude-agent-acp": 0.89.1
+  "@agentclientprotocol/sdk": 1.8.0
   "@assistant-ui/react": 0.15.26
   "@assistant-ui/react-markdown": 0.14.20
   "@base-ui/react": ^1.7.0
@@ -61,6 +65,8 @@ catalog:
   # The floor is the version the format module is tested against; an older
   # release inside the range is not.
   yaml: ^2.9.0
+  # Exact: see @agentclientprotocol/claude-agent-acp.
+  zod: 4.6.5
   zustand: ^5.0.0
 
 # Links an internal package from the workspace when the local version satisfies
@@ -78,3 +84,16 @@ minimumReleaseAge: 10080
 # cover the prebuilt .node binaries vite and vitest load at build time, which
 # reach the process without an install script.
 allowBuilds: {}
+
+# The platform binaries of the Agent SDK, a dependency of claude-agent-acp. The
+# daemon runs the user's own `claude` through CLAUDE_CODE_EXECUTABLE, so the
+# bundled copy (over 200 MB per platform) is never installed.
+ignoredOptionalDependencies:
+  - "@anthropic-ai/claude-agent-sdk-darwin-arm64"
+  - "@anthropic-ai/claude-agent-sdk-darwin-x64"
+  - "@anthropic-ai/claude-agent-sdk-linux-arm64"
+  - "@anthropic-ai/claude-agent-sdk-linux-arm64-musl"
+  - "@anthropic-ai/claude-agent-sdk-linux-x64"
+  - "@anthropic-ai/claude-agent-sdk-linux-x64-musl"
+  - "@anthropic-ai/claude-agent-sdk-win32-arm64"
+  - "@anthropic-ai/claude-agent-sdk-win32-x64"
