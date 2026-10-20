@@ -361,6 +361,26 @@ describe("the client", () => {
     expect(calls[0]).not.toHaveProperty("signal");
   });
 
+  it("puts the signal of a chat log read on the request", async () => {
+    const { calls, transport } = recorder(ok({ cursor: 5, entries: [] }));
+    const { signal } = new AbortController();
+
+    await createClient(transport).readChatEvents("SAGA", "SAGA-3", 2, 5, { signal });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.signal).toBe(signal);
+    expect(calls[0]?.path).toBe("/projects/SAGA/tasks/SAGA-3/chats/2/events?after=5");
+  });
+
+  it("sends no signal key on a chat log read with no options", async () => {
+    const { calls, transport } = recorder(ok({ cursor: 5, entries: [] }));
+
+    await createClient(transport).readChatEvents("SAGA", "SAGA-3", 2, 5);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toHaveProperty("signal");
+  });
+
   const hostile = { toString: 1 };
 
   const unusable: [string, unknown][] = [

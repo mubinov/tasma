@@ -85,7 +85,13 @@ export type Client = {
    * With `after` at the last `seq` of the log the daemon holds the call until
    * the next entry, so a transport timeout must be longer than the hold.
    */
-  readChatEvents(tag: string, id: string, chat: number, after?: number): Promise<Success<ChatEventsReply>>;
+  readChatEvents(
+    tag: string,
+    id: string,
+    chat: number,
+    after?: number,
+    options?: CallOptions,
+  ): Promise<Success<ChatEventsReply>>;
   listWorkflows(): Promise<Success<string[]>>;
   createWorkflow(input: WorkflowInput): Promise<Success<Workflow>>;
   readWorkflow(name: string): Promise<Success<Workflow>>;
@@ -200,11 +206,11 @@ export function createClient(transport: Transport): Client {
       call<WriteResult>(routes.deleteComment, { project: tag, id, commentId }),
     listChats: (tag, id) => call<Chat[]>(routes.listChats, { project: tag, id }),
     readChat: (tag, id, chat) => call<Chat>(routes.readChat, { project: tag, id, chat }),
-    readChatEvents: (tag, id, chat, after) =>
+    readChatEvents: (tag, id, chat, after, options) =>
       call<ChatEventsReply>(
         routes.readChatEvents,
         { project: tag, id, chat },
-        { query: { after } satisfies ChatEventsQuery },
+        { query: { after } satisfies ChatEventsQuery, signal: options?.signal },
       ),
     listWorkflows: () => call<string[]>(routes.listWorkflows, {}),
     createWorkflow: (input) => call<Workflow>(routes.createWorkflow, {}, { body: input }),

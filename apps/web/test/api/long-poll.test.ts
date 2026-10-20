@@ -204,3 +204,133 @@ describe("startLongPoll", () => {
     expect(onAbort).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("startLongPoll onStatus", () => {
+  it("reports 0 after a reply with events, an empty reply and a reset", async () => {
+    const { reads, read } = heldReads();
+    const onStatus = vi.fn();
+    startLongPoll({ after: "c1", read, onEvents: () => {}, onReset: () => {}, onStatus });
+
+    last(reads).answer({ cursor: "c2", events: ["one"] });
+    await settle();
+    last(reads).answer({ cursor: "c2", events: [] });
+    await settle();
+    last(reads).answer({ reset: true, cursor: "c0" });
+    await settle();
+
+    expect(onStatus.mock.calls).toEqual([[0], [0], [0]]);
+  });
+
+  it("counts the failed reads in a row, and reports 0 after the next success", async () => {
+    const { reads, read } = heldReads();
+    const onStatus = vi.fn();
+    startLongPoll({ after: "c1", read, onEvents: () => {}, onReset: () => {}, onStatus });
+
+    last(reads).fail(new Error("connection refused"));
+    await vi.advanceTimersByTimeAsync(1_000);
+    last(reads).fail(new Error("connection refused"));
+    await vi.advanceTimersByTimeAsync(2_000);
+    last(reads).fail(new Error("connection refused"));
+    await vi.advanceTimersByTimeAsync(4_000);
+    last(reads).answer({ cursor: "c2", events: [] });
+    await settle();
+    last(reads).fail(new Error("connection refused"));
+    await settle();
+
+    expect(onStatus.mock.calls).toEqual([[1], [2], [3], [0], [1]]);
+  });
+
+  it("reports the failure before the wait starts", async () => {
+    const { reads, read } = heldReads();
+    const onStatus = vi.fn();
+    startLongPoll({ after: "c1", read, onEvents: () => {}, onReset: () => {}, onStatus });
+
+    last(reads).fail(new Error("connection refused"));
+    await settle();
+
+    expect(onStatus.mock.calls).toEqual([[1]]);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it("counts a handler that throws as a failed read", async () => {
+    const { reads, read } = heldReads();
+    const onStatus = vi.fn();
+    startLongPoll({
+      after: "c1",
+      read,
+      onEvents: () => {
+        throw new Error("a mapper failed");
+      },
+      onReset: () => {},
+      onStatus,
+    });
+
+    last(reads).answer({ cursor: "c2", events: ["one"] });
+    await settle();
+
+    expect(onStatus.mock.calls).toEqual([[1]]);
+  });
+
+  it("goes on reading when onStatus throws, after a success and after a failure", async () => {
+    const { reads, read } = heldReads();
+    const onEvents = vi.fn();
+    startLongPoll({
+      after: "c1",
+      read,
+      onEvents,
+      onReset: () => {},
+      onStatus: () => {
+        throw new Error("a status handler failed");
+      },
+    });
+
+    last(reads).answer({ cursor: "c2", events: ["one"] });
+    await settle();
+    expect(reads).toHaveLength(2);
+    expect(last(reads).after).toBe("c2");
+
+    last(reads).fail(new Error("connection refused"));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(reads).toHaveLength(3);
+
+    last(reads).answer({ cursor: "c3", events: ["two"] });
+    await settle();
+    expect(onEvents.mock.calls).toEqual([[["one"]], [["two"]]]);
+    expect(reads).toHaveLength(4);
+  });
+
+  it("reports nothing after stop, whether the held read answers or fails", async () => {
+    const { reads, read } = heldReads();
+    const onStatus = vi.fn();
+    const answered = startLongPoll({ after: "c1", read, onEvents: () => {}, onReset: () => {}, onStatus });
+    answered.stop();
+    last(reads).answer({ cursor: "c2", events: ["one"] });
+
+    const failed = startLongPoll({ after: "c1", read, onEvents: () => {}, onReset: () => {}, onStatus });
+    failed.stop();
+    last(reads).fail(new Error("connection refused"));
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(onStatus).not.toHaveBeenCalled();
+  });
+
+  it("reports nothing when a handler stops the loop", async () => {
+    const { reads, read } = heldReads();
+    const onStatus = vi.fn();
+    const poll = startLongPoll({
+      after: "c1",
+      read,
+      onEvents: () => {
+        poll.stop();
+      },
+      onReset: () => {},
+      onStatus,
+    });
+
+    last(reads).answer({ cursor: "c2", events: ["one"] });
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(onStatus).not.toHaveBeenCalled();
+    expect(reads).toHaveLength(1);
+  });
+});

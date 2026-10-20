@@ -104,6 +104,7 @@ Rules in this chapter are for the `apps/web` application alone.
 - Share state through `src/store/`, never through React Context.
 - Selectors return primitives, or use `useShallow`.
 - Server data belongs in the query cache, never in the store.
+- A chat log is the exception: it lives in the component that shows it, through `useChatLog`.
 - A route's data: `query({ ...options, staleTime: "static" })` in the loader, `useSuspenseQuery` on the same `queryOptions`. Both clients arrive through router context.
 - A write goes through a factory in `src/api/mutations/`, one module per write domain, reaching the outside through `index.ts`. `notices.ts` holds the machinery a second write domain reuses unchanged, and nothing that names a screen; the notice text of each screen lives in `lib/write-failure.ts`.
 - The board shows a write from the pending mutation variables; never edit the query cache by hand.
@@ -120,4 +121,5 @@ Rules in this chapter are for the `apps/web` application alone.
 - `src/kit/` holds files that `pnpm kit:update` copies from assistant-ui. Change them only with that script, or inside a block between `tasma-edit: <reason>` and `tasma-edit end` comments.
 - The rules of this chapter apply to Tasma files, not to `src/kit/`.
 - Never fix a problem inside `src/kit/` in place unless the task asks for a marked edit; report it. To review a change to `src/kit/`, run `pnpm kit:check`, and read the diff of `src/kit/components/ui/` and `src/kit/lib/utils.ts`: the check cannot verify them.
+- Accessibility gaps inside `src/kit/` are not Tasma defects. Do not report them in a review, and do not plan a fix for them.
 - The kit's colour names (`background`, `primary`, `muted`, `accent`, hue shades like `red-600`) are for `src/kit/` only. Tasma files use Tasma roles.
