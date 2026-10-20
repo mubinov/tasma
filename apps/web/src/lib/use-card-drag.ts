@@ -10,7 +10,7 @@ import {
   type RefObject,
   type SetStateAction,
 } from "react";
-import { cardPlace, type ColumnData } from "./board";
+import { cardPlace, takesCard, type ColumnData } from "./board";
 import {
   CARD_GAP,
   DRAG_ATTRIBUTE,
@@ -157,7 +157,11 @@ function runFrame(
   }
 
   const found = dropPlace(at, readGeometry(lift.indexes));
-  const place = samePlace(found, lift.origin) ? null : found;
+  // The page renders the drag's snapshot, so a column's place is its index
+  // there. No `!`: a throw stops the frames, and the card stops following.
+  const target = found === null ? undefined : lift.board.columns[found.column];
+  const taken = target !== undefined && takesCard(target, current.taskId) ? found : null;
+  const place = samePlace(taken, lift.origin) ? null : taken;
   if (!samePlace(place, lift.place)) {
     lift.place = place;
     setDrag({ taskId: current.taskId, place, box: lift.box });

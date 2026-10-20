@@ -1,10 +1,10 @@
 import type { Frontmatter, TaskEntry, Workflow } from "@tasma/protocol";
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BoardColumn } from "../../src/components/board-column";
-import type { ColumnData } from "../../src/lib/board";
+import type { CardConfig, ColumnData } from "../../src/lib/board";
 import { useUiStore } from "../../src/store/ui";
 import { renderBesideTaskRoute } from "../helpers";
 
@@ -41,7 +41,13 @@ const WORKFLOW: Workflow = {
 type ColumnProps = Omit<ComponentProps<typeof BoardColumn>, "column">;
 
 async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnProps> = {}) {
-  const data: ColumnData = { status: "In Progress", byTag: { SAGA: "In Progress" }, final: false, matching: [], total: 0, ...column };
+  const status = column.status ?? "In Progress";
+  const data: ColumnData = { status, byTag: { SAGA: status }, final: false, matching: [], total: 0, ...column };
+  const config: CardConfig = {
+    statuses: ["To Do", "In Progress", "Done"],
+    final_statuses: data.final ? [status] : [],
+    priorities: ["high", "low"],
+  };
 
   return renderBesideTaskRoute(
     <BoardColumn
@@ -49,9 +55,8 @@ async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnPr
       place={0}
       column={data}
       filtered={false}
-      priorities={["high", "low"]}
       workflows={new Map([["dev", WORKFLOW]])}
-      statuses={["To Do", "In Progress", "Done"]}
+      configs={new Map([["SAGA", config]])}
       pendingIds={new Set()}
       movedIds={new Set()}
       onMove={() => {}}
@@ -92,7 +97,7 @@ function cardTitles(): string[] {
 
 /* jsdom has no layout; a card measures as tall as the column estimates it. */
 beforeEach(() => {
-  useUiStore.setState({ revealedColumns: new Set() });
+  useUiStore.setState({ revealedColumns: new Set(), editRequest: null });
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(96);
   vi.stubGlobal("scrollTo", () => {});
 });
@@ -150,6 +155,100 @@ it("shows the stale step for a workflow the column has no read of", async () => 
   await renderColumn({ matching: [entry(1, { workflow: "gone", step: "implement" })], total: 1 });
 
   expect(screen.getByText("implement").className).toContain("text-dim");
+});
+
+describe("cards of two projects in one column", () => {
+  const ALPHA: CardConfig = {
+    statuses: ["Backlog", "To Do", "In Progress", "Done"],
+    final_statuses: ["Done"],
+    priorities: ["high", "medium", "low"],
+  };
+
+  const BETA: CardConfig = { statuses: ["TO DO", "Review", "Done"], final_statuses: [], priorities: ["urgent", "normal"] };
+
+  const CONFIGS = new Map([["ALPHA", ALPHA], ["BETA", BETA]]);
+
+  function task(id: string, fields: Partial<Frontmatter> = {}): TaskEntry {
+    return { ...entry(0, { ...fields, id, title: `Task ${id}` }), id, path: `/tasks/${id}.md` };
+  }
+
+  async function renderToDo(matching: TaskEntry[]) {
+    return renderColumn(
+      { status: "To Do", byTag: { ALPHA: "To Do", BETA: "TO DO" }, matching, total: matching.length },
+      { configs: CONFIGS },
+    );
+  }
+
+  function cardOf(id: string): HTMLElement {
+    return document.querySelector<HTMLElement>(`[data-task-id="${id}"]`)!;
+  }
+
+  /** The statuses under "Move to" in the card's menu. */
+  async function statusItems(title: string): Promise<string[]> {
+    const user = userEvent.setup();
+    await user.click(menuButton(title));
+    const names = within(await screen.findByRole("menu")).getAllByRole("menuitemradio").map((item) => item.textContent);
+    await user.keyboard("{Escape}");
+
+    return names;
+  }
+
+  it("offers under Move to the statuses of each card's own project, in its order", async () => {
+    await renderToDo([task("ALPHA-1"), task("BETA-2")]);
+
+    expect(await statusItems("Task ALPHA-1")).toEqual(["Backlog", "To Do", "In Progress", "Done"]);
+    expect(await statusItems("Task BETA-2")).toEqual(["TO DO", "Review", "Done"]);
+  });
+
+  it("links each title to the task in its own project", async () => {
+    await renderToDo([task("ALPHA-1"), task("BETA-2")]);
+
+    expect(screen.getByRole("link", { name: "Task ALPHA-1" }).getAttribute("href")).toBe("/tasks/ALPHA/ALPHA-1");
+    expect(screen.getByRole("link", { name: "Task BETA-2" }).getAttribute("href")).toBe("/tasks/BETA/BETA-2");
+  });
+
+  it("opens the task from Edit in its own project, with an edit request that names that project", async () => {
+    const user = userEvent.setup();
+    const { router } = await renderToDo([task("ALPHA-1"), task("BETA-2")]);
+
+    await user.click(menuButton("Task BETA-2"));
+    const menu = await screen.findByRole("menu");
+    await act(async () => {
+      await user.click(within(menu).getByRole("menuitem", { name: "Edit" }));
+    });
+
+    expect(router.state.location.pathname).toBe("/tasks/BETA/BETA-2");
+    expect(useUiStore.getState().editRequest).toEqual({ tag: "BETA", id: "BETA-2" });
+  });
+
+  it("marks the priority of a card as top by the first priority of its own project", async () => {
+    await renderToDo([
+      task("ALPHA-1", { priority: "high" }),
+      task("BETA-2", { priority: "urgent" }),
+      task("BETA-3", { priority: "high" }),
+    ]);
+
+    expect(within(cardOf("ALPHA-1")).getByText("high").className).toContain("font-medium");
+    expect(within(cardOf("BETA-2")).getByText("urgent").className).toContain("font-medium");
+    expect(within(cardOf("BETA-3")).getByText("high").className).not.toContain("font-medium");
+  });
+
+  it("hides the step of a card whose own project marks the column's status final", async () => {
+    const step = { workflow: "dev", step: "implement" };
+    await renderColumn(
+      {
+        status: "Done",
+        byTag: { ALPHA: "Done", BETA: "Done" },
+        final: false,
+        matching: [task("ALPHA-1", step), task("BETA-2", step)],
+        total: 2,
+      },
+      { configs: CONFIGS },
+    );
+
+    expect(within(cardOf("ALPHA-1")).queryByText("implement")).toBeNull();
+    expect(within(cardOf("BETA-2")).getByText("implement")).toBeTruthy();
+  });
 });
 
 it("shows the first 20 cards of a final column until Show all is used", async () => {

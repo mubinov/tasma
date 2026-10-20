@@ -5,7 +5,10 @@ import {
   boardWarnings,
   type BoardProject,
   type CardClick,
+  type CardConfig,
   buildColumns,
+  cardConfig,
+  cardMarks,
   cardPlace,
   createdTarget,
   distinctLabels,
@@ -19,6 +22,7 @@ import {
   statusColumn,
   stepView,
   tagOf,
+  takesCard,
   workflowNames,
 } from "../../src/lib/board";
 
@@ -33,6 +37,12 @@ function project(tag: string, statuses: string[], finalStatuses: string[] = []):
 const ALPHA = project("ALPHA", ["Backlog", "To Do", "In Progress", "Done"], ["Done"]);
 
 const BETA = project("BETA", ["TO DO", "Review", "Done"], ["Done"]);
+
+const ALPHA_CONFIG: CardConfig = { ...ALPHA.config, priorities: ["high", "medium", "low"] };
+
+function betaConfig(finalStatuses: string[]): CardConfig {
+  return { statuses: BETA.config.statuses, final_statuses: finalStatuses, priorities: ["urgent", "normal"] };
+}
 
 function entry(id: string, fields: Partial<Frontmatter> = {}, blocked = false): TaskEntry {
   return {
@@ -457,6 +467,72 @@ describe("stepView", () => {
   });
 });
 
+describe("cardConfig", () => {
+  const CONFIGS = new Map([["ALPHA", ALPHA_CONFIG], ["BETA", betaConfig([])]]);
+
+  it("gives the config of the card's own project", () => {
+    expect(cardConfig(CONFIGS, "ALPHA-1")).toBe(ALPHA_CONFIG);
+  });
+
+  it("gives an empty config for a card whose project the configs do not hold", () => {
+    expect(cardConfig(CONFIGS, "GAMMA-3")).toEqual({ statuses: [], final_statuses: [], priorities: [] });
+  });
+});
+
+describe("takesCard", () => {
+  const COLUMNS = buildColumns([ALPHA, BETA], [], []);
+
+  it("takes a card into a column of its project's status, and not into a column that only another project has", () => {
+    expect(COLUMNS[1]?.byTag).toEqual({ ALPHA: "To Do", BETA: "TO DO" });
+    expect(takesCard(COLUMNS[1]!, "ALPHA-1")).toBe(true);
+    expect(COLUMNS[3]?.byTag).toEqual({ BETA: "Review" });
+    expect(takesCard(COLUMNS[3]!, "ALPHA-1")).toBe(false);
+  });
+});
+
+describe("cardMarks", () => {
+  const STEP = { workflow: "dev", step: "research" };
+
+  it("hides the step of a card whose own project marks the column's status final", () => {
+    const done = buildColumns([ALPHA, project("BETA", BETA.config.statuses, [])], [], [])[4]!;
+
+    expect(done.final).toBe(false);
+    expect(cardMarks(entry("ALPHA-1", STEP), done, ALPHA_CONFIG, WORKFLOW).view).toEqual({ kind: "none" });
+    expect(cardMarks(entry("BETA-2", STEP), done, betaConfig([]), WORKFLOW).view).toMatchObject({ kind: "step", name: "research" });
+  });
+
+  it("shows the step of a card in a column that its own project does not have", () => {
+    const review = buildColumns([ALPHA, BETA], [], [])[3]!;
+    const config = { ...ALPHA_CONFIG, final_statuses: ["Review"] };
+
+    expect(cardMarks(entry("ALPHA-1", STEP), review, config, WORKFLOW).view).toMatchObject({ kind: "step" });
+  });
+
+  it.each([
+    { id: "BETA-1", priority: "urgent", top: true },
+    { id: "BETA-2", priority: "high", top: false },
+    { id: "ALPHA-1", priority: "high", top: true },
+  ])("says $top for $id at $priority, by the first priority of its own project", ({ id, priority, top }) => {
+    const toDo = buildColumns([ALPHA, BETA], [], [])[1]!;
+    const configs = new Map([["ALPHA", ALPHA_CONFIG], ["BETA", betaConfig(["Done"])]]);
+
+    expect(cardMarks(entry(id, { priority }), toDo, cardConfig(configs, id), WORKFLOW).top).toBe(top);
+  });
+
+  it.each([
+    { case: "a board of one project", statuses: ["Backlog", "To Do", "Done"] },
+    { case: "a hand-edited config that holds the final status twice", statuses: ["To Do", "Done", "Done"] },
+  ])("gives the view of the column's final flag on $case", ({ statuses }) => {
+    const config: CardConfig = { statuses, final_statuses: ["Done"], priorities: [] };
+    const task = entry("T-1", STEP);
+    const columns = buildColumns([{ tag: "T", config }], [], []);
+
+    expect(columns.map((column) => column.status)).toEqual(statuses);
+    expect(columns.map((column) => cardMarks(task, column, config, WORKFLOW).view))
+      .toEqual(columns.map((column) => stepView(task.frontmatter, column.final, WORKFLOW)));
+  });
+});
+
 describe("opensTask", () => {
   function card(): { card: HTMLElement; text: HTMLElement; link: HTMLElement } {
     document.body.innerHTML = "<div><span>SAGA-1</span><a href=\"#\"><b>Title</b></a></div>";
@@ -644,10 +720,10 @@ describe("cardPlace", () => {
     [],
   );
 
-  it("names the card's column, its place in it, and whether the column is final", () => {
-    expect(cardPlace(COLUMNS, "T-3")).toMatchObject({ column: 2, index: 1, final: true });
+  it("names the card's column and its place in it", () => {
+    expect(cardPlace(COLUMNS, "T-3")).toMatchObject({ column: 2, index: 1 });
     expect(cardPlace(COLUMNS, "T-3")?.entry.id).toBe("T-3");
-    expect(cardPlace(COLUMNS, "T-1")).toMatchObject({ column: 0, index: 0, final: false });
+    expect(cardPlace(COLUMNS, "T-1")).toMatchObject({ column: 0, index: 0 });
   });
 
   it("is none for a card no column holds", () => {

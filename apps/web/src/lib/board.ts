@@ -6,6 +6,8 @@ export type BoardProject = {
   config: Pick<Config, "statuses" | "final_statuses">;
 };
 
+export type CardConfig = Pick<Config, "statuses" | "final_statuses" | "priorities">;
+
 export type ColumnData = {
   /** The spelling of the first project that has the status. */
   status: string;
@@ -333,6 +335,37 @@ export function isTopPriority(priority: string | undefined, priorities: readonly
   return top !== undefined && priority?.toLowerCase() === top.toLowerCase();
 }
 
+const NO_CONFIG: CardConfig = { statuses: [], final_statuses: [], priorities: [] };
+
+/**
+ * The config of the card's own project, else an empty one: during a drag the
+ * columns are the board the drag started on, which can hold cards of a project
+ * the board has lost since.
+ */
+export function cardConfig(configs: ReadonlyMap<string, CardConfig>, id: string): CardConfig {
+  return configs.get(tagOf(id)) ?? NO_CONFIG;
+}
+
+export function takesCard(column: Pick<ColumnData, "byTag">, id: string): boolean {
+  return column.byTag[tagOf(id)] !== undefined;
+}
+
+/** The step is hidden where the card's own project marks the column's status final, whatever `column.final` says. */
+export function cardMarks(
+  entry: TaskEntry,
+  column: Pick<ColumnData, "byTag">,
+  config: CardConfig,
+  workflow: Workflow | null | undefined,
+): { view: StepView; top: boolean } {
+  const status = column.byTag[tagOf(entry.id)];
+  const final = status !== undefined && isFinalStatus(status, config.final_statuses);
+
+  return {
+    view: stepView(entry.frontmatter, final, workflow),
+    top: isTopPriority(entry.frontmatter.priority, config.priorities),
+  };
+}
+
 function sameWarning(a: Diagnostic, b: Diagnostic): boolean {
   return a.code === b.code && a.message === b.message && a.path === b.path && a.line === b.line;
 }
@@ -418,12 +451,12 @@ export function createdTarget(
 export function cardPlace(
   columns: readonly ColumnData[],
   id: string,
-): { entry: TaskEntry; column: number; index: number; final: boolean } | null {
-  for (const [column, { matching, final }] of columns.entries()) {
+): { entry: TaskEntry; column: number; index: number } | null {
+  for (const [column, { matching }] of columns.entries()) {
     const index = matching.findIndex((entry) => entry.id === id);
 
     if (index >= 0) {
-      return { entry: matching[index]!, column, index, final };
+      return { entry: matching[index]!, column, index };
     }
   }
 

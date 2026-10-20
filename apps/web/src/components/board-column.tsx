@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { isTopPriority, stepView, type ColumnData } from "../lib/board";
+import { cardConfig, cardMarks, tagOf, type CardConfig, type ColumnData } from "../lib/board";
 import { CARD_GAP, DRAG_ATTRIBUTE } from "../lib/drag-place";
 import { PlusIcon } from "../lib/icons";
 import { revealedColumnKey, useUiStore } from "../store/ui";
@@ -18,18 +18,17 @@ import { TaskCard, type CardFocus } from "./task-card";
 import { PageVirtualList } from "./virtual-list";
 
 type BoardColumnProps = {
-  /** The tag of the project the board shows. */
+  /** The tag of the board, which keys the "Show all" state of the column. */
   tag: string;
   /** The column's place on the board, which tells two columns of one status apart. */
   place: number;
   column: ColumnData;
   /** Labels are selected, or a search result applies. */
   filtered: boolean;
-  priorities: readonly string[];
   /** By name: the workflow, `null` for a refused read, `undefined` while pending. */
   workflows: ReadonlyMap<string, Workflow | null | undefined>;
-  /** The project's statuses, in order. */
-  statuses: readonly string[];
+  /** By tag: the config of each project on the board. */
+  configs: ReadonlyMap<string, CardConfig>;
   /** The ids of the tasks a write the daemon has not answered yet changes. */
   pendingIds: ReadonlySet<string>;
   /** Of those, the ids of the tasks such a write moves rather than renumbers. */
@@ -110,9 +109,8 @@ export function BoardColumn({
   place,
   column,
   filtered,
-  priorities,
   workflows,
-  statuses,
+  configs,
   pendingIds,
   movedIds,
   onMove,
@@ -195,13 +193,16 @@ export function BoardColumn({
   }
 
   function renderCard(entry: TaskEntry, at: number): ReactNode {
+    const config = cardConfig(configs, entry.id);
+    const { view, top } = cardMarks(entry, column, config, workflows.get(entry.frontmatter.workflow ?? ""));
+
     return (
       <TaskCard
-        tag={tag}
+        tag={tagOf(entry.id)}
         entry={entry}
-        view={stepView(entry.frontmatter, final, workflows.get(entry.frontmatter.workflow ?? ""))}
-        top={isTopPriority(entry.frontmatter.priority, priorities)}
-        statuses={statuses}
+        view={view}
+        top={top}
+        statuses={config.statuses}
         pending={pendingIds.has(entry.id)}
         dragging={entry.id === draggingId}
         onMove={(next) => {

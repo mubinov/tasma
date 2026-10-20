@@ -17,17 +17,19 @@ import {
   applyPending,
   boardWarnings,
   buildColumns,
+  cardConfig,
+  cardMarks,
   cardPlace,
   createdTarget,
   distinctLabels,
-  isTopPriority,
   moveTarget,
   splitList,
   statusColumn,
-  stepView,
   tagOf,
+  takesCard,
   workflowNames,
   type BoardProject,
+  type CardConfig,
   type HiddenBy,
   type TaskWrite,
 } from "../lib/board";
@@ -212,6 +214,7 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
 
   const { name, live, config } = project;
   const boardProjects: BoardProject[] = [{ tag, config }];
+  const configs: ReadonlyMap<string, CardConfig> = new Map([[tag, config]]);
   const title = name ?? tag;
   const workflows = new Map<string, Workflow | null | undefined>(
     names.map((workflowName, index) => {
@@ -358,12 +361,14 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
    * have moved the card since. It moves no focus.
    */
   function dropCard(id: string, place: DropPlace, snapshot: BoardSnapshot): void {
-    const changesColumn = cardPlace(snapshot.columns, id)!.column !== place.column;
-    const status = changesColumn ? snapshot.columns[place.column]!.byTag[tagOf(id)] : undefined;
+    const target = snapshot.columns[place.column]!;
     // A column that the card's project has no status for takes no card of it.
-    if (changesColumn && status === undefined) {
+    if (!takesCard(target, id)) {
       return;
     }
+
+    const changesColumn = cardPlace(snapshot.columns, id)!.column !== place.column;
+    const status = changesColumn ? target.byTag[tagOf(id)] : undefined;
 
     const { unfiltered, visible, card } = moveTarget(
       boardProjects,
@@ -438,9 +443,8 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
             place={index}
             column={column}
             filtered={filtered}
-            priorities={config.priorities}
             workflows={workflows}
-            statuses={config.statuses}
+            configs={configs}
             pendingIds={pendingIds}
             movedIds={movedIds}
             onMove={move}
@@ -476,8 +480,12 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
           elementRef={liftedRef}
           width={drag.box.width}
           entry={origin.entry}
-          view={stepView(origin.entry.frontmatter, origin.final, workflows.get(origin.entry.frontmatter.workflow ?? ""))}
-          top={isTopPriority(origin.entry.frontmatter.priority, config.priorities)}
+          {...cardMarks(
+            origin.entry,
+            columns[origin.column]!,
+            cardConfig(configs, origin.entry.id),
+            workflows.get(origin.entry.frontmatter.workflow ?? ""),
+          )}
         />
       )}
       <BoardPollNotice tag={tag} searchText={searchText} />
