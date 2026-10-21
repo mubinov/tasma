@@ -17,6 +17,10 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import { TooltipIconButton } from "@kit/components/assistant-ui/elements/tooltip-icon-button";
 import { useCopyToClipboard } from "@kit/hooks/use-copy-to-clipboard";
 import { cn } from "@kit/lib/utils";
+// tasma-edit: agent text follows the link and image rules of a task body
+import { MarkdownLink } from "../../../../components/markdown";
+import { markdownUrl, rehypeLinkText, remarkImagesAsLinks } from "../../../../lib/markdown";
+// tasma-edit end
 
 type MarkdownTextProps = Partial<TextMessagePartProps> & {
   components?: Parameters<typeof memoizeMarkdownComponents>[0];
@@ -55,9 +59,13 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({
 
   return (
     <MarkdownTextPrimitive
-      remarkPlugins={[remarkGfm]}
+      // tasma-edit: agent text follows the link and image rules of a task body; the link reads its node, which a memoized component does not get
+      remarkPlugins={[remarkGfm, remarkImagesAsLinks]}
       className="aui-md"
-      components={markdownComponents}
+      rehypePlugins={[rehypeLinkText]}
+      urlTransform={markdownUrl}
+      components={{ ...markdownComponents, a: MarkdownLink }}
+      // tasma-edit end
       componentsByLanguage={stableComponentsByLanguage}
       defer
     />

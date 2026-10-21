@@ -28,6 +28,7 @@
     "@tasma/protocol": "workspace:*",
     "class-variance-authority": "catalog:",
     "cn": "catalog:",
+    "diff": "catalog:",
     "lucide-react": "catalog:",
     "mermaid": "catalog:",
     "micromark-util-sanitize-uri": "catalog:",

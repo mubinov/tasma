@@ -85,6 +85,7 @@
   /* The bottom of the task page's top bar, with its find row while that is open. */
   --spacing-under-bar: calc(var(--spacing-top-bar) + var(--find-row-height, 0px));
   --spacing-task-sidebar: 18rem;
+  --spacing-chat-panel: 35rem;
 
   /*
    * Stacking, bottom to top, in the order the values list them. Used as

@@ -305,6 +305,32 @@ export function stubResizeObservers() {
 }
 
 /**
+ * Gives jsdom what the chat panel and its kit thread use, for the rest of the
+ * test: a ResizeObserver, `scrollTo` on the window and on an element, and a
+ * hit test that finds no element.
+ */
+export function stubThreadDom(): void {
+  stubResizeObservers();
+  stubHitTest(() => null);
+  vi.stubGlobal("scrollTo", () => {});
+  Object.defineProperty(Element.prototype, "scrollTo", { configurable: true, value: () => {} });
+  onTestFinished(() => {
+    Reflect.deleteProperty(Element.prototype, "scrollTo");
+  });
+}
+
+/**
+ * Gives jsdom `document.elementFromPoint`, which it does not have, for the
+ * rest of the test. A later call replaces the hit test of an earlier one.
+ */
+export function stubHitTest(hit: (x: number, y: number) => Element | null): void {
+  Object.defineProperty(document, "elementFromPoint", { configurable: true, value: hit });
+  onTestFinished(() => {
+    Reflect.deleteProperty(document, "elementFromPoint");
+  });
+}
+
+/**
  * Gives jsdom the CSS Custom Highlight API it lacks: `CSS.highlights` as a map,
  * and a `Highlight` that keeps its ranges, so a test reads what is highlighted.
  */

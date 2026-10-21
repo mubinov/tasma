@@ -61,7 +61,11 @@ export function useUnsavedGuard(): UnsavedGuard {
   // needs the registry as it stands then, not as the render that sent it read it.
   const editorsRef = useRef<ReadonlyMap<string, RegisteredEditor>>(editors);
   const blocker = useBlocker({
-    shouldBlockFn: () => {
+    // A change of the search alone, such as opening a chat, keeps the page and its editors.
+    shouldBlockFn: ({ current, next }) => {
+      if (next.pathname === current.pathname) {
+        return false;
+      }
       openerRef.current = document.activeElement;
       return true;
     },

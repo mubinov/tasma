@@ -23,7 +23,8 @@ export const FEED_MAPPINGS: FeedMappings = {
     { queryKey: daemonKeys.project(event.tag) },
     ...(event.change === "renamed" ? [{ queryKey: daemonKeys.project(event.to) }] : []),
   ],
-  // No query reads a chat.
+  // The chat panel reads the state from the log, and the `seq` of the record
+  // when it opens and after each reset of the log.
   chat: () => [],
   // The main config gives the statuses of a project that has none, and its
   // `workflows_path` moves every workflow.

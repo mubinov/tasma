@@ -5,20 +5,33 @@ import { scrollBehavior } from "../lib/scroll-behavior";
 import { useFocusLost } from "../lib/use-focus-lost";
 import { useNoticeStore } from "../store/notices";
 
+/**
+ * The column at the right of the task page, which the control stays to the left of: the sidebar at lg and wider, the
+ * chat panel at xl and wider.
+ */
+export type PageColumn = "sidebar" | "chat";
+
+const COLUMN_RIGHT: Record<PageColumn, string> = {
+  sidebar: "lg:right-[calc(var(--spacing-task-sidebar)+--spacing(6))]",
+  chat: "xl:right-[calc(var(--spacing-chat-panel)+--spacing(6))]",
+};
+
 type ScrollToTopProps = {
   /** The page has scrolled past its heading. */
   scrolled: boolean;
   /** The page's h1, which takes the focus from the control. */
   headingRef: RefObject<HTMLElement | null>;
+  column: PageColumn;
 };
 
 type ControlProps = {
   headingRef: RefObject<HTMLElement | null>;
+  column: PageColumn;
   /** The control leaves while it holds focus. */
   onFocusLost: () => void;
 };
 
-function Control({ headingRef, onFocusLost }: ControlProps): ReactNode {
+function Control({ headingRef, column, onFocusLost }: ControlProps): ReactNode {
   const buttonRef = useRef<HTMLButtonElement>(null);
   useFocusLost(buttonRef, onFocusLost);
 
@@ -31,7 +44,7 @@ function Control({ headingRef, onFocusLost }: ControlProps): ReactNode {
         window.scrollTo({ top: 0, behavior: scrollBehavior() });
         headingRef.current?.focus({ preventScroll: true });
       }}
-      className="fixed right-6 bottom-6 z-(--layer-scroll-to-top) flex size-9 items-center justify-center rounded-full border border-line bg-surface text-subtle shadow-float hover:border-graphic hover:text-text lg:right-[calc(var(--spacing-task-sidebar)+--spacing(6))]"
+      className={`fixed right-6 bottom-6 z-(--layer-scroll-to-top) flex size-9 items-center justify-center rounded-full border border-line bg-surface text-subtle shadow-float hover:border-graphic hover:text-text ${COLUMN_RIGHT[column]}`}
     >
       <ArrowUpIcon size={16} aria-hidden="true" />
     </Button>
@@ -39,7 +52,7 @@ function Control({ headingRef, onFocusLost }: ControlProps): ReactNode {
 }
 
 /** Hidden while a notice is open, which takes the same corner. */
-export function ScrollToTop({ scrolled, headingRef }: ScrollToTopProps): ReactNode {
+export function ScrollToTop({ scrolled, headingRef, column }: ScrollToTopProps): ReactNode {
   const noticeOpen = useNoticeStore((state) => state.notices.length > 0);
   const shown = scrolled && !noticeOpen;
   const focusLostRef = useRef(false);
@@ -63,6 +76,7 @@ export function ScrollToTop({ scrolled, headingRef }: ScrollToTopProps): ReactNo
     ? (
         <Control
           headingRef={headingRef}
+          column={column}
           onFocusLost={() => {
             focusLostRef.current = true;
           }}

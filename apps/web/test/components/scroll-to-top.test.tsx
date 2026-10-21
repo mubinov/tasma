@@ -7,13 +7,13 @@ import { ScrollToTop } from "../../src/components/scroll-to-top";
 import { useNoticeStore } from "../../src/store/notices";
 import { stubReducedMotion } from "../helpers";
 
-function Page({ scrolled }: { scrolled: boolean }): ReactNode {
+function Page({ scrolled, column = "sidebar" }: { scrolled: boolean; column?: "sidebar" | "chat" }): ReactNode {
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   return (
     <>
       <h1 ref={headingRef} tabIndex={-1}>Build the parser</h1>
-      <ScrollToTop scrolled={scrolled} headingRef={headingRef} />
+      <ScrollToTop scrolled={scrolled} headingRef={headingRef} column={column} />
       <NoticeStack />
     </>
   );
@@ -62,6 +62,15 @@ describe("when it shows", () => {
       expect(button.classList.contains(name), name).toBe(true);
     }
     expect(button.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("stays to the left of the chat panel at xl and wider, and in the corner under xl, while a chat shows", () => {
+    render(<Page scrolled column="chat" />);
+
+    const button = control()!;
+    expect(button.classList.contains("xl:right-[calc(var(--spacing-chat-panel)+--spacing(6))]")).toBe(true);
+    expect([...button.classList].filter((name) => name.startsWith("lg:"))).toEqual([]);
+    expect(button.classList.contains("right-6")).toBe(true);
   });
 
   it("is absent while a notice is open, and present again after Dismiss", async () => {

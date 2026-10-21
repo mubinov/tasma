@@ -143,6 +143,19 @@
   --kit-fill: var(--palette-surface);
 }
 
+/*
+ * The kit expects the shadcn base rule that gives each border the colour
+ * `border`; without it, a bare `border` class draws in the text colour. Each
+ * kit element with such a class has an `aui-` class or a `data-slot`, and no
+ * Tasma element has either.
+ */
+@layer base {
+  [class*="aui-"],
+  [data-slot] {
+    border-color: var(--color-border);
+  }
+}
+
 /* Plain shadcn variables that kit files read in arbitrary values. */
 :root {
   --secondary: var(--color-secondary);

@@ -5,6 +5,7 @@ import {
   createRouter,
   notFound,
   redirect,
+  type AnyRouter,
   type RouterHistory,
 } from "@tanstack/react-router";
 import { buildPath, ProtocolError, routes as daemonRoutes, type Client, type Route } from "@tasma/protocol";
@@ -129,11 +130,21 @@ const tasksRoute = createRoute({
   errorComponent: TasksFailure,
 });
 
+/** `chat` is the number of the chat that the panel shows in place of the sidebar. */
+type TaskSearch = { chat?: string };
+
 // A sibling of the board, not its child: under `/tasks` it would take the
 // board's search, its redirect to a project and its loader.
 const taskRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/tasks/$project/$task",
+  // The router lays the answer over the search of the address, so a dropped
+  // value is set to undefined rather than left out.
+  validateSearch: (search: Record<string, unknown>): TaskSearch => {
+    const { chat } = search;
+
+    return { chat: typeof chat === "string" && /^[1-9]\d*$/.test(chat) ? chat : undefined };
+  },
   beforeLoad: ({ params }) => {
     requirePath(daemonRoutes.readTask, { project: params.project, id: params.task });
   },
@@ -268,8 +279,25 @@ function stringifySearch(search: Record<string, unknown>): string {
   return text === "" ? "" : `?${text}`;
 }
 
+/**
+ * A load that stays on the same task keeps the page where it is, whatever
+ * started it: a chat that opens, changes or closes, Back to an entry with the
+ * same address (a close replaces the entry of its chat), a link or a retry.
+ * The flag is the one that `resetScroll: false` sets, and the router reads it
+ * in the `onRendered` that follows this event. A scroll put back after the
+ * reset would not do: WebKit reveals a focused element after the render, and a
+ * scroll cancels that reveal.
+ */
+function keepTaskScroll(router: AnyRouter): void {
+  router.subscribe("onResolved", ({ pathChanged }) => {
+    if (!pathChanged && router.state.matches.at(-1)?.routeId === taskRoute.id) {
+      router._scroll.next = false;
+    }
+  });
+}
+
 export function createAppRouter(history: RouterHistory, context: RouterContext) {
-  return createRouter({
+  const router = createRouter({
     routeTree,
     history,
     context,
@@ -283,4 +311,7 @@ export function createAppRouter(history: RouterHistory, context: RouterContext) 
       />
     ),
   });
+
+  keepTaskScroll(router);
+  return router;
 }

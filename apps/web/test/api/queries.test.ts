@@ -5,6 +5,7 @@ import { createAppQueryClient, createDaemonClient, shouldRetry } from "../../src
 import { APP_PATH_PREFIX, DAEMON_PATH_PREFIX } from "../../src/api/paths";
 import {
   appKeys,
+  chatQuery,
   daemonKeys,
   healthQuery,
   projectQuery,
@@ -94,13 +95,13 @@ it("caches the whole success envelope, diagnostics included", async () => {
  * there is covered by existing; a key ignores the arguments it does not take.
  */
 it("descends every key from the one prefix that invalidates the daemon's answers", () => {
-  const builders: ((tag: string, id: string) => readonly string[])[] = Object.values(daemonKeys).filter(
+  const builders: ((tag: string, id: string, chat: number) => readonly unknown[])[] = Object.values(daemonKeys).filter(
     (value) => typeof value === "function",
   );
 
   expect(builders.length).toBeGreaterThan(0);
   for (const build of builders) {
-    const key = build("SAGA", "SAGA-1");
+    const key = build("SAGA", "SAGA-1", 2);
     expect(key.slice(0, daemonKeys.all.length), key.join("/")).toEqual([...daemonKeys.all]);
   }
 });
@@ -165,6 +166,23 @@ it("asks for one task with its comments in one request", async () => {
 
   expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects/SAGA/tasks/SAGA-1`]);
   expect(success).toEqual({ data: task, diagnostics: [] });
+});
+
+it("asks for one chat of a task", async () => {
+  const chat = { task: "SAGA-1", chat: 2, step: "build", agent: "claude", folder: "/repos/saga", seq: 4, state: "working" };
+  const paths = stubDaemon(chat);
+
+  const success = await createAppQueryClient().query({
+    ...chatQuery(createDaemonClient(), "SAGA", "SAGA-1", 2),
+    staleTime: "static",
+  });
+
+  expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects/SAGA/tasks/SAGA-1/chats/2`]);
+  expect(success).toEqual({ data: chat, diagnostics: [] });
+});
+
+it("nests a chat inside its task, apart from the exact key of the task", () => {
+  expect(daemonKeys.chat("SAGA", "SAGA-1", 2)).toEqual([...daemonKeys.task("SAGA", "SAGA-1"), "chats", 2]);
 });
 
 it("asks for the tasks of one project, with no filter", async () => {

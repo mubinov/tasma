@@ -13,6 +13,8 @@ export type ChatLog = {
   ready: boolean;
   /** Failed reads in a row: 0 after a successful read. */
   failures: number;
+  /** The resets of the log since the read of this chat started. Each one starts the view again. */
+  resets: number;
 };
 
 /** A chat log with the inputs of the loop that reads it. */
@@ -23,7 +25,7 @@ function keyOf(tag: string, task: string, chat: number): string {
 }
 
 function startOf(client: Client, key: string, ready: boolean): KeyedLog {
-  return { client, key, view: CHAT_VIEW_START, ready, failures: 0 };
+  return { client, key, view: CHAT_VIEW_START, ready, failures: 0, resets: 0 };
 }
 
 /**
@@ -69,7 +71,7 @@ export function useChatLog(client: Client, tag: string, task: string, chat: numb
         publish({ view, ready: current.ready || reaches(view.seq) });
       },
       onReset: () => {
-        publish({ view: CHAT_VIEW_START, ready: false });
+        publish({ view: CHAT_VIEW_START, ready: false, resets: current.resets + 1 });
       },
       onStatus: (failures) => {
         if (failures !== current.failures) {
@@ -83,5 +85,5 @@ export function useChatLog(client: Client, tag: string, task: string, chat: numb
     };
   }, [client, tag, task, chat]);
 
-  return { view: log.view, ready: log.ready || since === 0, failures: log.failures };
+  return { view: log.view, ready: log.ready || since === 0, failures: log.failures, resets: log.resets };
 }

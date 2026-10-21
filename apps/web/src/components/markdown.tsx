@@ -53,7 +53,9 @@ function MarkdownHeading({ node, children }: ChildrenProps & ExtraProps): ReactN
   return <Tag data-level={depth} className={headingClass(depth)}>{children}</Tag>;
 }
 
-function MarkdownLink({ node, href, children }: ChildrenProps & ExtraProps & { href?: string | undefined }): ReactNode {
+export function MarkdownLink(
+  { node, href, children }: ChildrenProps & ExtraProps & { href?: string | undefined },
+): ReactNode {
   const descriptionId = useId();
   // A footnote back-reference is a `#…` link: with its href dropped, only a "↩" that does nothing is left.
   if (node?.properties.dataFootnoteBackref !== undefined) {

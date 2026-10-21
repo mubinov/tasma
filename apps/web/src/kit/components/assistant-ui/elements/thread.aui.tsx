@@ -228,6 +228,10 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
           <div
             data-slot="aui_message-group"
             className="mb-14 flex flex-col gap-y-6 empty:hidden"
+            // tasma-edit: the message list is a silent log; the app announces changes itself
+            role="log"
+            aria-live="off"
+            // tasma-edit end
           >
             <ThreadPrimitive.Messages>
               {() => <ThreadMessage />}
@@ -243,7 +247,11 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
           >
             <ThreadScrollToBottom />
             <ThreadFollowupSuggestions />
-            <Composer autoFocus={autoFocus} />
+            {/* tasma-edit: a disabled thread shows no composer */}
+            <AuiIf condition={(s) => !s.thread.isDisabled}>
+              <Composer autoFocus={autoFocus} />
+            </AuiIf>
+            {/* tasma-edit end */}
             <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
               <ThreadSuggestions />
             </AuiIf>

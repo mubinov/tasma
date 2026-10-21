@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SRC, tasmaSourceFiles } from "../source-files";
+import { KIT_BORDER_SELECTOR } from "./borders";
 import { COLOR_PREFIX, OPACITY, RADIUS_SIDE, stringWords, utilityOf } from "./class-words";
 
 const root = join(import.meta.dirname, "..", "..");
@@ -147,5 +148,21 @@ describe("the kit tokens", () => {
     expect(scripts.length).toBeGreaterThan(0);
     expect(stylesheets).toContain(themeCss);
     expect(uses).toEqual([]);
+  });
+});
+
+describe("the border colour of the kit", () => {
+  it("is set in the base layer on each element that has an aui- class or a data-slot", () => {
+    expect(KIT_BORDER_SELECTOR.split(/\s*,\s*/)).toEqual(['[class*="aui-"]', "[data-slot]"]);
+  });
+
+  it("reaches no Tasma element: no Tasma file writes an aui- class or a data-slot", () => {
+    const marks = tasmaSourceFiles().flatMap((file) => {
+      const source = read(file);
+      return [...stringWords(source).filter((word) => word.includes("aui-")), ...(source.match(/data-slot/g) ?? [])]
+        .map((mark) => `${relative(SRC, file)}: ${mark}`);
+    });
+
+    expect(marks).toEqual([]);
   });
 });

@@ -22,6 +22,7 @@ import { formatClock } from "../lib/clock";
 import { deleteTaskWords } from "../lib/delete-words";
 import { useDocumentTitle } from "../lib/document-title";
 import type { FinalFocus } from "../lib/final-focus";
+import { focusInView } from "../lib/focus-in-view";
 import {
   ArrowLeftIcon,
   DotsThreeVerticalIcon,
@@ -58,9 +59,10 @@ import {
 } from "./control-classes";
 import { Markdown } from "./markdown";
 import { ScreenHeading } from "./screen-heading";
-import { ScrollToTop } from "./scroll-to-top";
+import { ScrollToTop, type PageColumn } from "./scroll-to-top";
 import { StepMark } from "./step-view";
 import { ChangedOnDisk } from "./changed-on-disk";
+import { ChatPanel } from "./chat-panel";
 import { TaskEditor } from "./task-editor";
 import type { Outline } from "./task-outline";
 import { TaskSidebar } from "./task-sidebar";
@@ -69,6 +71,23 @@ import { Tooltip } from "./tooltip";
 // The route is reached by id rather than imported: the tree in routes.tsx names
 // this component, so importing the route back would close a cycle.
 const route = getRouteApi("/tasks/$project/$task");
+
+/**
+ * The classes that put the right column beside the content. The chat panel is beside the content from xl only: in a
+ * narrower window with the app navigation open, the content column is narrower than its top bar.
+ */
+const COLUMN_LAYOUT: Record<PageColumn, { frame: string; content: string; contentEnd: string }> = {
+  sidebar: {
+    frame: "lg:flex-row lg:items-start",
+    content: "lg:block lg:min-w-0 lg:flex-1",
+    contentEnd: "lg:pb-[calc(--spacing(12)+var(--notice-stack-height,0px))]",
+  },
+  chat: {
+    frame: "xl:flex-row xl:items-start",
+    content: "xl:block xl:min-w-0 xl:flex-1",
+    contentEnd: "xl:pb-[calc(--spacing(12)+var(--notice-stack-height,0px))]",
+  },
+};
 
 /** The text of the element that is on the screen. */
 function visibleText(element: Element): string {
@@ -106,6 +125,50 @@ function useOutline(
   }, [bodyRef, commentsRef, task, editing]);
 
   return outline;
+}
+
+type TaskChat = {
+  /** The chat that the panel shows in place of the sidebar. */
+  chat: number | undefined;
+  /** The chat opened after the page loaded. At a load the shell moves focus to <main>. */
+  opened: boolean;
+  close: () => void;
+};
+
+/**
+ * The chat of the `?chat` search. When the chat closes and focus has nowhere
+ * to be, focus moves to `headingRef`.
+ */
+function useTaskChat(headingRef: RefObject<HTMLElement | null>): TaskChat {
+  const { project: tag, task: taskId } = route.useParams();
+  const { chat } = route.useSearch();
+  const navigate = route.useNavigate();
+  const [shownChat, setShownChat] = useState(chat);
+  const [opened, setOpened] = useState(false);
+  const lastChatRef = useRef(chat);
+
+  if (chat !== shownChat) {
+    setShownChat(chat);
+    setOpened(chat !== undefined);
+  }
+
+  useLayoutEffect(() => {
+    const last = lastChatRef.current;
+    lastChatRef.current = chat;
+    const active = document.activeElement;
+    if (last !== undefined && chat === undefined && (active === null || active === document.body)) {
+      focusInView(headingRef.current);
+    }
+  }, [chat, headingRef]);
+
+  return {
+    chat: chat === undefined ? undefined : Number(chat),
+    opened,
+    close: () => {
+      // Replaced, so Back does not open the closed chat again.
+      void navigate({ to: "/tasks/$project/$task", params: { project: tag, task: taskId }, search: {}, replace: true });
+    },
+  };
 }
 
 type CommentsProps = {
@@ -397,6 +460,10 @@ export function TaskScreen(): ReactNode {
   const scrolled = useScrolledPast(scrolledRef, barHeight);
   const outline = useOutline(bodyRef, list.listRef, task, draft !== null);
   const navigate = route.useNavigate();
+  // In edit mode the h1 is clipped and takes no focus, so the title field takes it.
+  const { chat, opened: chatOpened, close: closeChat } = useTaskChat(scrolledRef);
+  const column: PageColumn = chat === undefined ? "sidebar" : "chat";
+  const layout = COLUMN_LAYOUT[column];
   const { mutate: sendDelete } = useMutation(taskDeleteOptions(queryClient, client));
   const [deleteAsked, setDeleteAsked] = useState(false);
   const deleteFocusRef = useRef<FinalFocus>(null);
@@ -445,10 +512,11 @@ export function TaskScreen(): ReactNode {
   return (
     // A sticky sidebar cannot move past the end of its parent, so the frame reaches the page's end and its children
     // keep the notice stack's room in place of <main>.
-    <div className="-m-6 -mb-[calc(--spacing(6)+var(--notice-stack-height,0px))] flex flex-col sm:-m-10 sm:-mb-[calc(--spacing(10)+var(--notice-stack-height,0px))] lg:flex-row lg:items-start">
-      {/* A sticky bar stays only inside its parent box, so under lg the column
-          gives up its box and the bar stays over the sidebar too. */}
-      <div className="contents lg:block lg:min-w-0 lg:flex-1">
+    <div className={`-m-6 -mb-[calc(--spacing(6)+var(--notice-stack-height,0px))] flex flex-col sm:-m-10 sm:-mb-[calc(--spacing(10)+var(--notice-stack-height,0px))] ${layout.frame}`}>
+      {/* A sticky bar stays only inside its parent box, so while the right column
+          is under the content, the content gives up its box and the bar stays
+          over the right column too. */}
+      <div className={`contents ${layout.content}`}>
         {/*
           The page's scroll padding keeps a focus scroll's target and its ring clear of the bar. WebKit applies it to
           the bar's own controls too, so each focus move and keystroke in them would scroll the page: the page has no
@@ -507,7 +575,7 @@ export function TaskScreen(): ReactNode {
           {find.open && <FindBar id={findRowId} find={find} />}
         </div>
 
-        <div ref={findRootRef} className="px-6 pb-12 sm:px-10 lg:pb-[calc(--spacing(12)+var(--notice-stack-height,0px))]">
+        <div ref={findRootRef} className={`px-6 pb-12 sm:px-10 ${layout.contentEnd}`}>
           {draft === null
             ? (
                 <>
@@ -612,16 +680,25 @@ export function TaskScreen(): ReactNode {
             ))}
           </Comments>
         </div>
-        <ScrollToTop scrolled={scrolled} headingRef={scrolledRef} />
+        <ScrollToTop scrolled={scrolled} headingRef={scrolledRef} column={column} />
       </div>
-      <TaskSidebar
-        tag={tag}
-        view={view}
-        relations={relations}
-        outline={outline}
-        pageScrollPadding={scrollPaddingTop}
-        properties={properties}
-      />
+      {chat === undefined
+        ? (
+            <TaskSidebar
+              tag={tag}
+              view={view}
+              relations={relations}
+              outline={outline}
+              pageScrollPadding={scrollPaddingTop}
+              properties={properties}
+            />
+          )
+        : (
+            // Under xl the top bar sticks over the panel too, so the panel is shorter than the window by the bar.
+            <div className="h-[calc(100vh-var(--spacing-under-bar))] w-full border-t border-line bg-bg pb-(--notice-stack-height) xl:sticky xl:top-0 xl:h-screen xl:w-chat-panel xl:shrink-0 xl:self-start xl:border-t-0 xl:border-l">
+              <ChatPanel tag={tag} task={taskId} chat={chat} onClose={closeChat} focusOnMount={chatOpened} />
+            </div>
+          )}
       {/* Cancel asks about one editor, so it keeps the editor's own dialog. */}
       <ConfirmDialog
         open={editing.discardAsked}

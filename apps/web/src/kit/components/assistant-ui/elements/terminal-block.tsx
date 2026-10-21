@@ -88,6 +88,11 @@ export function parseAnsi(line: string): AnsiSegment[] {
   };
   const segments: AnsiSegment[] = [];
   let index = 0;
+  // tasma-edit: a search runs again only after the parse passes its match, so a line with many controls takes linear time
+  const c1Pattern = /[\u009b\u009d]/g;
+  let escape = -2;
+  let c1 = -2;
+  // tasma-edit end
 
   const append = (text: string) => {
     if (text === "") return;
@@ -105,9 +110,13 @@ export function parseAnsi(line: string): AnsiSegment[] {
   };
 
   while (index < line.length) {
-    const escape = line.indexOf("\u001b", index);
-    const c1Offset = line.slice(index).search(/[\u009b\u009d]/);
-    const c1 = c1Offset === -1 ? -1 : index + c1Offset;
+    // tasma-edit: a search runs again only after the parse passes its match, so a line with many controls takes linear time
+    if (escape !== -1 && escape < index) escape = line.indexOf("\u001b", index);
+    if (c1 !== -1 && c1 < index) {
+      c1Pattern.lastIndex = index;
+      c1 = c1Pattern.exec(line)?.index ?? -1;
+    }
+    // tasma-edit end
     const next = escape === -1 ? c1 : c1 === -1 ? escape : Math.min(escape, c1);
 
     if (next === -1) {

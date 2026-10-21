@@ -1,61 +1,9 @@
-import { createClient, type ChatEventsReply, type TransportReply } from "@tasma/protocol";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useChatLog } from "../../src/api/chat-log";
 import { CHAT_VIEW_START, foldChatEntries } from "../../src/lib/chat-fold";
+import { eventsPath, stubChatLog, type ChatLogStub } from "../chat-daemon";
 import { TEXT_LOG } from "../chat-fixtures";
-import { heldBack, refusalReply, stubTransport, successReply } from "../helpers";
-
-function eventsPath(after: number, chat = 2): string {
-  return `/projects/SAGA/tasks/SAGA-3/chats/${chat}/events?after=${after}`;
-}
-
-/**
- * A daemon that holds each read of a chat log until the test answers it. An
- * answer holds the next read, after the cursor of the answer, the same way.
- */
-function stubChatLog() {
-  const stub = stubTransport();
-  const answers = new Map<string, (reply: TransportReply) => void>();
-
-  function hold(after: number, chat = 2): void {
-    const { reply, answer } = heldBack();
-    stub.replies[eventsPath(after, chat)] = reply;
-    answers.set(eventsPath(after, chat), answer);
-  }
-
-  hold(0);
-
-  return {
-    ...stub,
-    client: createClient(stub.transport),
-    hold,
-    answer(after: number, data: ChatEventsReply, chat = 2): void {
-      const answer = answers.get(eventsPath(after, chat));
-      if (answer === undefined) {
-        throw new Error(`no read after ${after} is held`);
-      }
-      hold("reset" in data ? 0 : data.cursor, chat);
-      answer(successReply(data));
-    },
-    /** Each read after `after` gets the data at once, and the read after its cursor is held. */
-    serve(after: number, data: ChatEventsReply, chat = 2): void {
-      stub.replies[eventsPath(after, chat)] = successReply(data);
-      hold("reset" in data ? 0 : data.cursor, chat);
-    },
-    /** Each read after `after` gets a refusal, which the loop counts as a failed read. */
-    refuse(after: number, chat = 2): void {
-      stub.replies[eventsPath(after, chat)] = refusalReply(404, {
-        kind: "store",
-        code: "chat-not-found",
-        message: `no chat ${chat}`,
-      });
-    },
-    readsOf: (path: string) => stub.paths.filter((sent) => sent === path).length,
-  };
-}
-
-type ChatLogStub = ReturnType<typeof stubChatLog>;
 
 type Props = { client: ChatLogStub["client"]; chat: number; since: number };
 
@@ -128,7 +76,7 @@ it("is ready at once when since is 0", () => {
   const log = stubChatLog();
   const { result } = renderChatLog(log, 0);
 
-  expect(result.current).toEqual({ view: CHAT_VIEW_START, ready: true, failures: 0 });
+  expect(result.current).toEqual({ view: CHAT_VIEW_START, ready: true, failures: 0, resets: 0 });
 });
 
 it("stays ready when since grows, from 0 and after a read reached it", async () => {
@@ -185,7 +133,7 @@ it("drops the state of the old client at once, and keeps no failure count of its
 
   rerender({ client: second.client, chat: 2, since: 3 });
 
-  expect(result.current).toEqual({ view: CHAT_VIEW_START, ready: false, failures: 0 });
+  expect(result.current).toEqual({ view: CHAT_VIEW_START, ready: false, failures: 0, resets: 0 });
   await readStarted(second, eventsPath(0));
   second.answer(0, { cursor: 3, entries: TEXT_LOG.slice(0, 3) });
   await waitFor(() => {
@@ -195,6 +143,7 @@ it("drops the state of the old client at once, and keeps no failure count of its
     view: foldChatEntries(CHAT_VIEW_START, TEXT_LOG.slice(0, 3)),
     ready: true,
     failures: 0,
+    resets: 0,
   });
 });
 
@@ -224,7 +173,7 @@ it("starts the view again on a reset, and reads the log again from the start wit
 
   log.answer(3, { reset: true, cursor: 0 });
   await waitFor(() => {
-    expect(result.current).toEqual({ view: CHAT_VIEW_START, ready: false, failures: 0 });
+    expect(result.current).toEqual({ view: CHAT_VIEW_START, ready: false, failures: 0, resets: 1 });
   });
   await readStarted(log, eventsPath(0), 2);
 
@@ -233,6 +182,31 @@ it("starts the view again on a reset, and reads the log again from the start wit
     expect(result.current.ready).toBe(true);
   });
   expect(result.current.view).toEqual(foldChatEntries(CHAT_VIEW_START, TEXT_LOG.slice(0, 3)));
+});
+
+it("counts the resets, also when since is 0, and starts the count again for another chat", async () => {
+  const log = stubChatLog();
+  log.hold(0, 3);
+  const { result, rerender } = renderChatLog(log, 0);
+  await readStarted(log, eventsPath(0));
+  log.answer(0, { cursor: 2, entries: TEXT_LOG.slice(0, 2) });
+  await readStarted(log, eventsPath(2));
+
+  log.answer(2, { reset: true, cursor: 0 });
+  await waitFor(() => {
+    expect(result.current).toMatchObject({ view: CHAT_VIEW_START, resets: 1 });
+  });
+  await readStarted(log, eventsPath(0), 2);
+  log.answer(0, { cursor: 1, entries: TEXT_LOG.slice(0, 1) });
+  await readStarted(log, eventsPath(1));
+  log.answer(1, { reset: true, cursor: 0 });
+  await waitFor(() => {
+    expect(result.current.resets).toBe(2);
+  });
+
+  rerender({ client: log.client, chat: 3, since: 0 });
+
+  expect(result.current.resets).toBe(0);
 });
 
 it("counts the failed reads in a row, and sets 0 after a successful read", async () => {
@@ -284,7 +258,7 @@ it("drops the view of the old chat at once, and reads the new chat from the star
 
   rerender({ client: log.client, chat: 3, since: 4 });
 
-  expect(result.current).toEqual({ view: CHAT_VIEW_START, ready: false, failures: 0 });
+  expect(result.current).toEqual({ view: CHAT_VIEW_START, ready: false, failures: 0, resets: 0 });
   await readStarted(log, eventsPath(0, 3));
   expect(log.requests[1]?.signal?.aborted).toBe(true);
 });
