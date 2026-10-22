@@ -28,6 +28,7 @@ mod testing;
 mod uninstall;
 mod update;
 mod version;
+mod zoom;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -53,18 +54,8 @@ const HOST: &str = "localhost";
 /// configuration registers it, and a repo test holds the two together.
 const LINK_SCHEME: &str = "tasma";
 
-/// The one window, and the label `capabilities/zoom.json` grants against.
+/// The one window.
 const WINDOW: &str = "main";
-
-/// Whether `Cmd+=`, `Cmd+-` and `Cmd+0` resize the board. A packaged window has
-/// no browser chrome and macOS has no system text-size setting that scales web
-/// content, so without them the board has no enlargement at all.
-///
-/// The flag alone delivers nothing. wry implements it on Windows only; on macOS
-/// Tauri injects a script that invokes `plugin:webview|set_webview_zoom`, and an
-/// invoke no capability grants is refused before the webview sees it.
-/// `capabilities/zoom.json` is that grant, and a test holds the two together.
-const ZOOM_HOTKEYS: bool = true;
 
 /// Which of the two origins a development run opens.
 #[cfg(debug_assertions)]
@@ -309,6 +300,7 @@ fn main() {
 
     tauri::Builder::default()
         .manage(shell)
+        .manage(zoom::Level::default())
         .on_menu_event(|app, event| menu::dispatch(app, event.id()))
         // Asynchronous, so a daemon call never holds the main thread.
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |context, request, responder| {
@@ -351,7 +343,6 @@ fn main() {
             let builder = WebviewWindowBuilder::new(app, WINDOW, url)
                 .title("Tasma")
                 .min_inner_size(MIN_WIDTH, MIN_HEIGHT)
-                .zoom_hotkeys_enabled(ZOOM_HOTKEYS)
                 // Tauri does not copy `document.title` into the native title
                 // bar, so every screen would otherwise sit under a fixed name.
                 .on_document_title_changed(|window, title| {
@@ -369,6 +360,10 @@ fn main() {
                         PageLoadEvent::Finished => delivery.finished(),
                     };
                     drop(delivery);
+
+                    if payload.event() == PageLoadEvent::Finished {
+                        zoom::restore(&window);
+                    }
 
                     if let Some(route) = route {
                         push(&window, &route);
@@ -498,34 +493,6 @@ mod tests {
         assert_eq!(background(Some(Theme::Light)), LIGHT_BACKGROUND);
         // A window that reports no appearance at all.
         assert_eq!(background(None), LIGHT_BACKGROUND);
-    }
-
-    /// The capability the injected zoom script needs granted. Read at compile
-    /// time, so a capability moved or renamed fails the build of the test.
-    const ZOOM_CAPABILITY: &str = include_str!("../capabilities/zoom.json");
-
-    /// The command `scripts/zoom-hotkey.js` invokes, as its permission is
-    /// spelled in the access list.
-    const ZOOM_PERMISSION: &str = "core:webview:allow-set-webview-zoom";
-
-    /// Whether the capability grants this window the zoom command.
-    fn zoom_is_granted() -> bool {
-        let capability: serde_json::Value =
-            serde_json::from_str(ZOOM_CAPABILITY).expect("a capability is JSON");
-        let names = |key: &str, wanted: &str| {
-            capability[key]
-                .as_array()
-                .expect("a capability states its windows and its permissions")
-                .iter()
-                .any(|value| value == wanted)
-        };
-
-        names("windows", WINDOW) && names("permissions", ZOOM_PERMISSION)
-    }
-
-    #[test]
-    fn the_zoom_shortcuts_are_granted_the_command_they_invoke() {
-        assert_eq!(ZOOM_HOTKEYS, zoom_is_granted());
     }
 
     #[test]

@@ -1,12 +1,13 @@
 //! The default menu, with "Check for Updates…", "Install Command Line Tool…"
-//! and "Uninstall Tasma…" in the Tasma menu.
+//! and "Uninstall Tasma…" in the Tasma menu, and "Actual Size", "Zoom In" and
+//! "Zoom Out" in the View menu.
 
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use tauri::menu::{Menu, MenuId, MenuItem, MenuItemKind, PredefinedMenuItem};
-use tauri::{AppHandle, Manager as _, Wry};
+use tauri::menu::{IsMenuItem, Menu, MenuId, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
+use tauri::{AppHandle, Manager as _, Runtime, Wry};
 
 use crate::alert;
 use crate::command::{LINK, account_home, installed_executable};
@@ -14,10 +15,17 @@ use crate::daemon::Daemon;
 use crate::elevate::{self, Linked};
 use crate::uninstall;
 use crate::update::{Origin, Updater};
+use crate::zoom::{self, Change};
 
 const CHECK: &str = "check-for-updates";
 const INSTALL: &str = "install-command-line-tool";
 const UNINSTALL: &str = "uninstall-tasma";
+const ACTUAL_SIZE: &str = "zoom-actual-size";
+const ZOOM_IN: &str = "zoom-in";
+const ZOOM_OUT: &str = "zoom-out";
+
+const VIEW_MENU: &str = "View";
+const WINDOW_MENU: &str = "Window";
 
 const INSTALLED: &str = "The tasma command is installed.";
 const NOT_INSTALLED: &str = "Tasma did not install the tasma command.";
@@ -34,6 +42,9 @@ struct Items {
     check: MenuItem<Wry>,
     install: MenuItem<Wry>,
     uninstall: MenuItem<Wry>,
+    actual_size: MenuItem<Wry>,
+    zoom_in: MenuItem<Wry>,
+    zoom_out: MenuItem<Wry>,
 }
 
 /// Where the items go: directly after the first separator, which follows
@@ -46,7 +57,14 @@ fn after_first_separator(texts: &[Option<String>]) -> Option<usize> {
         .map(|at| at + 1)
 }
 
-/// Sets the menu. It must stay the default menu plus the three items: copy,
+/// Where the submenu titled `title` is among the titles of the menu bar.
+fn position_of(titles: &[Option<String>], title: &str) -> Option<usize> {
+    titles
+        .iter()
+        .position(|text| text.as_deref() == Some(title))
+}
+
+/// Sets the menu. It must stay the default menu plus the six items: copy,
 /// paste and select-all reach the webview only through it.
 pub(crate) fn build(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::default(app)?;
@@ -59,6 +77,11 @@ pub(crate) fn build(app: &AppHandle) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let uninstall = MenuItem::with_id(app, UNINSTALL, "Uninstall Tasma…", true, None::<&str>)?;
+
+    let actual_size =
+        MenuItem::with_id(app, ACTUAL_SIZE, "Actual Size", true, Some("CmdOrCtrl+0"))?;
+    let zoom_in = MenuItem::with_id(app, ZOOM_IN, "Zoom In", true, Some("CmdOrCtrl+="))?;
+    let zoom_out = MenuItem::with_id(app, ZOOM_OUT, "Zoom Out", true, Some("CmdOrCtrl+-"))?;
 
     if let Some(MenuItemKind::Submenu(first)) = menu.items()?.into_iter().next() {
         let texts: Vec<Option<String>> = first
@@ -77,14 +100,46 @@ pub(crate) fn build(app: &AppHandle) -> tauri::Result<()> {
         first.insert(&PredefinedMenuItem::separator(app)?, at + 3)?;
     }
 
+    add_to_view(app, &menu, &[&actual_size, &zoom_in, &zoom_out])?;
+
     app.set_menu(menu)?;
     app.manage(Items {
         check,
         install,
         uninstall,
+        actual_size,
+        zoom_in,
+        zoom_out,
     });
+    show_zoom(app, app.state::<zoom::Level>().get());
 
     Ok(())
+}
+
+/// Puts the zoom items at the top of the View menu, or in a View menu of their
+/// own when the default menu has none: they carry the only zoom shortcuts.
+fn add_to_view(
+    app: &AppHandle,
+    menu: &Menu<Wry>,
+    items: &[&dyn IsMenuItem<Wry>],
+) -> tauri::Result<()> {
+    let submenus = menu.items()?;
+    let titles: Vec<Option<String>> = submenus
+        .iter()
+        .map(|item| item.as_submenu().and_then(|submenu| submenu.text().ok()))
+        .collect();
+
+    if let Some(view) = position_of(&titles, VIEW_MENU).and_then(|at| submenus[at].as_submenu()) {
+        view.insert_items(items, 0)?;
+        return view.insert(&PredefinedMenuItem::separator(app)?, items.len());
+    }
+
+    let view = Submenu::with_items(app, VIEW_MENU, true, items)?;
+
+    menu.insert(
+        &view,
+        position_of(&titles, WINDOW_MENU).unwrap_or(titles.len()),
+    )
 }
 
 /// Which items are enabled: (check, install, uninstall). Uninstall disables
@@ -110,7 +165,35 @@ pub(crate) fn refresh(app: &AppHandle) {
     let _ = items.uninstall.set_enabled(uninstall);
 }
 
+/// Enables each zoom item by the level the window shows. Uninstall and the
+/// update leave these items as they are.
+pub(crate) fn show_zoom<R: Runtime>(app: &AppHandle<R>, level: u16) {
+    let Some(items) = app.try_state::<Items>() else {
+        return;
+    };
+    let (actual_size, zoom_in, zoom_out) = zoom::enabled(level);
+
+    let _ = items.actual_size.set_enabled(actual_size);
+    let _ = items.zoom_in.set_enabled(zoom_in);
+    let _ = items.zoom_out.set_enabled(zoom_out);
+}
+
+/// The change a zoom item makes, or none for any other item.
+fn zoom_change(id: &str) -> Option<Change> {
+    match id {
+        ACTUAL_SIZE => Some(Change::ActualSize),
+        ZOOM_IN => Some(Change::In),
+        ZOOM_OUT => Some(Change::Out),
+        _ => None,
+    }
+}
+
 pub(crate) fn dispatch(app: &AppHandle, id: &MenuId) {
+    if let Some(change) = zoom_change(id.as_ref()) {
+        zoom::change(app, change);
+        return;
+    }
+
     let shell = app.state::<Shell>();
 
     if id == CHECK {
@@ -199,5 +282,35 @@ mod tests {
             after_first_separator(&texts(&[Some("About Sample"), None])),
             None
         );
+    }
+
+    #[test]
+    fn a_submenu_is_found_by_its_title() {
+        let bar = texts(&[
+            Some("Sample"),
+            Some("Edit"),
+            None,
+            Some(VIEW_MENU),
+            Some(WINDOW_MENU),
+        ]);
+
+        assert_eq!(position_of(&bar, VIEW_MENU), Some(3));
+        assert_eq!(position_of(&bar, WINDOW_MENU), Some(4));
+    }
+
+    #[test]
+    fn a_menu_bar_without_the_title_has_no_such_submenu() {
+        assert_eq!(
+            position_of(&texts(&[Some("Sample"), None]), VIEW_MENU),
+            None
+        );
+    }
+
+    #[test]
+    fn each_zoom_item_makes_its_own_change() {
+        assert_eq!(zoom_change(ACTUAL_SIZE), Some(Change::ActualSize));
+        assert_eq!(zoom_change(ZOOM_IN), Some(Change::In));
+        assert_eq!(zoom_change(ZOOM_OUT), Some(Change::Out));
+        assert_eq!(zoom_change(CHECK), None);
     }
 }

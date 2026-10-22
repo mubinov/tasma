@@ -1,0 +1,3 @@
+tauri-build always watches this folder for capability files. When the folder
+is missing, Cargo runs the build script again on each build. Git keeps no
+empty folder, so this file keeps it.
