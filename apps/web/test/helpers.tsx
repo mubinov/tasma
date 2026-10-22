@@ -267,38 +267,39 @@ export async function renderWithRouter(initialPath = "/", transport?: Transport)
 
 /** Replaces ResizeObserver with one that reports a target only when a test asks. */
 export function stubResizeObservers() {
-  const callbacks = new Map<Element, () => void>();
+  const observers = new Map<Element, Set<StubObserver>>();
 
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      readonly callback: () => void;
-      readonly targets: Element[] = [];
+  class StubObserver implements ResizeObserver {
+    readonly callback: ResizeObserverCallback;
+    readonly targets: Element[] = [];
 
-      constructor(callback: () => void) {
-        this.callback = callback;
+    constructor(callback: ResizeObserverCallback) {
+      this.callback = callback;
+    }
+
+    observe(target: Element) {
+      this.targets.push(target);
+      observers.set(target, (observers.get(target) ?? new Set()).add(this));
+    }
+
+    unobserve() {}
+
+    disconnect() {
+      for (const target of this.targets) {
+        observers.get(target)?.delete(this);
       }
+    }
+  }
 
-      observe(target: Element) {
-        this.targets.push(target);
-        callbacks.set(target, this.callback);
-      }
-
-      unobserve() {}
-
-      disconnect() {
-        for (const target of this.targets) {
-          callbacks.delete(target);
-        }
-      }
-    },
-  );
+  vi.stubGlobal("ResizeObserver", StubObserver);
 
   return {
-    observed: (target: Element) => callbacks.has(target),
+    observed: (target: Element) => (observers.get(target)?.size ?? 0) > 0,
     report(target: Element) {
       act(() => {
-        callbacks.get(target)?.();
+        for (const observer of observers.get(target) ?? []) {
+          observer.callback([{ target } as ResizeObserverEntry], observer);
+        }
       });
     },
   };
@@ -345,6 +346,10 @@ export function stubHighlights() {
 
       constructor(...ranges: Range[]) {
         this.ranges = ranges;
+      }
+
+      clear() {
+        this.ranges.splice(0);
       }
     },
   );

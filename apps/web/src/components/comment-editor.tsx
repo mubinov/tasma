@@ -226,7 +226,7 @@ export function CommentEditor({
         <div
           ref={headerRef}
           data-comment-header=""
-          className="sticky top-under-bar z-(--layer-comment-header) rounded-t-card border-b border-line bg-surface px-4 pt-3 pb-2"
+          className="sticky top-top-bar z-(--layer-comment-header) rounded-t-card border-b border-line bg-surface px-4 pt-3 pb-2"
         >
           <Field.Root name="title" invalid={titleError !== undefined}>
             <Field.Label className="sr-only">{labels.title}</Field.Label>

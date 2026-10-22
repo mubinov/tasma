@@ -3,6 +3,7 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ICON_BUTTON_CLASS } from "../../src/components/control-classes";
+import { FIND_OPEN_WIDTHS } from "../../src/components/find-open-classes";
 import { formatClock } from "../../src/lib/clock";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
@@ -251,7 +252,7 @@ describe("the comments", () => {
       expect(sentinel?.childNodes).toHaveLength(0);
       for (const name of [
         "sticky",
-        "top-under-bar",
+        "top-top-bar",
         "z-(--layer-comment-header)",
         "rounded-t-card",
         "bg-surface",
@@ -1133,7 +1134,7 @@ describe("deleting the task", () => {
 
     const edit = within(topBar()).getByRole("button", { name: "Edit" });
     expect(edit.nextElementSibling).toBe(overflow());
-    expect(overflow().className).toBe(ICON_BUTTON_CLASS);
+    expect(overflow().className).toBe(`${ICON_BUTTON_CLASS} ${FIND_OPEN_WIDTHS.actions}`);
     expect(overflow().querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
 
     await user.click(overflow());

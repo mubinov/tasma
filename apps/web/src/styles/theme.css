@@ -82,10 +82,26 @@
 
   /* Lengths that more than one component places its elements by. */
   --spacing-top-bar: 3.3125rem;
-  /* The bottom of the task page's top bar, with its find row while that is open. */
-  --spacing-under-bar: calc(var(--spacing-top-bar) + var(--find-row-height, 0px));
   --spacing-task-sidebar: 18rem;
   --spacing-chat-panel: 35rem;
+
+  /*
+   * Widths of the task page's top bar line below which a step of the open
+   * find applies (find-open-classes.ts). From each `-wide` width, 5rem above
+   * its step, the find field has room for 15rem again. `-below-sm` widths
+   * apply below the `sm` window width, where the line has less padding and
+   * the back link shows its icon alone.
+   */
+  --container-find-title: 48rem;
+  --container-find-title-wide: 53rem;
+  --container-find-actions: 36.75rem;
+  --container-find-actions-wide: 41.75rem;
+  --container-find-back: 29.5rem;
+  --container-find-back-wide: 34.5rem;
+  --container-find-actions-below-sm: 32.25rem;
+  --container-find-back-below-sm: 25rem;
+  --container-find-back-below-sm-wide: 30rem;
+  --container-find-floor: 22.75rem;
 
   /*
    * Stacking, bottom to top, in the order the values list them. Used as

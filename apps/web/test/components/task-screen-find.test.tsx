@@ -1,9 +1,14 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Comment } from "@tasma/protocol";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ComponentType } from "react";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { ICON_BUTTON_CLASS } from "../../src/components/control-classes";
+import { FIND_OPEN_FLOOR, FIND_OPEN_WIDTHS } from "../../src/components/find-open-classes";
 import { FindShortcut } from "../../src/components/find-shortcut";
+import { MagnifyingGlassIcon, XIcon } from "../../src/lib/icons";
 import { renderMermaid } from "../../src/lib/mermaid";
 import { FIND_ANNOUNCE_DELAY, LONG_TEXT, NEARBY_MATCHES } from "../../src/lib/use-task-find";
 import { useNoticeStore } from "../../src/store/notices";
@@ -11,17 +16,18 @@ import { useUiStore } from "../../src/store/ui";
 import {
   renderWithRouter,
   stubHighlights,
-  stubIntersectionObserver,
   stubRangeBoxes,
   stubReducedMotion,
   stubSystemTheme,
   stubResizeObservers,
 } from "../helpers";
-import { TASK_PATH, caret, comment, commentCard, daemon, task, topBar } from "../task-screen-fixtures";
+import { TASK_PATH, backLink, caret, comment, commentCard, daemon, task, topBar } from "../task-screen-fixtures";
 
 vi.mock(import("../../src/lib/mermaid"), () => ({ renderMermaid: vi.fn(() => new Promise<never>(() => {})) }));
 
 const PAGE = "/tasks/SAGA/SAGA-3";
+
+const THEME_CSS = readFileSync(join(import.meta.dirname, "../../src/styles/theme.css"), "utf8");
 
 const ANNOUNCE = useNoticeStore.getState().announce;
 
@@ -41,12 +47,30 @@ function findButton(): HTMLElement {
   return screen.getByRole("button", { name: "Find in task" });
 }
 
-function row(): HTMLElement | null {
+function closeButton(): HTMLElement {
+  return screen.getByRole("button", { name: "Close find" });
+}
+
+function group(): HTMLElement | null {
   return screen.queryByRole("search", { name: "Find" });
 }
 
 function findField(): HTMLInputElement {
-  return within(row()!).getByRole("searchbox");
+  return within(group()!).getByRole("searchbox");
+}
+
+/** The line of the top bar, which holds the back link and the controls. */
+function line(): HTMLElement {
+  return backLink().parentElement!;
+}
+
+/** The markup of an icon, which tells the icons apart where nothing else does. */
+function iconMarkup(Icon: ComponentType<{ size: number }>): string {
+  const { container, unmount } = render(<Icon size={16} />);
+  const markup = container.querySelector("svg")!.innerHTML;
+  unmount();
+
+  return markup;
 }
 
 function counter(): string | null {
@@ -65,9 +89,8 @@ function writes(requests: readonly { method: string }[]): number {
   return requests.filter(({ method }) => method !== "GET").length;
 }
 
-/** The scroll calls a move to a match made, without the row's own open and close scrolls. */
 function matchScrolls(): unknown[] {
-  return scrollTo.mock.calls.map(([options]) => options).filter((options) => options.behavior !== "instant");
+  return scrollTo.mock.calls.map(([options]) => options);
 }
 
 async function openFind(user: ReturnType<typeof userEvent.setup>, text: string) {
@@ -143,46 +166,81 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("the find button", () => {
-  it("sits before Edit, names its key, and controls the row only while the row is open", async () => {
+describe("the toggle", () => {
+  it("sits before Edit and shows the magnifier with its key while find is closed, and × as the same element while it is open", async () => {
     const user = userEvent.setup();
     await openPage();
+    const [magnifier, cross] = [iconMarkup(MagnifyingGlassIcon), iconMarkup(XIcon)];
 
     const button = findButton();
     expect(button.nextElementSibling?.textContent).toBe("Edit");
     expect(button.getAttribute("aria-keyshortcuts")).toBe("Meta+F");
-    expect(button.getAttribute("aria-expanded")).toBe("false");
-    expect(button.hasAttribute("aria-controls")).toBe(false);
-    expect(row()).toBeNull();
+    expect(button.querySelector("svg")?.innerHTML).toBe(magnifier);
+    expect(group()).toBeNull();
 
     await user.click(button);
 
-    expect(button.getAttribute("aria-expanded")).toBe("true");
-    expect(button.getAttribute("aria-controls")).toBe(row()!.id);
+    expect(closeButton()).toBe(button);
+    expect(button.nextElementSibling?.textContent).toBe("Edit");
+    expect(button.hasAttribute("aria-keyshortcuts")).toBe(false);
+    expect(button.querySelector("svg")?.innerHTML).toBe(cross);
     expect(document.activeElement).toBe(findField());
+
+    await user.click(button);
+
+    expect(findButton()).toBe(button);
+    expect(button.querySelector("svg")?.innerHTML).toBe(magnifier);
+    for (const name of ["aria-expanded", "aria-controls"]) {
+      expect(button.hasAttribute(name), name).toBe(false);
+    }
   });
 
-  it("shows the key in its tooltip", async () => {
+  it("shows the key in its tooltip while find is closed, and Close find while it is open", async () => {
     const user = userEvent.setup();
     await openPage();
 
     await user.hover(findButton());
-
     expect(await screen.findByText("Find in task ⌘F")).toBeTruthy();
+
+    await user.click(findButton());
+    await user.unhover(closeButton());
+    await user.hover(closeButton());
+
+    expect(await screen.findByText("Close find")).toBeTruthy();
+    expect(screen.queryByText("Find in task ⌘F")).toBeNull();
   });
 
-  it("closes the row on a second press and calls focus on itself, which a pointer press does not give", async () => {
+  it("closes find on a second press, calls focus on itself, which a pointer press does not give, and says so", async () => {
     await openPage();
     const button = findButton();
     const focus = vi.spyOn(button, "focus");
 
     fireEvent.click(button);
-    expect(row()).not.toBeNull();
+    expect(group()).not.toBeNull();
     fireEvent.click(button);
 
-    expect(row()).toBeNull();
+    expect(group()).toBeNull();
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     expect(document.activeElement).toBe(button);
+    expect(announce.mock.calls).toEqual([["Find closed"]]);
+  });
+
+  it("closes only its tooltip on Escape, and keeps find open with focus on itself", async () => {
+    const user = userEvent.setup();
+    await openPage({ body: "alpha" });
+    await openFind(user, "alpha");
+    await user.hover(closeButton());
+    await screen.findByText("Close find");
+    closeButton().focus();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(screen.queryByText("Close find")).toBeNull();
+    });
+    expect(group()).not.toBeNull();
+    expect(document.activeElement).toBe(closeButton());
+    expect(current()).toEqual(["alpha"]);
   });
 
   it("puts focus in the field without a focus scroll, which the sticky bar would turn into a page scroll", async () => {
@@ -195,7 +253,7 @@ describe("the find button", () => {
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
   });
 
-  it("hides while the task editor is open, which closes the row; Cmd+F then does nothing", async () => {
+  it("hides while the task editor is open, which closes find; Cmd+F then does nothing", async () => {
     const user = userEvent.setup();
     await openPage({ body: "alpha" });
     await openFind(user, "alpha");
@@ -203,23 +261,23 @@ describe("the find button", () => {
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
 
-    expect(row()).toBeNull();
+    expect(group()).toBeNull();
     expect(current()).toBeUndefined();
-    expect(screen.queryByRole("button", { name: "Find in task" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /find/i })).toBeNull();
     act(() => {
       useUiStore.getState().requestFind();
     });
-    expect(row()).toBeNull();
+    expect(group()).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
-    expect(findButton().getAttribute("aria-expanded")).toBe("false");
-    expect(row()).toBeNull();
+    expect(findButton().getAttribute("aria-keyshortcuts")).toBe("Meta+F");
+    expect(group()).toBeNull();
   });
 });
 
 describe("Cmd+F", () => {
-  it("opens the row with focus in the field, and selects the text of an open row", async () => {
+  it("opens find with focus in the field, and selects the text of an open find", async () => {
     const user = userEvent.setup();
     const { router } = await openPage({ body: "alpha" });
     render(<FindShortcut router={router} />);
@@ -228,7 +286,7 @@ describe("Cmd+F", () => {
 
     expect(document.activeElement).toBe(findField());
     await user.type(findField(), "alpha");
-    findButton().focus();
+    closeButton().focus();
 
     await user.keyboard("{Meta>}f{/Meta}");
 
@@ -237,39 +295,38 @@ describe("Cmd+F", () => {
   });
 });
 
-describe("the row", () => {
-  it("is the second line of the bar: the label, the field, the counter, Previous, Next and Close", async () => {
+describe("the find group", () => {
+  it("opens on the line of the bar before the toggle: the label, the field with the counter in it, Previous and Next", async () => {
     const user = userEvent.setup();
     await openPage();
 
     await user.click(findButton());
 
-    const search = row()!;
-    expect(search.parentElement).toBe(topBar());
-    expect(search.previousElementSibling?.classList.contains("h-top-bar")).toBe(true);
-    expect(search.classList.contains("flex-wrap")).toBe(true);
-    expect(search.classList.contains("border-t")).toBe(true);
-    expect(search.hasAttribute("data-find-row")).toBe(true);
+    const search = group()!;
+    expect(topBar().childElementCount).toBe(1);
+    expect(line().classList.contains("h-top-bar")).toBe(true);
+    expect(search.parentElement?.parentElement).toBe(line());
+    expect(search.nextElementSibling).toBe(closeButton());
+    expect(search.firstElementChild?.textContent).toBe("Find");
     const field = findField();
     expect(field.getAttribute("type")).toBe("text");
     expect(field.getAttribute("autocomplete")).toBe("off");
     expect(field.getAttribute("spellcheck")).toBe("false");
-    expect(field.parentElement?.classList.contains("min-w-32")).toBe(true);
+    expect(field.parentElement?.classList.contains("w-60")).toBe(true);
     const description = document.getElementById(field.getAttribute("aria-describedby")!);
     expect(description?.getAttribute("aria-hidden")).toBe("true");
+    expect(description?.previousElementSibling).toBe(field);
     expect(within(search).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual([
       "Previous match",
       "Next match",
-      "Close find",
     ]);
-    expect(within(search).getByRole("button", { name: "Close find" }).className).toBe(ICON_BUTTON_CLASS);
   });
 
-  it("gives the page its scroll padding, with the row's height, only while focus is outside the bar", async () => {
+  it("gives the page its scroll padding, the height of the bar and a gap, only while focus is outside the bar", async () => {
     await openPage();
 
     const classes = [...topBar().classList];
-    expect(classes).toContain("[html:has(&)]:[--page-scroll-padding:calc(--spacing(16)+var(--find-row-height,0px))]");
+    expect(classes).toContain("[html:has(&)]:[--page-scroll-padding:--spacing(16)]");
     expect(classes).toContain("[html:has(&:not(:focus-within))]:scroll-pt-(--page-scroll-padding)");
     expect(classes.filter((name) => name.includes("scroll-pt"))).toHaveLength(1);
   });
@@ -282,71 +339,266 @@ describe("the row", () => {
     expect(classes.filter((name) => name.includes("min-h"))).toHaveLength(1);
   });
 
-  it("sets its height on the page while it is open, reads the scroll padding again on a resize, and removes it on close", async () => {
+  it("opens and closes with no scroll of the page", async () => {
     const user = userEvent.setup();
-    const io = stubIntersectionObserver();
-    const resize = stubResizeObservers();
-    let rowHeight = 41;
-    stubElementBoxes((element) => ({ height: element.hasAttribute("data-find-row") ? rowHeight : 0 }));
-    document.documentElement.style.setProperty("--page-scroll-padding", "64px");
-    await openPage({ body: "## Plan" });
-    resize.report(topBar());
-    const plan = screen.getByRole("heading", { level: 2, name: "Plan" });
-    const margins = () => io.observers
-      .filter((observer) => observer.targets.has(plan))
-      .map(({ options }) => options.rootMargin);
-    expect(margins()).toEqual(["-72px 0px 10000000px 0px"]);
-
-    await user.click(findButton());
-    expect(document.documentElement.style.getPropertyValue("--find-row-height")).toBe("41px");
-
-    rowHeight = 82;
-    document.documentElement.style.setProperty("--page-scroll-padding", "146px");
-    resize.report(row()!);
-
-    expect(document.documentElement.style.getPropertyValue("--find-row-height")).toBe("82px");
-    expect(margins()).toEqual(["-154px 0px 10000000px 0px"]);
-
-    await user.click(within(row()!).getByRole("button", { name: "Close find" }));
-
-    expect(document.documentElement.style.getPropertyValue("--find-row-height")).toBe("");
-  });
-
-  it.each([
-    [300, [{ top: 341, behavior: "instant" }], [{ top: 259, behavior: "instant" }]],
-    [0, [], [{ top: 0, behavior: "instant" }]],
-  ])("scrolls by its height on open and close at a scroll of %i, so the text stays", async (scrollY, opened, closed) => {
-    const user = userEvent.setup();
-    stubElementBoxes((element) => ({ height: element.hasAttribute("data-find-row") ? 41 : 0 }));
-    await openPage();
-    vi.stubGlobal("scrollY", scrollY);
-    scrollTo.mockClear();
-
-    await user.click(findButton());
-    expect(scrollTo.mock.calls.map(([options]) => options)).toEqual(opened);
-    scrollTo.mockClear();
-
-    await user.click(within(row()!).getByRole("button", { name: "Close find" }));
-    expect(scrollTo.mock.calls.map(([options]) => options)).toEqual(closed);
-  });
-
-  it("scrolls on open to the place before the open plus its height, also when the browser already moved the page", async () => {
-    const user = userEvent.setup();
-    // A browser that anchors the scroll moves the page by the row in the layout that measures the row.
-    stubElementBoxes((element) => {
-      if (!element.hasAttribute("data-find-row")) {
-        return { height: 0 };
-      }
-      vi.stubGlobal("scrollY", 341);
-      return { height: 41 };
-    });
     await openPage();
     vi.stubGlobal("scrollY", 300);
     scrollTo.mockClear();
 
     await user.click(findButton());
+    await user.click(closeButton());
 
-    expect(scrollTo.mock.calls.map(([options]) => options)).toEqual([{ top: 341, behavior: "instant" }]);
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+});
+
+describe("narrow widths", () => {
+  function hasClasses(element: Element, classes: string): boolean {
+    return classes.split(" ").every((name) => element.classList.contains(name));
+  }
+
+  it("marks the line only while find is open, and makes the bar, as wide as the line, a size container", async () => {
+    const user = userEvent.setup();
+    await openPage();
+    expect(topBar().classList.contains("@container")).toBe(true);
+    expect(line().classList.contains("group/top-bar")).toBe(true);
+    expect(line().hasAttribute("data-find-open")).toBe(false);
+
+    await user.click(findButton());
+    expect(line().hasAttribute("data-find-open")).toBe(true);
+
+    await user.click(closeButton());
+    expect(line().hasAttribute("data-find-open")).toBe(false);
+  });
+
+  it("gives each item of the line and of the find group the classes of its steps", async () => {
+    const user = userEvent.setup();
+    await openPage();
+
+    await user.click(findButton());
+
+    expect(hasClasses(backLink(), FIND_OPEN_WIDTHS.back)).toBe(true);
+    expect(hasClasses(line().children[1]!, FIND_OPEN_WIDTHS.title)).toBe(true);
+    expect(hasClasses(screen.getByRole("button", { name: "Edit" }), FIND_OPEN_WIDTHS.actions)).toBe(true);
+    expect(hasClasses(screen.getByRole("button", { name: "Task menu" }), FIND_OPEN_WIDTHS.actions)).toBe(true);
+    expect(hasClasses(group()!.parentElement!, `${FIND_OPEN_WIDTHS.controls} ${FIND_OPEN_FLOOR.controls}`)).toBe(true);
+    expect(hasClasses(group()!, `${FIND_OPEN_WIDTHS.group} ${FIND_OPEN_FLOOR.group}`)).toBe(true);
+    expect(hasClasses(findField().parentElement!, `${FIND_OPEN_WIDTHS.field} ${FIND_OPEN_FLOOR.field}`)).toBe(true);
+    expect(hasClasses(line(), FIND_OPEN_FLOOR.line)).toBe(true);
+    for (const name of ["Previous match", "Next match"]) {
+      expect(hasClasses(within(group()!).getByRole("button", { name }), `shrink-0 ${FIND_OPEN_FLOOR.stepButton}`)).toBe(true);
+    }
+    expect(closeButton().classList.contains("shrink-0")).toBe(true);
+  });
+
+  it("takes each width from the theme, steps in order, and gives the field 15rem again 5rem above each step", () => {
+    const width = (token: string | undefined): number => {
+      const value = new RegExp(`--container-${token}: ([\\d.]+)rem;`).exec(THEME_CSS)?.[1];
+      expect(value, token).toBeDefined();
+      return Number(value);
+    };
+    /** The `@min-` and `@max-` tokens of each class of `classes` under `prefix` that sets `utility`. */
+    const queries = (classes: string, prefix: string, utility: string) => classes
+      .split(" ")
+      .filter((name) => name.startsWith(`${prefix}:`) && name.endsWith(`:${utility}`))
+      .map((name) => ({ min: /:@min-([a-z-]+):/.exec(name)?.[1], max: /:@max-([a-z-]+):/.exec(name)?.[1] }));
+    // The sm window width, 40rem, less the 4rem nav rail.
+    const widestLineBelowSm = 36;
+    const floors = Object.values(FIND_OPEN_FLOOR)
+      .flatMap((classes) => classes.split(" "))
+      .map((name) => /^@max-([a-z-]+):/.exec(name)?.[1]);
+    expect(new Set(floors).size).toBe(1);
+    const floor = width(floors[0]);
+
+    for (const [prefix, widest] of [["max-sm", widestLineBelowSm], ["sm", Infinity]] as const) {
+      const steps = [FIND_OPEN_WIDTHS.title, FIND_OPEN_WIDTHS.actions, FIND_OPEN_WIDTHS.back]
+        .flatMap((classes) => queries(classes, prefix, "hidden"))
+        .flatMap(({ max }) => (max === undefined ? [] : [max]));
+      const stepWidths = steps.map(width);
+      expect(stepWidths, prefix).toEqual(stepWidths.toSorted((a, b) => b - a));
+      expect(stepWidths.at(-1)! > floor, prefix).toBe(true);
+
+      const back = { min: undefined, max: steps.at(-1) };
+      expect(queries(FIND_OPEN_WIDTHS.controls, prefix, "min-w-0"), prefix).toEqual([back]);
+      expect(queries(FIND_OPEN_WIDTHS.controls, prefix, "flex-1"), prefix).toEqual([back]);
+      expect(queries(FIND_OPEN_WIDTHS.group, prefix, "flex-1"), prefix).toEqual([back]);
+      expect(queries(FIND_OPEN_WIDTHS.field, prefix, "flex-1"), prefix).toEqual([back]);
+
+      const narrowFieldRanges = queries(FIND_OPEN_WIDTHS.field, prefix, "w-40");
+      expect(narrowFieldRanges.map(({ min }) => min), prefix).toEqual(steps);
+      for (const { min, max } of narrowFieldRanges) {
+        // The field's 15rem less its 10rem. A step with no upper bound has a line that is never that much wider.
+        const wideFieldFrom = width(min) + 5;
+        expect(max === undefined ? wideFieldFrom > widest : width(max) === wideFieldFrom, `${prefix} ${min}`).toBe(true);
+      }
+    }
+    expect(FIND_OPEN_WIDTHS.title).toContain("max-sm:group-data-find-open/top-bar:hidden");
+  });
+
+  it("leaves the input 8 px beside a counter of five-digit numbers at the floor, on a line of 256 px", () => {
+    // Measured in Chromium with the bundled Inter at 0.75rem, in px: the label "Find" and the counter "99999 of 99999".
+    const label = 24.4;
+    const counter = 95.9;
+    const border = 1;
+    /** The px of the spacing utility `utility` among the floor classes `classes`. */
+    const floorPx = (classes: string, utility: string): number => {
+      const value = classes
+        .split(" ")
+        .map((name) => new RegExp(`^@max-find-floor:(?:.+:)?${utility}-([\\d.]+)$`).exec(name)?.[1])
+        .find((step) => step !== undefined);
+      expect(value, `${classes} ${utility}`).toBeDefined();
+      return Number(value) * 4;
+    };
+    const toggle = Number(/(?:^| )w-(\d+)(?: |$)/.exec(ICON_BUTTON_CLASS)?.[1]) * 4;
+
+    const input = 256
+      - 2 * floorPx(FIND_OPEN_FLOOR.line, "px")
+      - floorPx(FIND_OPEN_FLOOR.controls, "gap")
+      - toggle
+      - label
+      - 3 * floorPx(FIND_OPEN_FLOOR.group, "gap")
+      - 2 * floorPx(FIND_OPEN_FLOOR.stepButton, "size")
+      - 2 * border
+      - 2 * floorPx(FIND_OPEN_FLOOR.field, "px")
+      - floorPx(FIND_OPEN_FLOOR.field, "gap")
+      - counter;
+
+    expect(input).toBeGreaterThanOrEqual(8);
+  });
+});
+
+describe("an item of the line that hides", () => {
+  /** Makes `checkVisibility()`, which jsdom does not have, false for the elements in the set. */
+  function stubVisibility(): Set<Element> {
+    const hidden = new Set<Element>();
+    Object.defineProperty(Element.prototype, "checkVisibility", {
+      configurable: true,
+      value(this: Element) {
+        return !hidden.has(this);
+      },
+    });
+    onTestFinished(() => {
+      Reflect.deleteProperty(Element.prototype, "checkVisibility");
+    });
+    return hidden;
+  }
+
+  function editButton(): HTMLElement {
+    return screen.getByRole("button", { name: "Edit" });
+  }
+
+  function menuButton(): HTMLElement {
+    return screen.getByRole("button", { name: "Task menu" });
+  }
+
+  async function openWithFocusOn(item: () => HTMLElement) {
+    const user = userEvent.setup();
+    const resize = stubResizeObservers();
+    const hidden = stubVisibility();
+    await openPage();
+    await user.click(findButton());
+    act(() => {
+      item().focus();
+    });
+    return { user, resize, hidden };
+  }
+
+  it.each([
+    ["Edit", editButton],
+    ["the task menu button", menuButton],
+    ["the back link", backLink],
+  ])("moves focus from %s to the toggle when a size change of the line hides it", async (_name, item) => {
+    const { resize, hidden } = await openWithFocusOn(item);
+    const focus = vi.spyOn(closeButton(), "focus");
+
+    hidden.add(item());
+    resize.report(line());
+
+    expect(document.activeElement).toBe(closeButton());
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it("moves focus to the toggle when the engine moved it to the body as the item hid", async () => {
+    const { resize, hidden } = await openWithFocusOn(editButton);
+
+    hidden.add(editButton());
+    act(() => {
+      editButton().blur();
+    });
+    expect(document.activeElement).toBe(document.body);
+    resize.report(line());
+
+    expect(document.activeElement).toBe(closeButton());
+  });
+
+  it("leaves focus alone when the reader moved it away from the item before the item hid", async () => {
+    const { resize, hidden } = await openWithFocusOn(editButton);
+
+    act(() => {
+      editButton().blur();
+    });
+    hidden.add(editButton());
+    resize.report(line());
+
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("leaves focus outside the line alone", async () => {
+    const addComment = () => screen.getByRole("button", { name: "Add comment" });
+    const { resize, hidden } = await openWithFocusOn(addComment);
+
+    hidden.add(editButton());
+    resize.report(line());
+
+    expect(document.activeElement).toBe(addComment());
+  });
+
+  it("leaves focus on an item that is still shown", async () => {
+    const { resize } = await openWithFocusOn(editButton);
+
+    resize.report(line());
+
+    expect(document.activeElement).toBe(editButton());
+  });
+
+  it("closes the open task menu when its button hides and puts focus on the toggle; a menu closed by Escape returns focus to its button", async () => {
+    const { user, resize, hidden } = await openWithFocusOn(menuButton);
+    await user.click(menuButton());
+    await screen.findByRole("menu");
+
+    resize.report(menuButton());
+    expect(screen.getByRole("menu")).toBeTruthy();
+    hidden.add(menuButton());
+    resize.report(menuButton());
+
+    await waitFor(() => {
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(closeButton());
+    });
+
+    hidden.clear();
+    await user.click(menuButton());
+    await screen.findByRole("menu");
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(menuButton());
+    });
+  });
+
+  it("watches the line only while find is open", async () => {
+    const user = userEvent.setup();
+    const resize = stubResizeObservers();
+    await openPage();
+    expect(resize.observed(line())).toBe(false);
+
+    await user.click(findButton());
+    expect(resize.observed(line())).toBe(true);
+
+    await user.click(closeButton());
+    expect(resize.observed(line())).toBe(false);
   });
 });
 
@@ -419,7 +671,7 @@ describe("the matches", () => {
     expect(counter()).toBe("1505 of 2000");
     expect(measured).toBeLessThan(2 * Math.log2(lines));
 
-    fireEvent.click(within(row()!).getByRole("button", { name: "Close find" }));
+    fireEvent.click(closeButton());
     measured = 0;
     fireEvent.click(findButton());
     expect(counter()).toBe("1505 of 2000");
@@ -468,14 +720,14 @@ describe("the matches", () => {
     expect(counter()).toBe("No matches");
     expect(current()).toBeUndefined();
     for (const name of ["Previous match", "Next match"]) {
-      const button = within(row()!).getByRole("button", { name });
+      const button = within(group()!).getByRole("button", { name });
       expect(button.getAttribute("aria-disabled")).toBe("true");
       expect(button.hasAttribute("disabled")).toBe(false);
       expect(button.hasAttribute("data-disabled")).toBe(true);
       expect(button.classList.contains("data-disabled:border-line")).toBe(true);
       expect(button.classList.contains("not-data-disabled:border-graphic")).toBe(true);
     }
-    await user.click(within(row()!).getByRole("button", { name: "Next match" }));
+    await user.click(within(group()!).getByRole("button", { name: "Next match" }));
     expect(counter()).toBe("No matches");
   });
 
@@ -509,7 +761,7 @@ describe("the matches", () => {
     await openPage({ body: "alpha one\n\nalpha two\n\nalpha three" });
     await openFind(user, "alpha");
     const currentBlock = () => highlights.ranges("task-find-current")[0]?.startContainer.textContent;
-    expect(within(row()!).getByRole("button", { name: "Next match" }).hasAttribute("data-disabled")).toBe(false);
+    expect(within(group()!).getByRole("button", { name: "Next match" }).hasAttribute("data-disabled")).toBe(false);
 
     await user.keyboard("{Enter}");
     expect([counter(), currentBlock()]).toEqual(["2 of 3", "alpha two"]);
@@ -518,9 +770,9 @@ describe("the matches", () => {
     expect([counter(), currentBlock()]).toEqual(["1 of 3", "alpha one"]);
     await user.keyboard("{Shift>}{Enter}{/Shift}");
     expect(counter()).toBe("3 of 3");
-    await user.click(within(row()!).getByRole("button", { name: "Previous match" }));
+    await user.click(within(group()!).getByRole("button", { name: "Previous match" }));
     expect(counter()).toBe("2 of 3");
-    await user.click(within(row()!).getByRole("button", { name: "Next match" }));
+    await user.click(within(group()!).getByRole("button", { name: "Next match" }));
     expect(counter()).toBe("3 of 3");
   });
 
@@ -610,7 +862,7 @@ describe("the scroll", () => {
 describe("a collapsed comment", () => {
   const COMMENTS = [comment(1, { collapsed: true, body: "the hidden alpha\n\n```mermaid\nflowchart LR\n```" })];
 
-  it("keeps its text in the page only while the row is open with a text", async () => {
+  it("keeps its text in the page only while find is open with a text", async () => {
     const user = userEvent.setup();
     await openPage({ body: "alpha first", comments: COMMENTS });
     expect(screen.queryByText("the hidden alpha")).toBeNull();
@@ -672,7 +924,7 @@ describe("a collapsed comment", () => {
   });
 });
 
-describe("Escape and Close", () => {
+describe("Escape and the close", () => {
   it("Escape puts focus on the link that holds the match, selects it, and deletes the highlights", async () => {
     const user = userEvent.setup();
     await openPage({ body: "See the [output](https://example.invalid/out) now" });
@@ -680,7 +932,7 @@ describe("Escape and Close", () => {
 
     await user.keyboard("{Escape}");
 
-    expect(row()).toBeNull();
+    expect(group()).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("link", { name: /output/ }));
     expect(window.getSelection()?.toString()).toBe("output");
     expect(current()).toBeUndefined();
@@ -749,7 +1001,7 @@ describe("Escape and Close", () => {
     expect(window.getSelection()?.toString()).toBe("run the fast");
   });
 
-  it("Escape with no match puts focus back where it was before the row opened", async () => {
+  it("Escape with no match puts focus back where it was before find opened", async () => {
     const user = userEvent.setup();
     const { router } = await openPage({ body: "alpha" });
     render(<FindShortcut router={router} />);
@@ -787,20 +1039,20 @@ describe("Escape and Close", () => {
     expect(document.activeElement).toBe(findButton());
   });
 
-  it("Escape on Previous, Next and Close closes the row too, and an Escape that ends a composition does not", async () => {
+  it("Escape on Previous and Next closes find too, and an Escape that ends a composition does not", async () => {
     const user = userEvent.setup();
     await openPage({ body: "alpha" });
     await openFind(user, "alpha");
 
     fireEvent.keyDown(findField(), { key: "Escape", isComposing: true });
-    expect(row()).not.toBeNull();
+    expect(group()).not.toBeNull();
 
-    for (const name of ["Previous match", "Next match", "Close find"]) {
-      if (row() === null) {
+    for (const name of ["Previous match", "Next match"]) {
+      if (group() === null) {
         await user.click(findButton());
       }
-      fireEvent.keyDown(within(row()!).getByRole("button", { name }), { key: "Escape" });
-      expect(row(), name).toBeNull();
+      fireEvent.keyDown(within(group()!).getByRole("button", { name }), { key: "Escape" });
+      expect(group(), name).toBeNull();
     }
   });
 
@@ -814,23 +1066,54 @@ describe("Escape and Close", () => {
     expect(counter()).toBe("1 of 2");
   });
 
-  it("Close puts focus on the button and deletes the highlights", async () => {
+  it("the toggle closes find, keeps focus on itself, says Find closed, and deletes the highlights", async () => {
     const user = userEvent.setup();
     await openPage({ body: "alpha" });
     await openFind(user, "alpha");
+    announce.mockClear();
 
-    await user.click(within(row()!).getByRole("button", { name: "Close find" }));
+    await user.click(closeButton());
 
-    expect(row()).toBeNull();
+    expect(group()).toBeNull();
     expect(document.activeElement).toBe(findButton());
+    expect(announce.mock.calls).toEqual([["Find closed"]]);
     expect(current()).toBeUndefined();
   });
 
-  it("keeps the text while the page stays, selected and searched again when the row opens", async () => {
+  it.each([
+    ["Enter", "{Enter}"],
+    ["Space", " "],
+  ])("the toggle closes find on %s and says so", async (_name, key) => {
     const user = userEvent.setup();
     await openPage({ body: "alpha" });
     await openFind(user, "alpha");
-    await user.click(within(row()!).getByRole("button", { name: "Close find" }));
+    closeButton().focus();
+    announce.mockClear();
+
+    await user.keyboard(key);
+
+    expect(group()).toBeNull();
+    expect(document.activeElement).toBe(findButton());
+    expect(announce.mock.calls).toEqual([["Find closed"]]);
+  });
+
+  it("Escape in the group says nothing of the close", async () => {
+    const user = userEvent.setup();
+    await openPage({ body: "alpha" });
+    await openFind(user, "omega");
+    announce.mockClear();
+
+    await user.keyboard("{Escape}");
+
+    expect(group()).toBeNull();
+    expect(announce).not.toHaveBeenCalled();
+  });
+
+  it("keeps the text while the page stays, selected and searched again when find opens", async () => {
+    const user = userEvent.setup();
+    await openPage({ body: "alpha" });
+    await openFind(user, "alpha");
+    await user.click(closeButton());
     announce.mockClear();
     scrollTo.mockClear();
 
@@ -850,7 +1133,40 @@ describe("Escape and Close", () => {
     cleanup();
 
     expect(current()).toBeUndefined();
-    expect(document.documentElement.style.getPropertyValue("--find-row-height")).toBe("");
+  });
+});
+
+describe("the highlights in WebKit", () => {
+  type Registered = { ranges: Range[] };
+
+  it.each([
+    ["a new result", async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.type(findField(), "a");
+    }],
+    ["a close", async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(closeButton());
+    }],
+    ["the editor opening", async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("button", { name: "Edit" }));
+    }],
+    ["the page going", () => {
+      cleanup();
+    }],
+  ])("empty both highlights before they leave the registry on %s", async (_case, action) => {
+    const user = userEvent.setup();
+    await openPage({ body: "alpha and alpha" });
+    await openFind(user, "alph");
+    const old = ["task-find", "task-find-current"].map((name) => CSS.highlights.get(name) as unknown as Registered);
+    expect(old.map(({ ranges }) => ranges.length)).toEqual([1, 1]);
+    const clear = vi.spyOn(Highlight.prototype, "clear");
+    const remove = vi.spyOn(CSS.highlights, "delete");
+
+    await action(user);
+
+    expect(clear.mock.contexts.slice(0, 2)).toEqual(old);
+    expect(old.map(({ ranges }) => ranges.length)).toEqual([0, 0]);
+    expect(remove.mock.calls.slice(0, 2)).toEqual([["task-find"], ["task-find-current"]]);
+    expect(Math.max(...clear.mock.invocationCallOrder.slice(0, 2))).toBeLessThan(remove.mock.invocationCallOrder[0]!);
   });
 });
 
@@ -991,8 +1307,8 @@ describe("the announcements", () => {
     await user.keyboard("{Enter}");
     await user.keyboard("{Enter}");
     await user.keyboard("{Shift>}{Enter}{/Shift}");
-    await user.click(within(row()!).getByRole("button", { name: "Next match" }));
-    await user.click(within(row()!).getByRole("button", { name: "Previous match" }));
+    await user.click(within(group()!).getByRole("button", { name: "Next match" }));
+    await user.click(within(group()!).getByRole("button", { name: "Previous match" }));
 
     expect(announce.mock.calls.flat()).toEqual([
       "Match 2 of 6, in the body",
@@ -1047,7 +1363,7 @@ describe("the announcements", () => {
     expect(announce.mock.calls).toEqual([[words]]);
   });
 
-  it("says nothing for a text that becomes empty, for Enter in an empty field, or when the row opens with no text", async () => {
+  it("says nothing for a text that becomes empty, for Enter in an empty field, or when find opens with no text", async () => {
     const user = userWithFakeTimers();
     await openPage({ body: "alpha" });
     await user.click(findButton());

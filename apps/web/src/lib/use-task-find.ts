@@ -19,7 +19,6 @@ export const LONG_TEXT = 10_000;
 
 const MATCHES_HIGHLIGHT = "task-find";
 const CURRENT_HIGHLIGHT = "task-find-current";
-const ROW_HEIGHT = "--find-row-height";
 
 type FindResult = {
   /** The query the matches are for. */
@@ -46,8 +45,6 @@ type Typed = { text: string; at: number };
 
 /** Moves asked for before the result of the text came, which apply to that result. */
 type PendingSteps = { text: string; steps: number };
-
-type Closing = { scrollTop: number; focus: () => void };
 
 function elementOf(node: Node): Element | null {
   return node instanceof Element ? node : node.parentElement;
@@ -228,42 +225,36 @@ function announce(words: string): void {
 type TaskFindOptions = {
   /** The element whose text the find searches. */
   rootRef: RefObject<HTMLElement | null>;
-  /** The magnifier button. */
+  /** The button that opens find and closes it. */
   buttonRef: RefObject<HTMLButtonElement | null>;
   /** The comments of the task, which name the place of a match. */
   comments: readonly Comment[];
-  /** The task editor is open: the row closes and stays closed. */
+  /** The task editor is open: find closes and stays closed. */
   editing: boolean;
-  /** The open row changed its height, which the page's scroll padding adds. */
-  onRowResize: () => void;
 };
 
 export type TaskFind = {
   open: boolean;
   text: string;
-  rowRef: RefObject<HTMLDivElement | null>;
   fieldRef: RefObject<HTMLInputElement | null>;
   /** "3 of 12", "No matches", or empty while the text is. */
   counter: string;
   hasMatches: boolean;
-  /** The row is open with a text, so a closed comment keeps its text in the page. */
+  /** Find is open with a text, so a closed comment keeps its text in the page. */
   findActive: boolean;
   reveal: RevealRequest | null;
   /** Cmd+F. */
   request: () => void;
-  /** The magnifier button. */
+  /** The button that opens find and closes it. */
   toggle: () => void;
   changeText: (text: string) => void;
   /** Enter, Shift+Enter, Next and Previous. */
   step: (direction: 1 | -1) => void;
   escape: () => void;
-  /** The Close button. */
-  close: () => void;
 };
 
-/** The find of the task page: the row, the matches, the current match and their highlights. */
-export function useTaskFind({ rootRef, buttonRef, comments, editing, onRowResize }: TaskFindOptions): TaskFind {
-  const rowRef = useRef<HTMLDivElement>(null);
+/** The find of the task page: the open state, the matches, the current match and their highlights. */
+export function useTaskFind({ rootRef, buttonRef, comments, editing }: TaskFindOptions): TaskFind {
   const fieldRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
@@ -274,8 +265,8 @@ export function useTaskFind({ rootRef, buttonRef, comments, editing, onRowResize
   const [typed, setTyped] = useState<Typed | null>(null);
   const [pending, setPending] = useState<PendingSteps | null>(null);
   const focusBeforeRef = useRef<Element | null>(null);
-  const openedAtRef = useRef(0);
-  const closingRef = useRef<Closing | null>(null);
+  /** The focus move of a close, which runs once the find group is gone. */
+  const closingRef = useRef<(() => void) | null>(null);
   const ranRef = useRef({ open, query });
   const active = open && query.trim() !== "";
 
@@ -335,16 +326,13 @@ export function useTaskFind({ rootRef, buttonRef, comments, editing, onRowResize
     setTyped(null);
   });
 
-  function openRow(): void {
+  function openFind(): void {
     focusBeforeRef.current = document.activeElement;
-    openedAtRef.current = window.scrollY;
     setOpen(true);
   }
 
-  /** The row unmounts before the page scrolls back by its height, so both lengths are read now. */
-  function closeRow(focus: () => void): void {
-    const height = rowRef.current!.getBoundingClientRect().height;
-    closingRef.current = { scrollTop: Math.max(0, window.scrollY - height), focus };
+  function closeFind(focus: () => void): void {
+    closingRef.current = focus;
     setOpen(false);
     setTyped(null);
     setPending(null);
@@ -363,15 +351,17 @@ export function useTaskFind({ rootRef, buttonRef, comments, editing, onRowResize
       fieldRef.current?.focus({ preventScroll: true });
       fieldRef.current?.select();
     } else {
-      openRow();
+      openFind();
     }
   }
 
+  // VoiceOver in WebKit does not reliably speak the new name of the focused button, so the close is announced.
   function toggle(): void {
     if (open) {
-      closeRow(focusButton);
+      closeFind(focusButton);
+      announce("Find closed");
     } else {
-      openRow();
+      openFind();
     }
   }
 
@@ -404,8 +394,8 @@ export function useTaskFind({ rootRef, buttonRef, comments, editing, onRowResize
     const root = rootRef.current;
     const match = result.matches[result.current];
     if (root !== null && match !== undefined && hiddenPanel(match) === null) {
-      closeRow(() => {
-        // The instant scroll of the close stops a smooth scroll to the match partway.
+      closeFind(() => {
+        // The focus moves without a scroll, and the page can have scrolled away from the match since the move to it.
         if (!inView(match)) {
           scrollToMatch(match);
         }
@@ -415,7 +405,7 @@ export function useTaskFind({ rootRef, buttonRef, comments, editing, onRowResize
     }
 
     const before = focusBeforeRef.current;
-    closeRow(() => {
+    closeFind(() => {
       if (before instanceof HTMLElement && before !== document.body && before.isConnected) {
         before.focus({ preventScroll: true });
       } else {
@@ -424,43 +414,15 @@ export function useTaskFind({ rootRef, buttonRef, comments, editing, onRowResize
     });
   }
 
-  const rowResized = useEffectEvent(onRowResize);
-
-  // Opening scrolls the page down by the row, and closing scrolls it back, so the text on the screen stays. Both
-  // targets come from the scroll before the change, so a browser that anchors the scroll itself ends at the same place.
   useLayoutEffect(() => {
-    const html = document.documentElement;
-    if (!open) {
-      const closing = closingRef.current;
-      closingRef.current = null;
-      if (closing !== null) {
-        window.scrollTo({ top: closing.scrollTop, behavior: "instant" });
-        closing.focus();
-      }
+    if (open) {
+      fieldRef.current?.focus({ preventScroll: true });
+      fieldRef.current?.select();
       return;
     }
-
-    const row = rowRef.current!;
-    const height = row.getBoundingClientRect().height;
-    html.style.setProperty(ROW_HEIGHT, `${String(height)}px`);
-    if (openedAtRef.current > 0) {
-      window.scrollTo({ top: openedAtRef.current + height, behavior: "instant" });
-    }
-    fieldRef.current?.focus({ preventScroll: true });
-    fieldRef.current?.select();
-
-    const observer = typeof ResizeObserver === "undefined"
-      ? null
-      : new ResizeObserver(() => {
-          html.style.setProperty(ROW_HEIGHT, `${String(row.getBoundingClientRect().height)}px`);
-          rowResized();
-        });
-    observer?.observe(row);
-
-    return () => {
-      observer?.disconnect();
-      html.style.removeProperty(ROW_HEIGHT);
-    };
+    const closing = closingRef.current;
+    closingRef.current = null;
+    closing?.();
   }, [open]);
 
   useLayoutEffect(() => {
@@ -522,10 +484,15 @@ export function useTaskFind({ rootRef, buttonRef, comments, editing, onRowResize
       return;
     }
 
-    CSS.highlights.set(MATCHES_HIGHLIGHT, new Highlight(...nearbyRanges(result)));
-    CSS.highlights.set(CURRENT_HIGHLIGHT, new Highlight(current.range));
+    const matches = new Highlight(...nearbyRanges(result));
+    const currentMatch = new Highlight(current.range);
+    CSS.highlights.set(MATCHES_HIGHLIGHT, matches);
+    CSS.highlights.set(CURRENT_HIGHLIGHT, currentMatch);
 
+    // WebKit does not repaint the text of a highlight that leaves the registry with its ranges.
     return () => {
+      matches.clear();
+      currentMatch.clear();
       CSS.highlights.delete(MATCHES_HIGHLIGHT);
       CSS.highlights.delete(CURRENT_HIGHLIGHT);
     };
@@ -534,7 +501,6 @@ export function useTaskFind({ rootRef, buttonRef, comments, editing, onRowResize
   return {
     open,
     text,
-    rowRef,
     fieldRef,
     counter: result.query.trim() === ""
       ? ""
@@ -549,8 +515,5 @@ export function useTaskFind({ rootRef, buttonRef, comments, editing, onRowResize
     changeText,
     step,
     escape,
-    close: () => {
-      closeRow(focusButton);
-    },
   };
 }

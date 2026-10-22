@@ -64,18 +64,3 @@
 html.cursor-grabbing * {
   cursor: grabbing;
 }
-
-/*
- * Outside every layer, so it wins over the sticky and scroll margin utilities.
- * In a short window the top bar, the find row and a stuck comment header would
- * cover the whole page.
- */
-@media (max-height: 30rem) {
-  html:has([data-find-row]) [data-comment-header] {
-    position: static;
-  }
-
-  html:has([data-find-row]) [data-comment-text] * {
-    scroll-margin-top: 0;
-  }
-}

@@ -31,10 +31,12 @@ import {
   PlusIcon,
   ProhibitIcon,
   TrashIcon,
+  XIcon,
 } from "../lib/icons";
 import { HIDDEN_TEXT } from "../lib/page-find";
 import { blockingRows, relationRows, type RelationRow } from "../lib/task-page";
 import { useCommentList } from "../lib/use-comment-list";
+import { useHiddenFocus } from "../lib/use-hidden-focus";
 import { useScrolledPast } from "../lib/use-scrolled-past";
 import { useTaskEditing } from "../lib/use-task-editing";
 import { useTaskFind } from "../lib/use-task-find";
@@ -47,7 +49,8 @@ import { useFindRequest, useUiStore } from "../store/ui";
 import { CommentCard } from "./comment-card";
 import { EditingComment } from "./comment-editor";
 import { ConfirmDialog } from "./confirm-dialog";
-import { FindBar } from "./find-bar";
+import { FindGroup } from "./find-group";
+import { FIND_OPEN_FLOOR, FIND_OPEN_WIDTHS } from "./find-open-classes";
 import {
   BUTTON_CLASS,
   BUTTON_FILLED_CLASS,
@@ -262,9 +265,7 @@ function BlockedSummary({ tag, blocking }: { tag: string; blocking: readonly Rel
 
 type ReadingControlsProps = {
   editButtonRef: Ref<HTMLButtonElement>;
-  findButtonRef: Ref<HTMLButtonElement>;
-  /** The id of the find row, which renders only while it is open. */
-  findRowId: string;
+  findButtonRef: RefObject<HTMLButtonElement | null>;
   findOpen: boolean;
   onFind: () => void;
   onEdit: () => void;
@@ -272,35 +273,73 @@ type ReadingControlsProps = {
 };
 
 function ReadingControls(
-  { editButtonRef, findButtonRef, findRowId, findOpen, onFind, onEdit, onDelete }: ReadingControlsProps,
+  { editButtonRef, findButtonRef, findOpen, onFind, onEdit, onDelete }: ReadingControlsProps,
 ): ReactNode {
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  // Where focus goes when the menu closes, or null for the menu button.
+  const menuFinalFocusRef = useRef<HTMLElement>(null);
+
+  // While find is open, a narrow line hides the menu button; the menu closes with it.
+  useLayoutEffect(() => {
+    if (!menuOpen || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const trigger = menuTriggerRef.current!;
+    const observer = new ResizeObserver(() => {
+      if (!trigger.checkVisibility()) {
+        menuFinalFocusRef.current = findButtonRef.current;
+        setMenuOpen(false);
+      }
+    });
+    observer.observe(trigger);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [menuOpen, findButtonRef]);
+
   return (
     <>
-      <Tooltip content="Find in task ⌘F">
+      {/* The name says what a press does, so the button has no expanded state. */}
+      <Tooltip content={findOpen ? "Close find" : "Find in task ⌘F"}>
         <Button
           ref={findButtonRef}
           type="button"
-          aria-label="Find in task"
-          aria-keyshortcuts="Meta+F"
-          aria-expanded={findOpen}
-          aria-controls={findOpen ? findRowId : undefined}
+          aria-label={findOpen ? "Close find" : "Find in task"}
+          aria-keyshortcuts={findOpen ? undefined : "Meta+F"}
           onClick={onFind}
-          className={ICON_BUTTON_CLASS}
+          className={`shrink-0 ${ICON_BUTTON_CLASS}`}
         >
-          <MagnifyingGlassIcon size={16} aria-hidden="true" />
+          {findOpen
+            ? <XIcon size={16} aria-hidden="true" />
+            : <MagnifyingGlassIcon size={16} aria-hidden="true" />}
         </Button>
       </Tooltip>
-      <Button ref={editButtonRef} type="button" onClick={onEdit} className={BUTTON_CLASS}>
+      <Button ref={editButtonRef} type="button" onClick={onEdit} className={`${BUTTON_CLASS} ${FIND_OPEN_WIDTHS.actions}`}>
         <PencilSimpleIcon size={14} aria-hidden="true" />
         Edit
       </Button>
-      <Menu.Root highlightItemOnHover={false}>
-        <Menu.Trigger aria-label="Task menu" className={ICON_BUTTON_CLASS}>
+      <Menu.Root
+        highlightItemOnHover={false}
+        open={menuOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            menuFinalFocusRef.current = null;
+          }
+          setMenuOpen(open);
+        }}
+      >
+        <Menu.Trigger
+          ref={menuTriggerRef}
+          aria-label="Task menu"
+          className={`${ICON_BUTTON_CLASS} ${FIND_OPEN_WIDTHS.actions}`}
+        >
           <DotsThreeVerticalIcon size={16} aria-hidden="true" />
         </Menu.Trigger>
         <Menu.Portal>
           <Menu.Positioner align="end" sideOffset={4} className={POSITIONER_CLASS}>
-            <Menu.Popup className={`min-w-52 ${POPUP_CLASS}`}>
+            <Menu.Popup finalFocus={() => menuFinalFocusRef.current ?? true} className={`min-w-52 ${POPUP_CLASS}`}>
               <Menu.Item onClick={onDelete} className={MENU_ITEM_CLASS}>
                 <TrashIcon size={14} aria-hidden="true" />
                 Delete task
@@ -447,16 +486,16 @@ export function TaskScreen(): ReactNode {
   const scrolledRef = draft === null ? headingRef : editing.titleRef;
   const findRootRef = useRef<HTMLDivElement>(null);
   const findButtonRef = useRef<HTMLButtonElement>(null);
-  const findRowId = useId();
-  const { barHeight, scrollPaddingTop, readScrollPadding } = useTopBarLengths(barRef);
+  const barLineRef = useRef<HTMLDivElement>(null);
+  const { barHeight, scrollPaddingTop } = useTopBarLengths(barRef);
   const find = useTaskFind({
     rootRef: findRootRef,
     buttonRef: findButtonRef,
     comments,
     editing: draft !== null,
-    onRowResize: readScrollPadding,
   });
   useFindRequest(find.request);
+  useHiddenFocus({ active: find.open, lineRef: barLineRef, targetRef: findButtonRef });
   const scrolled = useScrolledPast(scrolledRef, barHeight);
   const outline = useOutline(bodyRef, list.listRef, task, draft !== null);
   const navigate = route.useNavigate();
@@ -525,13 +564,17 @@ export function TaskScreen(): ReactNode {
         */}
         <div
           ref={barRef}
-          className="sticky top-0 z-(--layer-top-bar) border-b border-line bg-bg [html:has(&)]:[--page-scroll-padding:calc(--spacing(16)+var(--find-row-height,0px))] [html:has(&:not(:focus-within))]:scroll-pt-(--page-scroll-padding) [html:has(&:focus-within)]:min-h-px"
+          className="@container sticky top-0 z-(--layer-top-bar) border-b border-line bg-bg [html:has(&)]:[--page-scroll-padding:--spacing(16)] [html:has(&:not(:focus-within))]:scroll-pt-(--page-scroll-padding) [html:has(&:focus-within)]:min-h-px"
         >
-          <div className="flex h-top-bar items-center gap-4 px-6 sm:px-10">
+          <div
+            ref={barLineRef}
+            data-find-open={find.open ? "" : undefined}
+            className={`group/top-bar flex h-top-bar items-center gap-4 px-6 sm:px-10 ${FIND_OPEN_FLOOR.line}`}
+          >
             <Link
               to="/tasks"
               search={boardSearch}
-              className="inline-flex items-center gap-1.5 text-sm text-dim hover:text-text"
+              className={`inline-flex items-center gap-1.5 text-sm text-dim hover:text-text ${FIND_OPEN_WIDTHS.back}`}
             >
               <ArrowLeftIcon size={16} aria-hidden="true" />
               {/* At 320 CSS px the word does not fit beside the bar's controls. */}
@@ -540,18 +583,18 @@ export function TaskScreen(): ReactNode {
             {/* It repeats the h1, so a screen reader skips it. */}
             <span
               aria-hidden="true"
-              className={`inline-flex min-w-0 items-center gap-3 transition-[opacity,visibility] duration-(--duration-fast) ${scrolled ? "opacity-100" : "invisible opacity-0"}`}
+              className={`inline-flex min-w-0 items-center gap-3 transition-[opacity,visibility] duration-(--duration-fast) ${scrolled ? "opacity-100" : "invisible opacity-0"} ${FIND_OPEN_WIDTHS.title}`}
             >
               <span className="shrink-0 font-mono text-sm text-dim">{id}</span>
               <span className="truncate font-chrome text-base font-medium">{title}</span>
             </span>
-            <div className="ml-auto flex shrink-0 items-center gap-2">
+            <div className={`ml-auto flex shrink-0 items-center gap-2 ${FIND_OPEN_WIDTHS.controls} ${FIND_OPEN_FLOOR.controls}`}>
+              {find.open && <FindGroup find={find} />}
               {draft === null
                 ? (
                     <ReadingControls
                       editButtonRef={editing.editRef}
                       findButtonRef={findButtonRef}
-                      findRowId={findRowId}
                       findOpen={find.open}
                       onFind={find.toggle}
                       onEdit={editing.openEditor}
@@ -572,7 +615,6 @@ export function TaskScreen(): ReactNode {
                   )}
             </div>
           </div>
-          {find.open && <FindBar id={findRowId} find={find} />}
         </div>
 
         <div ref={findRootRef} className={`px-6 pb-12 sm:px-10 ${layout.contentEnd}`}>
@@ -695,7 +737,7 @@ export function TaskScreen(): ReactNode {
           )
         : (
             // Under xl the top bar sticks over the panel too, so the panel is shorter than the window by the bar.
-            <div className="h-[calc(100vh-var(--spacing-under-bar))] w-full border-t border-line bg-bg pb-(--notice-stack-height) xl:sticky xl:top-0 xl:h-screen xl:w-chat-panel xl:shrink-0 xl:self-start xl:border-t-0 xl:border-l">
+            <div className="h-[calc(100vh-var(--spacing-top-bar))] w-full border-t border-line bg-bg pb-(--notice-stack-height) xl:sticky xl:top-0 xl:h-screen xl:w-chat-panel xl:shrink-0 xl:self-start xl:border-t-0 xl:border-l">
               <ChatPanel tag={tag} task={taskId} chat={chat} onClose={closeChat} focusOnMount={chatOpened} />
             </div>
           )}

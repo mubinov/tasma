@@ -54,13 +54,6 @@ it("fills every find match in the match role with a dotted underline, and the cu
   );
 });
 
-it("unsticks the comment headers and their scroll margin in a short window while the find row is open, outside every layer", () => {
-  const css = unlayered(GLOBAL_CSS);
-
-  expect(css).toMatch(/@media \(max-height: 30rem\)\s*\{\s*html:has\(\[data-find-row\]\) \[data-comment-header\]\s*\{\s*position:\s*static;/);
-  expect(css).toMatch(/html:has\(\[data-find-row\]\) \[data-comment-text\] \*\s*\{\s*scroll-margin-top:\s*0;/);
-});
-
 it("registers the page's scroll padding as a length that starts at 0, so script reads it in px", () => {
   expect(GLOBAL_CSS).toMatch(
     /@property --page-scroll-padding\s*\{\s*syntax:\s*"<length>";\s*inherits:\s*false;\s*initial-value:\s*0px;\s*\}/,

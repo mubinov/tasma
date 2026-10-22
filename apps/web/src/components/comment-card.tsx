@@ -237,7 +237,7 @@ export function CommentCard({
           <div
             ref={headerRef}
             data-comment-header=""
-            className="sticky top-under-bar z-(--layer-comment-header) rounded-t-card bg-surface px-4 pt-3 group-data-closed/comment:rounded-b-card group-data-closed/comment:pb-3 group-data-open/comment:border-b group-data-open/comment:border-line group-data-open/comment:pb-2"
+            className="sticky top-top-bar z-(--layer-comment-header) rounded-t-card bg-surface px-4 pt-3 group-data-closed/comment:rounded-b-card group-data-closed/comment:pb-3 group-data-open/comment:border-b group-data-open/comment:border-line group-data-open/comment:pb-2"
           >
             <div className="flex items-center gap-1">
               {/* The heading is what names the card, so a comment with no title carries its id here. */}
