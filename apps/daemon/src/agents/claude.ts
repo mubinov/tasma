@@ -1,12 +1,13 @@
 // Claude through the ACP adapter `claude-agent-acp`, which runs the user's own
 // `claude` install.
 
-import { accessSync, constants, statSync } from "node:fs";
 import { delimiter, isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AcpObject } from "@tasma/protocol";
 import { causeOf } from "../http/failure.js";
-import type { AgentAdapter, AgentEnv, AgentLaunch } from "./adapter.js";
+import { AGENT_MODE } from "./adapter.js";
+import type { AgentAdapter, AgentEnv, LaunchResult } from "./adapter.js";
+import { isExecutableFile } from "./process.js";
 
 const ADAPTER_ENTRY = "@agentclientprotocol/claude-agent-acp/dist/index.js";
 
@@ -38,7 +39,14 @@ export const CLAUDE_SESSION_VARIABLES = [
 /** The largest `_meta.claudeCode.toolResponse` an update keeps, in bytes of JSON. */
 const TOOL_RESPONSE_LIMIT = 8 * 1024;
 
-export type ClaudeHost = { bun: boolean; resolve(specifier: string): string };
+/** `compiled` is a binary that `bun build --compile` made, which holds the adapter in its own file system. */
+export type ClaudeHost = { runtime: "node" | "bun" | "compiled"; resolve(specifier: string): string };
+
+function runtimeOf(): ClaudeHost["runtime"] {
+  // A compiled binary has argv ["bun", "/$bunfs/root/<name>", ...].
+  if (process.argv[1]?.includes("$bunfs")) return "compiled";
+  return process.versions.bun === undefined ? "node" : "bun";
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -59,17 +67,7 @@ function agentPath(path: string | undefined): string[] {
  * so a self-update of Claude Code reaches the next chat.
  */
 function findClaude(dirs: string[]): string | undefined {
-  for (const dir of dirs) {
-    const candidate = join(dir, "claude");
-    try {
-      if (!statSync(candidate).isFile()) continue;
-      accessSync(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
+  return dirs.map((dir) => join(dir, "claude")).find(isExecutableFile);
 }
 
 function withoutSession(env: AgentEnv): AgentEnv {
@@ -96,29 +94,33 @@ function filterUpdate(update: AcpObject): AcpObject {
 
 /** `host` is a parameter for the tests alone. */
 export function createClaudeAdapter(host: ClaudeHost = {
-  bun: process.versions.bun !== undefined,
+  runtime: runtimeOf(),
   resolve: (specifier) => import.meta.resolve(specifier),
 }): AgentAdapter {
   return {
     agent: "claude",
     notLoggedIn: 'Claude is not logged in. Run "claude /login" in a terminal.',
-    launch(env): AgentLaunch | { failed: string } {
-      // Under bun, `process.execPath` is the compiled daemon itself.
-      if (host.bun) return { failed: "This build of Tasma cannot run Claude yet" };
+    launch(env): LaunchResult {
       const path = agentPath(env.PATH);
       const claude = findClaude(path);
-      if (claude === undefined) return { failed: "Claude Code is not installed" };
+      if (claude === undefined) return { missing: "Claude Code is not installed" };
+      const agentEnv = { ...withoutSession(env), PATH: path.join(delimiter), CLAUDE_CODE_EXECUTABLE: claude };
+      // `process.execPath` is the compiled daemon itself.
+      if (host.runtime === "compiled") return { command: process.execPath, args: [AGENT_MODE, "claude"], env: agentEnv };
       let entry: string;
       try {
         entry = fileURLToPath(host.resolve(ADAPTER_ENTRY));
       } catch (error) {
         return { failed: `The agent could not start: ${causeOf(error)}` };
       }
-      return {
-        command: process.execPath,
-        args: [entry],
-        env: { ...withoutSession(env), PATH: path.join(delimiter), CLAUDE_CODE_EXECUTABLE: claude },
-      };
+      // bun reads `bunfig.toml` and `.env` of its working directory, which is the folder of the chat.
+      const flags = host.runtime === "bun" ? ["--no-env-file", "--config=/dev/null"] : [];
+      return { command: process.execPath, args: [...flags, entry], env: agentEnv };
+    },
+    async serve() {
+      // A literal, so that the build keeps it as an external import and
+      // `bun build --compile` puts the adapter into the binary.
+      await import("@agentclientprotocol/claude-agent-acp/dist/index.js");
     },
     filterUpdate,
   };

@@ -9,6 +9,7 @@ import { spawnAgent } from "../../src/agents/acp.js";
 import type { AgentProcess } from "../../src/agents/acp.js";
 import type { AgentAdapter, AgentEnv, AgentLaunch } from "../../src/agents/adapter.js";
 import { claudeAdapter } from "../../src/agents/claude.js";
+import type { ShellEnv } from "../../src/agents/shell-env.js";
 import { createChatRegistry } from "../../src/chats/registry.js";
 import type { ChatRegistry } from "../../src/chats/registry.js";
 import { ChatStartRefusal, createChatRunner } from "../../src/chats/runner.js";
@@ -75,6 +76,8 @@ type Options = {
   env?: AgentEnv;
   /** Replaces the spawn of the fake agent. */
   spawn?: (launch: AgentLaunch, folder: string) => AgentProcess;
+  /** The read of the login shell. Without it, a read fails the test. With `null`, the runner uses its own read. */
+  shellEnv?: ((signal: AbortSignal) => Promise<ShellEnv>) | null;
 };
 
 /** A daemon over project ALPHA, whose folder is a directory, with the task ALPHA-1. */
@@ -96,6 +99,12 @@ async function world(options: Options = {}): Promise<World> {
   const agents = fakeAgent(options.script);
   const { adapter, envs } = fakeAdapter();
   const errors: string[] = [];
+  let unexpectedReads = 0;
+  if (options.shellEnv === undefined) onTestFinished(() => expect(unexpectedReads, "reads of the shell").toBe(0));
+  const unexpected = async (): Promise<ShellEnv> => {
+    unexpectedReads += 1;
+    return { failed: "The test reads no shell" };
+  };
   const runner = createChatRunner({
     root,
     chats,
@@ -106,6 +115,7 @@ async function world(options: Options = {}): Promise<World> {
       options.started?.(fake);
       return fake;
     }),
+    shellEnv: options.shellEnv === null ? undefined : (options.shellEnv ?? unexpected),
     stderr: { write: (line: string) => errors.push(line) },
   });
   onTestFinished(() => runner.close());
@@ -356,6 +366,222 @@ describe("createChatRunner.start", () => {
 
     await expect(runner.start({ ...START, tag: "BETA", task: "BETA-1" })).rejects.toMatchObject({ code: "project-not-found" });
     await expect(runner.start({ ...START, task: "ALPHA-9" })).rejects.toMatchObject({ code: "task-not-found" });
+  });
+});
+
+describe("createChatRunner.start with the environment of the login shell", () => {
+  const DAEMON_ENV: AgentEnv = { PATH: "/usr/bin:/bin", HOME: "/home/alice" };
+  const AGENT_PATH = "/opt/agent/bin";
+  const SHELL_ENV: AgentEnv = { PATH: AGENT_PATH, HOME: "/home/alice", EDITOR: "vim" };
+
+  /** An adapter that finds its binary only on the `PATH` that `installed` holds, and launches with the env it gets. */
+  function pathAdapter(installed = { path: AGENT_PATH }) {
+    const envs: AgentEnv[] = [];
+    const adapter: AgentAdapter = {
+      ...fakeAdapter().adapter,
+      launch(env) {
+        envs.push(env);
+        return env.PATH === installed.path ? { ...LAUNCH, env } : { missing: "No agent binary" };
+      },
+    };
+    return { adapter, envs, installed };
+  }
+
+  /** A read of the shell that gives `results` in order, and the last one after them. */
+  function shellReads(...results: ShellEnv[]) {
+    const signals: AbortSignal[] = [];
+    const shellEnv = async (signal: AbortSignal): Promise<ShellEnv> => {
+      signals.push(signal);
+      return results[Math.min(signals.length, results.length) - 1]!;
+    };
+    return { shellEnv, signals };
+  }
+
+  /** A read of the shell that settles when the test releases it. */
+  function heldRead() {
+    const signals: AbortSignal[] = [];
+    let release!: (result: ShellEnv) => void;
+    const shellEnv = (signal: AbortSignal) => new Promise<ShellEnv>((resolve) => {
+      signals.push(signal);
+      release = resolve;
+    });
+    return { shellEnv, signals, release: (result: ShellEnv) => release(result) };
+  }
+
+  it("reads the login shell that SHELL of the daemon environment names, by default", async () => {
+    const shell = join(await target(), "zsh");
+    await writeFile(shell, `#!/bin/sh\nexport PATH=${AGENT_PATH}\nfor last; do :; done\n/bin/sh -c "$last"\n`, { mode: 0o755 });
+    const { adapter } = pathAdapter();
+    const env = { ...DAEMON_ENV, HOME: await target(), SHELL: shell };
+    const { runner, processes } = await world({ adapter, env, shellEnv: null });
+
+    await logUntil(await runner.start(START), "turn-end");
+
+    expect(processes[0]?.launch.env).toEqual({ ...env, PATH: AGENT_PATH });
+  });
+
+  it("reads no shell when the adapter finds its binary in the environment of the daemon", async () => {
+    const { adapter, envs } = pathAdapter({ path: DAEMON_ENV.PATH! });
+    const { runner, processes } = await world({ adapter, env: DAEMON_ENV });
+
+    await logUntil(await runner.start(START), "turn-end");
+
+    expect(envs).toEqual([DAEMON_ENV]);
+    expect(processes[0]?.launch.env).toEqual(DAEMON_ENV);
+  });
+
+  it("reads the shell one time when the binary is missing, and launches with the environment of the shell", async () => {
+    const { adapter, envs } = pathAdapter();
+    const { shellEnv, signals } = shellReads({ env: SHELL_ENV });
+    const { runner, processes } = await world({ adapter, env: DAEMON_ENV, shellEnv });
+
+    await logUntil(await runner.start(START), "turn-end");
+
+    expect(signals).toHaveLength(1);
+    expect(envs).toEqual([DAEMON_ENV, SHELL_ENV]);
+    expect(processes[0]?.launch.env).toEqual(SHELL_ENV);
+  });
+
+  it("gives two starts at the same time one read", async () => {
+    const { adapter } = pathAdapter();
+    const read = heldRead();
+    const { runner, processes } = await world({ adapter, env: DAEMON_ENV, shellEnv: read.shellEnv });
+
+    const starts = Promise.all([runner.start(START), runner.start({ ...START, text: "Build the printer" })]);
+    await until(() => read.signals.length > 0, "the shell is read");
+    read.release({ env: SHELL_ENV });
+    await starts;
+
+    expect(read.signals).toHaveLength(1);
+    expect(processes.map((fake) => fake.launch.env)).toEqual([SHELL_ENV, SHELL_ENV]);
+  });
+
+  it("launches a later chat with the kept environment, and reads no shell again", async () => {
+    const { adapter, envs } = pathAdapter();
+    const { shellEnv, signals } = shellReads({ env: SHELL_ENV });
+    const { runner, processes } = await world({ adapter, env: DAEMON_ENV, shellEnv });
+
+    await logUntil(await runner.start(START), "turn-end");
+    await logUntil(await runner.start(START), "turn-end");
+
+    expect(signals).toHaveLength(1);
+    expect(envs).toEqual([DAEMON_ENV, SHELL_ENV, DAEMON_ENV, SHELL_ENV]);
+    expect(processes.map((fake) => fake.launch.env)).toEqual([SHELL_ENV, SHELL_ENV]);
+  });
+
+  it("reads again when the kept environment has no binary, and keeps a new one only when the binary is in it", async () => {
+    const moved: AgentEnv = { ...SHELL_ENV, PATH: "/opt/moved/bin" };
+    const { adapter, installed } = pathAdapter();
+    const { shellEnv, signals } = shellReads({ env: SHELL_ENV }, { env: SHELL_ENV }, { env: moved });
+    const { runner, processes } = await world({ adapter, env: DAEMON_ENV, shellEnv });
+    await logUntil(await runner.start(START), "turn-end");
+    installed.path = moved.PATH!;
+
+    const second = await runner.start(START);
+    const third = await runner.start(START);
+    await logUntil(third, "turn-end");
+    await logUntil(await runner.start(START), "turn-end");
+
+    expect(await logOf(second)).toEqual([USER, { kind: "failed", reason: "No agent binary" }]);
+    expect(signals).toHaveLength(3);
+    expect(processes.map((fake) => fake.launch.env)).toEqual([SHELL_ENV, moved, moved]);
+  });
+
+  it("fails with the text of the shell when the read fails, and reads again at the next start", async () => {
+    const { adapter } = pathAdapter();
+    const shellFailed = { failed: "Tasma could not read the environment of your login shell (/bin/zsh): it broke" };
+    const { shellEnv, signals } = shellReads(shellFailed, { env: SHELL_ENV });
+    const { runner, processes } = await world({ adapter, env: DAEMON_ENV, shellEnv });
+
+    const first = await runner.start(START);
+    await logUntil(await runner.start(START), "turn-end");
+
+    expect(await logOf(first)).toEqual([USER, { kind: "failed", reason: shellFailed.failed }]);
+    expect(signals).toHaveLength(2);
+    expect(processes.map((fake) => fake.launch.env)).toEqual([SHELL_ENV]);
+  });
+
+  it("fails with the cause when the read of the shell throws, and the start does not reject", async () => {
+    const { adapter } = pathAdapter();
+    const shellEnv = () => {
+      throw new Error("the shell broke");
+    };
+    const { runner, processes } = await world({ adapter, env: DAEMON_ENV, shellEnv });
+
+    const live = await runner.start(START);
+
+    expect(await logOf(live)).toEqual([USER, { kind: "failed", reason: "the shell broke" }]);
+    expect(processes).toEqual([]);
+  });
+
+  it("fails with the text of the adapter when the environment of the shell has no binary either", async () => {
+    const { adapter } = pathAdapter();
+    const { shellEnv } = shellReads({ env: DAEMON_ENV });
+    const { runner, processes } = await world({ adapter, env: DAEMON_ENV, shellEnv });
+
+    const live = await runner.start(START);
+
+    expect(await logOf(live)).toEqual([USER, { kind: "failed", reason: "No agent binary" }]);
+    expect(processes).toEqual([]);
+  });
+
+  it("registers the process of the chat at the return of a start that waited for the shell", async () => {
+    const { adapter } = pathAdapter();
+    const read = heldRead();
+    const { runner, processes } = await world({ adapter, env: DAEMON_ENV, shellEnv: read.shellEnv });
+
+    const starting = runner.start(START);
+    await until(() => read.signals.length > 0, "the shell is read");
+    read.release({ env: SHELL_ENV });
+    const live = await starting;
+
+    expect(live.chat.state).toBe("working");
+    expect(runner.running(live)?.process).toBe(processes[0]);
+    await logUntil(live, "turn-end");
+  });
+
+  it("aborts a read at close and does not wait for it, and the chat gets no process", async () => {
+    const { adapter } = pathAdapter();
+    const read = heldRead();
+    const { runner, processes } = await world({ adapter, env: DAEMON_ENV, shellEnv: read.shellEnv });
+    const starting = runner.start(START);
+    await until(() => read.signals.length > 0, "the shell is read");
+
+    await runner.close();
+
+    expect(read.signals[0]?.aborted).toBe(true);
+    read.release({ env: SHELL_ENV });
+    const live = await starting;
+    expect(processes).toEqual([]);
+    expect(runner.running(live)).toBeUndefined();
+    expect(await logOf(live)).toEqual([USER]);
+  });
+
+  it("aborts a read at stopStarts, and the chat gets no process and no failure", async () => {
+    const { adapter } = pathAdapter();
+    const read = heldRead();
+    const { runner, processes } = await world({ adapter, env: DAEMON_ENV, shellEnv: read.shellEnv });
+    const starting = runner.start(START);
+    await until(() => read.signals.length > 0, "the shell is read");
+
+    runner.stopStarts();
+
+    expect(read.signals[0]?.aborted).toBe(true);
+    read.release({ failed: "Tasma could not read the environment of your login shell (/bin/zsh): the daemon is stopping" });
+    const live = await starting;
+    expect(processes).toEqual([]);
+    expect(await logOf(live)).toEqual([USER]);
+  });
+
+  it("spawns no agent for a start after stopStarts, also with the binary on the PATH of the daemon", async () => {
+    const { adapter } = pathAdapter({ path: DAEMON_ENV.PATH! });
+    const { runner, processes } = await world({ adapter, env: DAEMON_ENV });
+
+    runner.stopStarts();
+    const live = await runner.start(START);
+
+    expect(processes).toEqual([]);
+    expect(await logOf(live)).toEqual([USER]);
   });
 });
 
@@ -843,7 +1069,11 @@ describe("createChatRunner failures", () => {
   });
 
   it("fails with the install text of the real Claude adapter when PATH holds no claude", async () => {
-    const { runner } = await world({ adapter: claudeAdapter, env: { PATH: await target() } });
+    const { runner } = await world({
+      adapter: claudeAdapter,
+      env: { PATH: await target() },
+      shellEnv: async () => ({ env: { PATH: "" } }),
+    });
 
     const live = await runner.start(START);
 

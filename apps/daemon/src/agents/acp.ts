@@ -2,7 +2,7 @@
 // its stdin and stdout.
 
 import { spawn } from "node:child_process";
-import type { ChildProcess, ChildProcessByStdio } from "node:child_process";
+import type { ChildProcessByStdio } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import { client, ndJsonStream, PROTOCOL_VERSION, RequestError } from "@agentclientprotocol/sdk";
 import type {
@@ -13,6 +13,7 @@ import type {
 } from "@agentclientprotocol/sdk";
 import type { AcpObject } from "@tasma/protocol";
 import type { AgentLaunch } from "./adapter.js";
+import { killGroup } from "./process.js";
 
 /** How long `end()` waits for the process to exit after its stdin closes. */
 const END_GRACE_MS = 2000;
@@ -77,16 +78,6 @@ function notStarted(ended: Promise<AgentEnd>): AgentProcess {
     ended,
     end: () => done,
   };
-}
-
-/** Kills the process and the processes it started that stay in its group. */
-function killGroup(child: ChildProcess, pid: number): void {
-  try {
-    process.kill(-pid, "SIGKILL");
-  } catch {
-    // Unlike `child.kill`, `process.kill` throws, for example when the group has no live process left.
-    child.kill("SIGKILL");
-  }
 }
 
 /**

@@ -22,6 +22,8 @@ import type {
 import { AgentClosed, connectAgent, spawnAgent } from "../agents/acp.js";
 import type { AgentConnection, AgentEnd, AgentHandlers, AgentProcess, AgentSession } from "../agents/acp.js";
 import type { AgentAdapter, AgentEnv, AgentLaunch } from "../agents/adapter.js";
+import { readShellEnv } from "../agents/shell-env.js";
+import type { ShellEnv } from "../agents/shell-env.js";
 import { causeOf, DaemonError } from "../http/failure.js";
 import type { ChatRegistry, LiveChat } from "./registry.js";
 
@@ -73,7 +75,9 @@ export type ChatRunner = {
   /**
    * Creates the chat with its first message, so it is `working`, and starts
    * its agent in the background. A `ChatStartRefusal` comes before the chat is
-   * created.
+   * created. A start waits for a read of the login shell, before the create,
+   * when the agent binary is neither on the `PATH` of the daemon nor in the
+   * shell environment of an earlier start.
    */
   start(input: {
     tag: string;
@@ -93,6 +97,11 @@ export type ChatRunner = {
   cancel(live: LiveChat, input: ChatCancelInput): Promise<void>;
   answerPermission(live: LiveChat, request: string, answer: PermissionAnswer): Promise<void>;
   answerQuestion(live: LiveChat, request: string, answer: QuestionAnswer): Promise<void>;
+  /**
+   * Aborts a read of the login shell in progress and does not wait for it. A
+   * start that has not spawned its agent yet then spawns none. `close()` does the same.
+   */
+  stopStarts(): void;
   /** Ends every agent process and waits until all have exited, with no event in any log. */
   close(): Promise<void>;
 };
@@ -173,16 +182,51 @@ export function createChatRunner(options: {
   /** The environment of the daemon, which each launch starts from. */
   env: AgentEnv;
   spawn?: (launch: AgentLaunch, folder: string) => AgentProcess;
+  /** Reads the environment of the login shell, for an agent binary that is not on the `PATH` of `env`. */
+  shellEnv?: (signal: AbortSignal) => Promise<ShellEnv>;
   /** Where a fault of a chat log is reported. */
   stderr?: { write(text: string): unknown };
 }): ChatRunner {
   const { root, chats, adapters, env } = options;
   const spawn = options.spawn ?? spawnAgent;
+  const shellEnv = options.shellEnv ?? ((signal) => readShellEnv(env, { signal }));
   const stderr = options.stderr ?? process.stderr;
   const runs = new Map<LiveChat, Run>();
   /** Every agent process that has not exited, also of a chat that no longer runs. */
   const alive = new Set<AgentProcess>();
-  let closing = false;
+  const stopping = new AbortController();
+  /** The last shell environment in which an agent binary was found. */
+  let kept: AgentEnv | undefined;
+  /** The read of the shell in progress, which every start shares. */
+  let reading: Promise<ShellEnv> | undefined;
+
+  async function readShell(): Promise<ShellEnv> {
+    try {
+      return await shellEnv(stopping.signal);
+    } catch (error) {
+      return { failed: causeOf(error) };
+    }
+  }
+
+  /**
+   * A kept environment with no binary, or a failed read, gives a new read at
+   * the next start, so an install after a failed chat needs no daemon restart.
+   */
+  async function launchOf(adapter: AgentAdapter): Promise<AgentLaunch | { failed: string }> {
+    const own = adapter.launch(env);
+    if (!("missing" in own)) return own;
+    if (kept !== undefined) {
+      const again = adapter.launch(kept);
+      if (!("missing" in again)) return again;
+    }
+    reading ??= readShell().finally(() => (reading = undefined));
+    const read = await reading;
+    if ("failed" in read) return read;
+    const launch = adapter.launch(read.env);
+    if ("missing" in launch) return { failed: launch.missing };
+    kept = read.env;
+    return launch;
+  }
 
   function report(live: LiveChat, error: unknown): void {
     if (error instanceof TaskStoreError && GONE.has(error.code)) return;
@@ -354,10 +398,10 @@ export function createChatRunner(options: {
         throw new ChatStartRefusal("project-has-no-folder", `project ${tag} has no folder for an agent to work in`);
       }
 
+      const launch = await launchOf(adapter);
       const live = await chats.create(tag, task, { step, agent, folder: path }, { text, client });
-      // After `close()`, the chat stays with no agent, as a daemon stop leaves every other chat.
-      if (closing) return live;
-      const launch = adapter.launch(env);
+      // After `stopStarts()`, the chat stays with no agent, as a daemon stop leaves every other chat.
+      if (stopping.signal.aborted) return live;
       if ("failed" in launch) {
         try {
           await live.append({ kind: "failed", reason: launch.failed });
@@ -429,8 +473,12 @@ export function createChatRunner(options: {
       await settle(run, request, open, result, answer.client);
     },
 
+    stopStarts() {
+      stopping.abort();
+    },
+
     async close() {
-      closing = true;
+      stopping.abort();
       for (const run of [...runs.values()]) silence(run);
       await Promise.all([...alive].map((agentProcess) => agentProcess.end()));
     },

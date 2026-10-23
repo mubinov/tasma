@@ -1,65 +1,91 @@
 // A chat with the user's real `claude`, through the real adapter. It runs only
 // with TASMA_REAL_CLAUDE=1, and needs CLAUDE_CODE_OAUTH_TOKEN: the HOME of each
-// test file is a new temporary directory, which holds no login.
+// test file is a new temporary directory, which holds no login. The case of
+// the compiled agent mode also needs TASMA_COMPILED_DAEMON, the path of a
+// daemon that `scripts/app-binaries.sh` compiled.
 
 import { execFile } from "node:child_process";
+import { writeFile } from "node:fs/promises";
+import { delimiter, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { ChatEvent } from "@tasma/protocol";
+import type { AgentAdapter, AgentEnv, AgentLaunch, LaunchResult } from "../../src/agents/adapter.js";
 import { claudeAdapter } from "../../src/agents/claude.js";
 import { createChatRegistry } from "../../src/chats/registry.js";
+import type { LiveChat } from "../../src/chats/registry.js";
 import { createChatRunner } from "../../src/chats/runner.js";
+import type { ChatRunner } from "../../src/chats/runner.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import { WriteQueue } from "../../src/tasks/serialize.js";
 import { logOf, plant, projectConfig, projectsRoot, target, taskFile, taskText } from "../helpers.js";
 
 const TURN_MS = 120_000;
 
+const PING = "Reply with the single word: pong";
+
+function token(): string {
+  const value = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  if (!value) throw new Error("set CLAUDE_CODE_OAUTH_TOKEN to a token from `claude setup-token`");
+  return value;
+}
+
+function launched(launch: LaunchResult): AgentLaunch {
+  if (!("command" in launch)) throw new Error(JSON.stringify(launch));
+  return launch;
+}
+
+/** A runner over project ALPHA with the task ALPHA-1, and the folder of the project. */
+async function world(adapter: AgentAdapter, env: AgentEnv): Promise<{ runner: ChatRunner; folder: string }> {
+  const root = await projectsRoot("ALPHA");
+  const folder = await target();
+  await plant(projectConfig(root, "ALPHA"), `path: ${folder}\n`);
+  await plant(taskFile(root, "ALPHA", "ALPHA-1"), taskText("ALPHA-1"));
+  const host = createProjectHost({ root });
+  onTestFinished(() => host.close());
+  const chats = createChatRegistry({ root, host, writes: new WriteQueue() });
+  const runner = createChatRunner({ root, chats, adapters: [adapter], env });
+  onTestFinished(() => runner.close());
+  return { runner, folder };
+}
+
+function start(runner: ChatRunner): Promise<LiveChat> {
+  return runner.start({ tag: "ALPHA", task: "ALPHA-1", step: "dev:build", agent: "claude", text: PING, client: "test" });
+}
+
+/** Waits until the log holds `turns` turn ends, or a failure, and gives the log. */
+async function turnsEnded(live: LiveChat, turns: number): Promise<ChatEvent[]> {
+  let log: ChatEvent[] = [];
+  const ended = () => log.filter((event) => event.kind === "turn-end").length >= turns;
+  const deadline = Date.now() + TURN_MS;
+  while (!ended() && log.at(-1)?.kind !== "failed" && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    log = await logOf(live);
+  }
+  return log;
+}
+
+/** Checks that the first turn ended with an answer of the agent. */
+async function answered(live: LiveChat): Promise<ChatEvent[]> {
+  const log = await turnsEnded(live, 1);
+  expect(log.at(-1)).toMatchObject({ kind: "turn-end" });
+  expect(log.some((event) => event.kind === "update" && event.update.sessionUpdate === "agent_message_chunk"))
+    .toBe(true);
+  return log;
+}
+
 describe.skipIf(process.env.TASMA_REAL_CLAUDE !== "1")("a chat with the real Claude", () => {
   it("answers two messages in one conversation, and claude --resume continues it", async () => {
-    if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-      throw new Error("set CLAUDE_CODE_OAUTH_TOKEN to a token from `claude setup-token`");
-    }
-    const root = await projectsRoot("ALPHA");
-    const folder = await target();
-    await plant(projectConfig(root, "ALPHA"), `path: ${folder}\n`);
-    await plant(taskFile(root, "ALPHA", "ALPHA-1"), taskText("ALPHA-1"));
-    const host = createProjectHost({ root });
-    onTestFinished(() => host.close());
-    const chats = createChatRegistry({ root, host, writes: new WriteQueue() });
-    const env = { ...process.env };
-    const runner = createChatRunner({ root, chats, adapters: [claudeAdapter], env });
-    onTestFinished(() => runner.close());
+    const env = { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token() };
+    const { runner, folder } = await world(claudeAdapter, env);
 
-    const live = await runner.start({
-      tag: "ALPHA",
-      task: "ALPHA-1",
-      step: "dev:build",
-      agent: "claude",
-      text: "Reply with the single word: pong",
-      client: "test",
-    });
-    /** Waits until the log holds `turns` turn ends, or a failure, and gives the log. */
-    async function turnsEnded(turns: number): Promise<ChatEvent[]> {
-      let log: ChatEvent[] = [];
-      const ended = () => log.filter((event) => event.kind === "turn-end").length >= turns;
-      const deadline = Date.now() + TURN_MS;
-      while (!ended() && log.at(-1)?.kind !== "failed" && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        log = await logOf(live);
-      }
-      return log;
-    }
-
-    const log = await turnsEnded(1);
-    expect(log.at(-1)).toMatchObject({ kind: "turn-end" });
-    expect(log.some((event) => event.kind === "update" && event.update.sessionUpdate === "agent_message_chunk"))
-      .toBe(true);
+    const live = await start(runner);
+    const log = await answered(live);
     const session = live.chat.session;
     expect(session).toBeDefined();
 
     await runner.message(live, { text: "Which word did you reply with?", client: "test" });
-    const second = (await turnsEnded(2)).slice(log.length);
+    const second = (await turnsEnded(live, 2)).slice(log.length);
     expect(second.at(-1)).toMatchObject({ kind: "turn-end" });
     const reply = second.flatMap((event) => {
       if (event.kind !== "update" || event.update.sessionUpdate !== "agent_message_chunk") return [];
@@ -68,8 +94,7 @@ describe.skipIf(process.env.TASMA_REAL_CLAUDE !== "1")("a chat with the real Cla
     });
     expect(reply.join("").toLowerCase()).toContain("pong");
 
-    const launch = claudeAdapter.launch(env);
-    if ("failed" in launch) throw new Error(launch.failed);
+    const launch = launched(claudeAdapter.launch(env));
     const { stdout } = await promisify(execFile)(
       launch.env.CLAUDE_CODE_EXECUTABLE ?? "claude",
       ["-p", "--resume", session ?? "", "Which word did you reply with?"],
@@ -77,4 +102,45 @@ describe.skipIf(process.env.TASMA_REAL_CLAUDE !== "1")("a chat with the real Cla
     );
     expect(stdout.toLowerCase()).toContain("pong");
   }, 3 * TURN_MS);
+
+  it.skipIf(!process.env.TASMA_COMPILED_DAEMON)("answers through the agent mode of the compiled daemon", async () => {
+    const compiled = process.env.TASMA_COMPILED_DAEMON ?? "";
+    const adapter: AgentAdapter = {
+      ...claudeAdapter,
+      launch: (env) => ({ ...launched(claudeAdapter.launch(env)), command: compiled, args: ["--agent", "claude"] }),
+    };
+    const { runner } = await world(adapter, { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token() });
+
+    await answered(await start(runner));
+  }, 2 * TURN_MS);
+
+  it("answers when the daemon has the PATH of launchd, through the environment of the login shell", async () => {
+    // pnpm puts node_modules/.bin folders on the PATH of vitest, so node is taken from this process.
+    const claudeDir = dirname(launched(claudeAdapter.launch(process.env)).env.CLAUDE_CODE_EXECUTABLE ?? "");
+    const nodeDir = dirname(process.execPath);
+    // Real init files build PATH from $HOME, which is a temporary folder here.
+    const zdotdir = await target();
+    await writeFile(join(zdotdir, ".zshrc"), `export PATH='${claudeDir}${delimiter}${nodeDir}'${delimiter}"$PATH"\n`);
+    const launches: LaunchResult[] = [];
+    const adapter: AgentAdapter = {
+      ...claudeAdapter,
+      launch(env) {
+        const launch = claudeAdapter.launch(env);
+        launches.push(launch);
+        return launch;
+      },
+    };
+    const { runner } = await world(adapter, {
+      HOME: await target(),
+      SHELL: "/bin/zsh",
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      ZDOTDIR: zdotdir,
+      CLAUDE_CODE_OAUTH_TOKEN: token(),
+    });
+
+    await answered(await start(runner));
+
+    expect(launches[0]).toEqual({ missing: "Claude Code is not installed" });
+    expect(launched(launches[1]!).env.PATH?.split(delimiter)).toContain(claudeDir);
+  }, 2 * TURN_MS);
 });

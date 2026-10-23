@@ -14,7 +14,7 @@ import { parseArgs } from "node:util";
 import { DAEMON_NAME, DEFAULT_DAEMON_HOST, printable } from "@tasma/protocol";
 import type { DaemonRecord } from "@tasma/protocol";
 import manifest from "../../../../package.json" with { type: "json" };
-import type { AgentEnv } from "../agents/adapter.js";
+import type { AgentAdapter, AgentEnv } from "../agents/adapter.js";
 import { claudeAdapter } from "../agents/claude.js";
 import { createChatRegistry } from "../chats/registry.js";
 import { chatRoutes } from "../chats/routes.js";
@@ -41,6 +41,9 @@ const TOKEN_BYTES = 32;
 
 /** The signals a shutdown answers. A closed terminal sends `SIGHUP`, whose default ends the process outright. */
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+
+/** The agents a chat can run. The agent mode of `main.ts` serves the ones with `serve`. */
+export const AGENT_ADAPTERS: readonly AgentAdapter[] = [claudeAdapter];
 
 /**
  * What a start came to. The started arm carries the host as well as the stop
@@ -193,7 +196,7 @@ export async function startDaemon(options: {
   const host = createProjectHost({ root, publish });
   const writes = new WriteQueue();
   const chats = createChatRegistry({ root, host, writes, publish });
-  const runner = createChatRunner({ root, chats, adapters: [claudeAdapter], env, stderr });
+  const runner = createChatRunner({ root, chats, adapters: AGENT_ADAPTERS, env, stderr });
   const server = createDaemonServer(
     [
       ...projectRoutes(host, writes, chats),
@@ -212,6 +215,8 @@ export async function startDaemon(options: {
     connections.closeAfterEachReply();
     feed.close();
     chats.close();
+    // Before the drain, so that a start that waits for the login shell does not hold it.
+    runner.stopStarts();
     await drain(server, drainMs);
     // The daemon never calls process.exit, so an agent process or an index left
     // open would hold its pipes or its watch handle and the process would never

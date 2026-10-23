@@ -17,6 +17,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import { execPath } from "node:process";
+import { promisify } from "node:util";
 import { build, resolveConfig } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { binTargets, packageDirs, readManifest, workspaceRoot } from "../workspace.js";
@@ -169,6 +170,16 @@ function bun(
 
     if (typeof input === "string") child.stdin?.end(input);
   });
+}
+
+/** What `promise` gives, or `late` when it does not settle within `ms`. */
+async function within<T>(promise: Promise<T>, ms: number): Promise<T | "late"> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([promise, new Promise<"late">((resolve) => (timer = setTimeout(resolve, ms, "late")))]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** A port bound and released, so nothing listens on it and the first call of the sequence reaches nothing. */
@@ -335,6 +346,49 @@ describe("the built executables", () => {
     expect(stderr).toBe('tasma-daemon: --port must be a whole number from 0 to 65535: "nonsense"\n');
     expect(stdout).toBe("");
   });
+
+  it("serve the Claude ACP adapter from the compiled daemon with --agent claude", async (ctx) => {
+    if (!HAS_BUN) ctx.skip("bun is not on PATH");
+    const dir = mkdtempSync(join(tmpdir(), "tasma-compiled-"));
+    const binary = join(dir, "tasma-daemon");
+
+    try {
+      await promisify(execFile)("bun", [
+        "build", executable(DAEMON), "--compile", "--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv",
+        "--outfile", binary,
+      ]);
+      mkdirSync(join(dir, "home"));
+      const child = spawn(binary, ["--agent", "claude"], {
+        env: { HOME: join(dir, "home"), CLAUDE_CONFIG_DIR: join(dir, "claude"), CLAUDE_CODE_EXECUTABLE: "/usr/bin/false" },
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+      const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
+      const firstLine = new Promise<string>((resolve) => {
+        let stdout = "";
+        child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+          stdout += chunk;
+          if (stdout.includes("\n")) resolve(stdout.slice(0, stdout.indexOf("\n")));
+        });
+      });
+
+      try {
+        const request = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, clientCapabilities: {} } };
+        child.stdin.write(`${JSON.stringify(request)}\n`);
+        const first = await within(firstLine, 10_000);
+        child.stdin.end();
+
+        expect(first === "late" ? first : JSON.parse(first)).toMatchObject({
+          id: 1,
+          result: { agentInfo: { name: "@agentclientprotocol/claude-agent-acp" } },
+        });
+        expect(await within(exited, 10_000)).toBe(0);
+      } finally {
+        child.kill("SIGKILL");
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   // The one place both artifacts exist, which is what the daemon's lifecycle
   // through the CLI can only be proved against: the CLI resolves an executable,
