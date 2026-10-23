@@ -13,7 +13,7 @@ type DiagnosticsProps = {
   items: readonly WarningItem[];
   /** Rendered before `items`. */
   excluded?: readonly ExcludedFile[];
-  subject: "this project" | "the projects" | "this workflow" | "the workflows";
+  subject: "this project" | "these projects" | "the projects" | "this workflow" | "the workflows";
   className?: string;
 };
 

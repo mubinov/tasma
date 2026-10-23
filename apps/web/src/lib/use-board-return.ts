@@ -28,7 +28,12 @@ function focusReturnCard(taskId: string): void {
  * A waiting restore acts only while its record is still the pending one: a
  * card opened meanwhile records a restore of its own.
  */
-export function useBoardReturn(tag: string, labels: string | undefined, q: string | undefined, settled: boolean): void {
+export function useBoardReturn(
+  board: string,
+  labels: string | undefined,
+  q: string | undefined,
+  settled: boolean,
+): void {
   const router = useRouter();
   const boardReturn = useUiStore((state) => state.boardReturn);
   const pending = useUiStore((state) => state.boardRestorePending);
@@ -54,7 +59,7 @@ export function useBoardReturn(tag: string, labels: string | undefined, q: strin
     if (boardReturn === null || !pending) {
       return;
     }
-    if (boardReturn.projects !== tag || boardReturn.labels !== labels || boardReturn.q !== q) {
+    if (boardReturn.projects !== board || boardReturn.labels !== labels || boardReturn.q !== q) {
       endBoardRestore();
       return;
     }
@@ -79,7 +84,7 @@ export function useBoardReturn(tag: string, labels: string | undefined, q: strin
       stop();
       cancelAnimationFrame(frame);
     };
-  }, [boardReturn, pending, tag, labels, q, router, endBoardRestore]);
+  }, [boardReturn, pending, board, labels, q, router, endBoardRestore]);
 
   useEffect(() => {
     if (waiting === null) {

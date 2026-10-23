@@ -31,6 +31,7 @@ const ENTRIES = [entry("ALPHA-1", "To Do"), entry("BETA-2", "TO DO")];
 
 /** The columns To Do (0), Review (1) and Done (2), with both cards in To Do. */
 const BOARD: BoardSnapshot = {
+  projects: PROJECTS,
   entries: ENTRIES,
   columns: buildColumns(PROJECTS, ENTRIES, []),
   pendingIds: new Set(),

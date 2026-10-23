@@ -241,6 +241,18 @@ it("writes no q when the address leaves the project while the next board loads",
   expect(router.latestLocation.search).toEqual({ projects: "DELTA" });
 });
 
+it("writes no q when the address moves to a board of several projects that starts with the same one", async () => {
+  const user = setUser();
+  const delta = heldBack();
+  const router = await renderBoard("", { "/projects/DELTA": delta.reply });
+
+  await user.type(input(), "parser");
+  void router.navigate({ to: "/tasks", search: { projects: "SAGA,DELTA" } });
+  await wait(SEARCH_DELAY);
+
+  expect(router.latestLocation.search).toEqual({ projects: "SAGA,DELTA" });
+});
+
 it("turns the magnifier into a turning spinner while the search request runs", async () => {
   const user = setUser();
   const held = heldBack();

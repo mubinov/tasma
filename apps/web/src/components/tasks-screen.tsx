@@ -1,4 +1,4 @@
-import { useMutation, useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useSuspenseQueries, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, Link, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import type { Workflow } from "@tasma/protocol";
 import { useDeferredValue, useEffect, useId, useRef, useState, type ReactNode } from "react";
@@ -11,24 +11,27 @@ import {
   usePendingTaskWrites,
   type Created,
 } from "../api/mutations";
-import { usePollNotice } from "../api/poll-notice";
+import { usePollNotice, type PollRead } from "../api/poll-notice";
 import { POLL_INTERVAL, projectQuery, projectsQuery, taskSearchQuery, tasksQuery, workflowQuery } from "../api/queries";
 import {
   applyPending,
+  boardValue,
   boardWarnings,
   buildColumns,
   cardConfig,
   cardMarks,
   cardPlace,
+  columnKeys,
   createdTarget,
   distinctLabels,
   moveTarget,
+  readBoard,
   splitList,
   statusColumn,
   tagOf,
   takesCard,
   workflowNames,
-  type BoardProject,
+  type BoardSubject,
   type CardConfig,
   type HiddenBy,
   type TaskWrite,
@@ -43,6 +46,7 @@ import { PlusIcon } from "../lib/icons";
 import { useBoardReturn } from "../lib/use-board-return";
 import { idsOf, useBoardSearch } from "../lib/use-board-search";
 import { useCardDrag, type BoardSnapshot } from "../lib/use-card-drag";
+import { useFocusLost } from "../lib/use-focus-lost";
 import { warningCount } from "../lib/warning-count";
 import { boardFailureLine } from "../lib/write-failure";
 import { NAVIGATION_BY_PATH } from "../navigation";
@@ -114,28 +118,30 @@ function filterSentences({ labelled, searchText, searching, failed, matching, to
 }
 
 /** What the live region says: a summary of what a poll can change while the page stays put. */
-function boardSummary(live: boolean, warnings: number, filter: BoardFilter): string {
+function boardSummary(live: boolean, warnings: number, subject: BoardSubject, filter: BoardFilter): string {
   const said: string[] = [];
 
   if (!live) {
     said.push("The index is not following the disk.");
   }
   if (warnings > 0) {
-    said.push(`${warningCount(warnings)} about this project.`);
+    said.push(`${warningCount(warnings)} about ${subject}.`);
   }
 
   return [...said, ...filterSentences(filter)].join(" ");
 }
 
-function emptyWords(title: string, labelled: boolean, searchApplied: boolean): string {
+function emptyWords(projectsName: string, labelled: boolean, searchApplied: boolean): string {
   if (labelled && searchApplied) {
-    return `No task in ${title} matches the search and carries a selected label.`;
+    return `No task in ${projectsName} matches the search and carries a selected label.`;
   }
 
   return searchApplied
-    ? `No task in ${title} matches the search.`
-    : `No task in ${title} carries any of the selected labels.`;
+    ? `No task in ${projectsName} matches the search.`
+    : `No task in ${projectsName} carries any of the selected labels.`;
 }
+
+type BoardPollNoticeProps = { tags: readonly string[]; board: string; several: boolean; searchText: string };
 
 /**
  * Apart from the board, so a poll that changes nothing re-renders this alone.
@@ -144,21 +150,65 @@ function emptyWords(title: string, labelled: boolean, searchApplied: boolean): s
  * The search read counts only once it has a result: until then the board shows
  * the full listing, and the search's own line reports its failure.
  */
-function BoardPollNotice({ tag, searchText }: { tag: string; searchText: string }): ReactNode {
+function BoardPollNotice({ tags, board, several, searchText }: BoardPollNoticeProps): ReactNode {
   const { client } = route.useRouteContext();
-  const projectRead = useQuery({ ...projectQuery(client, tag), enabled: false });
-  const listingRead = useQuery({ ...tasksQuery(client, tag), enabled: false });
-  const searchRead = useQuery({ ...taskSearchQuery(client, tag, searchText), enabled: false });
-  const reads = searchText !== "" && searchRead.dataUpdatedAt > 0
-    ? [listingRead, projectRead, searchRead]
-    : [listingRead, projectRead];
+  const projectReads = useQueries({ queries: tags.map((tag) => ({ ...projectQuery(client, tag), enabled: false })) });
+  const listingReads = useQueries({ queries: tags.map((tag) => ({ ...tasksQuery(client, tag), enabled: false })) });
+  const searchRead = useQuery({ ...taskSearchQuery(client, tags[0]!, searchText), enabled: false });
+  const reads: PollRead[] = tags.flatMap((_, index) => [listingReads[index]!, projectReads[index]!]);
 
-  usePollNotice(`board-poll:${tag}`, reads, {
+  if (searchText !== "" && searchRead.dataUpdatedAt > 0) {
+    reads.push(searchRead);
+  }
+
+  usePollNotice(`board-poll:${board}`, reads, {
     title: "The board is not up to date",
-    line: (readAt) => `The last reads of ${tag} failed. The board shows the tasks as they were at ${formatClock(readAt)}.`,
+    line: (readAt) => (several
+      ? `The last reads of one or more of these projects failed. The board shows the tasks of those projects as they were at ${formatClock(readAt)}.`
+      : `The last reads of ${tags[0]!} failed. The board shows the tasks as they were at ${formatClock(readAt)}.`),
   });
 
   return null;
+}
+
+/**
+ * Polls the project list for the board of all projects. Apart from the board,
+ * so a poll re-renders this alone: the read time changes on every poll.
+ *
+ * `tags` come from the loader, not from the polled list: a tag whose reads are
+ * not in the cache yet would suspend the whole board. The read time is a
+ * dependency, so each read of a list that still differs starts a load again.
+ */
+function ProjectListPoll({ tags }: { tags: readonly string[] }): ReactNode {
+  const { client } = route.useRouteContext();
+  const router = useRouter();
+  const { data: { data: projects }, dataUpdatedAt } = useSuspenseQuery({
+    ...projectsQuery(client),
+    refetchInterval: POLL_INTERVAL,
+  });
+  const tagsChanged = projects.map((project) => project.tag).join(",") !== tags.join(",");
+
+  useEffect(() => {
+    if (tagsChanged) {
+      void router.invalidate();
+    }
+  }, [tagsChanged, dataUpdatedAt, router]);
+
+  return null;
+}
+
+/**
+ * A column a focus move goes back to after a render that can have changed the
+ * row: its key from `columnKeys`, and its index for a row that no longer has
+ * that key.
+ */
+type ColumnSpot = { key: string; index: number };
+
+/** The column of `spot` in `keys`, else the one at its index, else the last one. */
+function spotColumn(keys: readonly string[], spot: ColumnSpot): number {
+  const index = keys.indexOf(spot.key);
+
+  return index >= 0 ? index : Math.min(spot.index, keys.length - 1);
 }
 
 /**
@@ -166,27 +216,41 @@ function BoardPollNotice({ tag, searchText }: { tag: string; searchText: string 
  * dialog keeps its words. `column` is where the card stood when the dialog
  * opened, for a card a poll removes while it is open.
  */
-type DeleteAsk = { id: string; title: string; column: number; open: boolean };
+type DeleteAsk = { id: string; title: string; column: ColumnSpot; open: boolean };
 
-type BoardProps = { tag: string; labels: string | undefined; q: string | undefined };
+/** Focus that left the page with a column or a card: `id` names the card, `null` for focus elsewhere in the column. */
+type LostFocus = { id: string | null; column: ColumnSpot };
 
-function Board({ tag, labels, q }: BoardProps): ReactNode {
+type BoardProps = {
+  /** The projects the loader read, in board order. */
+  tags: readonly string[];
+  /** The board follows the project list of the tree. */
+  all: boolean;
+  /** The board value of the address. */
+  board: string;
+  labels: string | undefined;
+  q: string | undefined;
+};
+
+function Board({ tags, all, board, labels, q }: BoardProps): ReactNode {
   const { client, queryClient } = route.useRouteContext();
   const { data: { data: projects } } = useSuspenseQuery(projectsQuery(client));
-  const { data: { data: project, diagnostics: projectWarnings } } = useSuspenseQuery({
-    ...projectQuery(client, tag),
-    refetchInterval: POLL_INTERVAL,
+  const projectReads = useSuspenseQueries({
+    queries: tags.map((tag) => ({ ...projectQuery(client, tag), refetchInterval: POLL_INTERVAL })),
   });
-  const { data: { data: listing, diagnostics: listingWarnings } } = useSuspenseQuery({
-    ...tasksQuery(client, tag),
-    refetchInterval: POLL_INTERVAL,
+  const listingReads = useSuspenseQueries({
+    queries: tags.map((tag) => ({ ...tasksQuery(client, tag), refetchInterval: POLL_INTERVAL })),
   });
+  const several = all || tags.length > 1;
+  // The project of the picker. The New task controls, the search and the last
+  // selection use it only on a board of one project.
+  const tag = tags[0]!;
   const setLastTasksProject = useUiStore((state) => state.setLastTasksProject);
   const setBoardReturn = useUiStore((state) => state.setBoardReturn);
   const { mutateAsync: write } = useMutation(taskWriteOptions(queryClient, client));
-  const pending = usePendingTaskWrites([tag]);
+  const pending = usePendingTaskWrites(tags);
   const { mutate: sendDelete } = useMutation(taskDeleteOptions(queryClient, client));
-  const deletingIds = usePendingTaskDeletes([tag]);
+  const deletingIds = usePendingTaskDeletes(tags);
   const [deleteAsk, setDeleteAsk] = useState<DeleteAsk | null>(null);
   const deleteFocusRef = useRef<FinalFocus>(null);
   const [focusCard, setFocusCard] = useState<CardFocus | null>(null);
@@ -194,7 +258,9 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
   // The opener is kept, not read from focus: WebKit focuses no button on a pointer press.
   const [creating, setCreating] = useState<{ status: string; opener: HTMLElement } | null>(null);
   const newTaskRef = useRef<HTMLButtonElement>(null);
-  const listed = listing.entries.filter(({ id }) => !deletingIds.has(id));
+  const listed = listingReads
+    .flatMap(({ data: { data: listing } }) => listing.entries)
+    .filter(({ id }) => !deletingIds.has(id));
   const names = workflowNames(listed);
   // Not under Suspense: a poll can bring a name the loader did not read, and a
   // new key would suspend the whole board until its read lands.
@@ -202,20 +268,36 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
   const selected = distinctLabels(splitList(labels));
   const deferredSelected = distinctLabels(splitList(useDeferredValue(labels)));
   const { searchText, searchRequested, busy, failed, searching, applied, ids, settled }
-    = useBoardSearch(client, tag, q);
+    = useBoardSearch(client, tag, several ? undefined : q);
   const failureId = useId();
-  const [lostFocus, setLostFocus] = useState<{ id: string; column: number } | null>(null);
+  const [lostFocus, setLostFocus] = useState<LostFocus | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setLastTasksProject(tag);
-  }, [tag, setLastTasksProject]);
+    if (!several) {
+      setLastTasksProject(tag);
+    }
+  }, [several, tag, setLastTasksProject]);
 
-  useBoardReturn(tag, labels, q, settled);
+  // When the last project leaves the board of all projects, the empty-tree
+  // screen replaces the board at the same path, where the shell moves no focus.
+  useFocusLost(rootRef, (root) => {
+    root.closest("main")?.focus();
+  });
 
-  const { name, live, config } = project;
-  const boardProjects: BoardProject[] = [{ tag, config }];
-  const configs: ReadonlyMap<string, CardConfig> = new Map([[tag, config]]);
-  const title = name ?? tag;
+  useBoardReturn(board, labels, q, settled);
+
+  const { name, config } = projectReads[0]!.data.data;
+  const live = projectReads.every(({ data: { data: project } }) => project.live);
+  const boardProjects = tags.map((projectTag, index) => ({
+    tag: projectTag,
+    config: projectReads[index]!.data.data.config,
+  }));
+  const configs: ReadonlyMap<string, CardConfig> = new Map(
+    boardProjects.map((project) => [project.tag, project.config]),
+  );
+  const subject: BoardSubject = several ? "these projects" : "this project";
+  const projectsName = several ? "these projects" : name ?? tag;
   const workflows = new Map<string, Workflow | null | undefined>(
     names.map((workflowName, index) => {
       const read = workflowReads[index]?.data;
@@ -224,29 +306,38 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
   );
   const liveEntries = applyPending(listed, pending.writes);
   const liveBoard: BoardSnapshot = {
+    projects: boardProjects,
     entries: liveEntries,
     columns: buildColumns(boardProjects, liveEntries, deferredSelected, ids),
     pendingIds: new Set(pending.writes.map(({ id }) => id)),
     movedIds: pending.movedIds,
   };
-  const { drag, board, liftedRef, press } = useCardDrag({ board: liveBoard, onDrop: dropCard });
-  const { entries, columns, pendingIds, movedIds } = board;
+  const { drag, board: shownBoard, liftedRef, press } = useCardDrag({ board: liveBoard, onDrop: dropCard });
+  const { entries, columns, pendingIds, movedIds } = shownBoard;
+  const keys = columnKeys(columns);
   const origin = drag === null ? null : cardPlace(columns, drag.taskId);
   const labelled = deferredSelected.length > 0;
   const searchApplied = applied !== null;
   const filtered = labelled || searchApplied;
-  const warnings = boardWarnings(projectWarnings, listingWarnings);
+  const warnings = tags.flatMap((_, index) => boardWarnings(
+    projectReads[index]!.data.diagnostics,
+    listingReads[index]!.data.diagnostics,
+  ));
+  const excluded = listingReads.flatMap(({ data: { data: listing } }) => listing.excluded);
   const matching = columns.reduce((sum, column) => sum + column.matching.length, 0);
   const total = columns.reduce((sum, column) => sum + column.total, 0);
 
-  // A card the board no longer shows took the focus with it: focus goes to the
-  // heading of its column. A card with a focus target of its own and one that
-  // moved to another column keep theirs. Read here rather than in the card,
-  // which cannot see the render that removes it.
+  // A card or a column the board no longer shows took the focus with it: focus
+  // goes to the heading of the column with the same key, or else of the column
+  // at the old index. A card with a focus target of its own and one that moved
+  // to another column keep theirs. Read here rather than in the card or the
+  // column, which cannot see the render that removes it.
   if (lostFocus !== null) {
     setLostFocus(null);
-    if (focusCard === null && focusColumn === null && cardPlace(columns, lostFocus.id) === null) {
-      setFocusColumn(lostFocus.column);
+    const gone = lostFocus.id === null || cardPlace(columns, lostFocus.id) === null;
+
+    if (focusCard === null && focusColumn === null && gone) {
+      setFocusColumn(spotColumn(keys, lostFocus.column));
     }
   }
 
@@ -304,7 +395,7 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
 
   function recordReturn(id: string): void {
     setBoardReturn({
-      projects: tag,
+      projects: board,
       ...(labels === undefined ? {} : { labels }),
       ...(q === undefined ? {} : { q }),
       scrollX: window.scrollX,
@@ -316,14 +407,14 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
   function move(id: string, status: string): void {
     // The menu offers only the statuses of the card's project, and each of them has a column.
     const index = statusColumn(columns, tagOf(id), status);
-    const { unfiltered, card } = moveTarget(boardProjects, entries, columns, index, id);
+    const { unfiltered, card } = moveTarget(shownBoard.projects, entries, columns, index, id);
 
     // The top of the column, the tasks the filters hide counted in.
     moveFromMenu(id, placeWrites(unfiltered, card, 0, status));
   }
 
   function moveBy(index: number, id: string, by: -1 | 1): void {
-    const { unfiltered, visible, card } = moveTarget(boardProjects, entries, columns, index, id);
+    const { unfiltered, visible, card } = moveTarget(shownBoard.projects, entries, columns, index, id);
     const at = columns[index]!.matching.findIndex((entry) => entry.id === id);
 
     moveFromMenu(id, placeWrites(unfiltered, card, fullIndex(unfiltered, visible, at + by)));
@@ -333,7 +424,7 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
     // Asked from a card, which the board renders in these columns.
     const { entry: { frontmatter: { title: taskTitle } }, column } = cardPlace(columns, id)!;
 
-    setDeleteAsk({ id, title: taskTitle, column, open: true });
+    setDeleteAsk({ id, title: taskTitle, column: { key: keys[column]!, index: column }, open: true });
   }
 
   /**
@@ -351,7 +442,7 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
     if (next !== undefined) {
       setFocusCard({ id: next.id, part: "menu" });
     } else {
-      setFocusColumn(place?.column ?? ask.column);
+      setFocusColumn(place?.column ?? spotColumn(keys, ask.column));
     }
     sendDelete({ id });
   }
@@ -371,7 +462,7 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
     const status = changesColumn ? target.byTag[tagOf(id)] : undefined;
 
     const { unfiltered, visible, card } = moveTarget(
-      boardProjects,
+      snapshot.projects,
       snapshot.entries,
       snapshot.columns,
       place.column,
@@ -381,31 +472,33 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
   }
 
   return (
-    <>
+    <div ref={rootRef} className="contents">
       <div className={HEADING_LINE_CLASS}>
         <ScreenHeading>{TITLE}</ScreenHeading>
         <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-x-5 gap-y-3">
           <ProjectSelect projects={projects} tag={tag} />
-          <SearchField tag={tag} q={q} busy={busy} describedBy={failed ? failureId : undefined} />
-          <LabelFilter entries={listed} selected={selected} />
-          <button
-            ref={newTaskRef}
-            type="button"
-            onClick={(event) => {
-              setCreating({ status: config.default_status, opener: event.currentTarget });
-            }}
-            className={`ml-1 ${BUTTON_CLASS}`}
-          >
-            <PlusIcon size={14} aria-hidden="true" />
-            New task
-          </button>
+          {!several && <SearchField tag={tag} q={q} busy={busy} describedBy={failed ? failureId : undefined} />}
+          <LabelFilter entries={listed} selected={selected} subject={subject} />
+          {!several && (
+            <button
+              ref={newTaskRef}
+              type="button"
+              onClick={(event) => {
+                setCreating({ status: config.default_status, opener: event.currentTarget });
+              }}
+              className={`ml-1 ${BUTTON_CLASS}`}
+            >
+              <PlusIcon size={14} aria-hidden="true" />
+              New task
+            </button>
+          )}
         </div>
       </div>
 
       {/* Rendered whether or not it says anything: a live region inserted
           together with its content announces nothing. */}
       <div role="status" className="sr-only">
-        {boardSummary(live, warnings.length + listing.excluded.length, {
+        {boardSummary(live, warnings.length + excluded.length, subject, {
           labelled,
           searchText: applied?.text ?? null,
           searching,
@@ -416,30 +509,32 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
       </div>
       {/* Subtle, not signal: a failed search needs no human. */}
       {failed && <p id={failureId} className="mt-3 text-sm text-subtle">{SEARCH_FAILED}</p>}
-      {!live && <LiveNotice className="mt-6 max-w-2xl" />}
-      {/* The board stays mounted when the project changes, so the key starts
-          the line folded for the next project. */}
+      {!live && <LiveNotice subject={subject} className="mt-6 max-w-2xl" />}
+      {/* The board stays mounted when the address changes, so the key starts
+          the line folded for the next board. */}
       <Diagnostics
-        key={tag}
+        key={board}
         items={warnings}
-        excluded={listing.excluded}
-        subject="this project"
+        excluded={excluded}
+        subject={subject}
         className={live ? "mt-4" : "mt-3"}
       />
-      {listed.length === 0 && <p className={EMPTY_CLASS}>{`No tasks in ${title} yet.`}</p>}
+      {listed.length === 0 && <p className={EMPTY_CLASS}>{`No tasks in ${projectsName} yet.`}</p>}
       {listed.length > 0 && filtered && matching === 0 && (
-        <p className={EMPTY_CLASS}>{emptyWords(title, labelled, searchApplied)}</p>
+        <p className={EMPTY_CLASS}>{emptyWords(projectsName, labelled, searchApplied)}</p>
       )}
 
       {/* The right padding of main is not part of the page's sideways overflow, so
           the row extends into it and the last column carries the same padding. */}
       <div className="mt-6 -mr-6 flex items-start gap-6 *:last:box-content *:last:pr-6 sm:-mr-10 sm:*:last:pr-10">
         {columns.map((column, index) => (
-          // Keyed by position: a hand-edited configuration can hold the same
-          // status twice. The tag resets a column's state for the next project.
+          // Keyed by the column key, so a project that joins or leaves the board
+          // of all projects inserts or removes only its own columns. The board
+          // value resets a column's state for the next board.
           <BoardColumn
-            key={`${tag}:${String(index)}`}
-            tag={tag}
+            key={`${board}:${keys[index]!}`}
+            board={board}
+            columnKey={keys[index]!}
             place={index}
             column={column}
             filtered={filtered}
@@ -458,15 +553,20 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
               setFocusCard(null);
             }}
             onCardFocusLost={(id) => {
-              setLostFocus({ id, column: index });
+              setLostFocus({ id, column: { key: keys[index]!, index } });
+            }}
+            onFocusLost={() => {
+              setLostFocus({ id: null, column: { key: keys[index]!, index } });
             }}
             focusHeading={focusColumn === index}
             onHeaderFocused={() => {
               setFocusColumn(null);
             }}
-            onCreate={(status, opener) => {
-              setCreating({ status, opener });
-            }}
+            onCreate={several
+              ? undefined
+              : (status, opener) => {
+                  setCreating({ status, opener });
+                }}
             draggingId={drag?.taskId ?? null}
             slot={drag?.place?.column === index
               ? { index: drag.place.index, height: drag.box.height }
@@ -488,8 +588,9 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
           )}
         />
       )}
-      <BoardPollNotice tag={tag} searchText={searchText} />
-      {creating !== null && (
+      <BoardPollNotice tags={tags} board={board} several={several} searchText={searchText} />
+      {all && <ProjectListPoll tags={tags} />}
+      {creating !== null && !several && (
         <CreateTaskDialog
           queryClient={queryClient}
           client={client}
@@ -521,7 +622,7 @@ function Board({ tag, labels, q }: BoardProps): ReactNode {
           finalFocus={deleteFocusRef}
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -557,15 +658,18 @@ function EmptyTree(): ReactNode {
 
 export function TasksScreen(): ReactNode {
   const { projects, labels, q } = route.useSearch();
-  const [tag] = splitList(projects);
+  const { tags } = route.useLoaderData();
+  const address = readBoard(projects);
 
   useDocumentTitle(TITLE);
 
-  if (tag === undefined) {
+  // Also the board of all projects in an empty tree: the address keeps `all`,
+  // so the board of all projects opens when a project appears.
+  if (tags.length === 0) {
     return <EmptyTree />;
   }
 
-  return <Board tag={tag} labels={labels} q={q} />;
+  return <Board tags={tags} all={address.all} board={boardValue(address)} labels={labels} q={q} />;
 }
 
 /**
@@ -575,8 +679,9 @@ export function TasksScreen(): ReactNode {
  */
 export function TasksFailure(props: ErrorComponentProps): ReactNode {
   const { client } = route.useRouteContext();
-  const [tag] = splitList(route.useSearch().projects);
+  const { all, tags } = readBoard(route.useSearch().projects);
   const { data: read } = useQuery({ ...projectsQuery(client), enabled: false });
+  const tag = all ? read?.data[0]?.tag : tags[0];
 
   return (
     <>

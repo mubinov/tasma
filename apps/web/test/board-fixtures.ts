@@ -12,10 +12,11 @@ export const CONFIG = {
   instructions: [],
 };
 
-export const PROJECTS = [
-  { tag: "SAGA", name: "Saga", path: "/repos/saga" },
-  { tag: "DELTA", name: "Delta", path: "/repos/delta" },
-];
+export const SAGA = { tag: "SAGA", name: "Saga", path: "/repos/saga" };
+
+export const DELTA = { tag: "DELTA", name: "Delta", path: "/repos/delta" };
+
+export const PROJECTS = [SAGA, DELTA];
 
 export const WORKFLOW = {
   name: "dev",
@@ -27,12 +28,19 @@ export const WORKFLOW = {
   ],
 };
 
+/** A second project's statuses: To Do and Done are also in `CONFIG`, Review is not. */
+export const OTHER_CONFIG = { ...CONFIG, statuses: ["To Do", "Review", "Done"], default_status: "To Do" };
+
 export function entry(number: number, fields: Partial<Frontmatter> = {}): TaskEntry {
-  const id = `SAGA-${String(number)}`;
+  return taggedEntry("SAGA", number, fields);
+}
+
+export function taggedEntry(tag: string, number: number, fields: Partial<Frontmatter> = {}): TaskEntry {
+  const id = `${tag}-${String(number)}`;
 
   return {
     id,
-    path: `/repos/saga/tasks/${id}.md`,
+    path: `/repos/${tag.toLowerCase()}/tasks/${id}.md`,
     blocked: false,
     frontmatter: {
       id,
@@ -68,6 +76,18 @@ export function daemon(replies: Record<string, TransportReply | Promise<Transpor
     "/projects/SAGA/tasks": listing([]),
     "/projects/DELTA": project("DELTA"),
     "/projects/DELTA/tasks": listing([]),
+    ...replies,
+  });
+}
+
+/**
+ * A daemon with SAGA and DELTA, which have different statuses, and the project
+ * list sorted by tag as the daemon sends it.
+ */
+export function twoProjects(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
+  return daemon({
+    "/projects": successReply([DELTA, SAGA]),
+    "/projects/DELTA": project("DELTA", { config: OTHER_CONFIG }),
     ...replies,
   });
 }

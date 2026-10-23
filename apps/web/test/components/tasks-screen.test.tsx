@@ -71,11 +71,11 @@ describe("the address", () => {
     expect(router.state.location.search).toEqual({ projects: "SAGA" });
   });
 
-  it("keeps the first of several projects, and the labels", async () => {
+  it("keeps several projects, and the labels", async () => {
     const { transport } = daemon();
     const router = await renderWithRouter("/tasks?projects=DELTA,SAGA&labels=web", transport);
 
-    expect(router.state.location.search).toEqual({ projects: "DELTA", labels: "web" });
+    expect(router.state.location.search).toEqual({ projects: "DELTA,SAGA", labels: "web" });
   });
 
   it("reads an empty label list as no filter", async () => {
@@ -154,7 +154,7 @@ describe("a refused project", () => {
     expect(screen.getByText("No tasks in Delta yet.")).toBeTruthy();
   });
 
-  it.each(["/tasks", "/tasks?projects=SAGA"])("shows no selector at %s when the listing of projects was refused", async (path) => {
+  it.each(["/tasks", "/tasks?projects=SAGA", "/tasks?projects=all"])("shows no selector at %s when the listing of projects was refused", async (path) => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const { transport } = daemon({ "/projects": INVALID });
     await renderWithRouter(path, transport);

@@ -238,22 +238,26 @@ describe("the final columns Show all has opened", () => {
     expect([...useUiStore.getState().revealedColumns]).toEqual([]);
   });
 
-  it("keys a revealed column by its project and its place", () => {
-    useUiStore.getState().revealColumn("SAGA", 3);
+  it("names a column by the board value and the column key", () => {
+    expect(revealedColumnKey("DELTA,SAGA", "done")).toBe("DELTA,SAGA/done");
+  });
 
-    expect(useUiStore.getState().revealedColumns.has(revealedColumnKey("SAGA", 3))).toBe(true);
-    expect(useUiStore.getState().revealedColumns.has(revealedColumnKey("SAGA", 4))).toBe(false);
-    expect(useUiStore.getState().revealedColumns.has(revealedColumnKey("DELTA", 3))).toBe(false);
+  it("keys a revealed column by its board and its column key", () => {
+    useUiStore.getState().revealColumn("SAGA", "done");
+
+    expect(useUiStore.getState().revealedColumns.has(revealedColumnKey("SAGA", "done"))).toBe(true);
+    expect(useUiStore.getState().revealedColumns.has(revealedColumnKey("SAGA", "done#2"))).toBe(false);
+    expect(useUiStore.getState().revealedColumns.has(revealedColumnKey("DELTA", "done"))).toBe(false);
   });
 
   it("keeps the columns revealed before", () => {
-    useUiStore.getState().revealColumn("SAGA", 3);
-    useUiStore.getState().revealColumn("DELTA", 3);
-    useUiStore.getState().revealColumn("SAGA", 3);
+    useUiStore.getState().revealColumn("SAGA", "done");
+    useUiStore.getState().revealColumn("DELTA", "done");
+    useUiStore.getState().revealColumn("SAGA", "done");
 
     expect([...useUiStore.getState().revealedColumns].sort()).toEqual([
-      revealedColumnKey("DELTA", 3),
-      revealedColumnKey("SAGA", 3),
+      revealedColumnKey("DELTA", "done"),
+      revealedColumnKey("SAGA", "done"),
     ]);
   });
 
@@ -261,11 +265,11 @@ describe("the final columns Show all has opened", () => {
     const written: [string, string][] = [];
     setPreferenceStorage({ read: () => null, write: (key, value) => void written.push([key, value]) });
 
-    useUiStore.getState().revealColumn("SAGA", 3);
+    useUiStore.getState().revealColumn("SAGA", "done");
 
     expect(written).toEqual([]);
     hydrateUiStore();
-    expect(useUiStore.getState().revealedColumns.has(revealedColumnKey("SAGA", 3))).toBe(true);
+    expect(useUiStore.getState().revealedColumns.has(revealedColumnKey("SAGA", "done"))).toBe(true);
   });
 });
 

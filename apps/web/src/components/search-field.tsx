@@ -1,7 +1,7 @@
 import { Input } from "@base-ui/react/input";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode } from "react";
-import { splitList } from "../lib/board";
+import { boardValue, readBoard } from "../lib/board";
 import { CircleNotchIcon, MagnifyingGlassIcon, XIcon } from "../lib/icons";
 import { useFindRequest } from "../store/ui";
 import { GROUP_CLASS, LABEL_CLASS } from "./control-classes";
@@ -61,10 +61,10 @@ export function SearchField({ tag, q, busy, describedBy }: SearchFieldProps): Re
     });
   }
 
-  // The address changes before the board renders the next project, while its
+  // The address changes before the board renders the next board, while its
   // loader runs, so a delayed write checks it first.
   const writeDelayed = useEffectEvent((value: string) => {
-    if (splitList(router.latestLocation.search.projects)[0] === tag) {
+    if (boardValue(readBoard(router.latestLocation.search.projects)) === tag) {
       write(value);
     }
   });

@@ -10,7 +10,7 @@ import {
   type RefObject,
   type SetStateAction,
 } from "react";
-import { cardPlace, takesCard, type ColumnData } from "./board";
+import { cardPlace, takesCard, type BoardProject, type ColumnData } from "./board";
 import {
   CARD_GAP,
   DRAG_ATTRIBUTE,
@@ -24,6 +24,8 @@ import {
 
 /** The board as one render of it shows it. A drag holds the one it started on. */
 export type BoardSnapshot = {
+  /** The projects `columns` were built from. */
+  projects: readonly BoardProject[];
   entries: readonly TaskEntry[];
   columns: readonly ColumnData[];
   /** The ids of the tasks a write the daemon has not answered yet changes. */

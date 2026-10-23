@@ -2,6 +2,7 @@ import type { Diagnostic, Frontmatter, TaskEntry, Workflow } from "@tasma/protoc
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyPending,
+  boardValue,
   boardWarnings,
   type BoardProject,
   type CardClick,
@@ -10,6 +11,7 @@ import {
   cardConfig,
   cardMarks,
   cardPlace,
+  columnKeys,
   createdTarget,
   distinctLabels,
   isFinalStatus,
@@ -18,6 +20,7 @@ import {
   labelChoices,
   moveTarget,
   opensTask,
+  readBoard,
   splitList,
   statusColumn,
   stepView,
@@ -86,6 +89,51 @@ describe("splitList", () => {
     { value: " , ", parts: [] },
   ])("splits $value into $parts", ({ value, parts }) => {
     expect(splitList(value)).toEqual(parts);
+  });
+});
+
+describe("readBoard", () => {
+  it.each([undefined, "", ", ,"])("reads %s as no tag", (value) => {
+    const board = readBoard(value);
+
+    expect(board).toEqual({ all: false, tags: [] });
+    expect(boardValue(board)).toBe("");
+  });
+
+  it("sorts the tags by code unit and drops exact repeats", () => {
+    const board = readBoard("BETA,ALPHA,ALPHA");
+
+    expect(board).toEqual({ all: false, tags: ["ALPHA", "BETA"] });
+    expect(boardValue(board)).toBe("ALPHA,BETA");
+  });
+
+  it("gives one tag as the tag itself", () => {
+    expect(boardValue(readBoard(" SAGA ,SAGA"))).toBe("SAGA");
+  });
+
+  it.each(["all", "ALPHA,all", " all "])("reads %s as every project", (value) => {
+    const board = readBoard(value);
+
+    expect(board).toEqual({ all: true, tags: [] });
+    expect(boardValue(board)).toBe("all");
+  });
+
+  it("reads ALL as a tag", () => {
+    expect(readBoard("ALL")).toEqual({ all: false, tags: ["ALL"] });
+  });
+});
+
+describe("columnKeys", () => {
+  it("gives the lowercase status of each column", () => {
+    expect(columnKeys([{ status: "To Do" }, { status: "Open" }])).toEqual(["to do", "open"]);
+  });
+
+  it("counts a repeat of the lowercase status from #2", () => {
+    expect(columnKeys([{ status: "Open" }, { status: "OPEN" }, { status: "open" }])).toEqual(["open", "open#2", "open#3"]);
+  });
+
+  it("gives no key twice when a status reads like a repeat", () => {
+    expect(columnKeys([{ status: "Open" }, { status: "open#2" }, { status: "open" }])).toEqual(["open", "open#2", "open#3"]);
   });
 });
 

@@ -8,7 +8,14 @@ import {
   type AnyRouter,
   type RouterHistory,
 } from "@tanstack/react-router";
-import { buildPath, ProtocolError, routes as daemonRoutes, type Client, type Route } from "@tasma/protocol";
+import {
+  buildPath,
+  ProtocolError,
+  routes as daemonRoutes,
+  type Client,
+  type Route,
+  type TaskList,
+} from "@tasma/protocol";
 import {
   projectQuery,
   projectsQuery,
@@ -28,7 +35,7 @@ import { TaskScreen } from "./components/task-screen";
 import { TasksFailure, TasksScreen } from "./components/tasks-screen";
 import { WorkflowScreen } from "./components/workflow-screen";
 import { WorkflowsScreen } from "./components/workflows-screen";
-import { splitList, workflowNames } from "./lib/board";
+import { boardValue, readBoard, workflowNames } from "./lib/board";
 import { NAVIGATION_BY_PATH, type NavigationPath } from "./navigation";
 import { useUiStore } from "./store/ui";
 
@@ -76,7 +83,10 @@ const dashboardRoute = createRoute({
   component: placeholderFor("/"),
 });
 
-/** `projects` and `labels` are comma lists, as the address carries them. `q` is the search text. */
+/**
+ * `projects` is `all` or a comma list of tags, and `labels` a comma list, as the
+ * address carries them. `q` is the search text.
+ */
 type TasksSearch = { projects?: string; labels?: string; q?: string };
 
 const tasksRoute = createRoute({
@@ -92,13 +102,15 @@ const tasksRoute = createRoute({
     };
   },
   beforeLoad: async ({ search, context }) => {
-    const [tag, ...others] = splitList(search.projects);
+    const { all, tags } = readBoard(search.projects);
 
-    if (tag !== undefined && others.length > 0) {
-      throw redirect({ to: "/tasks", search: { ...search, projects: tag }, replace: true });
+    if (all) {
+      return;
     }
-    if (tag !== undefined) {
-      requirePath(daemonRoutes.readProject, { project: tag });
+    if (tags.length > 0) {
+      for (const tag of tags) {
+        requirePath(daemonRoutes.readProject, { project: tag });
+      }
       return;
     }
 
@@ -110,21 +122,34 @@ const tasksRoute = createRoute({
       throw redirect({ to: "/tasks", search: { ...search, projects: opened.tag }, replace: true });
     }
   },
-  loaderDeps: ({ search }) => ({ tag: splitList(search.projects)[0] }),
-  loader: async ({ context: { queryClient, client }, deps: { tag } }) => {
-    await queryClient.query({ ...projectsQuery(client), staleTime: "static" });
-    if (tag === undefined) {
-      return;
+  loaderDeps: ({ search }) => ({ board: boardValue(readBoard(search.projects)) }),
+  loader: async ({ context: { queryClient, client }, deps: { board } }) => {
+    const { data: projects } = await queryClient.query({ ...projectsQuery(client), staleTime: "static" });
+    const { all, tags: named } = readBoard(board);
+    const tags = all ? projects.map(({ tag }) => tag) : named;
+    const listed = new Set(projects.map(({ tag }) => tag));
+
+    async function readTag(tag: string): Promise<TaskList> {
+      const [, { data: listing }] = await Promise.all([
+        queryClient.query({ ...projectQuery(client, tag), staleTime: "static" }),
+        queryClient.query({ ...tasksQuery(client, tag), staleTime: "static" }),
+      ]);
+      return listing;
     }
 
-    const [, { data: listing }] = await Promise.all([
-      queryClient.query({ ...projectQuery(client, tag), staleTime: "static" }),
-      queryClient.query({ ...tasksQuery(client, tag), staleTime: "static" }),
-    ]);
+    // Tags the project list does not hold are read one at a time, so the first
+    // refusal ends the load and a long list of unknown tags sends no burst.
+    const listings: TaskList[] = [];
+    for (const tag of tags.filter((tag) => !listed.has(tag))) {
+      listings.push(await readTag(tag));
+    }
+    listings.push(...await Promise.all(tags.filter((tag) => listed.has(tag)).map(readTag)));
 
     await Promise.all(
-      workflowNames(listing.entries).map((name) => queryClient.query({ ...workflowQuery(client, name), staleTime: "static" })),
+      workflowNames(listings.flatMap(({ entries }) => entries))
+        .map((name) => queryClient.query({ ...workflowQuery(client, name), staleTime: "static" })),
     );
+    return { tags };
   },
   component: TasksScreen,
   errorComponent: TasksFailure,
@@ -283,14 +308,19 @@ function stringifySearch(search: Record<string, unknown>): string {
  * A load that stays on the same task keeps the page where it is, whatever
  * started it: a chat that opens, changes or closes, Back to an entry with the
  * same address (a close replaces the entry of its chat), a link or a retry.
+ * A load of the board that stays on the same history entry keeps it too: the
+ * board of all projects loads again when a project joins or leaves it.
  * The flag is the one that `resetScroll: false` sets, and the router reads it
  * in the `onRendered` that follows this event. A scroll put back after the
  * reset would not do: WebKit reveals a focused element after the render, and a
  * scroll cancels that reveal.
  */
-function keepTaskScroll(router: AnyRouter): void {
-  router.subscribe("onResolved", ({ pathChanged }) => {
-    if (!pathChanged && router.state.matches.at(-1)?.routeId === taskRoute.id) {
+function keepScroll(router: AnyRouter): void {
+  router.subscribe("onResolved", ({ pathChanged, hrefChanged, fromLocation, toLocation }) => {
+    const routeId = router.state.matches.at(-1)?.routeId;
+    const sameEntry = !hrefChanged && fromLocation?.state.__TSR_key === toLocation.state.__TSR_key;
+
+    if ((!pathChanged && routeId === taskRoute.id) || (sameEntry && routeId === tasksRoute.id)) {
       router._scroll.next = false;
     }
   });
@@ -312,6 +342,6 @@ export function createAppRouter(history: RouterHistory, context: RouterContext) 
     ),
   });
 
-  keepTaskScroll(router);
+  keepScroll(router);
   return router;
 }

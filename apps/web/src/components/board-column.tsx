@@ -13,14 +13,16 @@ import { flushSync } from "react-dom";
 import { cardConfig, cardMarks, tagOf, type CardConfig, type ColumnData } from "../lib/board";
 import { CARD_GAP, DRAG_ATTRIBUTE } from "../lib/drag-place";
 import { PlusIcon } from "../lib/icons";
+import { useFocusLost } from "../lib/use-focus-lost";
 import { revealedColumnKey, useUiStore } from "../store/ui";
 import { TaskCard, type CardFocus } from "./task-card";
 import { PageVirtualList } from "./virtual-list";
 
 type BoardColumnProps = {
-  /** The tag of the board, which keys the "Show all" state of the column. */
-  tag: string;
-  /** The column's place on the board, which tells two columns of one status apart. */
+  /** The board value, which keys the "Show all" state of the column together with `columnKey`. */
+  board: string;
+  columnKey: string;
+  /** The column's index in the row of the board a drag reads. */
   place: number;
   column: ColumnData;
   /** Labels are selected, or a search result applies. */
@@ -45,11 +47,13 @@ type BoardColumnProps = {
   onCardFocused: () => void;
   /** A card left the page while it held focus. */
   onCardFocusLost: (id: string) => void;
+  /** The column left the page while focus was inside it. A card in it also calls `onCardFocusLost`, after this. */
+  onFocusLost: () => void;
   /** The heading takes focus, after which `onHeaderFocused` is called. */
   focusHeading: boolean;
   onHeaderFocused: () => void;
-  /** Opens the create dialog on this column's status. `opener` is the control pressed. */
-  onCreate: (status: string, opener: HTMLElement) => void;
+  /** Opens the create dialog on this column's status. `opener` is the control pressed. Absent, there is no "+". */
+  onCreate?: (status: string, opener: HTMLElement) => void;
   /** The task a drag carries, whose card stays in place at the origin. */
   draggingId: string | null;
   /** The slot a drag shows here: its index in the visible list without the dragged card. */
@@ -105,7 +109,8 @@ function slotRow(
 }
 
 export function BoardColumn({
-  tag,
+  board,
+  columnKey,
   place,
   column,
   filtered,
@@ -120,6 +125,7 @@ export function BoardColumn({
   focusCard,
   onCardFocused,
   onCardFocusLost,
+  onFocusLost,
   focusHeading,
   onHeaderFocused,
   onCreate,
@@ -135,7 +141,7 @@ export function BoardColumn({
   const plainListRef = useRef<HTMLUListElement>(null);
   // In the store rather than in this component: the board unmounts while a task
   // page is open, and a card revealed here has to be back in place on return.
-  const showAll = useUiStore((state) => state.revealedColumns.has(revealedColumnKey(tag, place)));
+  const showAll = useUiStore((state) => state.revealedColumns.has(revealedColumnKey(board, columnKey)));
   const revealColumn = useUiStore((state) => state.revealColumn);
   // By id: the heights the capped cards had when the column opened in full.
   const [cardHeights, setCardHeights] = useState<ReadonlyMap<string, number>>(() => new Map());
@@ -152,11 +158,13 @@ export function BoardColumn({
   const items = placed === null ? cards : cards.toSpliced(placed.at, 0, placed.row);
   const focusIndex = items.findIndex((row) => !isSlot(row) && row.entry.id === focusId);
 
+  useFocusLost(sectionRef, onFocusLost);
+
   function openAll(): void {
     const rows = plainListRef.current?.children ?? [];
 
     setCardHeights(new Map(shown.map((entry, at) => [entry.id, (rows[at] as HTMLElement).offsetHeight])));
-    revealColumn(tag, place);
+    revealColumn(board, columnKey);
   }
 
   // Focus stays where it is: the card to focus takes it once it renders.
@@ -300,16 +308,18 @@ export function BoardColumn({
         </span>
         {/* 20px, under the 24px target size: no other control stands within 24px of it. It stays in the tab
             order, and focus on it is focus inside the column, which shows it. */}
-        <button
-          type="button"
-          aria-label={`New task in ${status}`}
-          onClick={(event) => {
-            onCreate(status, event.currentTarget);
-          }}
-          className="ml-auto flex size-5 items-center justify-center self-center rounded-[4px] text-dim opacity-0 transition-opacity duration-(--duration-fast) ease-standard group-focus-within/column:opacity-100 group-hover/column:opacity-100 hover:bg-surface-2 hover:text-text"
-        >
-          <PlusIcon size={14} aria-hidden="true" />
-        </button>
+        {onCreate !== undefined && (
+          <button
+            type="button"
+            aria-label={`New task in ${status}`}
+            onClick={(event) => {
+              onCreate(status, event.currentTarget);
+            }}
+            className="ml-auto flex size-5 items-center justify-center self-center rounded-[4px] text-dim opacity-0 transition-opacity duration-(--duration-fast) ease-standard group-focus-within/column:opacity-100 group-hover/column:opacity-100 hover:bg-surface-2 hover:text-text"
+          >
+            <PlusIcon size={14} aria-hidden="true" />
+          </button>
+        )}
       </div>
       {cardList()}
       {capped && (

@@ -386,6 +386,53 @@ export function joinList(values: readonly string[]): string | undefined {
   return values.length === 0 ? undefined : values.join(",");
 }
 
+const ALL_PROJECTS = "all";
+
+/** How a text names the projects of a board. */
+export type BoardSubject = "this project" | "these projects";
+
+/** The projects of a board: every project of the tree, or the tags in the order of the project list. */
+export type BoardAddress = { all: boolean; tags: string[] };
+
+/**
+ * The `projects` of an address. `all` is the keyword and `ALL` is a tag. The
+ * daemon sorts the project list by code unit, and so does this.
+ */
+export function readBoard(projects: string | undefined): BoardAddress {
+  const parts = splitList(projects);
+
+  if (parts.includes(ALL_PROJECTS)) {
+    return { all: true, tags: [] };
+  }
+
+  return { all: false, tags: [...new Set(parts)].sort() };
+}
+
+/** One value for every address that names the same board. */
+export function boardValue({ all, tags }: BoardAddress): string {
+  return all ? ALL_PROJECTS : tags.join(",");
+}
+
+/**
+ * The identity of each column, which a project that joins or leaves the board
+ * does not change: its status without case, and `#<n>` from the second column of
+ * that status on.
+ */
+export function columnKeys(columns: readonly Pick<ColumnData, "status">[]): string[] {
+  const used = new Set<string>();
+
+  return columns.map(({ status }) => {
+    const base = status.toLowerCase();
+    let key = base;
+
+    for (let repeat = 2; used.has(key); repeat += 1) {
+      key = `${base}#${String(repeat)}`;
+    }
+    used.add(key);
+    return key;
+  });
+}
+
 /**
  * The tasks of the column a move puts a card in, read the two ways a placement
  * needs them: with the tasks the filters hide and without them, both without

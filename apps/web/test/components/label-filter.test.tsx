@@ -2,9 +2,10 @@ import type { Frontmatter, TaskEntry } from "@tasma/protocol";
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { LabelFilter } from "../../src/components/label-filter";
 import { PICKER_ITEM_CLASS } from "../../src/components/property-picker";
 import { useUiStore } from "../../src/store/ui";
-import { renderWithRouter, stubTransport, successReply } from "../helpers";
+import { renderBesideTaskRoute, renderWithRouter, stubTransport, successReply } from "../helpers";
 
 const CONFIG = {
   statuses: ["Backlog", "Done"],
@@ -263,4 +264,14 @@ it("lists a selected label that no task carries, with count 0", async () => {
 
   expect(options()).toEqual([["api", "1"], ["infra", "1"], ["web", "2"], ["docs", "0"]]);
   expect(within(listbox).getByRole("option", { name: /docs/ }).getAttribute("aria-selected")).toBe("true");
+});
+
+it("says these projects have no labels on a board of several projects", async () => {
+  const user = userEvent.setup();
+  await renderBesideTaskRoute(<LabelFilter entries={[entry(1)]} selected={[]} subject="these projects" />);
+
+  await open(user);
+
+  expect(options()).toEqual([]);
+  expect(screen.getByText(/^No labels in these projects/)).toBeTruthy();
 });

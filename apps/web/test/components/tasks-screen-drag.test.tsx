@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { column, daemon, entry, listing, titlesIn } from "../board-fixtures";
+import { column, daemon, DELTA, entry, listing, SAGA, taggedEntry, titlesIn, twoProjects } from "../board-fixtures";
 import { heldBack, refusalReply, renderWithRouter, successReply } from "../helpers";
 
 beforeEach(() => {
@@ -710,6 +710,60 @@ describe("dragging a card to a place", () => {
       await vi.waitFor(() => {
         expect(titlesIn("Done")).toEqual(["Task 1"]);
       });
+    });
+  });
+
+  describe("on a board of several projects", () => {
+    it("shows no slot over a column the card's project has no status for, and writes nothing there", async () => {
+      const { transport, requests } = twoProjects({
+        "/projects/SAGA/tasks": listing([entry(1)]),
+        "/projects/DELTA/tasks": listing([taggedEntry("DELTA", 11, { status: "Review" })]),
+      });
+      await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+
+      // Backlog (0), To Do (1), Review (2), In Progress (3), Done (4).
+      press("Backlog", "Task 1");
+      movePointer(atRow(2, 1, 1));
+
+      expect(slotIn("Review")).toBeNull();
+      await release(atRow(2, 1, 1));
+
+      expect(patches(requests)).toEqual([]);
+    });
+
+    it("drops at the place under the pointer when a project joins the board of all projects during the drag", async () => {
+      const { transport, requests, replies } = twoProjects({
+        "/projects": successReply([SAGA]),
+        "/projects/SAGA/tasks": listing([
+          entry(1),
+          entry(2, { status: "In Progress", order: 1_000 }),
+          entry(3, { status: "In Progress", order: 2_000 }),
+        ]),
+        "/projects/DELTA/tasks": listing([taggedEntry("DELTA", 11, { status: "Review" })]),
+        "PATCH /projects/SAGA/tasks/SAGA-1": heldBack().reply,
+      });
+      const router = await renderWithRouter("/tasks?projects=all", transport);
+
+      // Backlog (0), To Do (1), In Progress (2), Done (3), until DELTA puts Review before In Progress.
+      press("Backlog", "Task 1");
+      movePointer(atRow(2, 0, 1));
+      expect(slotIn("In Progress")).toBeTruthy();
+
+      replies["/projects"] = successReply([DELTA, SAGA]);
+      await act(async () => {
+        await router.options.context.queryClient.refetchQueries({ queryKey: ["daemon", "projects"], exact: true });
+      });
+      await vi.waitFor(() => {
+        expect(router.state.matches.at(-1)?.loaderData).toEqual({ tags: ["DELTA", "SAGA"] });
+      });
+      movePointer(atRow(2, 0, 1));
+      await release(atRow(2, 0, 1));
+
+      expect(patches(requests)).toEqual([["/projects/SAGA/tasks/SAGA-1", { status: "In Progress", order: 1_500 }]]);
+      await vi.waitFor(() => {
+        expect(titlesIn("Review")).toEqual(["Task 11"]);
+      });
+      expect(titlesIn("In Progress")).toEqual(["Task 2", "Task 1", "Task 3"]);
     });
   });
 });

@@ -2,7 +2,7 @@ import { Combobox } from "@base-ui/react/combobox";
 import { useNavigate } from "@tanstack/react-router";
 import type { TaskEntry } from "@tasma/protocol";
 import { useId, type ReactNode } from "react";
-import { joinList, labelChoices } from "../lib/board";
+import { joinList, labelChoices, type BoardSubject } from "../lib/board";
 import { CaretDownIcon, CheckIcon, MagnifyingGlassIcon } from "../lib/icons";
 import { GROUP_CLASS, LABEL_CLASS, POPUP_CLASS, POSITIONER_CLASS, TRIGGER_CLASS } from "./control-classes";
 import { PICKER_ITEM_CLASS } from "./property-picker";
@@ -10,6 +10,7 @@ import { PICKER_ITEM_CLASS } from "./property-picker";
 type LabelFilterProps = {
   entries: readonly TaskEntry[];
   selected: readonly string[];
+  subject: BoardSubject;
 };
 
 function sameLabel(a: string, b: string): boolean {
@@ -24,7 +25,7 @@ function containsText(label: string, query: string): boolean {
  * The items and the value are label strings alike: Base UI compares an item with
  * a value, and appends the item itself to the value on a check.
  */
-export function LabelFilter({ entries, selected }: LabelFilterProps): ReactNode {
+export function LabelFilter({ entries, selected, subject }: LabelFilterProps): ReactNode {
   const navigate = useNavigate();
   const labelId = useId();
   const valueId = useId();
@@ -74,7 +75,7 @@ export function LabelFilter({ entries, selected }: LabelFilterProps): ReactNode 
                 />
               </div>
               <Combobox.Empty className="px-2 py-1.5 text-sm text-dim empty:p-0">
-                {items.length === 0 ? "No labels in this project" : "No label matches"}
+                {items.length === 0 ? `No labels in ${subject}` : "No label matches"}
               </Combobox.Empty>
               <Combobox.List aria-labelledby={labelId} className="max-h-72 overflow-y-auto">
                 {(label: string) => (

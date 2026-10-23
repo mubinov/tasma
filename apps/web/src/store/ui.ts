@@ -65,7 +65,7 @@ export function setPreferenceStorage(next: PreferenceStorage): void {
 
 /** The board a task page returns to: its address, where it was scrolled, and the card that was opened. */
 export type BoardReturn = {
-  /** The `projects` of the board's address. */
+  /** The board value of the board's address, as `boardValue` gives it. */
   projects: string;
   /** The `labels` of the board's address, absent while no label is selected. */
   labels?: string;
@@ -77,12 +77,11 @@ export type BoardReturn = {
 };
 
 /**
- * The name a final column is held under in `revealedColumns`. The column's
- * place names it, not its status: a hand-edited configuration can hold the same
- * status twice, and the board keys the two columns apart the same way.
+ * The name a final column is held under in `revealedColumns`: the board value
+ * and the column's key from `columnKeys`.
  */
-export function revealedColumnKey(tag: string, place: number): string {
-  return `${tag}/${String(place)}`;
+export function revealedColumnKey(board: string, columnKey: string): string {
+  return `${board}/${columnKey}`;
 }
 
 type UiState = {
@@ -100,7 +99,7 @@ type UiState = {
   endBoardRestore: () => void;
   /** The final columns "Show all" has opened, by `revealedColumnKey`. Never persisted: a reload folds them again. */
   revealedColumns: ReadonlySet<string>;
-  revealColumn: (tag: string, place: number) => void;
+  revealColumn: (board: string, columnKey: string) => void;
   /** A card menu's request to open a task page with its editor open. Never persisted: a reload opens it in reading. */
   editRequest: EditRequest | null;
   requestEdit: (tag: string, id: string) => void;
@@ -170,9 +169,9 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ boardRestorePending: false });
   },
   revealedColumns: new Set<string>(),
-  revealColumn: (tag, place) => {
+  revealColumn: (board, columnKey) => {
     set(({ revealedColumns }) => ({
-      revealedColumns: new Set(revealedColumns).add(revealedColumnKey(tag, place)),
+      revealedColumns: new Set(revealedColumns).add(revealedColumnKey(board, columnKey)),
     }));
   },
   editRequest: null,

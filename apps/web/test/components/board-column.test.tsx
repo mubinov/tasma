@@ -51,7 +51,8 @@ async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnPr
 
   return renderBesideTaskRoute(
     <BoardColumn
-      tag="SAGA"
+      board="SAGA"
+      columnKey={status.toLowerCase()}
       place={0}
       column={data}
       filtered={false}
@@ -66,6 +67,7 @@ async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnPr
       focusCard={null}
       onCardFocused={() => {}}
       onCardFocusLost={() => {}}
+      onFocusLost={() => {}}
       focusHeading={false}
       onHeaderFocused={() => {}}
       onCreate={() => {}}
@@ -276,7 +278,7 @@ describe("a column Show all has opened, after the board was unmounted", () => {
     expect(cardTitles()).toHaveLength(25);
     cleanup();
 
-    await renderColumn({ final: true, matching: entries(25), total: 25 }, { tag: "DELTA" });
+    await renderColumn({ final: true, matching: entries(25), total: 25 }, { board: "DELTA" });
     expect(cardTitles()).toHaveLength(20);
   });
 
@@ -286,7 +288,7 @@ describe("a column Show all has opened, after the board was unmounted", () => {
     await user.click(screen.getByRole("button", { name: "Show all" }));
     cleanup();
 
-    await renderColumn({ status: "Done", final: true, matching: entries(25), total: 25 }, { place: 1 });
+    await renderColumn({ status: "Done", final: true, matching: entries(25), total: 25 }, { columnKey: "done#2" });
     expect(cardTitles()).toHaveLength(20);
   });
 });
@@ -465,6 +467,13 @@ describe("the plus in the header", () => {
 
     expect(screen.getByRole("heading", { level: 2 }).nextElementSibling?.nextElementSibling).toBe(plus());
     expect(onCreate).toHaveBeenCalledExactlyOnceWith("In Progress", plus());
+  });
+
+  it("is not there without onCreate", async () => {
+    await renderColumn({ matching: entries(2), total: 2 }, { onCreate: undefined });
+
+    expect(screen.queryByRole("button", { name: "New task in In Progress" })).toBeNull();
+    expect(screen.getByRole("heading", { level: 2 }).nextElementSibling?.nextElementSibling).toBeNull();
   });
 
   it("shows only while the pointer is over the column or focus is inside it, and stays in the tab order", async () => {
