@@ -144,24 +144,59 @@ export function readLockfile(): string {
   return readFileSync(join(workspaceRoot, "pnpm-lock.yaml"), "utf8");
 }
 
-const MERMAID_SPECIFIER = String.raw`["']mermaid(?:/[^"']*)?["']`;
-
-const STATIC_MERMAID_IMPORT = new RegExp(
-  String.raw`^\s*(?:import|export)\s+(?!type\b)(?:[^;"']*?\bfrom\s+)?${MERMAID_SPECIFIER}`,
-  "m",
-);
-
-const DYNAMIC_MERMAID_IMPORT = new RegExp(String.raw`\bimport\(\s*${MERMAID_SPECIFIER}`);
+type LazyModule = {
+  name: string;
+  /** A pattern for the quoted import specifiers of the module. */
+  specifier: string;
+  /** The one file that loads the module. */
+  loader: string;
+  skipped?: readonly string[];
+};
 
 /**
- * Faults in how a file under `apps/web/src`, named by its path from there,
- * imports `mermaid`. Only `lib/mermaid.ts` loads it, and only through
- * `import()`: a static import puts Mermaid into the main chunk.
+ * The faults check of a module that only `loader` loads, and only through
+ * `import()`, for a file under `apps/web/src` named by its path from there.
  */
-export function mermaidImportFaults(path: string, text: string): string[] {
-  const isStatic = STATIC_MERMAID_IMPORT.test(text);
-  if (path !== "lib/mermaid.ts") {
-    return isStatic || DYNAMIC_MERMAID_IMPORT.test(text) ? ["imports mermaid outside lib/mermaid.ts"] : [];
-  }
-  return isStatic ? ["imports mermaid statically"] : [];
+function lazyImportCheck({
+  name,
+  specifier,
+  loader,
+  skipped = [],
+}: LazyModule): (path: string, text: string) => string[] {
+  const staticImport = new RegExp(String.raw`^\s*(?:import|export)\s+(?!type\b)(?:[^;"']*?\bfrom\s+)?${specifier}`, "m");
+  const dynamicImport = new RegExp(String.raw`\bimport\(\s*${specifier}`);
+
+  return (path, text) => {
+    if (skipped.includes(path)) return [];
+    const isStatic = staticImport.test(text);
+    if (path !== loader) {
+      return isStatic || dynamicImport.test(text) ? [`imports ${name} outside ${loader}`] : [];
+    }
+    return isStatic ? [`imports ${name} statically`] : [];
+  };
 }
+
+/** A static import of `mermaid` puts Mermaid into the main chunk. */
+export const mermaidImportFaults = lazyImportCheck({
+  name: "mermaid",
+  specifier: String.raw`["']mermaid(?:/[^"']*)?["']`,
+  loader: "lib/mermaid.ts",
+});
+
+/**
+ * A static import of Shiki, of the kit highlighter or of the tokenizer puts
+ * Shiki into the main chunk. The two kit files of the highlighter import Shiki
+ * and each other statically, inside the lazy chunk. The tokenizer and its
+ * worker entry import Shiki statically, inside the worker bundle.
+ */
+export const shikiImportFaults = lazyImportCheck({
+  name: "shiki",
+  specifier: String.raw`["'](?:(?:react-)?shiki(?:/[^"']*)?|[^"']*/(?:shiki-highlighter(?:\.aui)?|shiki-tokenize(?:\.worker)?)(?:\.[cm]?[jt]sx?)?)["']`,
+  loader: "components/chat-code.tsx",
+  skipped: [
+    "kit/components/assistant-ui/elements/shiki-highlighter.tsx",
+    "kit/components/assistant-ui/elements/shiki-highlighter.aui.tsx",
+    "lib/shiki-tokenize.ts",
+    "lib/shiki-tokenize.worker.ts",
+  ],
+});

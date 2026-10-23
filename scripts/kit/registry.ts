@@ -12,6 +12,7 @@ export const KIT_ITEMS = [
   "elements-todo-list",
   "elements-terminal-block",
   "elements-code-diff",
+  "shiki-highlighter",
 ] as const;
 
 const LIVE_REGISTRY = "https://r.assistant-ui.com/";

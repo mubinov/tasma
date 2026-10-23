@@ -40,6 +40,7 @@ import {
 } from "../chat-fixtures";
 import { heldBack, refusalReply, stubHitTest, stubThreadDom, successReply, testContext } from "../helpers";
 import { bareBorders, KIT_BORDER_SELECTOR } from "../kit/borders";
+import { colouredTokens, SHIKI_LOAD } from "../kit/shiki";
 import { frame } from "../setup/notice-store";
 
 beforeEach(() => {
@@ -753,6 +754,69 @@ it("shows an image in agent text as a link, and loads no image", async () => {
   expect(link.getAttribute("href")).toBe("https://evil.example/p.png?d=1");
   expect(screen.getByRole("link", { name: /^https:\/\/evil\.example\/q\.png/ })).toBeTruthy();
   expect(document.querySelector("img")).toBeNull();
+});
+
+const CODE_REPLY = ["Here is the sum:", "", "```ts", "// sum", "const total = 1 + 2;", "```"].join("\n");
+
+it("shows a fenced block of a complete agent message in Shiki colours", async () => {
+  await renderPanel(logOf(chatEntries([userMessage("Add the numbers."), textChunk(CODE_REPLY), turnEnd()])));
+
+  await waitFor(() => expect(colouredTokens(panel()).length).toBeGreaterThan(0), SHIKI_LOAD);
+  expect(panel().querySelector("pre.shiki")!.textContent).toBe("// sum\nconst total = 1 + 2;");
+});
+
+it("shows a fenced block of complete reasoning in Shiki colours", async () => {
+  const user = userEvent.setup();
+  await renderPanel(logOf(chatEntries([
+    userMessage("Add the numbers."),
+    thoughtChunk(CODE_REPLY, "msg_01"),
+    textChunk("The sum is 3.", "msg_02"),
+    turnEnd(),
+  ])));
+
+  await user.click(await screen.findByRole("button", { name: /^Reasoning/ }));
+
+  await waitFor(() => expect(colouredTokens(panel()).length).toBeGreaterThan(0), SHIKI_LOAD);
+  expect(colouredTokens(panel()).every((span) => span.closest(".aui-reasoning-content") !== null)).toBe(true);
+});
+
+/**
+ * Renders a log of 2 entries, the user message and a running reply with a
+ * fenced block, and waits until the block shows plain. The next read of the
+ * log asks for the entries after entry 2.
+ */
+async function renderRunningCodeReply(): Promise<ChatLogStub> {
+  const log = logOf(chatEntries([userMessage("Add the numbers."), textChunk(CODE_REPLY)]));
+  await renderPanel(log);
+  await waitFor(() => {
+    expect(panel().querySelector(".aui-shiki-streaming pre")?.textContent).toBe("// sum\nconst total = 1 + 2;");
+  }, SHIKI_LOAD);
+  return log;
+}
+
+it("shows a fenced block of an agent message plain while the message runs, and in Shiki colours when it ends", async () => {
+  const log = await renderRunningCodeReply();
+  expect(colouredTokens(panel())).toEqual([]);
+
+  log.answer(2, { cursor: 3, entries: chatEntries([turnEnd()], 3) });
+
+  await waitFor(() => expect(colouredTokens(panel()).length).toBeGreaterThan(0), SHIKI_LOAD);
+  expect(panel().querySelector(".aui-shiki-streaming")).toBeNull();
+});
+
+it("shows a fenced block in Shiki colours when a tool call follows its text, while the message still runs", async () => {
+  const user = userEvent.setup();
+  const log = await renderRunningCodeReply();
+
+  log.answer(2, {
+    cursor: 3,
+    entries: chatEntries([toolCall({ toolCallId: "t1", title: "Read src/a.ts", kind: "read", status: "in_progress" })], 3),
+  });
+
+  await waitFor(() => expect(colouredTokens(panel()).length).toBeGreaterThan(0), SHIKI_LOAD);
+  expect(panel().querySelector(".aui-shiki-streaming")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "1 tool call" }));
+  expect(screen.getByRole("button", { name: "Running tool: Read src/a.ts" })).toBeTruthy();
 });
 
 it("gives each kit element whose border has no colour a mark of the kit border rule", async () => {

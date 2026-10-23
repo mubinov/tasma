@@ -10,6 +10,7 @@ import {
   readManifest,
   runtimeCssInJsDependencies,
   runtimeCssInJsPackages,
+  shikiImportFaults,
   unlinkedInternalDependencies,
   workspaceRoot,
 } from "../workspace.js";
@@ -209,6 +210,25 @@ describe("the board's renderer code", () => {
   it("loads mermaid in lib/mermaid.ts", () => {
     expect(readFileSync(join(workspaceRoot, "apps/web/src/lib/mermaid.ts"), "utf8")).toMatch(/\bimport\(\s*"mermaid"\s*\)/);
   });
+
+  it("imports shiki only from components/chat-code.tsx, and only through import()", () => {
+    for (const source of sources) {
+      const path = relative("apps/web/src", source);
+      expect(shikiImportFaults(path, readFileSync(join(workspaceRoot, source), "utf8")), source).toEqual([]);
+    }
+  });
+
+  it("loads the kit highlighter in components/chat-code.tsx", () => {
+    expect(readFileSync(join(workspaceRoot, "apps/web/src/components/chat-code.tsx"), "utf8")).toMatch(
+      /\bimport\(\s*"@kit\/components\/assistant-ui\/elements\/shiki-highlighter\.aui"\s*\)/,
+    );
+  });
+
+  it("starts the tokenizer as a module worker in lib/shiki-client.ts", () => {
+    expect(readFileSync(join(workspaceRoot, "apps/web/src/lib/shiki-client.ts"), "utf8")).toContain(
+      'new Worker(new URL("./shiki-tokenize.worker.ts", import.meta.url), { type: "module" })',
+    );
+  });
 });
 
 describe("mermaidImportFaults", () => {
@@ -244,6 +264,80 @@ describe("mermaidImportFaults", () => {
     expect(mermaidImportFaults("components/a.tsx", 'import x from "mermaid-lite";\nconst word = "mermaid";')).toEqual(
       [],
     );
+  });
+});
+
+describe("shikiImportFaults", () => {
+  const loader = "components/chat-code.tsx";
+  const kitModule = "@kit/components/assistant-ui/elements/shiki-highlighter.aui";
+
+  it("accepts import() in components/chat-code.tsx, and a type import anywhere", () => {
+    expect(shikiImportFaults(loader, `await import("${kitModule}");\nawait import("shiki/engine/javascript");`)).toEqual([]);
+    expect(shikiImportFaults(loader, 'import type { RegexEngine } from "shiki";')).toEqual([]);
+    expect(shikiImportFaults("components/a.tsx", 'import type { ShikiHighlighterProps } from "react-shiki";')).toEqual([]);
+    expect(shikiImportFaults("lib/a.ts", 'import type { Hast } from "./shiki-tokenize";')).toEqual([]);
+  });
+
+  it("rejects a static import in components/chat-code.tsx, of each module of the rule", () => {
+    for (const text of [
+      'import { codeToHtml } from "shiki";',
+      "import {\n  createJavaScriptRegexEngine,\n} from 'shiki/engine/javascript';",
+      'import "react-shiki";',
+      'export { useShikiHighlighter } from "react-shiki/core";',
+      `import { SyntaxHighlighter } from "${kitModule}";`,
+      'import { SyntaxHighlighter } from "../kit/components/assistant-ui/elements/shiki-highlighter";',
+      'import { createTokenizer } from "../lib/shiki-tokenize";',
+      'import "../lib/shiki-tokenize.worker";',
+    ]) {
+      expect(shikiImportFaults(loader, text), text).toEqual(["imports shiki statically"]);
+    }
+  });
+
+  it("rejects any import of a module of the rule in another file", () => {
+    for (const text of [
+      'const shiki = await import("shiki");',
+      'import { useShikiHighlighter } from "react-shiki";',
+      `const kit = await import("${kitModule}");`,
+      'import { SyntaxHighlighter } from "./shiki-highlighter.aui";',
+      `import { SyntaxHighlighter } from "${kitModule}.js";`,
+      `const kit = await import("${kitModule}.tsx");`,
+      'import { SyntaxHighlighter } from "./shiki-highlighter.tsx";',
+      'import { SyntaxHighlighter } from "./shiki-highlighter.mjs";',
+      'import { createTokenizer } from "./shiki-tokenize";',
+      'const tokenizer = await import("../lib/shiki-tokenize.ts");',
+      'import "./shiki-tokenize.worker.ts";',
+    ]) {
+      expect(shikiImportFaults("components/a.tsx", text), text).toEqual(["imports shiki outside components/chat-code.tsx"]);
+    }
+  });
+
+  it("skips the two kit files of the highlighter, and the tokenizer and its worker entry", () => {
+    const text = 'import { bundledLanguages } from "shiki/langs";\nimport { SyntaxHighlighter } from "./shiki-highlighter";';
+
+    expect(shikiImportFaults("kit/components/assistant-ui/elements/shiki-highlighter.tsx", text)).toEqual([]);
+    expect(shikiImportFaults("kit/components/assistant-ui/elements/shiki-highlighter.aui.tsx", text)).toEqual([]);
+    expect(shikiImportFaults("lib/shiki-tokenize.ts", text)).toEqual([]);
+    expect(shikiImportFaults("lib/shiki-tokenize.worker.ts", 'import { createTokenizer } from "./shiki-tokenize";')).toEqual([]);
+    expect(shikiImportFaults("kit/components/assistant-ui/elements/markdown-text.tsx", text)).toEqual([
+      "imports shiki outside components/chat-code.tsx",
+    ]);
+  });
+
+  it("ignores a name that only contains shiki, shiki-highlighter or shiki-tokenize, and the word in text", () => {
+    expect(
+      shikiImportFaults(
+        "components/a.tsx",
+        [
+          'import x from "shiki-lite";',
+          'import y from "./my-shiki-highlighter";',
+          'import z from "./shiki-highlighter-theme";',
+          'import w from "./shiki-highlighter.css";',
+          'import v from "./shiki-tokenizer";',
+          'import u from "./my-shiki-tokenize";',
+          'const word = "shiki";',
+        ].join("\n"),
+      ),
+    ).toEqual([]);
   });
 });
 

@@ -104,6 +104,16 @@ describe("the built bundle", () => {
   it("prints no warning for the component the compiler skips on purpose", () => {
     expect(warnings.filter((message) => message.includes("IncompatibleLibrary"))).toEqual([]);
   });
+
+  it("lets no chunk import the entry chunk of the highlighter worker, which WebKit would run again", () => {
+    const entry = assets.find((name) => /^shiki-tokenize\.worker-[\w-]+\.js$/.test(name));
+    expect(entry).toBeDefined();
+    const specifier = new RegExp(`(?:\\bfrom|\\bimport)\\s*\\(?\\s*["'\`]\\./${entry!.replaceAll(".", "\\.")}["'\`]`);
+    const importers = assets.filter(
+      (name) => name.endsWith(".js") && specifier.test(readFileSync(join(outDir, "assets", name), "utf8")),
+    );
+    expect(importers).toEqual([]);
+  });
 });
 
 /** The text of each .ts and .tsx file in src/kit. */

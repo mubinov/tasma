@@ -92,7 +92,7 @@ function fakeRepo(): RepoPaths {
 }
 
 /**
- * The registry build of `version`: the 8 kit items, with one link to the live
+ * The registry build of `version`: the 9 kit items, with one link to the live
  * registry, one bare shadcn name and the `extra` registry dependencies.
  */
 function writeDist(dist: string, version: string, extra: readonly string[]): void {

@@ -21,6 +21,9 @@ import { cn } from "@kit/lib/utils";
 import { MarkdownLink } from "../../../../components/markdown";
 import { markdownUrl, rehypeLinkText, remarkImagesAsLinks } from "../../../../lib/markdown";
 // tasma-edit end
+// tasma-edit: fenced code in chat messages is highlighted by Shiki, loaded on first use
+import { ChatCode } from "../../../../components/chat-code";
+// tasma-edit end
 
 type MarkdownTextProps = Partial<TextMessagePartProps> & {
   components?: Parameters<typeof memoizeMarkdownComponents>[0];
@@ -99,6 +102,9 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
 };
 
 const defaultComponents = memoizeMarkdownComponents({
+  // tasma-edit: fenced code in chat messages is highlighted by Shiki, loaded on first use
+  SyntaxHighlighter: ChatCode,
+  // tasma-edit end
   h1: ({ className, ...props }) => (
     <h1
       className={cn(

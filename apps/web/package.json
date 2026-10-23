@@ -35,7 +35,9 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "catalog:",
+    "react-shiki": "catalog:",
     "remark-gfm": "catalog:",
+    "shiki": "catalog:",
     "tw-animate-css": "catalog:",
     "tw-shimmer": "catalog:",
     "zustand": "catalog:"

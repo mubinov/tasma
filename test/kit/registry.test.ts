@@ -3,10 +3,10 @@ import { itemUrls, KIT_ITEMS, prepareItem, serveRegistry, type KitServer } from 
 import { put, scratch } from "./helpers.ts";
 
 describe("itemUrls", () => {
-  it("names the 8 kit items on the local server", () => {
-    expect(KIT_ITEMS).toHaveLength(8);
+  it("names the 9 kit items on the local server", () => {
+    expect(KIT_ITEMS).toHaveLength(9);
     expect(itemUrls("http://127.0.0.1:4000")).toContain("http://127.0.0.1:4000/base/thread.json");
-    expect(itemUrls("http://127.0.0.1:4000")).toHaveLength(8);
+    expect(itemUrls("http://127.0.0.1:4000")).toHaveLength(9);
   });
 });
 

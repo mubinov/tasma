@@ -325,4 +325,7 @@ export default defineConfig({
     // else keeps the default limit.
     assetsInlineLimit: (filePath) => (FONT_FILE.test(filePath) ? false : undefined),
   },
+  // The highlighter worker loads each grammar through import(), which the
+  // default iife format cannot split into chunks.
+  worker: { format: "es" },
 });
