@@ -1,27 +1,39 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import type { ChatEntry, ChatEvent, ChatEventsReply } from "@tasma/protocol";
+import type { PromptResponse } from "@agentclientprotocol/sdk";
+import type { Chat, ChatEntry, ChatEvent, ChatEventsReply } from "@tasma/protocol";
+import type { AgentAdapter } from "../../src/agents/adapter.js";
 import { createChatRegistry } from "../../src/chats/registry.js";
-import type { ChatRegistry } from "../../src/chats/registry.js";
+import type { ChatRegistry, LiveChat } from "../../src/chats/registry.js";
 import { chatRoutes } from "../../src/chats/routes.js";
+import { createChatRunner } from "../../src/chats/runner.js";
+import type { ChatRunner } from "../../src/chats/runner.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import { projectRoutes } from "../../src/projects/routes.js";
 import { taskRoutes } from "../../src/tasks/routes.js";
 import { WriteQueue } from "../../src/tasks/serialize.js";
+import { fakeAgent, forever } from "../agents/fake-agent.js";
+import type { Script } from "../agents/fake-agent.js";
 import {
   chatFolder,
   failure,
   get,
   logFile,
+  logOf,
+  logUntil,
   plant,
+  projectConfig,
   projectsRoot,
+  requestsOf,
   send,
   startTestServer,
   stillPending,
   success,
+  target,
   taskFile,
   taskText,
+  until,
 } from "../helpers.js";
 import type { TestServer } from "../helpers.js";
 
@@ -43,7 +55,14 @@ const TURN_END: ChatEvent = { kind: "turn-end", stopReason: "end_turn" };
 
 const CHATS = "/projects/ALPHA/tasks/ALPHA-1/chats";
 
-type World = { chats: ChatRegistry; server: TestServer };
+const ADAPTER: AgentAdapter = {
+  agent: "claude",
+  launch: () => ({ command: "fake-agent", args: [], env: {} }),
+  notLoggedIn: "Log in to the agent first",
+  filterUpdate: (update) => update,
+};
+
+type World = { chats: ChatRegistry; runner: ChatRunner; server: TestServer };
 
 /** A tree holding project ALPHA with the tasks ALPHA-1 and ALPHA-2. */
 async function tree(): Promise<string> {
@@ -53,21 +72,49 @@ async function tree(): Promise<string> {
   return root;
 }
 
-/** A daemon over a tree with the chat routes. A second call over the same tree is a restart. */
-async function world(root: string, holdMs = LONG_HOLD_MS): Promise<World> {
+/**
+ * A daemon over a tree with the chat routes, whose agents are fake agents that
+ * run `script`. A second call over the same tree is a restart.
+ */
+async function world(root: string, options: { holdMs?: number; script?: Script } = {}): Promise<World> {
   const host = createProjectHost({ root });
   const writes = new WriteQueue();
-  const chats = createChatRegistry({ root, host, writes, holdMs });
+  const chats = createChatRegistry({ root, host, writes, holdMs: options.holdMs ?? LONG_HOLD_MS });
+  const { spawn } = fakeAgent(options.script);
+  const runner = createChatRunner({ root, chats, adapters: [ADAPTER], env: {}, spawn });
   onTestFinished(async () => {
+    await runner.close();
     chats.close();
     await host.close();
   });
   const server = await startTestServer([
     ...projectRoutes(host, writes, chats),
     ...taskRoutes(host, { writes, chats }),
-    ...chatRoutes(chats),
+    ...chatRoutes(chats, runner),
   ]);
-  return { chats, server };
+  return { chats, runner, server };
+}
+
+/** A daemon whose project ALPHA has a folder, with chat 1 of ALPHA-1 started through the runner. */
+async function running(script?: Script): Promise<World & { live: LiveChat }> {
+  const root = await tree();
+  await plant(projectConfig(root, "ALPHA"), `path: ${await target()}\n`);
+  const started = await world(root, { script });
+  const live = await started.runner.start({ tag: "ALPHA", task: "ALPHA-1", step: "dev:build", agent: "claude", ...MESSAGE });
+  return { ...started, live };
+}
+
+/** A turn that asks a permission request and a question, and stays open until a cancel ends it. */
+function asking(): Script {
+  let stop: ((result: PromptResponse) => void) | undefined;
+  return {
+    prompt(_params, agent) {
+      void agent.permission().catch(() => undefined);
+      void agent.question().catch(() => undefined);
+      return new Promise((resolve) => (stop = resolve));
+    },
+    cancel: () => stop?.({ stopReason: "cancelled" }),
+  };
 }
 
 /** One read of a chat log, which has to succeed. */
@@ -215,7 +262,7 @@ describe("GET …/chats/{chat}/events", () => {
   });
 
   it("ends a held read at the end of the hold with no entries and the same cursor", async () => {
-    const { chats, server } = await world(await tree(), SHORT_HOLD_MS);
+    const { chats, server } = await world(await tree(), { holdMs: SHORT_HOLD_MS });
     await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
 
     await expect(readLog(server, 1)).resolves.toEqual({ cursor: 1, entries: [] });
@@ -300,5 +347,138 @@ describe("GET …/chats/{chat}/events", () => {
     const response = await fetch(`${server.url}${CHATS}/1/events`);
 
     expect(response.status).toBe(401);
+  });
+});
+
+describe("the chat commands", () => {
+  it("answers a message with the chat, which is then working", async () => {
+    const { live, server } = await running();
+    await logUntil(live, "turn-end");
+
+    const response = await send(server, "POST", `${CHATS}/1/messages`, { text: "Now the printer", client: "web" });
+
+    expect(response.status).toBe(200);
+    const { data, diagnostics } = await success<Chat>(response);
+    expect(data).toMatchObject({ task: "ALPHA-1", chat: 1, state: "working", seq: 3 });
+    expect(diagnostics).toEqual([]);
+    expect((await logOf(live))[2]).toEqual({ kind: "user", text: "Now the printer", client: "web" });
+  });
+
+  it("answers a permission answer, a question answer and a cancel with the chat", async () => {
+    const { live, server } = await running(asking());
+    const [permission, question] = requestsOf(await logUntil(live, "question"));
+
+    const answered = await send(server, "POST", `${CHATS}/1/permissions/${permission}`, { optionId: "allow", client: "web" });
+    expect(answered.status).toBe(200);
+    expect((await success<Chat>(answered)).data).toMatchObject({ chat: 1, state: "needs-you" });
+
+    const replied = await send(server, "POST", `${CHATS}/1/questions/${question}`, {
+      action: "accept",
+      content: { parser: "peg", depth: 2, strict: true, tags: ["fast"] },
+      client: "web",
+    });
+    expect(replied.status).toBe(200);
+    expect((await success<Chat>(replied)).data).toMatchObject({ chat: 1, state: "working" });
+
+    const cancelled = await send(server, "POST", `${CHATS}/1/cancel`, { client: "app" });
+    expect(cancelled.status).toBe(200);
+    expect((await success<Chat>(cancelled)).data).toMatchObject({ chat: 1 });
+    expect((await logUntil(live, "turn-end")).slice(-3)).toEqual([
+      { kind: "permission-resolved", request: permission, outcome: { outcome: "selected", optionId: "allow" }, client: "web" },
+      {
+        kind: "question-resolved",
+        request: question,
+        answer: { action: "accept", content: { parser: "peg", depth: 2, strict: true, tags: ["fast"] } },
+        client: "web",
+      },
+      { kind: "turn-end", stopReason: "cancelled" },
+    ]);
+  });
+
+  it("answers a decline of a question with the chat", async () => {
+    const { live, server } = await running(asking());
+    const [, question] = requestsOf(await logUntil(live, "question"));
+
+    const response = await send(server, "POST", `${CHATS}/1/questions/${question}`, { action: "decline", client: "web" });
+
+    expect(response.status).toBe(200);
+    expect((await logOf(live)).at(-1)).toEqual({ kind: "question-resolved", request: question, answer: { action: "decline" }, client: "web" });
+  });
+
+  const LONG_CLIENT = "c".repeat(101);
+
+  it.each([
+    ["a body that is not an object", "messages", ["Build"]],
+    ["a body that is null", "messages", null],
+    ["no body", "messages", undefined],
+    ["a missing key", "messages", { text: "Build" }],
+    ["an extra key", "messages", { text: "Build", client: "web", step: "dev" }],
+    ["an empty client", "messages", { text: "Build", client: "" }],
+    ["a client of 101 characters", "messages", { text: "Build", client: LONG_CLIENT }],
+    ["a client that is not a string", "messages", { text: "Build", client: 7 }],
+    ["an empty text", "messages", { text: "", client: "web" }],
+    ["a text of whitespace only", "messages", { text: " \n\t", client: "web" }],
+    ["a text that is not a string", "messages", { text: ["Build"], client: "web" }],
+    ["a cancel with no client", "cancel", {}],
+    ["a cancel with an extra key", "cancel", { client: "web", text: "Stop" }],
+    ["an empty optionId", "permissions/req-1", { optionId: "", client: "web" }],
+    ["an optionId that is not a string", "permissions/req-1", { optionId: 1, client: "web" }],
+    ["a permission answer with no optionId", "permissions/req-1", { client: "web" }],
+    ["an accept with no content", "questions/req-1", { action: "accept", client: "web" }],
+    ["a content value that is an object", "questions/req-1", { action: "accept", content: { parser: { name: "peg" } }, client: "web" }],
+    ["a content value that is an array of numbers", "questions/req-1", { action: "accept", content: { sizes: [1] }, client: "web" }],
+    ["a content that is an array", "questions/req-1", { action: "accept", content: ["peg"], client: "web" }],
+    ["a decline with content", "questions/req-1", { action: "decline", content: {}, client: "web" }],
+    ["another action", "questions/req-1", { action: "cancel", client: "web" }],
+    ["an answer to a question with no client", "questions/req-1", { action: "decline" }],
+  ])("refuses %s with 400 before it reads the chat", async (_case, command, body) => {
+    const { server } = await world(await tree());
+
+    const response = await send(server, "POST", `${CHATS}/7/${command}`, body);
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+  });
+
+  it("refuses a query on a command with 400", async () => {
+    const { server } = await world(await tree());
+
+    const response = await send(server, "POST", `${CHATS}/1/cancel?now=1`, { client: "web" });
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+  });
+
+  it("sends turn-running, chat-not-running and already-answered with 409, and a missing chat with 404", async () => {
+    const { live, server, chats } = await running({ prompt: forever });
+    await until(() => live.chat.seq === 1 && live.chat.state === "working", "the turn runs");
+    const idle = await chats.create("ALPHA", "ALPHA-2", INPUT, MESSAGE);
+
+    const refusals = [
+      [await send(server, "POST", `${CHATS}/1/messages`, MESSAGE), "turn-running", 409],
+      [await send(server, "POST", `/projects/ALPHA/tasks/ALPHA-2/chats/${idle.chat.chat}/messages`, MESSAGE), "chat-not-running", 409],
+      [await send(server, "POST", `${CHATS}/1/permissions/unknown`, { optionId: "allow", client: "web" }), "already-answered", 409],
+      [await send(server, "POST", `${CHATS}/7/cancel`, { client: "web" }), "chat-not-found", 404],
+    ] as const;
+
+    for (const [response, code, status] of refusals) {
+      expect(response.status).toBe(status);
+      await expect(failure(response)).resolves.toMatchObject({ code });
+    }
+  });
+
+  it("closes a permission request for both of two clients that answer it at once", async () => {
+    const { live, server } = await running(asking());
+    const [permission] = requestsOf(await logUntil(live, "question"));
+    const path = `${CHATS}/1/permissions/${permission}`;
+
+    const responses = await Promise.all(["web", "app"].map((client) => send(server, "POST", path, { optionId: "allow", client })));
+
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    const winner = responses[0]?.status === 200 ? "web" : "app";
+    await expect(failure(responses.find((response) => response.status === 409)!)).resolves.toMatchObject({ code: "already-answered" });
+    expect((await logOf(live)).filter((event) => event.kind === "permission-resolved")).toEqual([
+      { kind: "permission-resolved", request: permission, outcome: { outcome: "selected", optionId: "allow" }, client: winner },
+    ]);
   });
 });

@@ -79,7 +79,10 @@ export type DaemonErrorCode
     | "method-not-allowed"
     | "unsupported-media-type"
     | "request-too-large"
-    | "unauthorized";
+    | "unauthorized"
+    | "turn-running"
+    | "chat-not-running"
+    | "already-answered";
 
 /**
  * Why a call was refused. Each arm carries only the fields its engine class has:

@@ -11,12 +11,12 @@ import { createChatRegistry } from "../../src/chats/registry.js";
 import { createChatRunner } from "../../src/chats/runner.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import { WriteQueue } from "../../src/tasks/serialize.js";
-import { plant, projectConfig, projectsRoot, target, taskFile, taskText } from "../helpers.js";
+import { logOf, plant, projectConfig, projectsRoot, target, taskFile, taskText } from "../helpers.js";
 
 const TURN_MS = 120_000;
 
 describe.skipIf(process.env.TASMA_REAL_CLAUDE !== "1")("a chat with the real Claude", () => {
-  it("answers the first message, and claude --resume continues the same conversation", async () => {
+  it("answers two messages in one conversation, and claude --resume continues it", async () => {
     if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) {
       throw new Error("set CLAUDE_CODE_OAUTH_TOKEN to a token from `claude setup-token`");
     }
@@ -39,18 +39,34 @@ describe.skipIf(process.env.TASMA_REAL_CLAUDE !== "1")("a chat with the real Cla
       text: "Reply with the single word: pong",
       client: "test",
     });
-    let log: ChatEvent[] = [];
-    const deadline = Date.now() + TURN_MS;
-    while (!["turn-end", "failed"].includes(log.at(-1)?.kind ?? "") && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      log = (await live.read(0)).map((entry) => entry.event);
+    /** Waits until the log holds `turns` turn ends, or a failure, and gives the log. */
+    async function turnsEnded(turns: number): Promise<ChatEvent[]> {
+      let log: ChatEvent[] = [];
+      const ended = () => log.filter((event) => event.kind === "turn-end").length >= turns;
+      const deadline = Date.now() + TURN_MS;
+      while (!ended() && log.at(-1)?.kind !== "failed" && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        log = await logOf(live);
+      }
+      return log;
     }
 
+    const log = await turnsEnded(1);
     expect(log.at(-1)).toMatchObject({ kind: "turn-end" });
     expect(log.some((event) => event.kind === "update" && event.update.sessionUpdate === "agent_message_chunk"))
       .toBe(true);
     const session = live.chat.session;
     expect(session).toBeDefined();
+
+    await runner.message(live, { text: "Which word did you reply with?", client: "test" });
+    const second = (await turnsEnded(2)).slice(log.length);
+    expect(second.at(-1)).toMatchObject({ kind: "turn-end" });
+    const reply = second.flatMap((event) => {
+      if (event.kind !== "update" || event.update.sessionUpdate !== "agent_message_chunk") return [];
+      const content = event.update.content as { type?: string; text?: string };
+      return content.type === "text" ? [content.text ?? ""] : [];
+    });
+    expect(reply.join("").toLowerCase()).toContain("pong");
 
     const launch = claudeAdapter.launch(env);
     if ("failed" in launch) throw new Error(launch.failed);

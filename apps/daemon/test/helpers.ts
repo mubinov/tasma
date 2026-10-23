@@ -8,7 +8,8 @@ import { dirname, join } from "node:path";
 import { expect, onTestFinished } from "vitest";
 import type { IndexedProject } from "@tasma/engine";
 import { DAEMON_RECORD_FILE } from "@tasma/protocol";
-import type { DaemonRecord, Diagnostic, Failure } from "@tasma/protocol";
+import type { ChatEvent, DaemonRecord, Diagnostic, Failure } from "@tasma/protocol";
+import type { LiveChat } from "../src/chats/registry.js";
 import { DaemonError } from "../src/http/failure.js";
 import type { RouteEntry } from "../src/http/router.js";
 import { createDaemonServer } from "../src/http/server.js";
@@ -293,6 +294,24 @@ export async function until(holds: () => boolean, what: string, change?: () => P
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
+}
+
+export async function logOf(live: LiveChat): Promise<ChatEvent[]> {
+  return (await live.read(0)).map((entry) => entry.event);
+}
+
+/** Waits until the log of the chat ends with an event of `kind`, and gives the events. */
+export async function logUntil(live: LiveChat, kind: ChatEvent["kind"]): Promise<ChatEvent[]> {
+  let seen: ChatEvent[] = [];
+  await until(() => seen.at(-1)?.kind === kind, `the log ends with ${kind}`, async () => {
+    seen = await logOf(live);
+  });
+  return seen;
+}
+
+/** The `request` of each permission request and question of the log, in log order. */
+export function requestsOf(log: ChatEvent[]): string[] {
+  return log.flatMap((event) => (event.kind === "permission" || event.kind === "question" ? [event.request] : []));
 }
 
 /** Whether a promise is still pending after a short wait. */

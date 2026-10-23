@@ -15,13 +15,18 @@ export type {
   AcpObject,
   Chat,
   ChatAgent,
+  ChatCancelInput,
   ChatEntry,
   ChatEvent,
   ChatEventsReply,
   ChatFold,
+  ChatMessageInput,
   ChatOutside,
   ChatState,
   ChatStatus,
+  PermissionAnswer,
+  QuestionAnswer,
+  QuestionValue,
 } from "./chat.js";
 export { createClient } from "./client.js";
 export type { CallOptions, CallSignal, Client, Transport, TransportReply, TransportRequest } from "./client.js";

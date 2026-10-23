@@ -198,7 +198,7 @@ export async function startDaemon(options: {
     [
       ...projectRoutes(host, writes, chats),
       ...taskRoutes(host, { writes, chats }),
-      ...chatRoutes(chats),
+      ...chatRoutes(chats, runner),
       ...workflowRoutes({ root, writes, publish }),
       ...configRoutes({ root, writes, publish }),
       ...eventRoutes(feed),

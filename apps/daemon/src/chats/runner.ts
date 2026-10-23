@@ -1,24 +1,42 @@
 // The agents of the chats. One chat has one agent process, which the daemon
 // owns: the runner starts it with the first message of the chat, writes every
-// event of the agent into the chat log, and ends the process.
+// event of the agent into the chat log, and ends the process. The commands of
+// the clients on a chat run here too: a message, a cancel and an answer.
 
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { RequestError } from "@agentclientprotocol/sdk";
+import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
 import { readProjectDeclaration, TaskStoreError } from "@tasma/engine";
 import type { TaskStoreErrorCode } from "@tasma/engine";
 import { DAEMON_NAME, printable } from "@tasma/protocol";
-import type { AcpObject, ChatAgent, ChatEvent } from "@tasma/protocol";
+import type {
+  AcpObject,
+  ChatAgent,
+  ChatCancelInput,
+  ChatEvent,
+  ChatMessageInput,
+  PermissionAnswer,
+  QuestionAnswer,
+} from "@tasma/protocol";
 import { AgentClosed, connectAgent, spawnAgent } from "../agents/acp.js";
 import type { AgentConnection, AgentEnd, AgentHandlers, AgentProcess, AgentSession } from "../agents/acp.js";
 import type { AgentAdapter, AgentEnv, AgentLaunch } from "../agents/adapter.js";
-import { causeOf } from "../http/failure.js";
+import { causeOf, DaemonError } from "../http/failure.js";
 import type { ChatRegistry, LiveChat } from "./registry.js";
 
 const AUTH_REQUIRED = RequestError.authRequired().code;
 
 /** The refusals of a chat write that mean the chat is gone: a delete of its project or of its task. */
 const GONE: ReadonlySet<TaskStoreErrorCode> = new Set(["chat-not-found", "task-not-found", "project-not-found"]);
+
+/** The outcome of a permission request and the answer to a question that nobody gives. */
+const CANCELLED = {
+  permission: { outcome: "cancelled" },
+  question: { action: "cancel" },
+} as const satisfies Record<OpenRequest["kind"], AcpObject>;
+
+const KIND_NAME = { permission: "permission request", question: "question" } as const;
 
 export class ChatStartRefusal extends Error {
   readonly code: "agent-not-supported" | "project-has-no-folder";
@@ -30,22 +48,27 @@ export class ChatStartRefusal extends Error {
   }
 }
 
-export type OpenRequest = { kind: "permission" | "question"; answer(result: AcpObject): void };
+export type OpenRequest = {
+  kind: "permission" | "question";
+  /** The params of the request, as the SDK gives them. */
+  params: AcpObject;
+  /** Sends the response to the agent. Only the runner calls it, once, after it takes the request out of `open`. */
+  answer(result: AcpObject): void;
+};
 
 export type RunningChat = {
   live: LiveChat;
   process: AgentProcess;
   /** Set once the agent has opened the session. */
   session: AgentSession | undefined;
-  /** The requests of the agent that wait for an answer, keyed by the `request` of their log event. */
+  /** The requests of the agent that wait for an answer, keyed by the `request` of their log event, in open order. */
   open: Map<string, OpenRequest>;
-  /**
-   * Prompts the agent and writes the end of the turn, or the failure of the
-   * chat. Rejects only when the session is not open yet.
-   */
-  turn(text: string): Promise<void>;
 };
 
+/**
+ * Each command resolves when its events are in the log. A refusal is a
+ * `DaemonError`. A fault of the log rejects the command after the run halts.
+ */
 export type ChatRunner = {
   /**
    * Creates the chat with its first message, so it is `working`, and starts
@@ -61,6 +84,15 @@ export type ChatRunner = {
     client: string;
   }): Promise<LiveChat>;
   running(live: LiveChat): RunningChat | undefined;
+  /** Writes the `user` event and starts a turn with the text. */
+  message(live: LiveChat, input: ChatMessageInput): Promise<void>;
+  /**
+   * Cancels the turn that runs and resolves its open requests in the name of
+   * `client`. Does nothing when no turn runs.
+   */
+  cancel(live: LiveChat, input: ChatCancelInput): Promise<void>;
+  answerPermission(live: LiveChat, request: string, answer: PermissionAnswer): Promise<void>;
+  answerQuestion(live: LiveChat, request: string, answer: QuestionAnswer): Promise<void>;
   /** Ends every agent process and waits until all have exited, with no event in any log. */
   close(): Promise<void>;
 };
@@ -73,6 +105,12 @@ type Run = RunningChat & {
   quiet: boolean;
   /** Set at the first refusal or fault of the log. */
   halted: boolean;
+  /** Set from the message that starts a turn to its prompt result. While it is clear, the session is open. */
+  turning: boolean;
+  /** Set when `begin` reads `cancelledEarly`, after the session id is written. Then a cancel goes to the agent. */
+  cancelReachesAgent: boolean;
+  /** Set by a cancel before `cancelReachesAgent`. `begin` then sends no first prompt, and ends the first turn. */
+  cancelledEarly: boolean;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -107,6 +145,27 @@ function errorReason(adapter: AgentAdapter, error: unknown): string {
   return causeOf(error);
 }
 
+/** The SDK checks the params of a permission request against the ACP schema before a handler gets them. */
+function offers(params: AcpObject, optionId: string): boolean {
+  return (params as RequestPermissionRequest).options.some((option) => option.optionId === optionId);
+}
+
+function nameOf(live: LiveChat): string {
+  return `chat ${live.chat.chat} of ${live.chat.task}`;
+}
+
+/** A resolution with no `client` is one of the daemon. */
+function resolution(kind: OpenRequest["kind"], request: string, result: AcpObject, client?: string): ChatEvent {
+  const by = client === undefined ? {} : { client };
+  return kind === "permission"
+    ? { kind: "permission-resolved", request, outcome: result, ...by }
+    : { kind: "question-resolved", request, answer: result, ...by };
+}
+
+function notRunning(live: LiveChat): DaemonError {
+  return new DaemonError("chat-not-running", `${nameOf(live)} has no agent process`);
+}
+
 export function createChatRunner(options: {
   root?: string;
   chats: ChatRegistry;
@@ -127,8 +186,7 @@ export function createChatRunner(options: {
 
   function report(live: LiveChat, error: unknown): void {
     if (error instanceof TaskStoreError && GONE.has(error.code)) return;
-    const { task, chat } = live.chat;
-    stderr.write(`${DAEMON_NAME}: ${printable(`chat ${chat} of ${task}: ${causeOf(error)}`)}\n`);
+    stderr.write(`${DAEMON_NAME}: ${printable(`${nameOf(live)}: ${causeOf(error)}`)}\n`);
   }
 
   function forget(run: Run): void {
@@ -149,12 +207,18 @@ export function createChatRunner(options: {
     await run.process.end();
   }
 
-  async function append(run: Run, event: ChatEvent): Promise<void> {
+  /** Rejects with a fault of the log after the run halts. */
+  async function record(run: Run, event: ChatEvent): Promise<void> {
     try {
       await run.live.append(event);
     } catch (error) {
       await halt(run, error);
+      throw error;
     }
+  }
+
+  async function append(run: Run, event: ChatEvent): Promise<void> {
+    await record(run, event).catch(() => undefined);
   }
 
   async function fail(run: Run, reason: string): Promise<void> {
@@ -188,9 +252,29 @@ export function createChatRunner(options: {
     }
   }
 
+  /** Takes the request out of `open`, writes its resolution, and then sends the response to the agent. */
+  function settle(run: Run, request: string, open: OpenRequest, result: AcpObject, client?: string): Promise<void> {
+    run.open.delete(request);
+    const written = record(run, resolution(open.kind, request, result, client));
+    open.answer(open.kind === "permission" ? { outcome: result } : result);
+    return written;
+  }
+
+  function cancelOpen(run: Run, client?: string): Promise<void>[] {
+    return [...run.open].map(([request, open]) => settle(run, request, open, CANCELLED[open.kind], client));
+  }
+
+  /** The agent still waits for an answer to each request that is open at the end of the turn. */
+  async function endTurn(run: Run, stopReason: string): Promise<void> {
+    run.turning = false;
+    if (run.quiet) return;
+    void Promise.allSettled(cancelOpen(run));
+    await append(run, { kind: "turn-end", stopReason });
+  }
+
   async function runTurn(run: Run, session: AgentSession, text: string): Promise<void> {
     const result = await send(run, () => session.prompt(text));
-    if (result !== undefined && !run.quiet) await append(run, { kind: "turn-end", stopReason: result.stopReason });
+    if (result !== undefined) await endTurn(run, result.stopReason);
   }
 
   /** Each handler appends before its first await, so the log keeps the order in which the handlers run. */
@@ -199,19 +283,12 @@ export function createChatRunner(options: {
       return (params: AcpObject, answer: (result: AcpObject) => void): () => void => {
         const request = randomUUID();
         if (!run.quiet) {
-          run.open.set(request, {
-            kind,
-            answer(result) {
-              if (run.open.delete(request)) answer(result);
-            },
-          });
+          run.open.set(request, { kind, params, answer });
           void append(run, kind === "permission" ? { kind, request, permission: params } : { kind, request, question: params });
         }
         return () => {
           if (!run.open.delete(request)) return;
-          void append(run, kind === "permission"
-            ? { kind: "permission-resolved", request, outcome: { outcome: "cancelled" } }
-            : { kind: "question-resolved", request, answer: { action: "cancel" } });
+          void append(run, resolution(kind, request, CANCELLED[kind]));
         };
       };
     }
@@ -235,7 +312,26 @@ export function createChatRunner(options: {
       await halt(run, error);
       return;
     }
-    await runTurn(run, session, text);
+    run.cancelReachesAgent = true;
+    if (run.cancelledEarly) await endTurn(run, "cancelled");
+    else await runTurn(run, session, text);
+  }
+
+  /** The open request an answer takes. The caller takes it out of `open` in the same synchronous step. */
+  function pending(live: LiveChat, request: string, kind: OpenRequest["kind"]): { run: Run; open: OpenRequest } {
+    const run = runs.get(live);
+    const open = run?.open.get(request);
+    if (run === undefined && live.fold.open.includes(request)) throw notRunning(live);
+    if (run === undefined || open === undefined) {
+      throw new DaemonError("already-answered", `request ${request} of ${nameOf(live)} is not open`);
+    }
+    if (open.kind !== kind) {
+      throw new DaemonError(
+        "malformed-request",
+        `request ${request} of ${nameOf(live)} is a ${KIND_NAME[open.kind]}, not a ${KIND_NAME[kind]}`,
+      );
+    }
+    return { run, open };
   }
 
   /**
@@ -282,11 +378,9 @@ export function createChatRunner(options: {
         requests: 0,
         quiet: false,
         halted: false,
-        turn(next) {
-          const { session } = run;
-          if (session === undefined) return Promise.reject(new Error("the agent session has not started"));
-          return runTurn(run, session, next);
-        },
+        turning: true,
+        cancelReachesAgent: false,
+        cancelledEarly: false,
       };
       runs.set(live, run);
       alive.add(agentProcess);
@@ -300,6 +394,39 @@ export function createChatRunner(options: {
 
     running(live) {
       return runs.get(live);
+    },
+
+    async message(live, { text, client }) {
+      const run = runs.get(live);
+      if (run === undefined) throw notRunning(live);
+      if (run.turning) throw new DaemonError("turn-running", `a turn of ${nameOf(live)} is running`);
+      run.turning = true;
+      const written = record(run, { kind: "user", text, client });
+      void runTurn(run, run.session!, text);
+      await written;
+    },
+
+    async cancel(live, { client }) {
+      const run = runs.get(live);
+      if (!run?.turning) return;
+      // ACP wants `session/cancel` before the cancelled responses.
+      if (run.cancelReachesAgent) run.session!.cancel();
+      else run.cancelledEarly = true;
+      await Promise.all(cancelOpen(run, client));
+    },
+
+    async answerPermission(live, request, { optionId, client }) {
+      const { run, open } = pending(live, request, "permission");
+      if (!offers(open.params, optionId)) {
+        throw new DaemonError("malformed-request", `permission request ${request} of ${nameOf(live)} offers no option "${optionId}"`);
+      }
+      await settle(run, request, open, { outcome: "selected", optionId }, client);
+    },
+
+    async answerQuestion(live, request, answer) {
+      const { run, open } = pending(live, request, "question");
+      const result = answer.action === "accept" ? { action: "accept", content: answer.content } : { action: "decline" };
+      await settle(run, request, open, result, answer.client);
     },
 
     async close() {

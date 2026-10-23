@@ -1,4 +1,11 @@
-import type { Chat, ChatEventsReply } from "./chat.js";
+import type {
+  Chat,
+  ChatCancelInput,
+  ChatEventsReply,
+  ChatMessageInput,
+  PermissionAnswer,
+  QuestionAnswer,
+} from "./chat.js";
 import type { UserConfig, UserConfigChange } from "./config.js";
 import { ProtocolError, TransportError } from "./errors.js";
 import type { Envelope, Failure, Success } from "./errors.js";
@@ -92,6 +99,29 @@ export type Client = {
     after?: number,
     options?: CallOptions,
   ): Promise<Success<ChatEventsReply>>;
+  /** Starts a turn with the message. Refused with `turn-running` while a turn runs. */
+  sendChatMessage(tag: string, id: string, chat: number, input: ChatMessageInput): Promise<Success<Chat>>;
+  /** Cancels the turn that runs. Does nothing when no turn runs. */
+  cancelChatTurn(tag: string, id: string, chat: number, input: ChatCancelInput): Promise<Success<Chat>>;
+  /**
+   * `request` is the `request` of the `permission` event in the log. The first
+   * answer wins, and a later one is refused with `already-answered`.
+   */
+  answerChatPermission(
+    tag: string,
+    id: string,
+    chat: number,
+    request: string,
+    answer: PermissionAnswer,
+  ): Promise<Success<Chat>>;
+  /** As `answerChatPermission`, for a `question` event. */
+  answerChatQuestion(
+    tag: string,
+    id: string,
+    chat: number,
+    request: string,
+    answer: QuestionAnswer,
+  ): Promise<Success<Chat>>;
   listWorkflows(): Promise<Success<string[]>>;
   createWorkflow(input: WorkflowInput): Promise<Success<Workflow>>;
   readWorkflow(name: string): Promise<Success<Workflow>>;
@@ -212,6 +242,14 @@ export function createClient(transport: Transport): Client {
         { project: tag, id, chat },
         { query: { after } satisfies ChatEventsQuery, signal: options?.signal },
       ),
+    sendChatMessage: (tag, id, chat, input) =>
+      call<Chat>(routes.sendChatMessage, { project: tag, id, chat }, { body: input }),
+    cancelChatTurn: (tag, id, chat, input) =>
+      call<Chat>(routes.cancelChatTurn, { project: tag, id, chat }, { body: input }),
+    answerChatPermission: (tag, id, chat, request, answer) =>
+      call<Chat>(routes.answerChatPermission, { project: tag, id, chat, request }, { body: answer }),
+    answerChatQuestion: (tag, id, chat, request, answer) =>
+      call<Chat>(routes.answerChatQuestion, { project: tag, id, chat, request }, { body: answer }),
     listWorkflows: () => call<string[]>(routes.listWorkflows, {}),
     createWorkflow: (input) => call<Workflow>(routes.createWorkflow, {}, { body: input }),
     readWorkflow: (name) => call<Workflow>(routes.readWorkflow, { workflow: name }),

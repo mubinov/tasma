@@ -147,6 +147,32 @@ describe("connectAgent", () => {
     expect(seen).toEqual([{ question: QUESTION }]);
   });
 
+  it("sends session/cancel with the session id", async () => {
+    const { fake, session } = await started();
+
+    session.cancel();
+
+    await until(() => fake.cancels.length === 1, "the agent got the cancel");
+    expect(fake.cancels).toEqual([{ sessionId: SESSION }]);
+  });
+
+  it("cancels after the connection closed with no throw and no unhandled rejection", async () => {
+    const { fake, connection, session } = await started();
+    fake.exit({ code: 0, signal: null });
+    await connection.closed;
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    onTestFinished(() => {
+      process.off("unhandledRejection", unhandled);
+    });
+
+    expect(() => session.cancel()).not.toThrow();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(unhandled).not.toHaveBeenCalled();
+    expect(fake.cancels).toEqual([]);
+  });
+
   it("closes after the handlers of every message sent before the end", async () => {
     const { seen, handlers } = recorder();
     const { fake, connection } = await started({}, handlers);

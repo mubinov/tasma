@@ -64,6 +64,25 @@ export type ChatEventsReply
     | { reset: true; cursor: 0 };
 
 /**
+ * The bodies of the commands on a chat. `client` names the client that sends
+ * the command; the daemon writes it into the events the command causes and
+ * does not interpret it.
+ */
+export type ChatMessageInput = { text: string; client: string };
+
+export type ChatCancelInput = { client: string };
+
+/** `optionId` is one of the options of the permission request. */
+export type PermissionAnswer = { optionId: string; client: string };
+
+/** As ACP's `ElicitationContentValue`. */
+export type QuestionValue = string | number | boolean | string[];
+
+export type QuestionAnswer
+  = | { action: "accept"; content: Readonly<Record<string, QuestionValue>>; client: string }
+    | { action: "decline"; client: string };
+
+/**
  * What a fold of a chat log keeps: whether a turn runs, the requests that wait
  * for an answer, and the stop that holds the chat until a message or `resumed`.
  */

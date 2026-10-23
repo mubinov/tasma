@@ -32,7 +32,12 @@ export type AgentProcess = {
   end(): Promise<void>;
 };
 
-export type AgentSession = { sessionId: string; prompt(text: string): Promise<{ stopReason: string }> };
+export type AgentSession = {
+  sessionId: string;
+  prompt(text: string): Promise<{ stopReason: string }>;
+  /** Sends `session/cancel`. Never throws: a send that fails means that the connection closes. */
+  cancel(): void;
+};
 
 export type AgentConnection = {
   /** Resolves when the connection closes, after the handlers of every message the agent sent before. */
@@ -206,6 +211,9 @@ export function connectAgent(stream: Stream, handlers: AgentHandlers): AgentConn
             prompt: [{ type: "text", text }],
           }));
           return { stopReason };
+        },
+        cancel() {
+          void connection.agent.notify("session/cancel", { sessionId }).catch(() => undefined);
         },
       };
     },

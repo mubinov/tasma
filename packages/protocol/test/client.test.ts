@@ -197,6 +197,45 @@ const invocations: Invocation[] = [
     path: "/projects/SAGA/tasks/SAGA-3/chats/2/events",
   },
   {
+    name: "sendChatMessage",
+    send: (client) => client.sendChatMessage("SAGA", "SAGA-3", 2, { text: "  Build it\n", client: "app" }),
+    method: "POST",
+    path: "/projects/SAGA/tasks/SAGA-3/chats/2/messages",
+    body: { text: "  Build it\n", client: "app" },
+  },
+  {
+    name: "cancelChatTurn",
+    send: (client) => client.cancelChatTurn("SAGA", "SAGA-3", 2, { client: "app" }),
+    method: "POST",
+    path: "/projects/SAGA/tasks/SAGA-3/chats/2/cancel",
+    body: { client: "app" },
+  },
+  {
+    name: "answerChatPermission",
+    send: (client) => client.answerChatPermission("SAGA", "SAGA-3", 2, "req 1?", { optionId: "allow", client: "app" }),
+    method: "POST",
+    path: "/projects/SAGA/tasks/SAGA-3/chats/2/permissions/req%201%3F",
+    body: { optionId: "allow", client: "app" },
+  },
+  {
+    name: "answerChatQuestion",
+    send: (client) => client.answerChatQuestion("SAGA", "SAGA-3", 2, "req 2?", {
+      action: "accept",
+      content: { parser: "peg", depth: 2, strict: true, tags: ["a"] },
+      client: "app",
+    }),
+    method: "POST",
+    path: "/projects/SAGA/tasks/SAGA-3/chats/2/questions/req%202%3F",
+    body: { action: "accept", content: { parser: "peg", depth: 2, strict: true, tags: ["a"] }, client: "app" },
+  },
+  {
+    name: "answerChatQuestion with a decline",
+    send: (client) => client.answerChatQuestion("SAGA", "SAGA-3", 2, "req-2", { action: "decline", client: "app" }),
+    method: "POST",
+    path: "/projects/SAGA/tasks/SAGA-3/chats/2/questions/req-2",
+    body: { action: "decline", client: "app" },
+  },
+  {
     name: "listWorkflows",
     send: (client) => client.listWorkflows(),
     method: "GET",
@@ -329,6 +368,29 @@ describe("the client", () => {
     expect(error).toBeInstanceOf(ProtocolError);
     expect(error).toMatchObject({ failure, status: 404, message: "no such task" });
   });
+
+  it("gives the chat a chat command answers", async () => {
+    const data = { task: "SAGA-3", chat: 2, step: "dev", agent: "claude", folder: "/srv/saga", created: "x", seq: 4, state: "working" };
+    const transport: Transport = async () => ({ status: 200, body: { ok: true, data, diagnostics: [] } });
+
+    await expect(createClient(transport).sendChatMessage("SAGA", "SAGA-3", 2, { text: "Go", client: "app" }))
+      .resolves.toEqual({ data, diagnostics: [] });
+  });
+
+  it.each(["turn-running", "chat-not-running", "already-answered"] as const)(
+    "throws the refusal %s of a chat command with its code",
+    async (code) => {
+      const failure: Failure = { kind: "daemon", code, message: code };
+      const transport: Transport = async () => ({ status: 409, body: { ok: false, error: failure } });
+
+      const error = await createClient(transport)
+        .answerChatPermission("SAGA", "SAGA-3", 2, "req-1", { optionId: "allow", client: "app" })
+        .catch((thrown: unknown) => thrown);
+
+      expect(error).toBeInstanceOf(ProtocolError);
+      expect(error).toMatchObject({ failure, status: 409 });
+    },
+  );
 
   it("throws a transport fault when the transport rejects", async () => {
     const cause = new Error("connection refused");

@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { RequestError } from "@agentclientprotocol/sdk";
-import type { NewSessionResponse } from "@agentclientprotocol/sdk";
+import type { NewSessionResponse, PromptResponse } from "@agentclientprotocol/sdk";
 import { TaskStoreError } from "@tasma/engine";
 import type { AcpObject, ChatEvent, FeedEvent } from "@tasma/protocol";
 import { spawnAgent } from "../../src/agents/acp.js";
@@ -10,14 +10,27 @@ import type { AgentProcess } from "../../src/agents/acp.js";
 import type { AgentAdapter, AgentEnv, AgentLaunch } from "../../src/agents/adapter.js";
 import { claudeAdapter } from "../../src/agents/claude.js";
 import { createChatRegistry } from "../../src/chats/registry.js";
-import type { ChatRegistry, LiveChat } from "../../src/chats/registry.js";
+import type { ChatRegistry } from "../../src/chats/registry.js";
 import { ChatStartRefusal, createChatRunner } from "../../src/chats/runner.js";
 import type { ChatRunner } from "../../src/chats/runner.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import { projectRoutes } from "../../src/projects/routes.js";
 import { taskRoutes } from "../../src/tasks/routes.js";
 import { WriteQueue } from "../../src/tasks/serialize.js";
-import { plant, projectConfig, projectsRoot, send, startTestServer, target, taskFile, taskText, until } from "../helpers.js";
+import {
+  logOf,
+  logUntil,
+  plant,
+  projectConfig,
+  projectsRoot,
+  requestsOf,
+  send,
+  startTestServer,
+  target,
+  taskFile,
+  taskText,
+  until,
+} from "../helpers.js";
 import type { TestServer } from "../helpers.js";
 import { fakeAgent, forever, line, PERMISSION, QUESTION, SESSION, text, updateLine } from "../agents/fake-agent.js";
 import type { FakeProcess, Script } from "../agents/fake-agent.js";
@@ -99,19 +112,6 @@ async function world(options: Options = {}): Promise<World> {
   return { folder, chats, runner, feed, errors, processes: agents.processes, envs, server };
 }
 
-async function events(live: LiveChat): Promise<ChatEvent[]> {
-  return (await live.read(0)).map((entry) => entry.event);
-}
-
-/** Waits until the log of the chat ends with an event of `kind`, and gives the events. */
-async function logUntil(live: LiveChat, kind: ChatEvent["kind"]): Promise<ChatEvent[]> {
-  let seen: ChatEvent[] = [];
-  await until(() => seen.at(-1)?.kind === kind, `the log ends with ${kind}`, async () => {
-    seen = await events(live);
-  });
-  return seen;
-}
-
 const USER: ChatEvent = { kind: "user", text: START.text, client: START.client };
 
 function filtered(update: AcpObject): ChatEvent {
@@ -124,9 +124,9 @@ function chatState(state: "working" | "needs-you" | "failed"): FeedEvent {
 
 /** The id the daemon gave the open request of the log, which a resolution names. */
 function requestOf(log: ChatEvent[]): string {
-  const asked = log.find((event) => event.kind === "permission" || event.kind === "question");
-  if (asked === undefined) throw new Error("the log holds no request");
-  return asked.request;
+  const [first] = requestsOf(log);
+  if (first === undefined) throw new Error("the log holds no request");
+  return first;
 }
 
 /** Waits until the runner has ended the process. */
@@ -170,10 +170,16 @@ describe("createChatRunner.start", () => {
       USER,
       filtered(text("Reading")),
       filtered(text("Done")),
-      { kind: "permission", request: expect.any(String) as string, permission: PERMISSION },
+      { kind: "permission", request: requestOf(log), permission: PERMISSION },
+      { kind: "permission-resolved", request: requestOf(log), outcome: { outcome: "cancelled" } },
       { kind: "turn-end", stopReason: "end_turn" },
     ]);
-    expect(feed.filter((event) => event.kind === "chat")).toEqual([chatState("working"), chatState("needs-you")]);
+    expect(feed.filter((event) => event.kind === "chat")).toEqual([
+      chatState("working"),
+      chatState("needs-you"),
+      chatState("working"),
+      chatState("needs-you"),
+    ]);
     expect(live.chat).toMatchObject({ state: "needs-you", session: SESSION, folder, agent: "claude", step: START.step });
     expect(processes.map((fake) => fake.folder)).toEqual([folder]);
     expect(processes[0]?.newSession).toEqual({ cwd: folder, mcpServers: [] });
@@ -283,7 +289,7 @@ describe("createChatRunner.start", () => {
     ]);
   });
 
-  it("keeps each open request with the function that answers it", async () => {
+  it("keeps each open request with its params until a client answers it", async () => {
     const answers: unknown[] = [];
     const { runner } = await world({
       script: {
@@ -295,42 +301,18 @@ describe("createChatRunner.start", () => {
       },
     });
     const live = await runner.start(START);
-    const granted = { outcome: { outcome: "selected", optionId: "allow" } };
-    const replied = { action: "decline" };
 
-    for (const [kind, result] of [["permission", granted], ["question", replied]] as const) {
-      await logUntil(live, kind);
+    for (const [kind, params] of [["permission", PERMISSION], ["question", QUESTION]] as const) {
+      const request = requestOf((await logUntil(live, kind)).filter((event) => event.kind === kind));
       const open = runner.running(live)?.open;
-      expect([...open?.values() ?? []].map((request) => request.kind)).toEqual([kind]);
-      const pending = open?.get(requestOf((await events(live)).filter((event) => event.kind === kind)));
-      pending?.answer(result);
-      pending?.answer({ outcome: { outcome: "cancelled" } });
-      expect(open?.size).toBe(0);
+      expect([...open ?? []]).toEqual([[request, { kind, params, answer: expect.any(Function) as unknown }]]);
+      if (kind === "permission") await runner.answerPermission(live, request, { optionId: "allow", client: "app" });
+      else await runner.answerQuestion(live, request, { action: "decline", client: "app" });
+      expect(open?.has(request)).toBe(false);
     }
 
     await logUntil(live, "turn-end");
-    expect(answers).toEqual([granted, replied]);
-  });
-
-  it("runs a later turn with the same rules", async () => {
-    const { runner, processes } = await world();
-    const live = await runner.start(START);
-    await logUntil(live, "turn-end");
-
-    await runner.running(live)?.turn("Now the printer");
-
-    expect(processes[0]?.prompts.map((prompt) => prompt.prompt)).toEqual([
-      [{ type: "text", text: START.text }],
-      [{ type: "text", text: "Now the printer" }],
-    ]);
-    expect((await events(live)).at(-1)).toEqual({ kind: "turn-end", stopReason: "end_turn" });
-  });
-
-  it("refuses a turn before the session starts", async () => {
-    const { runner } = await world({ script: { newSession: forever } });
-    const live = await runner.start(START);
-
-    await expect(runner.running(live)?.turn("Now the printer")).rejects.toThrow("the agent session has not started");
+    expect(answers).toEqual([{ outcome: { outcome: "selected", optionId: "allow" } }, { action: "decline" }]);
   });
 
   describe("refuses before it creates a chat", () => {
@@ -377,13 +359,483 @@ describe("createChatRunner.start", () => {
   });
 });
 
+/**
+ * A script whose prompts stay open until `finish`, or until a `session/cancel`
+ * ends the oldest one with `cancelled`.
+ */
+function heldTurns(): { script: Script; finish: () => void } {
+  const turns: ((result: PromptResponse) => void)[] = [];
+  const script: Script = {
+    prompt: () => new Promise((resolve) => turns.push(resolve)),
+    cancel: () => turns.shift()?.({ stopReason: "cancelled" }),
+  };
+  return { script, finish: () => turns.shift()?.({ stopReason: "end_turn" }) };
+}
+
+const NEXT = { text: "Now the printer", client: "web" } as const;
+
+describe("createChatRunner.message", () => {
+  it("starts a turn after the end of the last one, and writes the message with its client first", async () => {
+    const { runner, processes, feed } = await world({
+      script: {
+        async prompt(_params, agent) {
+          await agent.update(text("Working"));
+          return { stopReason: "end_turn" };
+        },
+      },
+    });
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+
+    await runner.message(live, NEXT);
+    const log = await logUntil(live, "turn-end");
+
+    expect(log).toEqual([
+      USER,
+      filtered(text("Working")),
+      { kind: "turn-end", stopReason: "end_turn" },
+      { kind: "user", ...NEXT },
+      filtered(text("Working")),
+      { kind: "turn-end", stopReason: "end_turn" },
+    ]);
+    expect(processes[0]?.prompts.map((prompt) => prompt.prompt)).toEqual([
+      [{ type: "text", text: START.text }],
+      [{ type: "text", text: NEXT.text }],
+    ]);
+    expect(feed.filter((event) => event.kind === "chat")).toEqual([
+      chatState("working"),
+      chatState("needs-you"),
+      chatState("working"),
+      chatState("needs-you"),
+    ]);
+  });
+
+  describe("refuses with turn-running", () => {
+    it("during the first turn, before the session starts", async () => {
+      const { runner } = await world({ script: { newSession: forever } });
+      const live = await runner.start(START);
+
+      await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "turn-running" });
+    });
+
+    it("during a later turn", async () => {
+      const { script, finish } = heldTurns();
+      const { runner, processes } = await world({ script });
+      const live = await runner.start(START);
+      await until(() => processes[0]?.prompts.length === 1, "the first turn started");
+      finish();
+      await logUntil(live, "turn-end");
+      await runner.message(live, NEXT);
+
+      await expect(runner.message(live, { ...NEXT, client: "app" })).rejects.toMatchObject({ code: "turn-running" });
+      expect((await logOf(live)).filter((event) => event.kind === "user")).toHaveLength(2);
+    });
+
+    it("while a permission request waits", async () => {
+      const { runner } = await world({
+        script: {
+          async prompt(_params, agent) {
+            void agent.permission().catch(() => undefined);
+            return forever();
+          },
+        },
+      });
+      const live = await runner.start(START);
+      await logUntil(live, "permission");
+
+      expect(live.chat.state).toBe("needs-you");
+      await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "turn-running" });
+    });
+
+    it("after a cancel, until the cancelled turn ends", async () => {
+      const { runner, processes } = await world({ script: { prompt: forever } });
+      const live = await runner.start(START);
+      await until(() => processes[0]?.prompts.length === 1, "the turn started");
+
+      await runner.cancel(live, { client: "web" });
+
+      await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "turn-running" });
+    });
+  });
+
+  it("accepts one of two messages sent in one synchronous step, and prompts the agent once", async () => {
+    const { runner, processes } = await world();
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+
+    const sent = await Promise.allSettled([runner.message(live, NEXT), runner.message(live, { ...NEXT, client: "app" })]);
+
+    expect(sent).toMatchObject([{ status: "fulfilled" }, { status: "rejected", reason: { code: "turn-running" } }]);
+    await logUntil(live, "turn-end");
+    expect(processes[0]?.prompts).toHaveLength(2);
+    expect((await logOf(live)).filter((event) => event.kind === "user")).toEqual([USER, { kind: "user", ...NEXT }]);
+  });
+
+  it("accepts a message at once after the prompt result, and writes it after the turn end", async () => {
+    const { runner } = await world();
+    const live = await runner.start(START);
+    const append = live.append.bind(live);
+    let next: Promise<void> | undefined;
+    vi.spyOn(live, "append").mockImplementation((event) => {
+      const written = append(event);
+      if (event.kind === "turn-end") next ??= runner.message(live, NEXT);
+      return written;
+    });
+
+    await until(() => next !== undefined, "the first turn ended");
+    await next;
+
+    expect(await logUntil(live, "turn-end")).toEqual([
+      USER,
+      { kind: "turn-end", stopReason: "end_turn" },
+      { kind: "user", ...NEXT },
+      { kind: "turn-end", stopReason: "end_turn" },
+    ]);
+  });
+
+  describe("refuses with chat-not-running", () => {
+    it("a failed chat", async () => {
+      const { runner } = await world({ adapter: fakeAdapter({ failed: "No agent here" }).adapter });
+      const live = await runner.start(START);
+
+      await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "chat-not-running" });
+    });
+
+    it("a chat whose process exited with code 0 while idle", async () => {
+      const { runner, processes } = await world();
+      const live = await runner.start(START);
+      await logUntil(live, "turn-end");
+      processes[0]?.exit({ code: 0, signal: null });
+      await until(() => runner.running(live) === undefined, "the chat stopped running");
+
+      await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "chat-not-running" });
+    });
+
+    it("a chat after close", async () => {
+      const { runner } = await world();
+      const live = await runner.start(START);
+      await logUntil(live, "turn-end");
+      await runner.close();
+
+      await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "chat-not-running" });
+      expect((await logOf(live)).at(-1)).toEqual({ kind: "turn-end", stopReason: "end_turn" });
+    });
+  });
+
+  it("rejects with chat-not-found when the task is deleted while the message is written, and ends the process", async () => {
+    const { script, finish } = heldTurns();
+    const { runner, server, processes, errors } = await world({ script });
+    const live = await runner.start(START);
+    await until(() => processes[0]?.prompts.length === 1, "the first turn started");
+    finish();
+    await logUntil(live, "turn-end");
+    const append = live.append.bind(live);
+    vi.spyOn(live, "append").mockImplementation(async (event) => {
+      if (event.kind === "user") await send(server, "DELETE", "/projects/ALPHA/tasks/ALPHA-1");
+      return append(event);
+    });
+
+    await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "chat-not-found" });
+
+    await endedByRunner(processes[0]);
+    await until(() => runner.running(live) === undefined, "the chat stopped running");
+    expect(errors).toEqual([]);
+  });
+});
+
+describe("createChatRunner.cancel", () => {
+  it("sends session/cancel, resolves each open request in the name of the client, and ends the turn", async () => {
+    const answers: unknown[] = [];
+    const withdraw = new AbortController();
+    let stop!: (result: PromptResponse) => void;
+    const { runner, processes } = await world({
+      script: {
+        prompt(_params, agent) {
+          void agent.permission({}, withdraw.signal).then((answer) => answers.push(answer));
+          void agent.question({}, withdraw.signal).then((answer) => answers.push(answer));
+          return new Promise((resolve) => (stop = resolve));
+        },
+        cancel() {
+          // As the adapter does: it withdraws its open requests, and then ends the prompt.
+          withdraw.abort();
+          stop({ stopReason: "cancelled" });
+        },
+      },
+    });
+    const live = await runner.start(START);
+    const [permission, question] = requestsOf(await logUntil(live, "question"));
+
+    await runner.cancel(live, { client: "web" });
+
+    expect(await logUntil(live, "turn-end")).toEqual([
+      USER,
+      { kind: "permission", request: permission, permission: PERMISSION },
+      { kind: "question", request: question, question: QUESTION },
+      { kind: "permission-resolved", request: permission, outcome: { outcome: "cancelled" }, client: "web" },
+      { kind: "question-resolved", request: question, answer: { action: "cancel" }, client: "web" },
+      { kind: "turn-end", stopReason: "cancelled" },
+    ]);
+    expect(processes[0]?.cancels).toEqual([{ sessionId: SESSION }]);
+    await until(() => answers.length === 2, "the agent got both answers");
+    expect(answers).toEqual([{ outcome: { outcome: "cancelled" } }, { action: "cancel" }]);
+  });
+
+  it("does nothing when no turn runs, and for a chat that does not run", async () => {
+    const { runner, processes } = await world();
+    const live = await runner.start(START);
+    const before = await logUntil(live, "turn-end");
+
+    await runner.cancel(live, { client: "web" });
+    await new Promise((resolve) => setImmediate(resolve));
+    await runner.close();
+    await runner.cancel(live, { client: "web" });
+
+    expect(await logOf(live)).toEqual(before);
+    expect(processes[0]?.cancels).toEqual([]);
+  });
+
+  describe("before the first prompt is sent", () => {
+    /** Cancels while `held` holds the start: the first turn ends with no prompt, and a later message runs. */
+    async function cancelled(setup: World, held: { started: () => boolean; release: () => void }): Promise<void> {
+      const { runner, processes } = setup;
+      const live = await runner.start(START);
+      await until(held.started, "the start is held");
+
+      await runner.cancel(live, { client: "web" });
+      held.release();
+
+      expect(await logUntil(live, "turn-end")).toEqual([USER, { kind: "turn-end", stopReason: "cancelled" }]);
+      expect(processes[0]?.prompts).toEqual([]);
+      expect(processes[0]?.cancels).toEqual([]);
+      expect(live.chat.session).toBe(SESSION);
+
+      await runner.message(live, NEXT);
+      await logUntil(live, "turn-end");
+      expect(processes[0]?.prompts.map((prompt) => prompt.prompt)).toEqual([[{ type: "text", text: NEXT.text }]]);
+    }
+
+    it("while session/new runs", async () => {
+      let release!: () => void;
+      const setup = await world({
+        script: { newSession: () => new Promise((resolve) => (release = () => resolve({ sessionId: SESSION }))) },
+      });
+
+      await cancelled(setup, { started: () => setup.processes[0]?.newSession !== undefined, release: () => release() });
+    });
+
+    it("while the session id is written", async () => {
+      let release: (() => void) | undefined;
+      const setup = await world({
+        chats: (chats) => ({
+          ...chats,
+          async create(...args) {
+            const live = await chats.create(...args);
+            const setSession = live.setSession.bind(live);
+            vi.spyOn(live, "setSession").mockImplementation(async (session) => {
+              await new Promise<void>((resolve) => (release = resolve));
+              await setSession(session);
+            });
+            return live;
+          },
+        }),
+      });
+
+      await cancelled(setup, { started: () => release !== undefined, release: () => release?.() });
+    });
+  });
+
+  it("resolves a request still open at the prompt result as cancelled, with no client", async () => {
+    const answers: unknown[] = [];
+    const { runner } = await world({
+      script: {
+        async prompt(_params, agent) {
+          void agent.question().then((answer) => answers.push(answer));
+          return { stopReason: "end_turn" };
+        },
+      },
+    });
+    const live = await runner.start(START);
+
+    const log = await logUntil(live, "turn-end");
+
+    expect(log).toEqual([
+      USER,
+      { kind: "question", request: requestOf(log), question: QUESTION },
+      { kind: "question-resolved", request: requestOf(log), answer: { action: "cancel" } },
+      { kind: "turn-end", stopReason: "end_turn" },
+    ]);
+    await until(() => answers.length === 1, "the agent got the answer");
+    expect(answers).toEqual([{ action: "cancel" }]);
+    await expect(runner.answerQuestion(live, requestOf(log), { action: "decline", client: "web" }))
+      .rejects.toMatchObject({ code: "already-answered" });
+  });
+});
+
+describe("createChatRunner.answerPermission", () => {
+  it("gives the agent the option, and writes the resolution with the client before the next update", async () => {
+    const answers: unknown[] = [];
+    const { runner, feed } = await world({
+      script: {
+        async prompt(_params, agent) {
+          answers.push(await agent.permission());
+          await agent.update(text("Built"));
+          return { stopReason: "end_turn" };
+        },
+      },
+    });
+    const live = await runner.start(START);
+    const request = requestOf(await logUntil(live, "permission"));
+
+    await runner.answerPermission(live, request, { optionId: "reject", client: "web" });
+
+    expect(await logUntil(live, "turn-end")).toEqual([
+      USER,
+      { kind: "permission", request, permission: PERMISSION },
+      { kind: "permission-resolved", request, outcome: { outcome: "selected", optionId: "reject" }, client: "web" },
+      filtered(text("Built")),
+      { kind: "turn-end", stopReason: "end_turn" },
+    ]);
+    expect(answers).toEqual([{ outcome: { outcome: "selected", optionId: "reject" } }]);
+    expect(feed.filter((event) => event.kind === "chat")).toEqual([
+      chatState("working"),
+      chatState("needs-you"),
+      chatState("working"),
+      chatState("needs-you"),
+    ]);
+  });
+
+  it("refuses with malformed-request an option the request does not offer, and a question", async () => {
+    const { runner } = await world({
+      script: {
+        async prompt(_params, agent) {
+          void agent.permission().catch(() => undefined);
+          void agent.question().catch(() => undefined);
+          return forever();
+        },
+      },
+    });
+    const live = await runner.start(START);
+    const log = await logUntil(live, "question");
+    const [permission, question] = requestsOf(log);
+
+    await expect(runner.answerPermission(live, permission!, { optionId: "maybe", client: "web" }))
+      .rejects.toMatchObject({ code: "malformed-request" });
+    await expect(runner.answerPermission(live, question!, { optionId: "allow", client: "web" }))
+      .rejects.toMatchObject({ code: "malformed-request", message: expect.stringContaining("is a question, not a permission request") as string });
+
+    expect(runner.running(live)?.open.size).toBe(2);
+    expect(await logOf(live)).toEqual(log);
+  });
+
+  it("refuses with already-answered a second answer, a withdrawn request, a cancelled request and an unknown id", async () => {
+    const withdraw = new AbortController();
+    const { runner } = await world({
+      script: {
+        async prompt(_params, agent) {
+          for (const signal of [undefined, withdraw.signal, undefined]) {
+            void agent.permission({}, signal).catch(() => undefined);
+          }
+          return forever();
+        },
+      },
+    });
+    const live = await runner.start(START);
+    await until(() => live.fold.open.length === 3, "three permission requests are open");
+    const [first, withdrawn, cancelled] = live.fold.open;
+    const answer = { optionId: "allow", client: "web" };
+
+    await runner.answerPermission(live, first!, answer);
+    withdraw.abort();
+    await until(() => !live.fold.open.includes(withdrawn!), "the agent withdrew its request");
+    await runner.cancel(live, { client: "app" });
+
+    for (const request of [first!, withdrawn!, cancelled!, "unknown"]) {
+      await expect(runner.answerPermission(live, request, { ...answer, client: "app" }))
+        .rejects.toMatchObject({ code: "already-answered" });
+    }
+    expect((await logOf(live)).filter((event) => event.kind === "permission-resolved")).toEqual([
+      { kind: "permission-resolved", request: first, outcome: { outcome: "selected", optionId: "allow" }, client: "web" },
+      { kind: "permission-resolved", request: withdrawn, outcome: { outcome: "cancelled" } },
+      { kind: "permission-resolved", request: cancelled, outcome: { outcome: "cancelled" }, client: "app" },
+    ]);
+  });
+
+  it("refuses after close with chat-not-running a request the log shows open, and with already-answered another", async () => {
+    const { runner } = await world({
+      script: {
+        async prompt(_params, agent) {
+          void agent.permission().catch(() => undefined);
+          return forever();
+        },
+      },
+    });
+    const live = await runner.start(START);
+    const request = requestOf(await logUntil(live, "permission"));
+    await runner.close();
+
+    await expect(runner.answerPermission(live, request, { optionId: "allow", client: "web" }))
+      .rejects.toMatchObject({ code: "chat-not-running" });
+    await expect(runner.answerPermission(live, "unknown", { optionId: "allow", client: "web" }))
+      .rejects.toMatchObject({ code: "already-answered" });
+  });
+});
+
+describe("createChatRunner.answerQuestion", () => {
+  it("gives the agent an accepted answer and a decline unchanged, and writes each with its client", async () => {
+    const answers: unknown[] = [];
+    const { runner } = await world({
+      script: {
+        async prompt(_params, agent) {
+          answers.push(await agent.question());
+          answers.push(await agent.question());
+          return { stopReason: "end_turn" };
+        },
+      },
+    });
+    const live = await runner.start(START);
+    const content = { parser: "peg", depth: 2, strict: true, tags: ["fast", "small"] };
+
+    const first = requestOf(await logUntil(live, "question"));
+    await runner.answerQuestion(live, first, { action: "accept", content, client: "web" });
+    const second = requestsOf(await logUntil(live, "question")).at(-1)!;
+    await runner.answerQuestion(live, second, { action: "decline", client: "app" });
+
+    expect(await logUntil(live, "turn-end")).toEqual([
+      USER,
+      { kind: "question", request: first, question: QUESTION },
+      { kind: "question-resolved", request: first, answer: { action: "accept", content }, client: "web" },
+      { kind: "question", request: second, question: QUESTION },
+      { kind: "question-resolved", request: second, answer: { action: "decline" }, client: "app" },
+      { kind: "turn-end", stopReason: "end_turn" },
+    ]);
+    expect(answers).toEqual([{ action: "accept", content }, { action: "decline" }]);
+  });
+
+  it("refuses a permission request with malformed-request", async () => {
+    const { runner } = await world({
+      script: {
+        async prompt(_params, agent) {
+          void agent.permission().catch(() => undefined);
+          return forever();
+        },
+      },
+    });
+    const live = await runner.start(START);
+    const request = requestOf(await logUntil(live, "permission"));
+
+    await expect(runner.answerQuestion(live, request, { action: "decline", client: "web" }))
+      .rejects.toMatchObject({ code: "malformed-request", message: expect.stringContaining("is a permission request, not a question") as string });
+    expect(runner.running(live)?.open.has(request)).toBe(true);
+  });
+});
+
 describe("createChatRunner failures", () => {
   it("fails with the text of the launch, and starts no process", async () => {
     const { runner, processes, feed } = await world({ adapter: fakeAdapter({ failed: "No agent here" }).adapter });
 
     const live = await runner.start(START);
 
-    expect(await events(live)).toEqual([USER, { kind: "failed", reason: "No agent here" }]);
+    expect(await logOf(live)).toEqual([USER, { kind: "failed", reason: "No agent here" }]);
     expect(live.chat.state).toBe("failed");
     expect(feed.filter((event) => event.kind === "chat")).toEqual([chatState("working"), chatState("failed")]);
     expect(processes).toEqual([]);
@@ -396,7 +848,7 @@ describe("createChatRunner failures", () => {
     const live = await runner.start(START);
 
     expect(live.chat.state).toBe("failed");
-    expect(await events(live)).toEqual([USER, { kind: "failed", reason: "Claude Code is not installed" }]);
+    expect(await logOf(live)).toEqual([USER, { kind: "failed", reason: "Claude Code is not installed" }]);
   });
 
   it("fails when the process cannot start", async () => {
@@ -544,7 +996,7 @@ describe("createChatRunner failures", () => {
 
     await endedByRunner(processes[0]);
     await until(() => runner.running(live) === undefined, "the chat stopped running");
-    expect((await events(live)).at(-1)).toEqual({ kind: "turn-end", stopReason: "end_turn" });
+    expect((await logOf(live)).at(-1)).toEqual({ kind: "turn-end", stopReason: "end_turn" });
   });
 
   it("writes nothing when the process exits with code 0 between turns", async () => {
@@ -556,7 +1008,7 @@ describe("createChatRunner failures", () => {
     await processes[0]?.ended;
     await until(() => runner.running(live) === undefined, "the chat stopped running");
 
-    expect((await events(live)).at(-1)).toEqual({ kind: "turn-end", stopReason: "end_turn" });
+    expect((await logOf(live)).at(-1)).toEqual({ kind: "turn-end", stopReason: "end_turn" });
     expect(live.chat.state).toBe("needs-you");
   });
 
@@ -645,6 +1097,29 @@ describe("createChatRunner when the chat is gone", () => {
     expect(errors).toEqual(["tasma-daemon: chat 1 of ALPHA-1: the disk is gone\n"]);
   });
 
+  it("writes no turn end for a prompt result that comes after a fault of the log", async () => {
+    let finish!: () => void;
+    const { runner, processes } = await world({
+      script: {
+        prompt: (_params, agent) => new Promise((resolve) => {
+          finish = () => {
+            void agent.update(text("late")).catch(() => undefined);
+            resolve({ stopReason: "end_turn" });
+          };
+        }),
+      },
+      started: slowEnd(100),
+    });
+    const live = await runner.start(START);
+    await until(() => processes[0]?.prompts.length === 1, "the turn started");
+    const append = vi.spyOn(live, "append").mockRejectedValue(new Error("the disk is gone"));
+
+    finish();
+    await processes[0]?.ended;
+
+    expect(append.mock.calls.map(([event]) => event.kind)).toEqual(["update"]);
+  });
+
   it("reports one line for the faults of several writes that were already running", async () => {
     const { script, late } = lateUpdates();
     const { runner, processes, errors } = await world({ script });
@@ -678,7 +1153,7 @@ describe("createChatRunner when the chat is gone", () => {
 
     await endedByRunner(processes[0]);
     expect(processes[0]?.prompts).toEqual([]);
-    expect(await events(live)).toEqual([USER]);
+    expect(await logOf(live)).toEqual([USER]);
     expect(errors).toEqual([]);
   });
 
@@ -715,7 +1190,7 @@ describe("createChatRunner.close", () => {
     const second = await runner.start({ ...START, text: "Build the printer" });
     await logUntil(live, "permission");
     await logUntil(second, "permission");
-    const before = [await events(live), await events(second)];
+    const before = [await logOf(live), await logOf(second)];
 
     await runner.close();
 
@@ -725,7 +1200,7 @@ describe("createChatRunner.close", () => {
       { code: 0, signal: null },
     ]);
     await new Promise((resolve) => setImmediate(resolve));
-    expect([await events(live), await events(second)]).toEqual(before);
+    expect([await logOf(live), await logOf(second)]).toEqual(before);
     expect(runner.running(live)).toBeUndefined();
   });
 
@@ -745,7 +1220,7 @@ describe("createChatRunner.close", () => {
 
     await runner.close();
 
-    expect(await events(live)).toEqual(before);
+    expect(await logOf(live)).toEqual(before);
   });
 
   it("starts no agent for a start that the close overtakes", async () => {
@@ -769,7 +1244,7 @@ describe("createChatRunner.close", () => {
 
     expect(processes).toEqual([]);
     expect(runner.running(live)).toBeUndefined();
-    expect(await events(live)).toEqual([USER]);
+    expect(await logOf(live)).toEqual([USER]);
   });
 
   it("waits for a process that a failure is ending", async () => {

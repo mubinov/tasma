@@ -5,6 +5,7 @@
 import { agent, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
 import type {
   AgentContext,
+  CancelNotification,
   CreateElicitationRequest,
   InitializeRequest,
   JsonRpcId,
@@ -58,6 +59,8 @@ export type FakeProcess = AgentProcess & {
   prompts: PromptRequest[];
   /** The JSON-RPC id of each prompt, in the order of `prompts`. */
   promptIds: JsonRpcId[];
+  /** The params of each `session/cancel` notification. */
+  cancels: CancelNotification[];
   /** The calls of `end()`, which ends the process one time and exits with code 0. */
   endCalls: number;
   /** The agent side of the connection, once the client has connected. */
@@ -76,6 +79,8 @@ export type FakeProcess = AgentProcess & {
 export type Script = {
   newSession?(params: NewSessionRequest, fake: FakeProcess): Promise<NewSessionResponse>;
   prompt?(params: PromptRequest, fake: FakeProcess): Promise<PromptResponse>;
+  /** Runs at each `session/cancel`, for example to end the running prompt with `cancelled`. */
+  cancel?(params: CancelNotification, fake: FakeProcess): void;
 };
 
 export const PERMISSION: RequestPermissionRequest = {
@@ -135,6 +140,7 @@ export function fakeAgent(script: Script = {}): {
       folder,
       prompts: [],
       promptIds: [],
+      cancels: [],
       endCalls: 0,
       stream: ndJsonStream(toAgent.writable, toClient.readable),
       ended,
@@ -186,6 +192,10 @@ export function fakeAgent(script: Script = {}): {
         fake.prompts.push(params);
         fake.promptIds.push(requestId);
         return script.prompt?.(params, fake) ?? { stopReason: "end_turn" };
+      })
+      .onNotification("session/cancel", ({ params }) => {
+        fake.cancels.push(params);
+        script.cancel?.(params, fake);
       })
       .connect(ndJsonStream(toClient.writable, toAgent.readable));
 

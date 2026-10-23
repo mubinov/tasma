@@ -163,6 +163,11 @@ const DAEMON_STATUS = {
   "unsupported-media-type": 415,
   "request-too-large": 413,
   "unauthorized": 401,
+  // The state of the chat refuses the command now; the caller sends it again
+  // when the state changes, or not at all.
+  "turn-running": 409,
+  "chat-not-running": 409,
+  "already-answered": 409,
 } satisfies Record<DaemonErrorCode, number>;
 
 /** The status a refusal is sent with. Every success answers 200. */
