@@ -37,7 +37,7 @@ import { TaskScreen } from "./components/task-screen";
 import { TasksFailure, TasksScreen } from "./components/tasks-screen";
 import { WorkflowScreen } from "./components/workflow-screen";
 import { WorkflowsScreen } from "./components/workflows-screen";
-import { boardValue, readBoard, workflowNames } from "./lib/board";
+import { boardValue, isSeveral, readBoard, workflowNames } from "./lib/board";
 import { useUiStore } from "./store/ui";
 
 /** What every loader and every screen is handed: the cache, and the daemon. */
@@ -95,6 +95,9 @@ const dashboardRoute = createRoute({
  */
 type TasksSearch = { projects?: string; labels?: string; q?: string };
 
+/** Both reads of a project succeeded, or the daemon refused one of them. */
+type TagRead = { tag: string; listing: TaskList } | { tag: string; refusal: unknown };
+
 const tasksRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/tasks",
@@ -129,33 +132,63 @@ const tasksRoute = createRoute({
     }
   },
   loaderDeps: ({ search }) => ({ board: boardValue(readBoard(search.projects)) }),
+  /**
+   * On a board of several projects a project the daemon refuses does not end
+   * the load: `tags` are the projects that loaded, `refused` those the daemon
+   * refused, and `missing` the tags its project list does not hold, each in
+   * board order. The load fails when no project loads, on a refusal on a
+   * board of one project, and on any error that is not a refusal.
+   */
   loader: async ({ context: { queryClient, client }, deps: { board } }) => {
-    const { data: projects } = await queryClient.query({ ...projectsQuery(client), staleTime: "static" });
-    const { all, tags: named } = readBoard(board);
-    const tags = all ? projects.map(({ tag }) => tag) : named;
-    const listed = new Set(projects.map(({ tag }) => tag));
+    const address = readBoard(board);
+    const several = isSeveral(address);
+    let { data: projects } = await queryClient.query({ ...projectsQuery(client), staleTime: "static" });
+    const tags = address.all ? projects.map(({ tag }) => tag) : address.tags;
 
-    async function readTag(tag: string): Promise<TaskList> {
-      const [, { data: listing }] = await Promise.all([
+    async function readTag(tag: string): Promise<TagRead> {
+      const [project, listing] = await Promise.allSettled([
         queryClient.query({ ...projectQuery(client, tag), staleTime: "static" }),
         queryClient.query({ ...tasksQuery(client, tag), staleTime: "static" }),
       ]);
-      return listing;
+      const errors = [project, listing].flatMap((read) => (read.status === "rejected" ? [read.reason as unknown] : []));
+      const unanswered = errors.filter((error) => !(error instanceof ProtocolError));
+
+      if (unanswered.length > 0) {
+        throw unanswered[0];
+      }
+      return listing.status === "fulfilled" && errors.length === 0
+        ? { tag, listing: listing.value.data }
+        : { tag, refusal: errors[0] };
     }
 
-    // Tags the project list does not hold are read one at a time, so the first
-    // refusal ends the load and a long list of unknown tags sends no burst.
-    const listings: TaskList[] = [];
-    for (const tag of tags.filter((tag) => !listed.has(tag))) {
-      listings.push(await readTag(tag));
+    // One more read of the list, never a read of each tag it does not hold: an
+    // address can name any number of tags.
+    if (several && tags.some((tag) => !projects.some((listed) => listed.tag === tag))) {
+      ({ data: projects } = await queryClient.query({ ...projectsQuery(client), staleTime: 0 }));
     }
-    listings.push(...await Promise.all(tags.filter((tag) => listed.has(tag)).map(readTag)));
+
+    const missing = several ? tags.filter((tag) => !projects.some((listed) => listed.tag === tag)) : [];
+    const reads = await Promise.all(tags.filter((tag) => !missing.includes(tag)).map(readTag));
+    let loaded = reads.filter((read) => "listing" in read);
+
+    if (tags.length > 0 && loaded.length === 0) {
+      const first = reads.find((read) => read.tag === tags[0]) ?? await readTag(tags[0]!);
+
+      if ("refusal" in first) {
+        throw first.refusal;
+      }
+      loaded = [first];
+    }
 
     await Promise.all(
-      workflowNames(listings.flatMap(({ entries }) => entries))
+      workflowNames(loaded.flatMap(({ listing }) => listing.entries))
         .map((name) => queryClient.query({ ...workflowQuery(client, name), staleTime: "static" })),
     );
-    return { tags };
+    return {
+      tags: loaded.map(({ tag }) => tag),
+      refused: reads.filter((read) => "refusal" in read).map(({ tag }) => tag),
+      missing: missing.filter((tag) => !loaded.some((read) => read.tag === tag)),
+    };
   },
   component: TasksScreen,
   errorComponent: TasksFailure,

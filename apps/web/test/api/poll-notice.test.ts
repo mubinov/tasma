@@ -1,7 +1,7 @@
 import { ProtocolError, TransportError } from "@tasma/protocol";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { usePollNotice, type PollRead } from "../../src/api/poll-notice";
+import { usePollNotice, type NamedPollRead, type PollRead } from "../../src/api/poll-notice";
 import { DAEMON_URL } from "../../src/api/transport";
 import { useNoticeStore } from "../../src/store/notices";
 
@@ -36,17 +36,30 @@ function openKeys(): string[] {
   return useNoticeStore.getState().notices.map(({ key }) => key);
 }
 
-function mount(initial: Reads) {
+/** Names the reads by their place, for a list whose reads keep their places. */
+function byPlace(reads: Reads): NamedPollRead[] {
+  return reads.map((poll, index) => ({ name: `read-${String(index)}`, read: poll }));
+}
+
+function mountNamed(initial: readonly NamedPollRead[]) {
   const { rerender, unmount } = renderHook(({ reads, noticeKey }) => {
     usePollNotice(noticeKey, reads, { title: TITLE, line });
   }, { initialProps: { reads: initial, noticeKey: KEY } });
 
   /** Renders the reads as the last poll left them. */
-  function poll(reads: Reads, noticeKey = KEY): void {
+  function pollNamed(reads: readonly NamedPollRead[], noticeKey = KEY): void {
     rerender({ reads, noticeKey });
   }
 
-  return { poll, unmount };
+  function poll(reads: Reads, noticeKey = KEY): void {
+    pollNamed(byPlace(reads), noticeKey);
+  }
+
+  return { poll, pollNamed, unmount };
+}
+
+function mount(initial: Reads) {
+  return mountNamed(byPlace(initial));
 }
 
 beforeEach(() => {
@@ -175,6 +188,51 @@ it("closes on a change of key, counts again for the new key, and closes on unmou
 
   unmount();
   expect(openKeys()).toEqual([]);
+});
+
+it("keeps the count of a read by its name when a read joins before it", () => {
+  const once = failed(read(), UNREADABLE, 2_000);
+  const twice = failed(once, UNREADABLE, 3_000);
+  const { pollNamed } = mountNamed([{ name: "SAGA:tasks", read: read() }]);
+  pollNamed([{ name: "SAGA:tasks", read: once }]);
+
+  pollNamed([{ name: "DELTA:tasks", read: read() }, { name: "SAGA:tasks", read: twice }]);
+  expect(openKeys()).toEqual([KEY]);
+
+  pollNamed([{ name: "ALPHA:tasks", read: read() }, { name: "DELTA:tasks", read: read() }, { name: "SAGA:tasks", read: twice }]);
+  expect(openKeys()).toEqual([KEY]);
+});
+
+it("does not open a dismissed notice again when a read joins before the failing read", () => {
+  const twice = failed(failed(read(), UNREADABLE, 2_000), UNREADABLE, 3_000);
+  const { pollNamed } = mountNamed([{ name: "SAGA:tasks", read: read() }]);
+  pollNamed([{ name: "SAGA:tasks", read: failed(read(), UNREADABLE, 2_000) }]);
+  pollNamed([{ name: "SAGA:tasks", read: twice }]);
+  act(() => {
+    useNoticeStore.getState().dismissNotice(KEY);
+  });
+
+  pollNamed([{ name: "DELTA:tasks", read: read() }, { name: "SAGA:tasks", read: twice }]);
+
+  expect(openKeys()).toEqual([]);
+});
+
+it("counts from zero for a read that leaves and comes back", () => {
+  const once = failed(read(), UNREADABLE, 2_000);
+  const twice = failed(once, UNREADABLE, 3_000);
+  const { pollNamed } = mountNamed([{ name: "SAGA:tasks", read: read() }]);
+  pollNamed([{ name: "SAGA:tasks", read: once }]);
+  pollNamed([]);
+
+  pollNamed([{ name: "SAGA:tasks", read: twice }]);
+  expect(openKeys()).toEqual([]);
+
+  const thrice = failed(twice, UNREADABLE, 4_000);
+  pollNamed([{ name: "SAGA:tasks", read: thrice }]);
+  expect(openKeys()).toEqual([]);
+
+  pollNamed([{ name: "SAGA:tasks", read: failed(thrice, UNREADABLE, 5_000) }]);
+  expect(openKeys()).toEqual([KEY]);
 });
 
 it("takes a success and a failure seen at once as one failure when the failure is newer", () => {

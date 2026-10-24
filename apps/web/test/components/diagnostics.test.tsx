@@ -52,6 +52,12 @@ it("says warning for one", () => {
   expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("1 warning about this project");
 });
 
+it("names a project by its tag", () => {
+  render(<Diagnostics items={WARNINGS.slice(0, 2)} subject="ALPHA" />);
+
+  expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("2 warnings about ALPHA");
+});
+
 it("names the projects as the subject on the list of projects", () => {
   render(<Diagnostics items={WARNINGS.slice(0, 1)} subject="the projects" />);
 

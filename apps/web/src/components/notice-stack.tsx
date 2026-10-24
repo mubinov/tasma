@@ -4,6 +4,7 @@ import { useShallow } from "zustand/react/shallow";
 import { WarningIcon, XIcon } from "../lib/icons";
 import { useFocusLost } from "../lib/use-focus-lost";
 import { useNoticeStore, type OpenNotice } from "../store/notices";
+import { NOTICE_WORDS_CLASS } from "./control-classes";
 
 /** Set on <html> while a notice is open: the height the stack covers above the window's bottom edge. */
 const STACK_HEIGHT_PROPERTY = "--notice-stack-height";
@@ -253,8 +254,6 @@ type NoticePanelProps = {
   onFocusLost: () => void;
 };
 
-const WORDS_CLASS = "mt-2 space-y-1 rounded-control bg-surface-2 px-2.5 py-2 font-mono text-xs-plus text-dim wrap-anywhere";
-
 /** Escape on a panel closes that panel alone and never reaches a dialog's Escape handler. */
 function stopEscapePropagation(event: KeyboardEvent): void {
   if (event.key === "Escape") {
@@ -287,7 +286,7 @@ function NoticePanel({ toast, onFocusLost }: NoticePanelProps): ReactNode {
           {notice.line !== undefined && <p className="mt-0.5 text-sm text-subtle">{notice.line}</p>}
           {notice.form === "failure"
             ? (
-                <div className={WORDS_CLASS}>
+                <div className={NOTICE_WORDS_CLASS}>
                   {notice.words.map((word, index) => (
                     // Two words can be identical, so the position is the only
                     // stable identity a row has.
@@ -297,7 +296,7 @@ function NoticePanel({ toast, onFocusLost }: NoticePanelProps): ReactNode {
                 </div>
               )
             : (
-                <ul className={WORDS_CLASS}>
+                <ul className={NOTICE_WORDS_CLASS}>
                   {notice.words.map((word, index) => (
                     // eslint-disable-next-line @eslint-react/no-array-index-key
                     <li key={index}>{word}</li>

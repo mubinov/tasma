@@ -119,3 +119,11 @@ export const DIALOG_PANEL_WIDE_CLASS
   = "my-auto w-full max-w-[560px] rounded-panel border border-line bg-surface px-6 pt-5 pb-6 shadow-float";
 
 export const DIALOG_ACTIONS_CLASS = "mt-5 flex justify-end gap-2";
+
+// No width: an appended `max-w-*` would not override one here.
+export const NOTE_CLASS = "flex gap-3 rounded-card border border-line bg-surface px-4 py-3";
+
+export const NOTE_SIGNAL_TITLE_CLASS = "font-chrome text-base font-medium text-signal";
+
+/** The words a daemon or the transport gave for a failure, as a notice shows them. */
+export const NOTICE_WORDS_CLASS = "mt-2 space-y-1 rounded-control bg-surface-2 px-2.5 py-2 font-mono text-xs-plus text-dim wrap-anywhere";

@@ -103,3 +103,21 @@ export function countOf(status: string): string | null | undefined {
 export function titlesIn(status: string): string[] {
   return within(column(status)).queryAllByText(/^Task \d+$/).map((title) => title.textContent);
 }
+
+/** The first of the board's two status regions: what a poll can change about the projects. */
+export function boardStateRegion(): HTMLElement {
+  return screen.getAllByRole("status")[0]!;
+}
+
+/** The second of the board's two status regions: the result of the filters. */
+export function filterRegion(): HTMLElement {
+  return screen.getAllByRole("status")[1]!;
+}
+
+export function boardState(): string | null {
+  return boardStateRegion().textContent;
+}
+
+export function filterResult(): string | null {
+  return filterRegion().textContent;
+}

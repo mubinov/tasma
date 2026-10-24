@@ -5,6 +5,9 @@ import { useNoticeStore } from "../store/notices";
 
 export type PollRead = Pick<QueryObserverResult, "dataUpdatedAt" | "errorUpdateCount" | "errorUpdatedAt" | "error">;
 
+/** A read and the name its count is kept under, which stays the same while reads join or leave the list. */
+export type NamedPollRead = { name: string; read: PollRead };
+
 export type PollNoticeContent = {
   title: string;
   /** The muted line, given the time of the last success of the read the words are about. */
@@ -38,21 +41,25 @@ function nextCount(poll: PollRead, seen: PollCount | undefined): PollCount {
  * and the time of its last success. It closes when no read is failing that way,
  * on a change of key and on unmount. After Dismiss it stays closed until a poll
  * succeeds.
+ *
+ * A read that leaves `reads` drops its count, and counts from zero when it
+ * comes back.
  */
-export function usePollNotice(key: string, reads: readonly PollRead[], content: PollNoticeContent): void {
+export function usePollNotice(key: string, reads: readonly NamedPollRead[], content: PollNoticeContent): void {
   // Read during render, so the query results notify the component of each poll.
-  const polls = reads.map(({ dataUpdatedAt, errorUpdateCount, errorUpdatedAt, error }) => ({
+  const polls = reads.map(({ name, read: { dataUpdatedAt, errorUpdateCount, errorUpdatedAt, error } }) => ({
+    name,
     dataUpdatedAt,
     errorUpdateCount,
     errorUpdatedAt,
     error,
   }));
-  const countsRef = useRef<{ key: string; counts: PollCount[] } | null>(null);
+  const countsRef = useRef<{ key: string; counts: ReadonlyMap<string, PollCount> } | null>(null);
 
   const sync = useEffectEvent(() => {
-    const previous = countsRef.current?.key === key ? countsRef.current.counts : [];
-    const tracked = polls.map((poll, index) => ({ poll, count: nextCount(poll, previous[index]) }));
-    countsRef.current = { key, counts: tracked.map(({ count }) => count) };
+    const previous = countsRef.current?.key === key ? countsRef.current.counts : new Map<string, PollCount>();
+    const tracked = polls.map((poll) => ({ poll, count: nextCount(poll, previous.get(poll.name)) }));
+    countsRef.current = { key, counts: new Map(tracked.map(({ poll, count }) => [poll.name, count])) };
 
     // Not the newest error: reads that fail together finish in either order, and
     // words that change on every poll would replace the notice on every poll.

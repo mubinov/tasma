@@ -6,7 +6,7 @@ import { DAEMON_URL } from "../../src/api/transport";
 import { BUSY_ANNOUNCE_DELAY } from "../../src/lib/use-board-search";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { CONFIG, column, countOf, daemon, entry, listing, titlesIn } from "../board-fixtures";
+import { CONFIG, column, countOf, daemon, entry, filterRegion, filterResult, listing, titlesIn } from "../board-fixtures";
 import { heldBack, refusalReply, renderWithRouter, successReply } from "../helpers";
 
 beforeEach(() => {
@@ -54,10 +54,6 @@ describe("the search", () => {
       [RELEASE]: listing([]),
       ...replies,
     });
-  }
-
-  function status(): string | null {
-    return screen.getByRole("status").textContent;
   }
 
   function spinning(): boolean {
@@ -111,7 +107,7 @@ describe("the search", () => {
 
       expect(paths.filter((path) => path.includes("?q="))).toEqual([]);
       expect(countOf("Backlog")).toBe("3");
-      expect(status()).toBe("");
+      expect(filterResult()).toBe("");
     });
 
     it("asks with the text trimmed", async () => {
@@ -132,7 +128,7 @@ describe("the search", () => {
 
       expect(CONFIG.statuses.map(countOf)).toEqual(["2 of 3", "0 of 0", "0 of 0", "0 of 1"]);
       expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2"]);
-      expect(status()).toBe("2 of 4 tasks match \"parser\".");
+      expect(filterResult()).toBe("2 of 4 tasks match \"parser\".");
     });
 
     it("shows a card only when it matches the search and carries a selected label", async () => {
@@ -143,7 +139,7 @@ describe("the search", () => {
 
       expect(CONFIG.statuses.map(countOf)).toEqual(["1 of 3", "0 of 0", "0 of 0", "0 of 1"]);
       expect(titlesIn("Backlog")).toEqual(["Task 1"]);
-      expect(status()).toBe("1 of 4 tasks match \"parser\" and carry a selected label.");
+      expect(filterResult()).toBe("1 of 4 tasks match \"parser\" and carry a selected label.");
 
       await user.click(screen.getByRole("combobox", { name: /^Labels/ }));
       const options = within(await screen.findByRole("listbox")).getAllByRole("option");
@@ -160,7 +156,7 @@ describe("the search", () => {
       await settle();
 
       expect(screen.getByText("No task in Saga matches the search.")).toBeTruthy();
-      expect(status()).toBe("0 of 4 tasks match \"release\".");
+      expect(filterResult()).toBe("0 of 4 tasks match \"release\".");
     });
 
     it("says no task matches the search and carries a selected label", async () => {
@@ -169,7 +165,7 @@ describe("the search", () => {
       await settle();
 
       expect(screen.getByText("No task in Saga matches the search and carries a selected label.")).toBeTruthy();
-      expect(status()).toBe("0 of 4 tasks match \"docs\" and carry a selected label.");
+      expect(filterResult()).toBe("0 of 4 tasks match \"docs\" and carry a selected label.");
     });
 
     it("shows every card again when the search is cleared", async () => {
@@ -181,7 +177,7 @@ describe("the search", () => {
 
       expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2", "Task 3"]);
       expect(countOf("Backlog")).toBe("3");
-      expect(status()).toBe("");
+      expect(filterResult()).toBe("");
     });
   });
 
@@ -219,7 +215,7 @@ describe("the search", () => {
      * texts come from the mutation records, not from reads of the region.
      */
     function recordStatus(): () => string[] {
-      const region = screen.getByRole("status");
+      const region = filterRegion();
       const texts: string[] = [];
       const take = (records: MutationRecord[]) => {
         for (const record of records) {
@@ -254,7 +250,7 @@ describe("the search", () => {
       await go(router, { q: "docs" });
       await advanceToBeforeDelay(start);
 
-      expect(status()).toBe("2 of 4 tasks match \"parser\".");
+      expect(filterResult()).toBe("2 of 4 tasks match \"parser\".");
     });
 
     it("says the busy sentence after the delay, and then the result with no old sentence between", async () => {
@@ -266,13 +262,13 @@ describe("the search", () => {
 
       await go(router, { q: "docs" });
       await advancePastDelay();
-      expect(status()).toBe("Searching for \"docs\".");
+      expect(filterResult()).toBe("Searching for \"docs\".");
 
       await act(async () => {
         held.answer(listing([ENTRIES[1]!]));
       });
       await settle();
-      expect(status()).toBe("1 of 4 tasks match \"docs\".");
+      expect(filterResult()).toBe("1 of 4 tasks match \"docs\".");
       expect(textsFrom(record(), "Searching for \"docs\".")).toEqual([
         "Searching for \"docs\".",
         "1 of 4 tasks match \"docs\".",
@@ -284,11 +280,11 @@ describe("the search", () => {
       const { transport } = searchDaemon({ [PARSER]: held.reply });
       await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
       await settle();
-      expect(status()).toBe("");
+      expect(filterResult()).toBe("");
 
       await advancePastDelay();
 
-      expect(status()).toBe("Searching for \"parser\".");
+      expect(filterResult()).toBe("Searching for \"parser\".");
     });
 
     it("says no busy sentence for an answer that comes before the delay", async () => {
@@ -300,7 +296,7 @@ describe("the search", () => {
       await go(router, { q: "docs" });
       await advancePastDelay();
 
-      expect(status()).toBe("1 of 4 tasks match \"docs\".");
+      expect(filterResult()).toBe("1 of 4 tasks match \"docs\".");
       expect(record().filter((text) => text.includes("Searching"))).toEqual([]);
     });
 
@@ -313,7 +309,7 @@ describe("the search", () => {
       await go(router, { labels: "web", q: "docs" });
       await advancePastDelay();
 
-      expect(status()).toBe("Searching for \"docs\".");
+      expect(filterResult()).toBe("Searching for \"docs\".");
     });
 
     it("keeps the busy sentence of the earlier text until a new text has run for the delay", async () => {
@@ -324,15 +320,15 @@ describe("the search", () => {
 
       await go(router, { q: "docs" });
       await advancePastDelay();
-      expect(status()).toBe("Searching for \"docs\".");
+      expect(filterResult()).toBe("Searching for \"docs\".");
 
       const start2 = Date.now();
       await go(router, { q: "release" });
       await advanceToBeforeDelay(start2);
-      expect(status()).toBe("Searching for \"docs\".");
+      expect(filterResult()).toBe("Searching for \"docs\".");
 
       await advancePastDelay();
-      expect(status()).toBe("Searching for \"release\".");
+      expect(filterResult()).toBe("Searching for \"release\".");
       expect(textsFrom(record(), "Searching for \"docs\".")).toEqual([
         "Searching for \"docs\".",
         "Searching for \"release\".",
@@ -353,7 +349,7 @@ describe("the search", () => {
       });
       await settle();
 
-      expect(status()).toBe(FAILED_LINE);
+      expect(filterResult()).toBe(FAILED_LINE);
       expect(textsFrom(record(), "Searching for \"docs\".")).toEqual(["Searching for \"docs\".", FAILED_LINE]);
     });
 
@@ -373,7 +369,7 @@ describe("the search", () => {
       await settle();
 
       expect(router.state.location.search).toEqual({ projects: "SAGA" });
-      expect(status()).toBe("");
+      expect(filterResult()).toBe("");
       expect(textsFrom(record(), "Searching for \"docs\".")).toEqual(["Searching for \"docs\".", ""]);
     });
 
@@ -388,10 +384,10 @@ describe("the search", () => {
       const start2 = Date.now();
       await go(router, { q: "release" });
       await advanceToBeforeDelay(start2);
-      expect(status()).toBe("2 of 4 tasks match \"parser\".");
+      expect(filterResult()).toBe("2 of 4 tasks match \"parser\".");
 
       await advancePastDelay();
-      expect(status()).toBe("Searching for \"release\".");
+      expect(filterResult()).toBe("Searching for \"release\".");
     });
 
     it("keeps the result it shows and turns the spinner while the request for a new text runs", async () => {
@@ -403,7 +399,7 @@ describe("the search", () => {
       await go(router, { q: "docs" });
       expect(spinning()).toBe(true);
       expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2"]);
-      expect(status()).toBe("2 of 4 tasks match \"parser\".");
+      expect(filterResult()).toBe("2 of 4 tasks match \"parser\".");
 
       await act(async () => {
         held.answer(listing([ENTRIES[1]!]));
@@ -411,7 +407,7 @@ describe("the search", () => {
       await settle();
       expect(spinning()).toBe(false);
       expect(titlesIn("Backlog")).toEqual(["Task 2"]);
-      expect(status()).toBe("1 of 4 tasks match \"docs\".");
+      expect(filterResult()).toBe("1 of 4 tasks match \"docs\".");
     });
 
     it("shows every card for a first search while its request runs", async () => {
@@ -422,7 +418,7 @@ describe("the search", () => {
 
       expect(spinning()).toBe(true);
       expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2", "Task 3"]);
-      expect(status()).toBe("");
+      expect(filterResult()).toBe("");
     });
 
     it("shows every card after a clear while the request for the next text runs", async () => {
@@ -448,7 +444,7 @@ describe("the search", () => {
 
       expect(spinning()).toBe(false);
       expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2"]);
-      expect(status()).not.toContain("Searching");
+      expect(filterResult()).not.toContain("Searching");
     });
 
     it("turns no spinner while a poll of a failed text runs", async () => {
@@ -461,7 +457,7 @@ describe("the search", () => {
 
       expect(spinning()).toBe(false);
       expect(screen.getByText(FAILED_LINE, { selector: "p" })).toBeTruthy();
-      expect(status()).not.toContain("Searching");
+      expect(filterResult()).not.toContain("Searching");
     });
 
     it("turns the spinner and keeps the shown result while a text that failed before is asked again", async () => {
@@ -477,12 +473,12 @@ describe("the search", () => {
       expect(spinning()).toBe(true);
       expect(screen.queryByText(FAILED_LINE, { selector: "p" })).toBeNull();
       expect(titlesIn("Backlog")).toEqual(["Task 2"]);
-      expect(status()).toBe("1 of 4 tasks match \"docs\".");
+      expect(filterResult()).toBe("1 of 4 tasks match \"docs\".");
 
       await advanceToBeforeDelay(start);
-      expect(status()).toBe("1 of 4 tasks match \"docs\".");
+      expect(filterResult()).toBe("1 of 4 tasks match \"docs\".");
       await advancePastDelay();
-      expect(status()).toBe("Searching for \"parser\".");
+      expect(filterResult()).toBe("Searching for \"parser\".");
     });
   });
 
@@ -495,7 +491,7 @@ describe("the search", () => {
       expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2", "Task 3"]);
       expect(countOf("Backlog")).toBe("3");
       expect(screen.getByText(FAILED_LINE, { selector: "p" })).toBeTruthy();
-      expect(status()).toBe(FAILED_LINE);
+      expect(filterResult()).toBe(FAILED_LINE);
     });
 
     it("says the label sentence after the failure sentence", async () => {
@@ -504,7 +500,7 @@ describe("the search", () => {
       await settle();
 
       expect(titlesIn("Backlog")).toEqual(["Task 1"]);
-      expect(status()).toBe(`${FAILED_LINE} 2 of 4 tasks carry a selected label.`);
+      expect(filterResult()).toBe(`${FAILED_LINE} 2 of 4 tasks carry a selected label.`);
     });
 
     it("asks again on each poll, keeps q, and applies the first result", async () => {

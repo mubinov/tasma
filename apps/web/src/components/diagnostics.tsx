@@ -13,7 +13,8 @@ type DiagnosticsProps = {
   items: readonly WarningItem[];
   /** Rendered before `items`. */
   excluded?: readonly ExcludedFile[];
-  subject: "this project" | "these projects" | "the projects" | "this workflow" | "the workflows";
+  /** What the warnings are about: words such as "the workflows", or the tag of a project. */
+  subject: string;
   className?: string;
 };
 

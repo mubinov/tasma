@@ -754,7 +754,7 @@ describe("dragging a card to a place", () => {
         await router.options.context.queryClient.refetchQueries({ queryKey: ["daemon", "projects"], exact: true });
       });
       await vi.waitFor(() => {
-        expect(router.state.matches.at(-1)?.loaderData).toEqual({ tags: ["DELTA", "SAGA"] });
+        expect(router.state.matches.at(-1)?.loaderData).toEqual({ tags: ["DELTA", "SAGA"], refused: [], missing: [] });
       });
       movePointer(atRow(2, 0, 1));
       await release(atRow(2, 0, 1));

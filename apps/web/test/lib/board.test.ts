@@ -15,6 +15,7 @@ import {
   createdTarget,
   distinctLabels,
   isFinalStatus,
+  isSeveral,
   isTopPriority,
   joinList,
   labelChoices,
@@ -120,6 +121,18 @@ describe("readBoard", () => {
 
   it("reads ALL as a tag", () => {
     expect(readBoard("ALL")).toEqual({ all: false, tags: ["ALL"] });
+  });
+});
+
+describe("isSeveral", () => {
+  it.each([
+    { value: "all", several: true },
+    { value: "ALPHA,BETA", several: true },
+    { value: "ALPHA", several: false },
+    { value: "ALPHA,ALPHA", several: false },
+    { value: "", several: false },
+  ])("reads $value as several: $several", ({ value, several }) => {
+    expect(isSeveral(readBoard(value))).toBe(several);
   });
 });
 

@@ -6,7 +6,20 @@ import { DAEMON_URL } from "../../src/api/transport";
 import { formatClock } from "../../src/lib/clock";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { CONFIG, column, countOf, daemon, entry, listing, project, PROJECTS, titlesIn, WORKFLOW } from "../board-fixtures";
+import {
+  boardState,
+  CONFIG,
+  column,
+  countOf,
+  daemon,
+  entry,
+  filterResult,
+  listing,
+  project,
+  PROJECTS,
+  titlesIn,
+  WORKFLOW,
+} from "../board-fixtures";
 import { heldBack, refusalReply, renderWithRouter, successReply } from "../helpers";
 
 beforeEach(() => {
@@ -229,7 +242,7 @@ describe("the board", () => {
 
     expect(CONFIG.statuses.map(countOf)).toEqual(["1 of 2", "0 of 0", "0 of 0", "1 of 1"]);
     expect(titlesIn("Backlog")).toEqual(["Task 1"]);
-    expect(screen.getByRole("status").textContent).toBe("2 of 3 tasks carry a selected label.");
+    expect(filterResult()).toBe("2 of 3 tasks carry a selected label.");
   });
 
   it("says no task carries a label that matches nothing", async () => {
@@ -238,7 +251,7 @@ describe("the board", () => {
 
     expect(screen.getByText("No task in Saga carries any of the selected labels.")).toBeTruthy();
     expect(countOf("Backlog")).toBe("0 of 2");
-    expect(screen.getByRole("status").textContent).toBe("0 of 2 tasks carry a selected label.");
+    expect(filterResult()).toBe("0 of 2 tasks carry a selected label.");
   });
 
   it("wraps the heading line, so the controls stay inside a narrow viewport", async () => {
@@ -298,11 +311,15 @@ describe("what the daemon reports beside the tasks", () => {
     });
     await renderWithRouter("/tasks?projects=SAGA", transport);
 
-    expect(within(screen.getByRole("note")).getByText("The index is not following the disk")).toBeTruthy();
+    expect(screen.getByRole("note").textContent).toBe(
+      "The index of SAGA is not following the disk"
+      + "The daemon could not repair the index of SAGA on this request. What it reports about SAGA "
+      + "can be older than the files on disk. Reload to try again.",
+    );
     const line = screen.getByRole("heading", { level: 2, name: /warnings/ });
-    expect(line.textContent).toBe("4 warnings about this project");
+    expect(line.textContent).toBe("4 warnings about SAGA");
     expect(line.parentElement?.parentElement?.className).toBe("mt-3");
-    expect(screen.getByRole("status").textContent).toBe("The index is not following the disk. 4 warnings about this project.");
+    expect(boardState()).toBe("The index of SAGA is not following the disk. 4 warnings about SAGA.");
   });
 
   it("says nothing while there is nothing to report", async () => {
@@ -311,7 +328,7 @@ describe("what the daemon reports beside the tasks", () => {
 
     expect(screen.queryByRole("note")).toBeNull();
     expect(screen.queryByRole("heading", { level: 2, name: /warning/ })).toBeNull();
-    expect(screen.getByRole("status").textContent).toBe("");
+    expect([boardState(), filterResult()]).toEqual(["", ""]);
   });
 
   it("spaces the warnings line under the heading when there is no notice", async () => {
@@ -319,9 +336,9 @@ describe("what the daemon reports beside the tasks", () => {
     await renderWithRouter("/tasks?projects=SAGA", transport);
 
     const line = screen.getByRole("heading", { level: 2, name: /warning/ });
-    expect(line.textContent).toBe("1 warning about this project");
+    expect(line.textContent).toBe("1 warning about SAGA");
     expect(line.parentElement?.parentElement?.className).toBe("mt-4");
-    expect(screen.getByRole("status").textContent).toBe("1 warning about this project.");
+    expect(boardState()).toBe("1 warning about SAGA.");
   });
 });
 
@@ -927,6 +944,8 @@ describe("the notice for failed polls", () => {
     await poll();
     expect(useNoticeStore.getState().notices).toHaveLength(1);
     expect(useNoticeStore.getState().notices[0]).toBe(notice);
+    expect(titlesIn("Backlog")).toEqual(["Task 1"]);
+    expect(screen.queryByRole("note")).toBeNull();
   });
 
   it("closes when another project opens", async () => {

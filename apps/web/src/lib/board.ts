@@ -408,6 +408,20 @@ export function readBoard(projects: string | undefined): BoardAddress {
   return { all: false, tags: [...new Set(parts)].sort() };
 }
 
+/** The board of all projects, or of two or more tags. */
+export function isSeveral({ all, tags }: BoardAddress): boolean {
+  return all || tags.length > 1;
+}
+
+/**
+ * The tags of several lists of one board in board order. The order of every
+ * board is the order of code units, which `readBoard` and the daemon's project
+ * list both keep.
+ */
+export function boardOrder(...lists: (readonly string[])[]): string[] {
+  return lists.flat().sort();
+}
+
 /** One value for every address that names the same board. */
 export function boardValue({ all, tags }: BoardAddress): string {
   return all ? ALL_PROJECTS : tags.join(",");

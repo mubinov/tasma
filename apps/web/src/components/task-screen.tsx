@@ -403,7 +403,13 @@ function TaskPollNotice({ tag, id }: { tag: string; id: string }): ReactNode {
   const projectRead = useQuery({ ...projectQuery(client, tag), enabled: false });
   const listingRead = useQuery({ ...tasksQuery(client, tag), enabled: false });
 
-  usePollNotice(`task-poll:${id}`, [taskRead, projectRead, listingRead], {
+  const reads = [
+    { name: "task", read: taskRead },
+    { name: "project", read: projectRead },
+    { name: "tasks", read: listingRead },
+  ];
+
+  usePollNotice(`task-poll:${id}`, reads, {
     title: `${id} is not up to date`,
     line: (readAt) => `The last reads of ${id} failed. The page shows the task as it was at ${formatClock(readAt)}.`,
   });

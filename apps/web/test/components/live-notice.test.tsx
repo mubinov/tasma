@@ -26,12 +26,12 @@ it("says this project by default", () => {
   );
 });
 
-it("says one or more of these projects for a board of several projects", () => {
-  render(<LiveNotice subject="these projects" />);
+it("names the project in the title and the text", () => {
+  render(<LiveNotice project="ALPHA" />);
 
   expect(screen.getByRole("note").textContent).toBe(
-    "The index is not following the disk"
-    + "The daemon could not repair the index of one or more of these projects on this request. What it reports about "
-    + "these projects can be older than the files on disk. Reload to try again.",
+    "The index of ALPHA is not following the disk"
+    + "The daemon could not repair the index of ALPHA on this request. What it reports about ALPHA "
+    + "can be older than the files on disk. Reload to try again.",
   );
 });
