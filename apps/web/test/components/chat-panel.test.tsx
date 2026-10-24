@@ -165,7 +165,9 @@ it("shows Loading the chat until the log reaches the seq of the record, and the 
   log.answer(3, { cursor: 5, entries: TEXT_LOG.slice(3, 5) });
 
   expect(await screen.findByRole("log")).toBeTruthy();
-  expect(statusLine().textContent).toBe("");
+  await waitFor(() => {
+    expect(statusLine().textContent).toBe("");
+  });
 });
 
 it("shows the user text, the agent text and the plan", async () => {
@@ -610,7 +612,9 @@ it("after a reset shows the transcript, and announces, only when the log reaches
   log.answer(3, { cursor: 6, entries: rewritten.slice(3) });
 
   expect(await screen.findByRole("log")).toBeTruthy();
-  expect(statusLine().textContent).toBe("");
+  await waitFor(() => {
+    expect(statusLine().textContent).toBe("");
+  });
   await frame();
   expect(spoken()).toEqual(["Claude finished the turn"]);
 });

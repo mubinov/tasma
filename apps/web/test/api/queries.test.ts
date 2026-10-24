@@ -193,7 +193,8 @@ it("nests the list of the chats of all projects and one item of it under one pre
   const chats = daemonKeys.chats();
 
   expect(chats).toEqual([...daemonKeys.all, "chats"]);
-  expect(daemonKeys.chatList()).toEqual([...chats, {}]);
+  expect(daemonKeys.chatList({})).toEqual([...chats, {}]);
+  expect(daemonKeys.chatList({ project: "SAGA", q: "plan" })).toEqual([...chats, { project: "SAGA", q: "plan" }]);
   expect(daemonKeys.chatItem("SAGA-1", 2)).toEqual([...chats, "SAGA-1", 2]);
 });
 
@@ -204,7 +205,7 @@ describe("chatListQuery", () => {
       "/chats?after=c1": successReply({ items: [{ ...CHAT_ITEM, chat: 1 }], total: 2 }),
     });
     const queryClient = createAppQueryClient();
-    const options = chatListQuery(createClient(transport));
+    const options = chatListQuery(createClient(transport), {});
 
     const first = await queryClient.infiniteQuery({ ...options, staleTime: "static" });
     expect(first.pages).toEqual([{ data: { items: [CHAT_ITEM], total: 2, next: "c1" }, diagnostics: [] }]);
@@ -214,7 +215,23 @@ describe("chatListQuery", () => {
     expect(both.pages.map((page) => page.data.items[0]?.chat)).toEqual([2, 1]);
     expect(options.getNextPageParam(both.pages[1]!, both.pages, "c1", [undefined, "c1"])).toBeUndefined();
     expect(paths.filter((path) => path.startsWith("/chats"))).toEqual(["/chats", "/chats", "/chats?after=c1"]);
-    expect(queryClient.getQueryData(daemonKeys.chatList())).toEqual(both);
+    expect(queryClient.getQueryData(daemonKeys.chatList({}))).toEqual(both);
+  });
+
+  it("asks for the project and the search of the filter, on the first page and after the cursor", async () => {
+    const { transport, paths } = stubTransport({
+      "/chats?project=SAGA&q=plan%20it": successReply({ items: [CHAT_ITEM], total: 2, next: "c1" }),
+      "/chats?project=SAGA&q=plan%20it&after=c1": successReply({ items: [{ ...CHAT_ITEM, chat: 1 }], total: 2 }),
+    });
+    const queryClient = createAppQueryClient();
+    const filter = { project: "SAGA", q: "plan it" };
+    const options = chatListQuery(createClient(transport), filter);
+
+    const both = await queryClient.infiniteQuery({ ...options, pages: 2, staleTime: "static" });
+
+    expect(both.pages.map((page) => page.data.items[0]?.chat)).toEqual([2, 1]);
+    expect(paths).toEqual(["/chats?project=SAGA&q=plan%20it", "/chats?project=SAGA&q=plan%20it&after=c1"]);
+    expect(queryClient.getQueryData(daemonKeys.chatList(filter))).toEqual(both);
   });
 });
 

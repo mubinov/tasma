@@ -571,6 +571,20 @@ describe("anchorTop", () => {
     expect(region.top()).toBe(0);
   });
 
+  it("keeps the rows in view in place when rows come first to a list that mounted under the pointer", () => {
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- called with the element as `this`
+    const matches = Element.prototype.matches;
+    vi.spyOn(Element.prototype, "matches").mockImplementation(function (this: Element, selectors: string) {
+      return selectors === ":hover" ? this.tagName === "DIV" : matches.call(this, selectors);
+    });
+    const { container, rerender } = render(anchored(rows));
+    const region = regionOf(container);
+
+    rerender(anchored(added));
+
+    expect(region.top()).toBe(2 * ROW_HEIGHT);
+  });
+
   it("shows rows that come first at the top again after the pointer leaves", () => {
     const { container, rerender } = render(anchored(rows));
     const region = regionOf(container);

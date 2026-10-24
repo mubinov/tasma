@@ -38,6 +38,7 @@ import { TasksFailure, TasksScreen } from "./components/tasks-screen";
 import { WorkflowScreen } from "./components/workflow-screen";
 import { WorkflowsScreen } from "./components/workflows-screen";
 import { boardValue, isSeveral, readBoard, workflowNames } from "./lib/board";
+import { chatFilterOf } from "./lib/use-chat-filter";
 import { useUiStore } from "./store/ui";
 
 /** What every loader and every screen is handed: the cache, and the daemon. */
@@ -62,30 +63,49 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
   errorComponent: ErrorScreen,
 });
 
-/** `task` and `chat` name the open chat, both or neither. */
-type DashboardSearch = { task?: string; chat?: string };
+/**
+ * `project` is the tag of the project filter, and `q` the search text. `task`
+ * and `chat` name the open chat, both or neither.
+ */
+type DashboardSearch = { project?: string; q?: string; task?: string; chat?: string };
+
+/** A tag of the engine. */
+const PROJECT_TAG = /^[A-Z0-9]+$/;
 
 /** A tag of the engine, a dash and a number. */
 const TASK_ID = /^[A-Z0-9]+-\d+$/;
 
 const CHAT_NUMBER = /^[1-9]\d*$/;
 
+// As on the task page, a dropped value is set to undefined rather than left out.
+function readDashboardSearch(search: Record<string, unknown>): DashboardSearch {
+  const { project, q, task, chat } = search;
+  const named = typeof task === "string" && TASK_ID.test(task) && typeof chat === "string" && CHAT_NUMBER.test(chat);
+
+  return {
+    project: typeof project === "string" && PROJECT_TAG.test(project) ? project : undefined,
+    q: typeof q === "string" && q !== "" ? q : undefined,
+    ...(named ? { task, chat } : { task: undefined, chat: undefined }),
+  };
+}
+
 // Explicit calls, never a map over the navigation arrays: a path produced inside
 // a .map() collapses to `string` and takes <Link to="…"> type safety with it.
 const dashboardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  // As on the task page, a dropped value is set to undefined rather than left out.
-  validateSearch: (search: Record<string, unknown>): DashboardSearch => {
-    const { task, chat } = search;
-    const named = typeof task === "string" && TASK_ID.test(task) && typeof chat === "string" && CHAT_NUMBER.test(chat);
+  validateSearch: readDashboardSearch,
+  // A change of the filter or of the open chat keeps the screen and its last
+  // result: the screen reads a new filter itself.
+  shouldReload: ({ cause }) => cause !== "stay",
+  loader: async ({ context: { queryClient, client }, location }) => {
+    const { data: projects } = await queryClient.query({ ...projectsQuery(client), staleTime: "static" });
 
-    return named ? { task, chat } : { task: undefined, chat: undefined };
+    await queryClient.infiniteQuery({
+      ...chatListQuery(client, chatFilterOf(readDashboardSearch(location.search), projects)),
+      staleTime: "static",
+    });
   },
-  loader: ({ context: { queryClient, client } }) => queryClient.infiniteQuery({
-    ...chatListQuery(client),
-    staleTime: "static",
-  }),
   component: DashboardScreen,
 });
 

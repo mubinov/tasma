@@ -35,11 +35,14 @@ beforeEach(() => {
   // The hash is the app's address bar and hash history reads it when it is
   // created, so every test states where it opens before it imports the entry.
   window.location.hash = "#/";
-  // The dashboard at #/ lists the chats before it renders.
-  vi.stubGlobal("fetch", (input: string) =>
-    input.endsWith("/daemon/chats")
-      ? Promise.resolve(Response.json({ ok: true, data: { items: [], total: 0 }, diagnostics: [] }))
-      : Promise.reject(new Error(`no stub answers ${input}`)));
+  // The dashboard at #/ lists the projects and the chats before it renders.
+  const replies: Record<string, unknown> = { "/daemon/chats": { items: [], total: 0 }, "/daemon/projects": [] };
+  vi.stubGlobal("fetch", (input: string) => {
+    const path = Object.keys(replies).find((key) => input.endsWith(key));
+    return path === undefined
+      ? Promise.reject(new Error(`no stub answers ${input}`))
+      : Promise.resolve(Response.json({ ok: true, data: replies[path], diagnostics: [] }));
+  });
   system = stubSystemTheme("dark");
 });
 

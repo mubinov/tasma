@@ -2,7 +2,7 @@ import { useQuery, useSuspenseInfiniteQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
 import type { ChatListItem } from "@tasma/protocol";
 import { useId, useRef, useState, type ReactNode, type RefObject } from "react";
-import { chatItemQuery, chatListQuery } from "../api/queries";
+import { chatItemQuery, chatListQuery, type ChatFilter } from "../api/queries";
 import { opensHere, tagOf } from "../lib/board";
 import { sameChat, type OpenChat } from "../lib/chat-list-announcements";
 import { chatAgentName, isChatMissing } from "../lib/chat-messages";
@@ -19,6 +19,8 @@ const route = getRouteApi("/");
 const COLUMN_CLASS = "mx-auto w-full max-w-[44rem]";
 
 type DashboardChatProps = {
+  /** The filter of the list on the screen. */
+  filter: ChatFilter;
   open: OpenChat | undefined;
   wide: boolean;
   headingRef: RefObject<HTMLHeadingElement | null>;
@@ -27,9 +29,9 @@ type DashboardChatProps = {
 };
 
 /** The chat side of the dashboard: the open chat, or a short text. */
-export function DashboardChat({ open, wide, headingRef, onBack }: DashboardChatProps): ReactNode {
+export function DashboardChat({ filter, open, wide, headingRef, onBack }: DashboardChatProps): ReactNode {
   const { client } = route.useRouteContext();
-  const { data } = useSuspenseInfiniteQuery(chatListQuery(client));
+  const { data } = useSuspenseInfiniteQuery(chatListQuery(client, filter));
   const items = data.pages.flatMap((page) => page.data.items);
 
   if (open === undefined) {
@@ -51,7 +53,7 @@ export function DashboardChat({ open, wide, headingRef, onBack }: DashboardChatP
   );
 }
 
-type ChatSideProps = Omit<DashboardChatProps, "open"> & {
+type ChatSideProps = Omit<DashboardChatProps, "open" | "filter"> & {
   open: OpenChat;
   /** The item of the open chat in the loaded pages. */
   listed: ChatListItem | undefined;
@@ -115,8 +117,9 @@ function ChatsLink({ onBack, onFocusLost }: { onBack: () => void; onFocusLost: (
   return (
     <Link
       ref={ref}
+      from="/"
       to="/"
-      search={{}}
+      search={(previous) => ({ ...previous, task: undefined, chat: undefined })}
       // A partial match is active on every address of the dashboard.
       activeOptions={{ exact: true }}
       replace

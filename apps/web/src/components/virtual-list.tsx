@@ -224,6 +224,15 @@ export function VirtualList<T>({
     focusOnMount();
   }, []);
 
+  // A list that mounts under a pointer that does not move gets no `pointerenter`.
+  const readPointer = useEffectEvent(() => {
+    setPointerIn(scrollRef.current!.matches(":hover"));
+  });
+
+  useLayoutEffect(() => {
+    readPointer();
+  }, []);
+
   // A focused row that leaves the list hands the focus to the row after it, else the row before it.
   useLayoutEffect(() => {
     const last = lastKeysRef.current;

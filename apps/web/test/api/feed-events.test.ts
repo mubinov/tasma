@@ -43,7 +43,7 @@ const sample = {
 };
 
 const chatSample = {
-  chatList: daemonKeys.chatList(),
+  chatList: daemonKeys.chatList({}),
   chatItem: daemonKeys.chatItem("ACME-4", 1),
   chatRecord: daemonKeys.chat("SAGA", "SAGA-1", 2),
   otherChatRecord: daemonKeys.chat("SAGA", "SAGA-2", 1),

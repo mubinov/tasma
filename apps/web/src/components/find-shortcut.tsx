@@ -2,8 +2,11 @@ import type { AnyRouter } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
 import { useUiStore } from "../store/ui";
 
-/** The board and the task page. On any other screen the key stays the browser's. */
+/** The board and the task page. */
 const FIND_ROUTES = new Set(["/tasks", "/tasks/$project/$task"]);
+
+/** The dashboard takes the key only while its search field is mounted. */
+const DASHBOARD_ROUTE = "/";
 
 const LATIN_LETTER = /^[a-z]$/i;
 
@@ -16,17 +19,20 @@ function isFindKey({ key, code, metaKey, shiftKey, altKey, ctrlKey }: KeyboardEv
 }
 
 /**
- * Cmd+F on the board and on the task page. It sits above the router, where no
+ * Cmd+F on the board, on the task page and on the dashboard. On any other
+ * screen the key stays the browser's. It sits above the router, where no
  * router hook works, so it reads the router it is handed at each press.
  */
 export function FindShortcut({ router }: { router: AnyRouter }): ReactNode {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
-      if (!isFindKey(event) || useUiStore.getState().modalDialogs > 0) {
+      const ui = useUiStore.getState();
+      if (!isFindKey(event) || ui.modalDialogs > 0) {
         return;
       }
       const route = router.state.matches.at(-1)?.routeId;
-      if (route === undefined || !FIND_ROUTES.has(route)) {
+      const findable = route === DASHBOARD_ROUTE ? ui.findTargets > 0 : route !== undefined && FIND_ROUTES.has(route);
+      if (!findable) {
         return;
       }
 

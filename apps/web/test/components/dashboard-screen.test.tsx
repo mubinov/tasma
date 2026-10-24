@@ -1,11 +1,14 @@
 import type { ChatListItem, FeedEvent } from "@tasma/protocol";
-import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { daemonKeys } from "../../src/api/queries";
+import { FindShortcut } from "../../src/components/find-shortcut";
 import { chatPath } from "../chat-daemon";
 import {
   chatHeading,
   chatList,
+  chatsPath,
   ITEMS,
   itemLink,
   itemLinks,
@@ -14,13 +17,17 @@ import {
   NOW,
   OPEN,
   pageReply,
+  PROJECTS,
   renderDashboard,
   stubDashboard,
   stubLayout,
 } from "../dashboard-fixtures";
 import { heldBack, refusalReply, stubThreadDom, successReply } from "../helpers";
 import { stubWindowWidth } from "../setup/match-media";
+import { frame } from "../setup/notice-store";
 import { spoken } from "../update-fixtures";
+
+type Router = Awaited<ReturnType<typeof renderDashboard>>;
 
 const OPEN_PATH = "/?task=SAGA-3&chat=2";
 
@@ -56,6 +63,41 @@ function itemState(task: string, chat: number): string | null {
 function chatStatusLine(): HTMLElement {
   return screen.getByRole("region", { name: /^SAGA-|^ACME-/ }).querySelector<HTMLElement>(':scope > [role="status"]')!;
 }
+
+function searchField(): HTMLInputElement {
+  return screen.getByRole("searchbox", { name: "Search chats" });
+}
+
+function projectFilter(): HTMLElement {
+  return screen.getByRole("button", { name: /^Project: / });
+}
+
+/** Records each element that takes the focus from now on. */
+function recordFocus(): Element[] {
+  const focused: Element[] = [];
+  function record(event: FocusEvent): void {
+    focused.push(event.target as Element);
+  }
+  document.addEventListener("focusin", record);
+  onTestFinished(() => {
+    document.removeEventListener("focusin", record);
+  });
+  return focused;
+}
+
+/** Changes the search of the address, as Back or another window can, while the focus stays where it is. */
+async function navigateSearch(router: Router, search: { project?: string; q?: string }): Promise<void> {
+  await act(async () => {
+    await router.navigate({ to: "/", search: (previous) => ({ ...previous, ...search }), replace: true });
+  });
+}
+
+const FAILURE = "The chats cannot be loaded. The list shows the last result.";
+
+/** The line of a failed result, apart from the words that announce it. */
+const LINE = { ignore: "[aria-live] *, script, style" };
+
+const BROKEN = refusalReply(500, { kind: "store", code: "chat-unreadable", message: "broken" });
 
 /** Gives the scroll region of the list a scroll offset, which jsdom keeps at 0. */
 function scrollableList() {
@@ -320,7 +362,7 @@ describe("the empty texts", () => {
     await renderDashboard(stubDashboard({ "/chats": pageReply([]) }));
 
     const empty = screen.getByText("No chats yet. A chat shows here when an agent starts a step of a task.");
-    expect(empty.tabIndex).toBe(-1);
+    expect(empty.hasAttribute("tabindex")).toBe(false);
     expect(screen.queryByRole("list", { name: "Chats" })).toBeNull();
     expect(screen.queryByText("Select a chat in the list.")).toBeNull();
   });
@@ -603,7 +645,7 @@ describe("live updates", () => {
     });
   });
 
-  it("moves the focus from a removed item to the next item, and from the last item to the empty text", async () => {
+  it("moves the focus from a removed item to the next item, and from the last item to the search field", async () => {
     const stub = stubDashboard();
     await renderDashboard(stub);
     itemLink("ACME-7", 1).focus();
@@ -619,27 +661,42 @@ describe("live updates", () => {
     await stub.send([{ kind: "task", tag: "SAGA", id: "SAGA-3", change: "deleted" }]);
 
     await waitFor(() => {
-      expect(document.activeElement).toBe(screen.getByText(/^No chats yet\./));
+      expect(document.activeElement).toBe(searchField());
     });
   });
 
-  it("moves the focus from the empty text to the first item when a chat comes, also while the window is in the background", async () => {
+  it("leaves the focus in the search field when a chat comes to the empty list", async () => {
     const stub = stubDashboard();
     await renderDashboard(stub);
     itemLink("ACME-7", 1).focus();
     stub.replies["/chats"] = pageReply([]);
     await stub.send([{ kind: "project", tag: "ACME", change: "deleted" }]);
     await waitFor(() => {
-      expect(document.activeElement).toBe(screen.getByText(/^No chats yet\./));
+      expect(document.activeElement).toBe(searchField());
     });
-    fireEvent.blur(screen.getByText(/^No chats yet\./));
     stub.replies["/chats"] = pageReply([OPEN]);
 
     await stub.send([{ kind: "chat", tag: "SAGA", task: "SAGA-3", chat: 2, step: "dev:review", state: "needs-you" }]);
 
     await waitFor(() => {
-      expect(document.activeElement).toBe(itemLink("SAGA-3", 2));
+      expect(itemLinks()).toHaveLength(1);
     });
+    expect(document.activeElement).toBe(searchField());
+  });
+
+  it("moves the focus from Try again of the older chats to the search field when a live update removes the last item", async () => {
+    const stub = stubDashboard({ "/chats": pageReply(ITEMS, "c1", 4), "/chats?after=c1": BROKEN });
+    await renderDashboard(stub);
+    (await screen.findByRole("button", { name: "Try again" })).focus();
+    const focused = recordFocus();
+    stub.replies["/chats"] = pageReply([]);
+
+    await stub.send([{ kind: "project", tag: "SAGA", change: "deleted" }]);
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(searchField());
+    });
+    expect(focused).toEqual([searchField()]);
   });
 
   it("moves the focus from Open task to the heading when the item of the open chat goes away", async () => {
@@ -710,7 +767,7 @@ describe("the narrow window", () => {
     });
   });
 
-  it("moves the focus from Chats to the empty text when the list has no items", async () => {
+  it("moves the focus from Chats to the search field when the list has no items", async () => {
     stubWindowWidth("narrow");
     const user = userEvent.setup();
     const stub = stubDashboard({ "/chats": pageReply([]), "/chats/SAGA-3/2": successReply(OPEN) });
@@ -719,21 +776,19 @@ describe("the narrow window", () => {
     await user.click(screen.getByRole("link", { name: "Chats" }));
 
     await waitFor(() => {
-      expect(document.activeElement).toBe(screen.getByText(/^No chats yet\./));
+      expect(document.activeElement).toBe(searchField());
     });
   });
 
-  it("takes no focus when chats come to the empty list that Chats focused, and keeps the closed chat as the tab stop", async () => {
+  it("takes no focus when chats come to the empty list that Chats opened, and keeps the closed chat as the tab stop", async () => {
     stubWindowWidth("narrow");
     const user = userEvent.setup();
     const stub = stubDashboard({ "/chats": pageReply([]), "/chats/SAGA-3/2": successReply(OPEN) });
     await renderDashboard(stub, OPEN_PATH);
     await user.click(screen.getByRole("link", { name: "Chats" }));
     await waitFor(() => {
-      expect(document.activeElement).toBe(screen.getByText(/^No chats yet\./));
+      expect(document.activeElement).toBe(searchField());
     });
-    const elsewhere = screen.getByRole("link", { name: "Dashboard" });
-    elsewhere.focus();
     stub.replies["/chats"] = pageReply(ITEMS);
 
     await stub.send([LIST_EVENT]);
@@ -741,26 +796,25 @@ describe("the narrow window", () => {
     await waitFor(() => {
       expect(itemLinks()).toHaveLength(3);
     });
-    expect(document.activeElement).toBe(elsewhere);
+    expect(document.activeElement).toBe(searchField());
     expect(itemLinks().map((link) => link.tabIndex)).toEqual([-1, 0, -1]);
   });
 
-  it("moves the focus from the empty text that Chats focused to the item of the closed chat when chats come", async () => {
+  it("makes the first item the tab stop of a new result after Chats, not the closed chat", async () => {
     stubWindowWidth("narrow");
     const user = userEvent.setup();
-    const stub = stubDashboard({ "/chats": pageReply([]), "/chats/SAGA-3/2": successReply(OPEN) });
-    await renderDashboard(stub, OPEN_PATH);
+    const router = await renderDashboard(stubDashboard(), OPEN_PATH);
     await user.click(screen.getByRole("link", { name: "Chats" }));
-    await waitFor(() => {
-      expect(document.activeElement).toBe(screen.getByText(/^No chats yet\./));
-    });
-    stub.replies["/chats"] = pageReply(ITEMS);
-
-    await stub.send([LIST_EVENT]);
-
     await waitFor(() => {
       expect(document.activeElement).toBe(itemLink("SAGA-3", 2));
     });
+
+    await navigateSearch(router, { q: "dev" });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(itemLink("ACME-7", 1));
+    });
+    expect(itemLinks().map((link) => link.tabIndex)).toEqual([0, -1, -1]);
   });
 
   it("takes no focus after a resize when a modified click on Chats closes nothing", async () => {
@@ -837,5 +891,585 @@ describe("the narrow window", () => {
     width.set("narrow");
 
     expect(document.activeElement).toBe(itemLink("ACME-7", 1));
+  });
+});
+
+describe("the search and the project in the address", () => {
+  it("reads the search and the project of the address at load, and lists their chats", async () => {
+    const stub = stubDashboard();
+    await renderDashboard(stub, "/?project=SAGA&q=parser");
+
+    expect(searchField().value).toBe("parser");
+    expect(projectFilter().textContent).toContain("Saga");
+    expect(screen.getByRole("button", { name: "Project: Saga SAGA" })).toBe(projectFilter());
+    expect(stub.paths.filter((path) => path.startsWith("/chats"))).toEqual(["/chats?project=SAGA&q=parser"]);
+    expect(itemLinks().map((link) => link.getAttribute("data-chat-key"))).toEqual(["SAGA-3/2", "SAGA-3/1"]);
+  });
+
+  it.each([
+    ["/?project=ZETA", "ZETA"],
+    ["/?project=saga", undefined],
+  ])("lists the chats of all projects for %s, with All projects in the filter", async (path, project) => {
+    const stub = stubDashboard();
+    const router = await renderDashboard(stub, path);
+
+    expect(screen.getByRole("button", { name: "Project: All projects" })).toBe(projectFilter());
+    expect(stub.paths.filter((sent) => sent.startsWith("/chats"))).toEqual(["/chats"]);
+    expect(itemLinks()).toHaveLength(3);
+    expect(router.state.location.search).toEqual({ project });
+  });
+
+  it("shows a search of spaces in the field, and lists the chats of all projects", async () => {
+    const stub = stubDashboard();
+    await renderDashboard(stub, "/?q=%20%20");
+
+    expect(searchField().value).toBe("  ");
+    expect(stub.paths.filter((path) => path.startsWith("/chats"))).toEqual(["/chats"]);
+  });
+
+  it("keeps the search and the project when an item opens its chat", async () => {
+    const user = userEvent.setup();
+    const router = await renderDashboard(stubDashboard(), "/?project=SAGA&q=parser");
+
+    await user.click(itemLink("SAGA-3", 2));
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ project: "SAGA", q: "parser", task: "SAGA-3", chat: "2" });
+    });
+  });
+
+  it("keeps the search and the project when Chats closes the chat", async () => {
+    stubWindowWidth("narrow");
+    const user = userEvent.setup();
+    const router = await renderDashboard(stubDashboard(), "/?project=SAGA&q=parser&task=SAGA-3&chat=2");
+
+    await user.click(screen.getByRole("link", { name: "Chats" }));
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ project: "SAGA", q: "parser" });
+    });
+    expect(searchField().value).toBe("parser");
+  });
+
+  it("lists the chats of all projects when the project of the filter is deleted, and announces the count", async () => {
+    const stub = stubDashboard();
+    await renderDashboard(stub, "/?project=ACME");
+    stub.replies["/projects"] = successReply(PROJECTS.filter((project) => project.tag !== "ACME"));
+    stub.replies["/chats"] = pageReply(ITEMS.filter((item) => item.tag !== "ACME"));
+
+    await stub.send([{ kind: "project", tag: "ACME", change: "deleted" }]);
+
+    await waitFor(() => {
+      expect(itemLinks()).toHaveLength(2);
+    });
+    expect(screen.getByRole("button", { name: "Project: All projects" })).toBe(projectFilter());
+    await waitFor(() => {
+      expect(spoken()).toEqual(["2 chats"]);
+    });
+  });
+});
+
+describe("the search", () => {
+  it("names the field, and stands with the project filter between the hidden heading and the list", async () => {
+    await renderDashboard(stubDashboard());
+
+    const field = searchField();
+    const heading = screen.getByRole("heading", { level: 2, name: "Chats" });
+    expect(field.getAttribute("placeholder")).toBe("Search");
+    expect(field.closest(".w-full")).not.toBeNull();
+    expect(heading.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(field.compareDocumentPosition(projectFilter()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(projectFilter().compareDocumentPosition(chatList()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("writes the text to the address after a short wait, in place of the address entry, and lists the chats that match", async () => {
+    const user = userEvent.setup();
+    const stub = stubDashboard();
+    const router = await renderDashboard(stub);
+    const entries = router.history.length;
+
+    await user.type(searchField(), "parser");
+    expect(router.state.location.search.q).toBeUndefined();
+
+    await waitFor(() => {
+      expect(router.state.location.search.q).toBe("parser");
+    });
+    expect(router.history.length).toBe(entries);
+    await waitFor(() => {
+      expect(itemLinks().map((link) => link.getAttribute("data-chat-key"))).toEqual(["SAGA-3/2", "SAGA-3/1"]);
+    });
+    expect(stub.paths).toContain("/chats?q=parser");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("writes the text at once on Enter", async () => {
+    const user = userEvent.setup();
+    const router = await renderDashboard(stubDashboard());
+
+    await user.type(searchField(), "ship{Enter}");
+
+    expect(router.state.location.search.q).toBe("ship");
+  });
+
+  it("clears the search with Escape, and with the clear button, which keeps the focus in the field", async () => {
+    const user = userEvent.setup();
+    const router = await renderDashboard(stubDashboard(), "/?q=parser");
+    searchField().focus();
+
+    await user.keyboard("{Escape}");
+
+    expect(searchField().value).toBe("");
+    await waitFor(() => {
+      expect(router.state.location.search.q).toBeUndefined();
+    });
+
+    await user.type(searchField(), "ship{Enter}");
+    await user.click(screen.getByRole("button", { name: "Clear the search" }));
+
+    expect(searchField().value).toBe("");
+    expect(document.activeElement).toBe(searchField());
+    await waitFor(() => {
+      expect(router.state.location.search.q).toBeUndefined();
+    });
+  });
+
+  it("keeps the items of the last result, with no busy mark, until the new result comes", async () => {
+    const user = userEvent.setup();
+    const read = heldBack();
+    const stub = stubDashboard({ [chatsPath({ q: "ship" })]: read.reply });
+    await renderDashboard(stub);
+
+    await user.type(searchField(), "ship{Enter}");
+    await waitFor(() => {
+      expect(stub.paths).toContain("/chats?q=ship");
+    });
+
+    expect(itemLinks()).toHaveLength(3);
+    expect(searchField().parentElement!.querySelector(".animate-spin")).toBeNull();
+
+    read.answer(pageReply([ITEMS[0]!]));
+    await waitFor(() => {
+      expect(itemLinks()).toHaveLength(1);
+    });
+  });
+
+  it("marks the words of the search in the id, the title and the step, and keeps the name of the item", async () => {
+    await renderDashboard(stubDashboard(), "/?q=acme%20release%20test");
+
+    const item = itemLink("ACME-7", 1);
+    expect([...item.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual(["ACME", "release", "test"]);
+    expect(item.querySelector("mark")?.className).toContain("bg-match");
+    expect(item.getAttribute("aria-label")).toBe("ACME-7 Ship the release, dev:test, Agent works, 22 October 2026 11:58");
+  });
+
+  it("marks nothing with no search", async () => {
+    await renderDashboard(stubDashboard());
+
+    expect(chatList().querySelectorAll("mark")).toHaveLength(0);
+  });
+
+  it("focuses and selects the text of the field on Cmd+F", async () => {
+    const router = await renderDashboard(stubDashboard(), "/?q=ship");
+    render(<FindShortcut router={router} />);
+
+    act(() => {
+      expect(fireEvent.keyDown(window, { key: "f", code: "KeyF", metaKey: true })).toBe(false);
+    });
+
+    expect(document.activeElement).toBe(searchField());
+    expect([searchField().selectionStart, searchField().selectionEnd]).toEqual([0, 4]);
+  });
+
+  it("leaves Cmd+F to the browser in the narrow window with an open chat", async () => {
+    stubWindowWidth("narrow");
+    const router = await renderDashboard(stubDashboard(), OPEN_PATH);
+    render(<FindShortcut router={router} />);
+
+    expect(fireEvent.keyDown(window, { key: "f", code: "KeyF", metaKey: true })).toBe(true);
+  });
+});
+
+describe("the project filter", () => {
+  it("lists All projects, a separator and the projects in order, and checks the project of the address", async () => {
+    const user = userEvent.setup();
+    await renderDashboard(stubDashboard(), "/?project=SAGA");
+
+    await user.click(projectFilter());
+
+    const menu = await screen.findByRole("menu");
+    const items = within(menu).getAllByRole("menuitemradio");
+    expect(items.map((item) => item.textContent)).toEqual(["All projects", "Acme ACME", "Saga SAGA", "DUNE"]);
+    expect(items.map((item) => item.getAttribute("aria-checked"))).toEqual(["false", "false", "true", "false"]);
+    expect(items[0]?.nextElementSibling?.getAttribute("role")).toBe("separator");
+  });
+
+  it("checks All projects for a tag that no project has", async () => {
+    const user = userEvent.setup();
+    await renderDashboard(stubDashboard(), "/?project=ZETA");
+
+    await user.click(projectFilter());
+
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByRole("menuitemradio", { name: "All projects" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("shows the chats of the chosen project, in place of the address entry, and keeps the open chat and the search", async () => {
+    const user = userEvent.setup();
+    const router = await renderDashboard(stubDashboard(), "/?q=e&task=SAGA-3&chat=2");
+    const entries = router.history.length;
+
+    await user.click(projectFilter());
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitemradio", { name: "Acme ACME" }));
+
+    await waitFor(() => {
+      expect(itemLinks().map((link) => link.getAttribute("data-chat-key"))).toEqual(["ACME-7/1"]);
+    });
+    expect(router.state.location.search).toEqual({ project: "ACME", q: "e", task: "SAGA-3", chat: "2" });
+    expect(router.history.length).toBe(entries);
+    expect(screen.getByRole("button", { name: "Project: Acme ACME" })).toBe(projectFilter());
+    expect(chatHeading().textContent).toBe("SAGA-3 Build the parser");
+    expect(itemLinks().some((link) => link.hasAttribute("aria-current"))).toBe(false);
+  });
+
+  it("names a project with no name by its tag, and shows all chats again with All projects", async () => {
+    const user = userEvent.setup();
+    const router = await renderDashboard(stubDashboard(), "/?project=DUNE");
+    expect(screen.getByRole("button", { name: "Project: DUNE" })).toBe(projectFilter());
+
+    await user.click(projectFilter());
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitemradio", { name: "All projects" }));
+
+    await waitFor(() => {
+      expect(itemLinks()).toHaveLength(3);
+    });
+    expect(router.state.location.search).toEqual({});
+  });
+
+  it("moves the focus to the heading of the chat when a resize removes the list while the menu is open", async () => {
+    const width = stubWindowWidth("wide");
+    const user = userEvent.setup();
+    await renderDashboard(stubDashboard(), OPEN_PATH);
+    await user.click(projectFilter());
+    await screen.findByRole("menu");
+
+    act(() => {
+      width.set("narrow");
+    });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(chatHeading());
+    });
+  });
+});
+
+describe("the empty texts of a filter", () => {
+  it.each([
+    ["/?q=zzz", 'No chats match "zzz".'],
+    ["/?project=DUNE&q=zzz", 'No chats match "zzz".'],
+    ["/?project=DUNE", "This project has no chats."],
+  ])("says for %s: %s", async (path, text) => {
+    await renderDashboard(stubDashboard(), path);
+
+    expect(screen.getByText(text).hasAttribute("tabindex")).toBe(false);
+    expect(screen.getByText(text).classList).toContain("wrap-anywhere");
+    expect(screen.queryByRole("list", { name: "Chats" })).toBeNull();
+    expect(screen.queryByText("Select a chat in the list.")).toBeNull();
+  });
+});
+
+describe("a failed result", () => {
+  async function failSearch(stub = stubDashboard({ [chatsPath({ q: "ship" })]: BROKEN })) {
+    const user = userEvent.setup();
+    const router = await renderDashboard(stub);
+    await user.type(searchField(), "ship{Enter}");
+    const line = await screen.findByText(FAILURE, LINE);
+    return { user, router, stub, line };
+  }
+
+  it("shows the line with Try again under the controls, keeps the last result, and announces the failure", async () => {
+    const { line } = await failSearch();
+
+    expect(projectFilter().compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(line.compareDocumentPosition(chatList()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(line.parentElement?.querySelector("button")?.textContent).toBe("Try again");
+    expect(itemLinks()).toHaveLength(3);
+    expect(screen.queryByRole("alert")).toBeNull();
+    await waitFor(() => {
+      expect(spoken()).toEqual([FAILURE]);
+    });
+  });
+
+  it("ties the line to the search field when the search changed", async () => {
+    const { line } = await failSearch();
+
+    expect(line.id).not.toBe("");
+    expect(searchField().getAttribute("aria-describedby")).toBe(line.id);
+    expect(projectFilter().hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  it("ties the line to the project filter when the project changed", async () => {
+    const user = userEvent.setup();
+    await renderDashboard(stubDashboard({ [chatsPath({ project: "ACME" })]: BROKEN }));
+
+    await user.click(projectFilter());
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitemradio", { name: "Acme ACME" }));
+
+    const line = await screen.findByText(FAILURE, LINE);
+    expect(projectFilter().getAttribute("aria-describedby")).toBe(line.id);
+    expect(searchField().hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  it("announces a failed read of Try again, and no failed read that a feed event starts", async () => {
+    const { router, stub, user } = await failSearch();
+    const { queryClient } = router.options.context;
+    const errors = () => queryClient.getQueryState(daemonKeys.chatList({ q: "ship" }))?.errorUpdateCount;
+    await waitFor(() => {
+      expect(spoken()).toEqual([FAILURE]);
+    });
+
+    await stub.send([LIST_EVENT]);
+    await waitFor(() => {
+      expect(errors()).toBe(2);
+    });
+    await frame();
+    expect(spoken()).toEqual([FAILURE]);
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => {
+      expect(errors()).toBe(3);
+    });
+    await waitFor(() => {
+      expect(spoken()).toEqual([FAILURE, FAILURE]);
+    });
+  });
+
+  it("announces no failed read that a feed event starts after a Try again of an earlier request of the same search", async () => {
+    const { router, stub, user } = await failSearch();
+    const { queryClient } = router.options.context;
+    const errors = () => queryClient.getQueryState(daemonKeys.chatList({ q: "ship" }))?.errorUpdateCount;
+    await waitFor(() => {
+      expect(spoken()).toEqual([FAILURE]);
+    });
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => {
+      expect(spoken()).toEqual([FAILURE, FAILURE]);
+    });
+    await user.click(screen.getByRole("button", { name: "Clear the search" }));
+    await waitFor(() => {
+      expect(screen.queryByText(FAILURE, LINE)).toBeNull();
+    });
+
+    await user.type(searchField(), "ship{Enter}");
+    await waitFor(() => {
+      expect(spoken()).toEqual([FAILURE, FAILURE, FAILURE]);
+    });
+    await stub.send([LIST_EVENT]);
+    await waitFor(() => {
+      expect(errors()).toBe(4);
+    });
+    await frame();
+
+    expect(spoken()).toEqual([FAILURE, FAILURE, FAILURE]);
+  });
+
+  it("keeps the line while Try again reads, and moves the focus to the search field when the result comes", async () => {
+    const { stub, user } = await failSearch();
+    const read = heldBack();
+    stub.replies[chatsPath({ q: "ship" })] = read.reply;
+    const retry = screen.getByRole("button", { name: "Try again" });
+
+    await user.click(retry);
+    await waitFor(() => {
+      expect(stub.paths.filter((path) => path === "/chats?q=ship")).toHaveLength(2);
+    });
+    expect(screen.getByText(FAILURE, LINE)).toBeTruthy();
+    expect(document.activeElement).toBe(retry);
+
+    read.answer(pageReply([ITEMS[0]!]));
+
+    await waitFor(() => {
+      expect(itemLinks()).toHaveLength(1);
+    });
+    expect(screen.queryByText(FAILURE, LINE)).toBeNull();
+    expect(document.activeElement).toBe(searchField());
+  });
+
+  it("removes the line when the search goes back to the result on the screen, and announces nothing for it", async () => {
+    const { user } = await failSearch();
+    await waitFor(() => {
+      expect(spoken()).toEqual([FAILURE]);
+    });
+
+    await user.click(screen.getByRole("button", { name: "Clear the search" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(FAILURE, LINE)).toBeNull();
+    });
+    expect(searchField().hasAttribute("aria-describedby")).toBe(false);
+    await frame();
+    expect(spoken()).toEqual([FAILURE]);
+  });
+});
+
+describe("a new search or filter result", () => {
+  it("starts the list at its top, also when the list was scrolled down with the pointer over it", async () => {
+    const stub = stubDashboard({
+      "/chats": pageReply(LONG, "c1", 21),
+      "/chats?after=c1": heldBack().reply,
+      [chatsPath({ q: "beta-3" })]: pageReply(LONG.slice(1, 11)),
+    });
+    const router = await renderDashboard(stub);
+    const before = chatList().parentElement!;
+    scrollableList().scrollTo(500);
+    fireEvent.pointerEnter(before);
+
+    await navigateSearch(router, { q: "beta-3" });
+
+    await waitFor(() => {
+      expect(itemLinks()).toHaveLength(10);
+    });
+    expect(chatList().parentElement).not.toBe(before);
+    expect(chatList().parentElement!.scrollTop).toBe(0);
+  });
+
+  it("keeps the scroll position on a live refresh", async () => {
+    const stub = stubDashboard({ "/chats": pageReply(LONG, "c1", 21), "/chats?after=c1": heldBack().reply });
+    await renderDashboard(stub);
+    const region = chatList().parentElement!;
+    scrollableList().scrollTo(500);
+    const [first, ...rest] = LONG as [ChatListItem, ...ChatListItem[]];
+    stub.replies["/chats"] = pageReply([{ ...first, status: { state: "failed" } }, ...rest], "c1", 21);
+
+    await stub.send([LIST_EVENT]);
+
+    await waitFor(() => {
+      expect(itemState("BETA-40", 1)).toBe("Failed");
+    });
+    expect(chatList().parentElement).toBe(region);
+    expect(region.scrollTop).toBe(500);
+  });
+
+  it("moves the focus from an item to the item of the open chat in the new result, once", async () => {
+    const router = await renderDashboard(stubDashboard(), OPEN_PATH);
+    itemLink("SAGA-3", 1).focus();
+    const focused = recordFocus();
+
+    await navigateSearch(router, { q: "saga" });
+
+    await waitFor(() => {
+      expect(itemLinks()).toHaveLength(2);
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(itemLink("SAGA-3", 2));
+    });
+    expect(focused).toEqual([itemLink("SAGA-3", 2)]);
+  });
+
+  it("moves the focus from an item to the first item of the new result with no open chat", async () => {
+    const router = await renderDashboard(stubDashboard());
+    itemLink("ACME-7", 1).focus();
+
+    await navigateSearch(router, { project: "SAGA" });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(itemLink("SAGA-3", 2));
+    });
+  });
+
+  it("moves the focus from an item that a window in the background left focused", async () => {
+    const router = await renderDashboard(stubDashboard());
+    itemLink("ACME-7", 1).focus();
+    fireEvent.blur(itemLink("ACME-7", 1));
+
+    await navigateSearch(router, { project: "SAGA" });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(itemLink("SAGA-3", 2));
+    });
+  });
+
+  it("takes no focus when the focus is outside the list", async () => {
+    const user = userEvent.setup();
+    await renderDashboard(stubDashboard());
+    await user.click(itemLink("ACME-7", 1));
+    await user.click(searchField());
+
+    await user.type(searchField(), "saga{Enter}");
+
+    await waitFor(() => {
+      expect(itemLinks()).toHaveLength(2);
+    });
+    expect(document.activeElement).toBe(searchField());
+  });
+
+  it("moves the focus from Try again of the older chats to the item of the new result, once", async () => {
+    const stub = stubDashboard({ "/chats": pageReply(ITEMS, "c1", 4), "/chats?after=c1": BROKEN });
+    const router = await renderDashboard(stub);
+    (await screen.findByRole("button", { name: "Try again" })).focus();
+    const focused = recordFocus();
+
+    await navigateSearch(router, { q: "parser" });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(itemLink("SAGA-3", 2));
+    });
+    expect(focused).toEqual([itemLink("SAGA-3", 2)]);
+  });
+
+  it.each(["an item", "Try again of the older chats"])(
+    "moves the focus from %s to the search field when the new result is empty, once",
+    async (from) => {
+      const stub = stubDashboard({ "/chats": pageReply(ITEMS, "c1", 4), "/chats?after=c1": BROKEN });
+      const router = await renderDashboard(stub);
+      const retry = await screen.findByRole("button", { name: "Try again" });
+      (from === "an item" ? itemLink("ACME-7", 1) : retry).focus();
+      const focused = recordFocus();
+
+      await navigateSearch(router, { q: "zzz" });
+
+      await waitFor(() => {
+        expect(document.activeElement).toBe(searchField());
+      });
+      expect(focused).toEqual([searchField()]);
+    },
+  );
+
+  it("announces the count of a new result, and no change of state in it", async () => {
+    const user = userEvent.setup();
+    const [acme] = ITEMS as [ChatListItem];
+    const stub = stubDashboard({ [chatsPath({ project: "ACME" })]: pageReply([{ ...acme, status: { state: "needs-you" } }]) });
+    await renderDashboard(stub);
+    expect(spoken()).toEqual([]);
+
+    await user.click(projectFilter());
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitemradio", { name: "Acme ACME" }));
+    await waitFor(() => {
+      expect(spoken()).toEqual(["1 chat"]);
+    });
+
+    await user.click(projectFilter());
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitemradio", { name: "DUNE" }));
+    await waitFor(() => {
+      expect(spoken()).toEqual(["1 chat", "No chats"]);
+    });
+
+    await user.click(projectFilter());
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitemradio", { name: "All projects" }));
+    await waitFor(() => {
+      expect(spoken()).toEqual(["1 chat", "No chats", "3 chats"]);
+    });
+  });
+
+  it("announces a chat that now needs you after a live refresh of the same filter", async () => {
+    const stub = stubDashboard();
+    await renderDashboard(stub, "/?project=ACME");
+    const [acme] = ITEMS as [ChatListItem];
+    stub.replies[chatsPath({ project: "ACME" })] = pageReply([{ ...acme, status: { state: "needs-you" } }]);
+
+    await stub.send([LIST_EVENT]);
+
+    await waitFor(() => {
+      expect(spoken()).toEqual(["ACME-7 needs you"]);
+    });
   });
 });

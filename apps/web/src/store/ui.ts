@@ -132,6 +132,10 @@ type UiState = {
    */
   findRequest: number;
   requestFind: () => void;
+  /** The mounted callers of `useFindRequest`. */
+  findTargets: number;
+  addFindTarget: () => void;
+  removeFindTarget: () => void;
 };
 
 export type EditRequest = { tag: string; id: string };
@@ -222,6 +226,13 @@ export const useUiStore = create<UiState>((set, get) => ({
   requestFind: () => {
     set((state) => ({ findRequest: state.findRequest + 1 }));
   },
+  findTargets: 0,
+  addFindTarget: () => {
+    set((state) => ({ findTargets: state.findTargets + 1 }));
+  },
+  removeFindTarget: () => {
+    set((state) => ({ findTargets: Math.max(0, state.findTargets - 1) }));
+  },
 }));
 
 /** Runs `onRequest` after each Cmd+F press that comes after the caller mounts. */
@@ -229,6 +240,14 @@ export function useFindRequest(onRequest: () => void): void {
   const request = useUiStore((state) => state.findRequest);
   const [requestAtMount] = useState(request);
   const run = useEffectEvent(onRequest);
+
+  useEffect(() => {
+    useUiStore.getState().addFindTarget();
+
+    return () => {
+      useUiStore.getState().removeFindTarget();
+    };
+  }, []);
 
   useEffect(() => {
     if (request !== requestAtMount) {

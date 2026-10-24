@@ -1,7 +1,7 @@
 import type { ChatListItem, ChatStatus } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
 import { tagOf } from "../../src/lib/board";
-import { chatListAnnouncements } from "../../src/lib/chat-list-announcements";
+import { chatListAnnouncements, resultCountWords } from "../../src/lib/chat-list-announcements";
 
 function item(task: string, chat: number, minute: number, status?: ChatStatus): ChatListItem {
   return {
@@ -131,5 +131,13 @@ describe("chatListAnnouncements", () => {
     ];
 
     expect(chatListAnnouncements([], after, undefined)).toEqual(["1 chat needs you", "3 chats failed"]);
+  });
+});
+
+describe("resultCountWords", () => {
+  it("says the number of chats of a result", () => {
+    expect(resultCountWords(0)).toBe("No chats");
+    expect(resultCountWords(1)).toBe("1 chat");
+    expect(resultCountWords(12)).toBe("12 chats");
   });
 });

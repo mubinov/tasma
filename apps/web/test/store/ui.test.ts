@@ -353,4 +353,21 @@ describe("the Cmd+F request", () => {
     expect(onRequest).toHaveBeenCalledTimes(2);
     unmount();
   });
+
+  it("counts each mounted find as a find target", () => {
+    useUiStore.setState({ findTargets: 0 });
+    const first = renderHook(() => {
+      useFindRequest(() => {});
+    });
+    const second = renderHook(() => {
+      useFindRequest(() => {});
+    });
+    expect(useUiStore.getState().findTargets).toBe(2);
+
+    first.unmount();
+    expect(useUiStore.getState().findTargets).toBe(1);
+
+    second.unmount();
+    expect(useUiStore.getState().findTargets).toBe(0);
+  });
 });

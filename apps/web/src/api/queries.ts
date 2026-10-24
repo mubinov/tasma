@@ -4,6 +4,7 @@ import {
   ProtocolError,
   routes,
   type ChatListPage,
+  type ChatListQuery,
   type Client,
   type Diagnostic,
   type Failure,
@@ -14,6 +15,9 @@ import {
 import { APP_PATH_PREFIX } from "./paths";
 
 export const POLL_INTERVAL = 5_000;
+
+/** The chats the dashboard lists. A field that is absent is left out, so the filter of all chats is `{}`. */
+export type ChatFilter = Omit<ChatListQuery, "after">;
 
 /**
  * Two properties a new key has to keep: every key descends from `all`, so one
@@ -41,7 +45,7 @@ export const daemonKeys = {
   workflowList: () => [...daemonKeys.all, "workflow-list"] as const,
   workflowRead: (name: string) => [...daemonKeys.all, "workflow-read", name] as const,
   chats: () => [...daemonKeys.all, "chats"] as const,
-  chatList: () => [...daemonKeys.chats(), {}] as const,
+  chatList: (filter: ChatFilter) => [...daemonKeys.chats(), filter] as const,
   chatItem: (id: string, chat: number) => [...daemonKeys.chats(), id, chat] as const,
 };
 
@@ -98,10 +102,10 @@ export function chatQuery(client: Client, tag: string, id: string, chat: number)
   });
 }
 
-export function chatListQuery(client: Client) {
+export function chatListQuery(client: Client, filter: ChatFilter) {
   return infiniteQueryOptions({
-    queryKey: daemonKeys.chatList(),
-    queryFn: ({ pageParam }) => client.listAllChats(pageParam === undefined ? {} : { after: pageParam }),
+    queryKey: daemonKeys.chatList(filter),
+    queryFn: ({ pageParam }) => client.listAllChats(pageParam === undefined ? filter : { ...filter, after: pageParam }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page: Success<ChatListPage>) => page.data.next,
   });

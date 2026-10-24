@@ -1,14 +1,16 @@
-import { Button } from "@base-ui/react/button";
 import { useSuspenseInfiniteQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
-import type { ChatListItem as Item } from "@tasma/protocol";
-import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { chatListQuery } from "../api/queries";
+import type { ChatListItem as Item, ProjectSummary } from "@tasma/protocol";
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { chatListQuery, type ChatFilter } from "../api/queries";
 import { chatKey } from "../lib/chat-list-announcements";
+import { searchWords } from "../lib/match-ranges";
+import { filterKey, type FailedFields } from "../lib/use-chat-filter";
 import { useFocusLost } from "../lib/use-focus-lost";
 import { usePendingFocus } from "../lib/use-pending-focus";
+import { ChatFilterBar } from "./chat-filter-bar";
 import { ChatListItem } from "./chat-list-item";
-import { BUTTON_CLASS } from "./control-classes";
+import { RetryButton } from "./retry-button";
 import { VirtualList } from "./virtual-list";
 
 const route = getRouteApi("/");
@@ -19,16 +21,24 @@ const ITEM_HEIGHT = 79;
 const MINUTE = 60_000;
 
 type ChatListProps = {
+  /** The filter of the items on the screen. */
+  filter: ChatFilter;
+  /** The filter of the address. */
+  requested: ChatFilter;
+  projects: readonly ProjectSummary[];
+  /** `null` while no read of the requested filter failed. */
+  failedFields: FailedFields | null;
+  onRetry: () => void;
   openKey: string | undefined;
   /**
    * The chat that "Chats" closed. The mount it comes with focuses its item, or
-   * the empty text, and calls `onReturned`.
+   * the search field, and calls `onReturned`.
    */
   returnKey: string | undefined;
   onReturned: () => void;
   /** The width and the border of the column. */
   className: string;
-  /** Called when the column goes away while the focus is in it. */
+  /** Called when the column, or the project filter, goes away while the focus is in it. */
   onFocusLost: () => void;
 };
 
@@ -48,28 +58,50 @@ function useMinute(): number {
   return now;
 }
 
-/** The list of the chats of all projects, newest first, and the older pages it loads. */
-export function ChatList({ openKey, returnKey, onReturned, className, onFocusLost }: ChatListProps): ReactNode {
+function emptyText({ project, q }: ChatFilter): string {
+  if (q !== undefined) {
+    return `No chats match "${q}".`;
+  }
+  return project === undefined
+    ? "No chats yet. A chat shows here when an agent starts a step of a task."
+    : "This project has no chats.";
+}
+
+/** The list of the chats, newest first, the older pages it loads, and the filter above it. */
+export function ChatList({
+  filter,
+  requested,
+  projects,
+  failedFields,
+  onRetry,
+  openKey,
+  returnKey,
+  onReturned,
+  className,
+  onFocusLost,
+}: ChatListProps): ReactNode {
   const { client } = route.useRouteContext();
   const { data, fetchNextPage, hasNextPage, isFetching, isFetchingNextPage, isFetchNextPageError }
-    = useSuspenseInfiniteQuery(chatListQuery(client));
+    = useSuspenseInfiniteQuery(chatListQuery(client, filter));
   const items = data.pages.flatMap((page) => page.data.items);
-  // The preferred tab stop for the life of the list, after `returnKey` is cleared.
-  const [mountReturnKey] = useState(returnKey);
-  // The rows that replace the empty text while it has the focus take the focus.
-  const [emptyFocused, setEmptyFocused] = useState(false);
+  const listKey = filterKey(filter);
+  // The preferred tab stop of the list of the filter at mount, after `returnKey` is cleared.
+  const [mountReturn, setMountReturn] = useState({ key: returnKey, listKey });
+
+  if (mountReturn.key !== undefined && mountReturn.listKey !== listKey) {
+    setMountReturn({ key: undefined, listKey });
+  }
   const now = useMinute();
   const columnRef = useRef<HTMLDivElement>(null);
-  const emptyRef = useRef<HTMLParagraphElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const headingId = useId();
   const pendingFocus = usePendingFocus();
-  const failed = isFetchNextPageError && !isFetchingNextPage;
   const takeReturnFocus = useEffectEvent(() => {
     if (returnKey === undefined) {
       return;
     }
     if (items.length === 0) {
-      emptyRef.current?.focus();
+      inputRef.current?.focus();
     }
     onReturned();
   });
@@ -80,8 +112,10 @@ export function ChatList({ openKey, returnKey, onReturned, className, onFocusLos
     takeReturnFocus();
   }, []);
 
-  function focusItem(key: string): void {
-    columnRef.current?.querySelector<HTMLElement>(`[data-chat-key="${key}"]`)?.focus();
+  function focusSearch(): void {
+    pendingFocus(() => {
+      inputRef.current?.focus();
+    });
   }
 
   // A next page that cancels a live refresh adds itself to the old pages, and the refresh is lost.
@@ -97,116 +131,128 @@ export function ChatList({ openKey, returnKey, onReturned, className, onFocusLos
     }
   }
 
-  const footer = (
-    <div className="flex items-center gap-3 px-3.5 py-2">
-      <p role="status" className="text-sm text-subtle">
-        {isFetchingNextPage ? "Loading older chats" : failed ? "Older chats cannot be loaded." : ""}
-      </p>
-      {failed && (
-        <OlderRetry
-          onRetry={retryOlder}
-          onFocusLost={() => {
-            pendingFocus(() => {
-              focusItem(chatKey(items.at(-1)!));
-            });
-          }}
-        />
-      )}
-    </div>
-  );
-
   return (
     <div ref={columnRef} className={`flex h-full min-h-0 flex-col bg-bg ${className}`}>
       <h2 id={headingId} className="sr-only">Chats</h2>
+      <ChatFilterBar
+        project={requested.project}
+        projects={projects}
+        failedFields={failedFields}
+        onRetry={onRetry}
+        inputRef={inputRef}
+        onFocusLost={onFocusLost}
+        onRetryFocusLost={focusSearch}
+      />
       {items.length === 0
-        ? <EmptyText ref={emptyRef} onFocusChange={setEmptyFocused} />
+        ? <p className="p-4 text-sm wrap-anywhere text-subtle">{emptyText(filter)}</p>
         : (
             <ChatRows
               items={items}
               total={data.pages[0]!.data.total}
+              listKey={listKey}
+              words={searchWords(filter.q ?? "")}
               headingId={headingId}
               openKey={openKey}
-              mountReturnKey={mountReturnKey}
-              focusOnMount={returnKey !== undefined || emptyFocused}
+              mountReturnKey={mountReturn.key}
+              focusOnMount={returnKey !== undefined}
               now={now}
-              footer={footer}
+              loadingOlder={isFetchingNextPage}
+              olderFailed={isFetchNextPageError && !isFetchingNextPage}
+              onRetryOlder={retryOlder}
               onEnd={loadOlderWhenIdle}
-              onFocusLost={() => {
-                pendingFocus(() => {
-                  emptyRef.current?.focus();
-                });
-              }}
+              onFocusLost={focusSearch}
             />
           )}
     </div>
   );
 }
 
-type EmptyTextProps = {
-  ref: RefObject<HTMLParagraphElement | null>;
-  onFocusChange: (focused: boolean) => void;
-};
-
-function EmptyText({ ref, onFocusChange }: EmptyTextProps): ReactNode {
-  useFocusLost(ref, () => {
-    onFocusChange(false);
-  });
-
-  return (
-    <p
-      ref={ref}
-      tabIndex={-1}
-      onFocus={() => {
-        onFocusChange(true);
-      }}
-      onBlur={(event) => {
-        // A window that goes to the background blurs the element and keeps it active.
-        onFocusChange(document.activeElement === event.currentTarget);
-      }}
-      className="p-4 text-sm text-subtle"
-    >
-      No chats yet. A chat shows here when an agent starts a step of a task.
-    </p>
-  );
-}
-
 type ChatRowsProps = {
   items: readonly Item[];
   total: number;
+  /** The filter of the items. A new one mounts a new list. */
+  listKey: string;
+  /** The words of the search, which the items mark. */
+  words: readonly string[];
   headingId: string;
   openKey: string | undefined;
   mountReturnKey: string | undefined;
   /** Focus the tab stop at mount. */
   focusOnMount: boolean;
   now: number;
-  footer: ReactNode;
+  loadingOlder: boolean;
+  olderFailed: boolean;
+  onRetryOlder: () => void;
   onEnd: () => void;
   /** Called when the last item goes away while the focus is in the rows. */
   onFocusLost: () => void;
 };
 
-function ChatRows(
-  { items, total, headingId, openKey, mountReturnKey, focusOnMount, now, footer, onEnd, onFocusLost }: ChatRowsProps,
-): ReactNode {
+function ChatRows({
+  items,
+  total,
+  listKey,
+  words,
+  headingId,
+  openKey,
+  mountReturnKey,
+  focusOnMount,
+  now,
+  loadingOlder,
+  olderFailed,
+  onRetryOlder,
+  onEnd,
+  onFocusLost,
+}: ChatRowsProps): ReactNode {
   const rowsRef = useRef<HTMLDivElement>(null);
+  // The focus is on an item or in the footer.
+  const [focused, setFocused] = useState(false);
+  const [shownKey, setShownKey] = useState(listKey);
+  // The list of a new filter takes the focus that was in the list before it.
+  const [focusNewList, setFocusNewList] = useState(false);
+
+  if (listKey !== shownKey) {
+    setShownKey(listKey);
+    setFocusNewList(focused);
+  }
 
   useFocusLost(rowsRef, onFocusLost);
 
   return (
-    <div ref={rowsRef} className="min-h-0 flex-1">
+    <div
+      ref={rowsRef}
+      className="min-h-0 flex-1"
+      onFocus={() => {
+        setFocused(true);
+      }}
+      onBlur={(event) => {
+        // A window that goes to the background blurs the element and keeps it active.
+        setFocused(event.currentTarget.contains(event.relatedTarget) || document.activeElement === event.target);
+      }}
+    >
       <VirtualList
+        key={listKey}
         items={items}
         estimateSize={ITEM_HEIGHT}
         getKey={chatKey}
         labelledBy={headingId}
-        roving={{ preferredKey: openKey ?? mountReturnKey, focusOnMount }}
+        roving={{ preferredKey: openKey ?? mountReturnKey, focusOnMount: focusOnMount || focusNewList }}
         renderItem={(item, _index, tabIndex) => (
-          <ChatListItem item={item} selected={chatKey(item) === openKey} now={now} tabIndex={tabIndex} />
+          <ChatListItem item={item} selected={chatKey(item) === openKey} now={now} tabIndex={tabIndex} words={words} />
         )}
         height="100%"
         className="pb-(--notice-stack-height) scroll-pb-(--notice-stack-height)"
         total={total}
-        footer={footer}
+        footer={(
+          <OlderFooter
+            loading={loadingOlder}
+            failed={olderFailed}
+            onRetry={onRetryOlder}
+            onRetryGone={() => {
+              rowsRef.current?.querySelector<HTMLElement>(`[data-chat-key="${chatKey(items.at(-1)!)}"]`)?.focus();
+            }}
+          />
+        )}
         onEnd={onEnd}
         anchorTop
       />
@@ -214,17 +260,34 @@ function ChatRows(
   );
 }
 
-type OlderRetryProps = { onRetry: () => void; onFocusLost: () => void };
+type OlderFooterProps = {
+  loading: boolean;
+  failed: boolean;
+  onRetry: () => void;
+  /** Moves the focus when "Try again" goes away with it. */
+  onRetryGone: () => void;
+};
 
-/** A page load or a live refresh can remove the button while it has the focus. */
-function OlderRetry({ onRetry, onFocusLost }: OlderRetryProps): ReactNode {
-  const ref = useRef<HTMLButtonElement>(null);
-
-  useFocusLost(ref, onFocusLost);
+/**
+ * The state of the older chats. It owns the move of the focus from "Try again":
+ * a new list or the end of the rows unmounts the footer, and the move with it.
+ */
+function OlderFooter({ loading, failed, onRetry, onRetryGone }: OlderFooterProps): ReactNode {
+  const pendingFocus = usePendingFocus();
 
   return (
-    <Button ref={ref} type="button" onClick={onRetry} className={`${BUTTON_CLASS} shrink-0`}>
-      Try again
-    </Button>
+    <div className="flex items-center gap-3 px-3.5 py-2">
+      <p role="status" className="text-sm text-subtle">
+        {loading ? "Loading older chats" : failed ? "Older chats cannot be loaded." : ""}
+      </p>
+      {failed && (
+        <RetryButton
+          onRetry={onRetry}
+          onFocusLost={() => {
+            pendingFocus(onRetryGone);
+          }}
+        />
+      )}
+    </div>
   );
 }

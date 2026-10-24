@@ -39,6 +39,14 @@ function announcedState(item: ChatListItem): Announced | null {
   return state === "needs-you" || state === "failed" ? state : null;
 }
 
+/** What a new search or filter result announces: its number of chats. */
+export function resultCountWords(total: number): string {
+  if (total === 0) {
+    return "No chats";
+  }
+  return total === 1 ? "1 chat" : `${String(total)} chats`;
+}
+
 function countWords(count: number, state: Announced): string {
   if (state === "needs-you") {
     return count === 1 ? "1 chat needs you" : `${String(count)} chats need you`;

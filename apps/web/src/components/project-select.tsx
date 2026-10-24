@@ -20,7 +20,7 @@ type ProjectSelectProps = {
 };
 
 /** One inline run, so a long name wraps inside its box, also inside a word, and the tag moves to a new line whole. */
-function ProjectName({ name, tag }: { name: string | undefined; tag: string }): ReactNode {
+export function ProjectName({ name, tag }: { name: string | undefined; tag: string }): ReactNode {
   return (
     <span className="min-w-0 wrap-anywhere">
       {name ?? tag}
@@ -33,6 +33,18 @@ function ProjectName({ name, tag }: { name: string | undefined; tag: string }): 
       )}
     </span>
   );
+}
+
+/** The radio item of each project, in the order of `projects`, for a `Menu.RadioGroup`. */
+export function ProjectMenuItems({ projects }: { projects: readonly ProjectSummary[] }): ReactNode {
+  return projects.map((project) => (
+    // A radio item stays open on a click by default, and the screen stays
+    // mounted when the project changes.
+    <Menu.RadioItem key={project.tag} value={project.tag} closeOnClick className={MENU_RADIO_ITEM_CLASS}>
+      <RadioIndicator />
+      <ProjectName name={project.name} tag={project.tag} />
+    </Menu.RadioItem>
+  ));
 }
 
 export function ProjectSelect({ projects, tag }: ProjectSelectProps): ReactNode {
@@ -60,14 +72,7 @@ export function ProjectSelect({ projects, tag }: ProjectSelectProps): ReactNode 
                   void navigate({ to: "/tasks", search: { projects: next } });
                 }}
               >
-                {projects.map((project) => (
-                  // A radio item stays open on a click by default, and the board
-                  // stays mounted when the project changes.
-                  <Menu.RadioItem key={project.tag} value={project.tag} closeOnClick className={MENU_RADIO_ITEM_CLASS}>
-                    <RadioIndicator />
-                    <ProjectName name={project.name} tag={project.tag} />
-                  </Menu.RadioItem>
-                ))}
+                <ProjectMenuItems projects={projects} />
               </Menu.RadioGroup>
             </Menu.Popup>
           </Menu.Positioner>

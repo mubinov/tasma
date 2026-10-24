@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FindShortcut } from "../../src/components/find-shortcut";
 import { useUiStore } from "../../src/store/ui";
@@ -7,7 +7,9 @@ import { daemon } from "../task-screen-fixtures";
 
 beforeEach(() => {
   window.localStorage.clear();
-  useUiStore.setState({ boardReturn: null, boardRestorePending: false, modalDialogs: 0, findRequest: 0 });
+  useUiStore.setState({
+    boardReturn: null, boardRestorePending: false, modalDialogs: 0, findRequest: 0, findTargets: 0,
+  });
 });
 
 afterEach(() => {
@@ -67,12 +69,34 @@ describe("Cmd+F", () => {
     expect(useUiStore.getState().findRequest).toBe(0);
   });
 
-  it.each(["/settings", "/projects", "/workflows", "/"])("leaves the key to the browser on %s", async (path) => {
+  it.each(["/settings", "/projects", "/workflows"])("leaves the key to the browser on %s", async (path) => {
     await mount(path);
 
     expect(press({ key: "f", code: "KeyF", metaKey: true })).toBe(false);
 
     expect(useUiStore.getState().findRequest).toBe(0);
+  });
+
+  it("asks the dashboard for its find only while a find target is mounted, and else leaves the key to the browser", async () => {
+    await mount("/");
+    await screen.findByRole("searchbox", { name: "Search chats" });
+    useUiStore.setState({ findTargets: 0 });
+
+    expect(press({ key: "f", code: "KeyF", metaKey: true })).toBe(false);
+    expect(useUiStore.getState().findRequest).toBe(0);
+
+    useUiStore.setState({ findTargets: 1 });
+
+    expect(press({ key: "f", code: "KeyF", metaKey: true })).toBe(true);
+    expect(useUiStore.getState().findRequest).toBe(1);
+  });
+
+  it("asks the board for its find with no find target mounted", async () => {
+    await mount("/tasks?projects=SAGA");
+    useUiStore.setState({ findTargets: 0 });
+
+    expect(press({ key: "f", code: "KeyF", metaKey: true })).toBe(true);
+    expect(useUiStore.getState().findRequest).toBe(1);
   });
 
   it("does nothing while a modal dialog is open", async () => {
