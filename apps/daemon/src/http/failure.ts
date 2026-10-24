@@ -168,6 +168,12 @@ const DAEMON_STATUS = {
   "turn-running": 409,
   "chat-not-running": 409,
   "already-answered": 409,
+  // The task or the project cannot have a chat started until the user changes it.
+  "task-has-no-workflow": 409,
+  "step-stale": 409,
+  "project-has-no-folder": 409,
+  // No adapter runs the agent of a new chat; no change to the task or the project clears it.
+  "agent-not-supported": 409,
 } satisfies Record<DaemonErrorCode, number>;
 
 /** The status a refusal is sent with. Every success answers 200. */

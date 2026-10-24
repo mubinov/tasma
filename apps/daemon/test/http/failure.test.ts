@@ -181,6 +181,10 @@ describe("the status of a refusal", () => {
     ["turn-running", 409],
     ["chat-not-running", 409],
     ["already-answered", 409],
+    ["task-has-no-workflow", 409],
+    ["step-stale", 409],
+    ["project-has-no-folder", 409],
+    ["agent-not-supported", 409],
   ])("answers the daemon code %s with %i", (code, status) => {
     const failure: Failure = { kind: "daemon", code, message: code };
     expect(statusOf(failure)).toBe(status);

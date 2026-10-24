@@ -2,13 +2,14 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { PromptResponse } from "@agentclientprotocol/sdk";
-import type { Chat, ChatEntry, ChatEvent, ChatEventsReply } from "@tasma/protocol";
+import type { Chat, ChatEntry, ChatEvent, ChatEventsReply, ChatStart } from "@tasma/protocol";
 import type { AgentAdapter } from "../../src/agents/adapter.js";
 import { createChatRegistry } from "../../src/chats/registry.js";
 import type { ChatRegistry, LiveChat } from "../../src/chats/registry.js";
 import { chatRoutes } from "../../src/chats/routes.js";
 import { createChatRunner } from "../../src/chats/runner.js";
 import type { ChatRunner } from "../../src/chats/runner.js";
+import { createStepChats } from "../../src/chats/start.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import { projectRoutes } from "../../src/projects/routes.js";
 import { taskRoutes } from "../../src/tasks/routes.js";
@@ -16,13 +17,16 @@ import { WriteQueue } from "../../src/tasks/serialize.js";
 import { fakeAgent, forever } from "../agents/fake-agent.js";
 import type { Script } from "../agents/fake-agent.js";
 import {
+  bearer,
   chatFolder,
   failure,
   get,
   logFile,
   logOf,
   logUntil,
+  onWorkflow,
   plant,
+  plantSteps,
   projectConfig,
   projectsRoot,
   requestsOf,
@@ -34,6 +38,7 @@ import {
   taskFile,
   taskText,
   until,
+  userConfig,
 } from "../helpers.js";
 import type { TestServer } from "../helpers.js";
 
@@ -54,6 +59,8 @@ const UPDATE: ChatEvent = { kind: "update", update: { sessionUpdate: "agent_mess
 const TURN_END: ChatEvent = { kind: "turn-end", stopReason: "end_turn" };
 
 const CHATS = "/projects/ALPHA/tasks/ALPHA-1/chats";
+
+const LONG_CLIENT = "c".repeat(101);
 
 const ADAPTER: AgentAdapter = {
   agent: "claude",
@@ -77,12 +84,15 @@ async function tree(): Promise<string> {
  * A daemon over a tree with the chat routes, whose agents are fake agents that
  * run `script`. A second call over the same tree is a restart.
  */
-async function world(root: string, options: { holdMs?: number; script?: Script } = {}): Promise<World> {
+async function world(
+  root: string,
+  options: { holdMs?: number; script?: Script; adapters?: AgentAdapter[] } = {},
+): Promise<World> {
   const host = createProjectHost({ root });
   const writes = new WriteQueue();
   const chats = createChatRegistry({ root, host, writes, holdMs: options.holdMs ?? LONG_HOLD_MS });
   const { spawn } = fakeAgent(options.script);
-  const runner = createChatRunner({ root, chats, adapters: [ADAPTER], env: {}, spawn });
+  const runner = createChatRunner({ root, chats, adapters: options.adapters ?? [ADAPTER], env: {}, spawn });
   onTestFinished(async () => {
     await runner.close();
     chats.close();
@@ -91,7 +101,7 @@ async function world(root: string, options: { holdMs?: number; script?: Script }
   const server = await startTestServer([
     ...projectRoutes(host, writes, chats),
     ...taskRoutes(host, { writes, chats }),
-    ...chatRoutes(chats, runner),
+    ...chatRoutes(chats, runner, createStepChats({ root, host, chats, runner })),
   ]);
   return { chats, runner, server };
 }
@@ -166,6 +176,135 @@ describe("GET …/chats", () => {
       data: [],
       diagnostics: [],
     });
+  });
+});
+
+describe("POST …/chats", () => {
+  /**
+   * The tree of `tree()`, where ALPHA declares the workflow "flow" and has a
+   * folder unless `folder` is false. ALPHA-3 is at the step "build" of "flow",
+   * and ALPHA-4 at the step "ship", which "flow" does not have.
+   */
+  async function stepTree(options: { folder?: boolean } = {}): Promise<string> {
+    const root = await tree();
+    await plantSteps(root, "flow", "plan", "build");
+    const path = options.folder === false ? "" : `path: ${await target()}\n`;
+    await plant(projectConfig(root, "ALPHA"), `${path}workflows: [flow]\n`);
+    await plant(taskFile(root, "ALPHA", "ALPHA-3"), onWorkflow("ALPHA-3", "flow", "build"));
+    await plant(taskFile(root, "ALPHA", "ALPHA-4"), onWorkflow("ALPHA-4", "flow", "ship"));
+    return root;
+  }
+
+  const START = "/projects/ALPHA/tasks/ALPHA-3/chats";
+
+  it("starts the chat of the step, and gives it back to the next start", async () => {
+    const root = await stepTree();
+    await plant(userConfig(root), "colour: blue\n");
+    const { server } = await world(root);
+
+    const first = await send(server, "POST", START, { client: "cli" });
+    const second = await send(server, "POST", START, { client: "app" });
+
+    expect([first.status, second.status]).toEqual([200, 200]);
+    const started = await success<ChatStart>(first);
+    expect(started.data).toMatchObject({ started: true, chat: { task: "ALPHA-3", chat: 1, step: "build", agent: "claude" } });
+    expect(started.diagnostics).toMatchObject([{ code: "config-key-unknown", path: userConfig(root) }]);
+    const again = await success<ChatStart>(second);
+    expect(again.data).toMatchObject({ started: false, chat: { chat: 1, step: "build" } });
+  });
+
+  it.each([
+    ["a body that is not an object", ["cli"]],
+    ["no body", undefined],
+    ["a missing client", {}],
+    ["an empty client", { client: "" }],
+    ["a client of 101 characters", { client: LONG_CLIENT }],
+    ["a client that is not a string", { client: 7 }],
+    ["an extra key", { client: "cli", step: "build" }],
+  ])("refuses %s with 400 before it reads the task", async (_case, body) => {
+    const { server } = await world(await stepTree());
+
+    const response = await send(server, "POST", "/projects/ALPHA/tasks/ALPHA-9/chats", body);
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+  });
+
+  it("refuses a query with 400", async () => {
+    const { server } = await world(await stepTree());
+
+    const response = await send(server, "POST", `${START}?step=build`, { client: "cli" });
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+  });
+
+  it("refuses a body that is not JSON with 415", async () => {
+    const { server } = await world(await stepTree());
+
+    const response = await fetch(`${server.url}${START}`, {
+      method: "POST",
+      headers: { "content-type": "text/plain", ...bearer(server.token) },
+      body: JSON.stringify({ client: "cli" }),
+    });
+
+    expect(response.status).toBe(415);
+  });
+
+  it("refuses a start without the token with 401", async () => {
+    const { server } = await world(await stepTree());
+
+    const response = await fetch(`${server.url}${START}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client: "cli" }),
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it.each([
+    ["an unknown task", 404, "task-not-found", "/projects/ALPHA/tasks/ALPHA-9/chats"],
+    ["an unknown project", 404, "project-not-found", "/projects/BETA/tasks/BETA-1/chats"],
+    ["a task with no workflow", 409, "task-has-no-workflow", "/projects/ALPHA/tasks/ALPHA-1/chats"],
+    ["a step that the workflow does not have", 409, "step-stale", "/projects/ALPHA/tasks/ALPHA-4/chats"],
+  ])("refuses %s with %i %s", async (_case, status, code, path) => {
+    const { server } = await world(await stepTree());
+
+    const response = await send(server, "POST", path, { client: "cli" });
+
+    expect(response.status).toBe(status);
+    await expect(failure(response)).resolves.toMatchObject({ code });
+  });
+
+  it("refuses a workflow that the project does not declare with 400", async () => {
+    const root = await stepTree();
+    await plantSteps(root, "other", "draft");
+    await plant(taskFile(root, "ALPHA", "ALPHA-5"), onWorkflow("ALPHA-5", "other", "draft"));
+    const { server } = await world(root);
+
+    const response = await send(server, "POST", "/projects/ALPHA/tasks/ALPHA-5/chats", { client: "cli" });
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "workflow-unknown" });
+  });
+
+  it("refuses a project with no folder with 409", async () => {
+    const { server } = await world(await stepTree({ folder: false }));
+
+    const response = await send(server, "POST", START, { client: "cli" });
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "project-has-no-folder" });
+  });
+
+  it("refuses an agent that Tasma cannot run with 409", async () => {
+    const { server } = await world(await stepTree(), { adapters: [] });
+
+    const response = await send(server, "POST", START, { client: "cli" });
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "agent-not-supported" });
   });
 });
 
@@ -406,8 +545,6 @@ describe("the chat commands", () => {
     expect(response.status).toBe(200);
     expect((await logOf(live)).at(-1)).toEqual({ kind: "question-resolved", request: question, answer: { action: "decline" }, client: "web" });
   });
-
-  const LONG_CLIENT = "c".repeat(101);
 
   it.each([
     ["a body that is not an object", "messages", ["Build"]],

@@ -95,6 +95,11 @@ export type ChatMessageInput = { text: string; client: string };
 
 export type ChatCancelInput = { client: string };
 
+export type ChatStartInput = { client: string };
+
+/** `started` is false when the answer is a chat that the task already had. */
+export type ChatStart = { chat: Chat; started: boolean };
+
 /** `optionId` is one of the options of the permission request. */
 export type PermissionAnswer = { optionId: string; client: string };
 

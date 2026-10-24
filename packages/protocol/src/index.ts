@@ -24,6 +24,8 @@ export type {
   ChatListPage,
   ChatMessageInput,
   ChatOutside,
+  ChatStart,
+  ChatStartInput,
   ChatState,
   ChatStatus,
   PermissionAnswer,

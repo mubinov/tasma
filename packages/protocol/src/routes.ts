@@ -30,6 +30,7 @@ export const routes = {
   updateComment: { method: "PATCH", template: "/projects/{project}/tasks/{id}/comments/{commentId}" },
   deleteComment: { method: "DELETE", template: "/projects/{project}/tasks/{id}/comments/{commentId}" },
   listChats: { method: "GET", template: "/projects/{project}/tasks/{id}/chats" },
+  startChat: { method: "POST", template: "/projects/{project}/tasks/{id}/chats" },
   readChat: { method: "GET", template: "/projects/{project}/tasks/{id}/chats/{chat}" },
   readChatEvents: { method: "GET", template: "/projects/{project}/tasks/{id}/chats/{chat}/events" },
   sendChatMessage: { method: "POST", template: "/projects/{project}/tasks/{id}/chats/{chat}/messages" },

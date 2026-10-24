@@ -21,6 +21,7 @@ import { chatListRoutes } from "../chats/list-routes.js";
 import { createChatRegistry } from "../chats/registry.js";
 import { chatRoutes } from "../chats/routes.js";
 import { createChatRunner } from "../chats/runner.js";
+import { createStepChats } from "../chats/start.js";
 import { configRoutes } from "../config/routes.js";
 import { createFeed } from "../events/feed.js";
 import { eventRoutes } from "../events/routes.js";
@@ -206,11 +207,12 @@ export async function startDaemon(options: {
     idleLimit: idleLimit({ root, host }),
     stderr,
   });
+  const starts = createStepChats({ root, host, chats, runner });
   const server = createDaemonServer(
     [
       ...projectRoutes(host, writes, chats),
       ...taskRoutes(host, { writes, chats }),
-      ...chatRoutes(chats, runner),
+      ...chatRoutes(chats, runner, starts),
       ...chatListRoutes({ root, host, chats }),
       ...workflowRoutes({ root, writes, publish }),
       ...configRoutes({ root, writes, publish }),

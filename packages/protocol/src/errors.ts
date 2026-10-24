@@ -82,7 +82,11 @@ export type DaemonErrorCode
     | "unauthorized"
     | "turn-running"
     | "chat-not-running"
-    | "already-answered";
+    | "already-answered"
+    | "task-has-no-workflow"
+    | "step-stale"
+    | "project-has-no-folder"
+    | "agent-not-supported";
 
 /**
  * Why a call was refused. Each arm carries only the fields its engine class has:

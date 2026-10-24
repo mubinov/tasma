@@ -2,11 +2,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { AGENT_STEP_IDLE_MS, HUMAN_STEP_IDLE_MS, idleLimit, idleTimer } from "../../src/chats/idle.js";
 import { createProjectHost } from "../../src/projects/host.js";
-import { plant, plantWorkflow, projectsRoot, taskFile, taskText, workflowDir } from "../helpers.js";
-
-function onWorkflow(id: string, workflow: string): string {
-  return taskText(id).replace("status: To Do\n", `status: To Do\nworkflow: ${workflow}\n`);
-}
+import { onWorkflow, plant, plantWorkflow, projectsRoot, taskFile, taskText, workflowDir } from "../helpers.js";
 
 /**
  * The idle limit over project ALPHA. ALPHA-1 follows the workflow "flow",

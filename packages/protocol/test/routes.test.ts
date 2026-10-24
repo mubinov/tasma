@@ -28,6 +28,8 @@ describe("the route table", () => {
   it("carries one template under two methods where a route reads what another writes", () => {
     expect(routes.listComments.template).toBe(routes.addComment.template);
     expect(routes.listComments.method).not.toBe(routes.addComment.method);
+    expect(routes.listChats.template).toBe(routes.startChat.template);
+    expect(routes.listChats.method).not.toBe(routes.startChat.method);
   });
 });
 

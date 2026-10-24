@@ -10,6 +10,7 @@ import { workflowRoutes } from "../../src/workflows/routes.js";
 import {
   failure,
   get,
+  onWorkflow,
   plant,
   plantWorkflow,
   projectConfig,
@@ -295,7 +296,7 @@ describe("PATCH /workflows/{workflow}", () => {
     await plant(taskFile(root, "ALPHA", "ALPHA-1"), taskOn("ALPHA-1", "flow-a", "a:two"));
     await plant(taskFile(root, "ALPHA", "ALPHA-2"), taskOn("ALPHA-2", "flow-a", "a:two", "Done"));
     await plant(taskFile(root, "ALPHA", "ALPHA-3"), taskOn("ALPHA-3", "flow-a", "a:one"));
-    await plant(taskFile(root, "ALPHA", "ALPHA-4"), taskText("ALPHA-4").replace("status: To Do\n", "status: To Do\nworkflow: flow-a\n"));
+    await plant(taskFile(root, "ALPHA", "ALPHA-4"), onWorkflow("ALPHA-4", "flow-a"));
     await plant(taskFile(root, "BETA", "BETA-1"), taskOn("BETA-1", "flow-a", "a:two"));
     await plant(taskFile(root, "BETA", "BETA-2"), taskOn("BETA-2", "flow-b", "a:two"));
     const server = await serving(root);

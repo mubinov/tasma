@@ -5,6 +5,8 @@ import type {
   ChatListItem,
   ChatListPage,
   ChatMessageInput,
+  ChatStart,
+  ChatStartInput,
   PermissionAnswer,
   QuestionAnswer,
 } from "./chat.js";
@@ -90,6 +92,13 @@ export type Client = {
   updateComment(tag: string, id: string, commentId: number, change: CommentInput): Promise<Success<WriteResult>>;
   deleteComment(tag: string, id: string, commentId: number): Promise<Success<WriteResult>>;
   listChats(tag: string, id: string): Promise<Success<Chat[]>>;
+  /**
+   * The chat of the current step of the task, or of the first step of its
+   * workflow when the task has no step. The answer is the latest chat of the
+   * task when it is of that step, holds its first message and has not failed;
+   * in other cases a new chat with its agent started.
+   */
+  startChat(tag: string, id: string, input: ChatStartInput): Promise<Success<ChatStart>>;
   readChat(tag: string, id: string, chat: number): Promise<Success<Chat>>;
   /**
    * With `after` at the last `seq` of the log the daemon holds the call until
@@ -246,6 +255,7 @@ export function createClient(transport: Transport): Client {
     deleteComment: (tag, id, commentId) =>
       call<WriteResult>(routes.deleteComment, { project: tag, id, commentId }),
     listChats: (tag, id) => call<Chat[]>(routes.listChats, { project: tag, id }),
+    startChat: (tag, id, input) => call<ChatStart>(routes.startChat, { project: tag, id }, { body: input }),
     readChat: (tag, id, chat) => call<Chat>(routes.readChat, { project: tag, id, chat }),
     readChatEvents: (tag, id, chat, after, options) =>
       call<ChatEventsReply>(

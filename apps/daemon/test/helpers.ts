@@ -236,6 +236,12 @@ Body.
 `;
 }
 
+/** The task file of `taskText` that follows `workflow`, at `step` when one is given. */
+export function onWorkflow(id: string, workflow: string, step?: string): string {
+  const fields = step === undefined ? `workflow: ${workflow}\n` : `workflow: ${workflow}\nstep: ${step}\n`;
+  return taskText(id).replace("status: To Do\n", `status: To Do\n${fields}`);
+}
+
 /**
  * A task file carrying two comments: one written inline with an author, one
  * written as a block with every optional marker field. The first body holds

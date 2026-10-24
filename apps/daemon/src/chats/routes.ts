@@ -1,6 +1,7 @@
-// The routes over the chats of one task: the list, one chat, a long-poll read
-// of the log of one chat after a cursor, and the commands of a client on a
-// chat: a message, a cancel and an answer.
+// The routes over the chats of one task: the list, the start of the chat of
+// the current step, one chat, a long-poll read of the log of one chat after a
+// cursor, and the commands of a client on a chat: a message, a cancel and an
+// answer.
 
 import { routes } from "@tasma/protocol";
 import type {
@@ -8,6 +9,8 @@ import type {
   ChatCancelInput,
   ChatEventsReply,
   ChatMessageInput,
+  ChatStart,
+  ChatStartInput,
   PermissionAnswer,
   QuestionAnswer,
   QuestionValue,
@@ -18,6 +21,7 @@ import type { HandlerRequest, RouteEntry } from "../http/router.js";
 import { assertNoQuery, readChatEventsQuery } from "../tasks/filter.js";
 import type { ChatRegistry, LiveChat } from "./registry.js";
 import type { ChatRunner } from "./runner.js";
+import type { StepChats } from "./start.js";
 
 /** The most bytes of entries in one reply. A reply always holds at least one entry, however large. */
 const CHAT_REPLY_BYTES = 1024 * 1024;
@@ -33,6 +37,8 @@ type Decline = Extract<QuestionAnswer, { action: "decline" }>;
 const MESSAGE_KEYS = Object.keys({ text: true, client: true } satisfies Record<keyof ChatMessageInput, true>);
 
 const CANCEL_KEYS = Object.keys({ client: true } satisfies Record<keyof ChatCancelInput, true>);
+
+const START_KEYS = Object.keys({ client: true } satisfies Record<keyof ChatStartInput, true>);
 
 const PERMISSION_KEYS = Object.keys({ optionId: true, client: true } satisfies Record<keyof PermissionAnswer, true>);
 
@@ -96,6 +102,12 @@ function readCancel(raw: unknown): ChatCancelInput {
   return { client: clientOf(body) };
 }
 
+function readStart(raw: unknown): ChatStartInput {
+  const body = objectBody(raw);
+  assertKeys(body, START_KEYS);
+  return { client: clientOf(body) };
+}
+
 function readPermissionAnswer(raw: unknown): PermissionAnswer {
   const body = objectBody(raw);
   assertKeys(body, PERMISSION_KEYS);
@@ -143,7 +155,7 @@ async function readAfter(
   return { cursor: entries.at(-1)!.seq, entries };
 }
 
-export function chatRoutes(chats: ChatRegistry, runner: ChatRunner): RouteEntry[] {
+export function chatRoutes(chats: ChatRegistry, runner: ChatRunner, starts: StepChats): RouteEntry[] {
   /** Checks the query and the body before it gets the chat, and answers the chat after the command. */
   function command<T>(
     read: (body: unknown) => T,
@@ -165,6 +177,15 @@ export function chatRoutes(chats: ChatRegistry, runner: ChatRunner): RouteEntry[
         assertNoQuery(request.query);
         const listed = await chats.list(request.params.project!, request.params.id!);
         return { data: listed.chats.map((live) => live.chat), diagnostics: listed.diagnostics };
+      },
+    },
+    {
+      route: routes.startChat,
+      handler: async (request): Promise<Success<ChatStart>> => {
+        assertNoQuery(request.query);
+        const { client } = readStart(request.body);
+        const { live, started, diagnostics } = await starts.start(request.params.project!, request.params.id!, client);
+        return { data: { chat: live.chat, started }, diagnostics };
       },
     },
     {

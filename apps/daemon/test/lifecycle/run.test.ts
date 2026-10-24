@@ -13,12 +13,16 @@ import type { DaemonIo, Start } from "../../src/lifecycle/run.js";
 import {
   bearer,
   chatFolder,
+  failure,
   foreignPort,
   freePort,
   get,
   logFile,
+  onWorkflow,
   plant,
   plantChat,
+  plantSteps,
+  projectConfig,
   projectsRoot,
   seedRecord,
   send,
@@ -324,6 +328,22 @@ describe("a chat that an earlier daemon left in a turn", () => {
       { kind: "permission-resolved", request: "r-1", outcome: { outcome: "cancelled" } },
       { kind: "interrupted" },
     ]);
+  });
+});
+
+describe("the start of a chat", () => {
+  it("is served, and refuses a project with no folder before any agent starts", async () => {
+    const root = await projectsRoot("ONE");
+    await plantSteps(root, "flow", "build");
+    await plant(projectConfig(root, "ONE"), "workflows: [flow]\n");
+    await plant(taskFile(root, "ONE", "ONE-1"), onWorkflow("ONE-1", "flow"));
+    const start = await daemonOn(root);
+    const server: TestServer = { url: start.url, token: await tokenOf(root), close: start.stop };
+
+    const response = await send(server, "POST", "/projects/ONE/tasks/ONE-1/chats", { client: "cli" });
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "project-has-no-folder" });
   });
 });
 
