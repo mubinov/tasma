@@ -38,16 +38,16 @@ vi.mock("../src/components/app-shell", async (importOriginal) => {
   };
 });
 
-vi.mock("../src/components/placeholder-screen", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/components/placeholder-screen")>();
+vi.mock("../src/components/settings-screen", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/components/settings-screen")>();
 
   return {
-    PlaceholderScreen: (props: { title: string; summary: string }) => {
+    SettingsScreen: () => {
       if (failing.screen) {
         throw new Error("the screen could not render");
       }
 
-      return <actual.PlaceholderScreen {...props} />;
+      return <actual.SettingsScreen />;
     },
   };
 });
@@ -61,8 +61,14 @@ function silenceFailureNoise() {
   vi.stubGlobal("scrollTo", () => {});
 }
 
+/** Opens the app's router, which reads the hash of the document, on a screen whose route has no loader. */
+function openWithNoLoader() {
+  window.location.hash = "#/settings";
+}
+
 afterEach(() => {
   cleanup();
+  window.location.hash = "";
   failing.shell = false;
   failing.screen = false;
   vi.restoreAllMocks();
@@ -85,6 +91,7 @@ it("couples relative asset paths to hash history", () => {
 it("answers a throw from the root route with the app's own panel, not the library's", async () => {
   silenceFailureNoise();
   failing.shell = true;
+  openWithNoLoader();
 
   await act(async () => {
     render(<RouterProvider router={router} />);
@@ -111,6 +118,7 @@ it("answers a throw from the root route with the app's own panel, not the librar
 it("keeps a throw from a child screen inside the shell's one main landmark", async () => {
   silenceFailureNoise();
   failing.screen = true;
+  openWithNoLoader();
 
   await act(async () => {
     render(<RouterProvider router={router} />);

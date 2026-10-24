@@ -148,10 +148,10 @@ export function stubIntersectionObserver() {
  * `PATCH /projects/P/tasks/P-1`. A reply can be a promise, for an answer a test
  * holds back.
  *
- * The default map answers `/health`, an empty `/projects` and an empty
- * `/workflows`, which is what every test that only mounts the tree needs. A
- * caller's entries extend it, and override by key. The map is returned too: an
- * entry set later answers the next request.
+ * The default map answers `/health`, an empty `/projects`, an empty
+ * `/workflows` and an empty `/chats`, which is what every test that only mounts
+ * the tree needs. A caller's entries extend it, and override by key. The map is
+ * returned too: an entry set later answers the next request.
  */
 export function stubTransport(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
   const paths: string[] = [];
@@ -160,6 +160,7 @@ export function stubTransport(replies: Record<string, TransportReply | Promise<T
     "/health": successReply({ name: "tasma-daemon", version: "0.0.0" }),
     "/projects": successReply([]),
     "/workflows": successReply([]),
+    "/chats": successReply({ items: [], total: 0 }),
     ...replies,
   };
 

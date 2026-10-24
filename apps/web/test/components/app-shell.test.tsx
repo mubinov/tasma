@@ -1,7 +1,6 @@
 import { act, cleanup, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { FOOTER_NAVIGATION, PRIMARY_NAVIGATION } from "../../src/navigation";
-import { PLACEHOLDER_SUMMARIES } from "../../src/routes";
 import { useUiStore } from "../../src/store/ui";
 import { renderWithRouter } from "../helpers";
 
@@ -23,9 +22,10 @@ it("opens the main content with the page's only h1", async () => {
   await renderWithRouter();
 
   const headings = screen.getAllByRole("heading", { level: 1 });
+  const main = screen.getByRole("main");
   expect(headings).toHaveLength(1);
-  expect(screen.getByRole("main").contains(headings[0]!)).toBe(true);
-  expect(document.querySelectorAll("h1, h2, h3, h4, h5, h6")).toHaveLength(1);
+  expect(main.contains(headings[0]!)).toBe(true);
+  expect([...document.querySelectorAll("h1, h2, h3, h4, h5, h6")].filter((heading) => !main.contains(heading))).toEqual([]);
 });
 
 /*
@@ -122,17 +122,6 @@ it("renders the screen every entry names", async () => {
     await renderWithRouter(entry.path);
 
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(entry.label);
-    cleanup();
-  }
-});
-
-// The copy and the route that shows it are declared in the same table, so only
-// mounting each one proves a screen carries the sentence declared for it.
-it("shows the sentence each placeholder route declares", async () => {
-  for (const [path, summary] of Object.entries(PLACEHOLDER_SUMMARIES)) {
-    await renderWithRouter(path);
-
-    expect(screen.getByRole("main").textContent).toContain(summary);
     cleanup();
   }
 });

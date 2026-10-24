@@ -3,12 +3,18 @@ import { AssistantRuntimeProvider, useExternalStoreRuntime } from "@assistant-ui
 import { Thread, type ThreadComponents } from "@kit/components/assistant-ui/elements/thread.aui";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { ProtocolError, type Chat, type ChatStatus, type Client } from "@tasma/protocol";
+import type { Chat, ChatStatus, Client } from "@tasma/protocol";
 import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useChatLog } from "../api/chat-log";
 import { chatQuery } from "../api/queries";
 import type { ChatMessage, ChatView } from "../lib/chat-fold";
-import { chatAgentName, chatAnnouncements, chatOutsideName, chatThreadMessage } from "../lib/chat-messages";
+import {
+  chatAgentName,
+  chatAnnouncements,
+  chatStateText,
+  chatThreadMessage,
+  isChatMissing,
+} from "../lib/chat-messages";
 import { WarningIcon, XIcon } from "../lib/icons";
 import { focusInView } from "../lib/focus-in-view";
 import { useFocusLost } from "../lib/use-focus-lost";
@@ -47,41 +53,39 @@ function refuseMessage(): Promise<void> {
   return Promise.reject(new Error("The chat panel sends no messages."));
 }
 
-function isChatNotFound(error: Error | null): boolean {
-  return error instanceof ProtocolError && error.failure.code === "chat-not-found";
-}
+export function StateMark({ status }: { status: ChatStatus }): ReactNode {
+  const text = chatStateText(status);
 
-function StateMark({ status }: { status: ChatStatus }): ReactNode {
   switch (status.state) {
     case "working":
       return (
         <span className="inline-flex items-center gap-1.5">
           <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-running" />
-          Agent works
+          {text}
         </span>
       );
     case "needs-you":
       return (
         <span className="inline-flex items-center gap-1.5">
           <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-signal" />
-          Needs you
+          {text}
         </span>
       );
     case "failed":
       return (
         <span className="inline-flex items-center gap-1.5">
           <WarningIcon size={14} aria-hidden="true" className="shrink-0 text-signal" />
-          Failed
+          {text}
         </span>
       );
     case "continued-outside":
-      return <span className="text-subtle">{`Continued in ${chatOutsideName(status.where)}`}</span>;
+      return <span className="text-subtle">{text}</span>;
   }
 }
 
-function statusText(failed: boolean, notFound: boolean, log: LogState | null): string {
+function statusText(failed: boolean, missing: boolean, log: LogState | null): string {
   if (failed) {
-    return notFound ? "This chat does not exist." : "The chat cannot be read.";
+    return missing ? "This chat does not exist." : "The chat cannot be read.";
   }
   if (log !== null && log.failures >= 2) {
     return "The chat cannot be read now. Tasma tries again.";
@@ -103,13 +107,9 @@ function ChatPanelBody({ tag, task, chat, onClose, focusOnMount = false }: ChatP
   const { client, queryClient } = useRouter().options.context;
   const read = useQuery(chatQuery(client, tag, task, chat), queryClient);
   const record = read.data?.data;
-  // The log state of the current round of the transcript, null until its log runs.
   const [log, setLog] = useState<LogState | null>(null);
-  const [round, setRound] = useState(0);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const headingId = useId();
-  const notFound = isChatNotFound(read.error);
-  const failed = log === null && read.error !== null;
   const takeHeadingFocus = useEffectEvent(() => {
     if (focusOnMount) {
       focusInView(headingRef.current);
@@ -119,11 +119,6 @@ function ChatPanelBody({ tag, task, chat, onClose, focusOnMount = false }: ChatP
   useEffect(() => {
     takeHeadingFocus();
   }, []);
-
-  function restart(): void {
-    setLog(null);
-    setRound(round + 1);
-  }
 
   return (
     <section aria-labelledby={headingId} className="flex h-full min-h-0 flex-col">
@@ -143,10 +138,55 @@ function ChatPanelBody({ tag, task, chat, onClose, focusOnMount = false }: ChatP
           </Button>
         </Tooltip>
       </div>
-      <p role="status" className="px-6 py-2 text-sm text-subtle empty:py-0">{statusText(failed, notFound, log)}</p>
-      {failed && !notFound && (
+      <ChatBody tag={tag} task={task} chat={chat} headingRef={headingRef} onLog={setLog} />
+    </section>
+  );
+}
+
+type ChatBodyProps = ChatPlace & {
+  /** The heading of the host, where the focus goes when an element of the body that has it goes away. */
+  headingRef: RefObject<HTMLHeadingElement | null>;
+  /** Gets the log state of the transcript, null while no log runs. */
+  onLog?: (log: LogState | null) => void;
+  /** Added to the classes of the status line and of its Try again. */
+  lineClassName?: string;
+};
+
+/**
+ * The status line, the transcript and the announcements of one chat, live,
+ * under the header of its host. The host lays it out in a flex column.
+ */
+export function ChatBody(props: ChatBodyProps): ReactNode {
+  return <ChatBodyOfChat key={JSON.stringify([props.tag, props.task, props.chat])} {...props} />;
+}
+
+function ChatBodyOfChat({ tag, task, chat, headingRef, onLog, lineClassName = "" }: ChatBodyProps): ReactNode {
+  const { client, queryClient } = useRouter().options.context;
+  const read = useQuery(chatQuery(client, tag, task, chat), queryClient);
+  // The log state of the current round of the transcript, null until its log runs.
+  const [log, setLog] = useState<LogState | null>(null);
+  const [round, setRound] = useState(0);
+  const missing = isChatMissing(read.error);
+  // After the log starts, a failed read of the record shows only when it says that the chat does not exist.
+  const failed = read.error !== null && (log === null || missing);
+
+  function changeLog(next: LogState | null): void {
+    setLog(next);
+    onLog?.(next);
+  }
+
+  function restart(): void {
+    changeLog(null);
+    setRound(round + 1);
+  }
+
+  return (
+    <>
+      <p role="status" className={`px-6 py-2 text-sm text-subtle empty:py-0 ${lineClassName}`}>{statusText(failed, missing, log)}</p>
+      {failed && !missing && (
         <RetryButton
           headingRef={headingRef}
+          className={lineClassName}
           onRetry={() => {
             void read.refetch();
           }}
@@ -158,17 +198,17 @@ function ChatPanelBody({ tag, task, chat, onClose, focusOnMount = false }: ChatP
         task={task}
         chat={chat}
         headingRef={headingRef}
-        onLog={setLog}
+        onLog={changeLog}
         onReset={restart}
       />
-    </section>
+    </>
   );
 }
 
-type RetryButtonProps = { headingRef: RefObject<HTMLHeadingElement | null>; onRetry: () => void };
+type RetryButtonProps = { headingRef: RefObject<HTMLHeadingElement | null>; className: string; onRetry: () => void };
 
 /** Any read of the record can remove the button, also one the user did not start. Focus then goes to the heading. */
-function RetryButton({ headingRef, onRetry }: RetryButtonProps): ReactNode {
+function RetryButton({ headingRef, className, onRetry }: RetryButtonProps): ReactNode {
   const ref = useRef<HTMLButtonElement>(null);
 
   useFocusLost(ref, () => {
@@ -176,7 +216,7 @@ function RetryButton({ headingRef, onRetry }: RetryButtonProps): ReactNode {
   });
 
   return (
-    <div className="px-6 pb-2">
+    <div className={`px-6 pb-2 ${className}`}>
       <Button
         ref={ref}
         type="button"

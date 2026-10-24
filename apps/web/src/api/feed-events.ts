@@ -11,21 +11,25 @@ export type FeedMappings = { [K in FeedEvent["kind"]]: Mapper<K> };
 
 export const FEED_MAPPINGS: FeedMappings = {
   // A delete that changes the references in other tasks sends a `task` event
-  // for each of them, so the exact keys are enough.
-  task: ({ tag, id }) => [
-    { queryKey: daemonKeys.task(tag, id), exact: true },
+  // for each of them, so the exact keys are enough. A deleted task sends no
+  // `chat` event, so the record reads of its chats under the task read again.
+  task: ({ tag, id, change }) => [
+    { queryKey: daemonKeys.task(tag, id), exact: change !== "deleted" },
     { queryKey: daemonKeys.tasks(tag), exact: true },
     { queryKey: daemonKeys.taskSearches(tag) },
+    { queryKey: daemonKeys.chats() },
   ],
   // The prefix covers the tasks: their reads check the statuses of the project.
   project: (event) => [
     { queryKey: daemonKeys.projects(), exact: true },
     { queryKey: daemonKeys.project(event.tag) },
     ...(event.change === "renamed" ? [{ queryKey: daemonKeys.project(event.to) }] : []),
+    { queryKey: daemonKeys.chats() },
   ],
-  // The chat panel reads the state from the log, and the `seq` of the record
-  // when it opens and after each reset of the log.
-  chat: () => [],
+  // Only the list of all chats reads again. The chat panel reads the state from
+  // the log, and the `seq` of the record when it opens and after each reset of
+  // the log.
+  chat: () => [{ queryKey: daemonKeys.chats() }],
   // The main config gives the statuses of a project that has none, and its
   // `workflows_path` moves every workflow.
   config: () => [{ queryKey: daemonKeys.all }],

@@ -73,6 +73,13 @@ it("does not leave Dashboard current on another screen", async () => {
   expect(current.map((link) => link.textContent)).toEqual(["Tasks"]);
 });
 
+it("keeps Dashboard current while the address of the dashboard names a chat", async () => {
+  await renderWithRouter("/?task=SAGA-3&chat=2");
+
+  const current = screen.getAllByRole("link").filter((link) => link.getAttribute("aria-current") === "page");
+  expect(current.map((link) => link.textContent)).toEqual(["Dashboard"]);
+});
+
 it("marks Settings current on its own screen", async () => {
   await renderWithRouter("/settings");
 

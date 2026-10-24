@@ -1,4 +1,4 @@
-import type { ChatEntry, ChatEvent } from "@tasma/protocol";
+import { ProtocolError, type ChatEntry, type ChatEvent } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
 import {
   CHAT_VIEW_START,
@@ -16,10 +16,12 @@ import {
   chatDiff,
   chatNoticeText,
   chatOutsideName,
+  chatStateText,
   chatTerminalView,
   chatThreadMessage,
   chatToolName,
   chatToolStatus,
+  isChatMissing,
 } from "../../src/lib/chat-messages";
 import {
   atSeq,
@@ -373,6 +375,29 @@ describe("chatOutsideName", () => {
   it("names the places", () => {
     expect(chatOutsideName("vscode")).toBe("VS Code");
     expect(chatOutsideName("terminal")).toBe("terminal");
+  });
+});
+
+describe("chatStateText", () => {
+  it("gives the text of each state", () => {
+    expect(chatStateText({ state: "working" })).toBe("Agent works");
+    expect(chatStateText({ state: "needs-you" })).toBe("Needs you");
+    expect(chatStateText({ state: "failed" })).toBe("Failed");
+    expect(chatStateText({ state: "continued-outside", where: "vscode" })).toBe("Continued in VS Code");
+  });
+});
+
+describe("isChatMissing", () => {
+  it("is true for a refusal that says the chat, its task or its project does not exist", () => {
+    for (const code of ["chat-not-found", "task-not-found", "project-not-found"] as const) {
+      expect(isChatMissing(new ProtocolError({ kind: "store", code, message: "gone" }, 404))).toBe(true);
+    }
+  });
+
+  it("is false for another refusal, another error and no error", () => {
+    expect(isChatMissing(new ProtocolError({ kind: "store", code: "chat-unreadable", message: "broken" }, 500))).toBe(false);
+    expect(isChatMissing(new Error("chat-not-found"))).toBe(false);
+    expect(isChatMissing(null)).toBe(false);
   });
 });
 

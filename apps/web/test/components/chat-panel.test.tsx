@@ -434,6 +434,16 @@ it("says that a chat that does not exist does not exist, and reads no events", a
   expect(log.readsOf(eventsPath(0))).toBe(0);
 });
 
+it.each(["task-not-found", "project-not-found"] as const)("says that a chat does not exist after a refusal %s, with no Try again", async (code) => {
+  const log = stubChatLog({ [chatPath()]: refusalReply(404, { kind: "store", code, message: "gone" }) });
+  await renderPanel(log);
+
+  await waitFor(() => {
+    expect(statusLine().textContent).toBe("This chat does not exist.");
+  });
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+});
+
 const UNREADABLE = refusalReply(500, { kind: "store", code: "chat-unreadable", message: "broken" });
 
 it("offers to read the record again after another failure, and moves focus to the heading", async () => {
@@ -486,6 +496,22 @@ it("shows no failure, and keeps the transcript, when a read of the record fails 
   expect(statusLine().textContent).toBe("");
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   expect(screen.getByText("Rename the parser module.")).toBeTruthy();
+});
+
+it("says that the chat does not exist when a read of the record after the log started says so", async () => {
+  const log = logOf(TEXT_LOG.slice(0, 3));
+  const context = await renderPanel(log);
+  expect(await screen.findByText("Rename the parser module.")).toBeTruthy();
+  log.replies[chatPath()] = refusalReply(404, { kind: "store", code: "task-not-found", message: "no task SAGA-3" });
+
+  await act(async () => {
+    await context.queryClient.refetchQueries({ queryKey: daemonKeys.chat("SAGA", "SAGA-3", 2) });
+  });
+
+  await waitFor(() => {
+    expect(statusLine().textContent).toBe("This chat does not exist.");
+  });
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
 });
 
 it("says that the chat cannot be read when the read of a cached record fails, and starts the log only after a read succeeds", async () => {

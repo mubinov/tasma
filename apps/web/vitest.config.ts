@@ -13,7 +13,12 @@ export default mergeConfig(
   defineConfig({
     test: {
       environment: "jsdom",
-      setupFiles: ["../../test/setup/home.ts", "./test/setup/notice-store.ts", "./test/setup/shiki-worker.ts"],
+      setupFiles: [
+        "../../test/setup/home.ts",
+        "./test/setup/notice-store.ts",
+        "./test/setup/shiki-worker.ts",
+        "./test/setup/match-media.ts",
+      ],
     },
   }),
 );

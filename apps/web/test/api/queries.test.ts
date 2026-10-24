@@ -5,6 +5,8 @@ import { createAppQueryClient, createDaemonClient, shouldRetry } from "../../src
 import { APP_PATH_PREFIX, DAEMON_PATH_PREFIX } from "../../src/api/paths";
 import {
   appKeys,
+  chatItemQuery,
+  chatListQuery,
   chatQuery,
   daemonKeys,
   healthQuery,
@@ -26,6 +28,8 @@ const HEALTH = { name: "tasma-daemon", version: "0.0.0" };
 const PROJECTS = [{ tag: "SAGA", name: "saga", path: "/repos/saga" }];
 
 const PROJECT = { tag: "SAGA", name: "saga" };
+
+const CHAT_ITEM = { tag: "SAGA", task: "SAGA-1", title: "Plan", chat: 2, step: "build", agent: "claude", created: "2026-09-01T10:00:00.000Z" };
 
 /** Answers every call with one envelope, and records the paths asked for. */
 function stubDaemon(data: unknown = HEALTH) {
@@ -95,9 +99,9 @@ it("caches the whole success envelope, diagnostics included", async () => {
  * there is covered by existing; a key ignores the arguments it does not take.
  */
 it("descends every key from the one prefix that invalidates the daemon's answers", () => {
-  const builders: ((tag: string, id: string, chat: number) => readonly unknown[])[] = Object.values(daemonKeys).filter(
+  const builders = Object.values(daemonKeys).filter(
     (value) => typeof value === "function",
-  );
+  ) as ((...args: unknown[]) => readonly unknown[])[];
 
   expect(builders.length).toBeGreaterThan(0);
   for (const build of builders) {
@@ -183,6 +187,47 @@ it("asks for one chat of a task", async () => {
 
 it("nests a chat inside its task, apart from the exact key of the task", () => {
   expect(daemonKeys.chat("SAGA", "SAGA-1", 2)).toEqual([...daemonKeys.task("SAGA", "SAGA-1"), "chats", 2]);
+});
+
+it("nests the list of the chats of all projects and one item of it under one prefix", () => {
+  const chats = daemonKeys.chats();
+
+  expect(chats).toEqual([...daemonKeys.all, "chats"]);
+  expect(daemonKeys.chatList()).toEqual([...chats, {}]);
+  expect(daemonKeys.chatItem("SAGA-1", 2)).toEqual([...chats, "SAGA-1", 2]);
+});
+
+describe("chatListQuery", () => {
+  it("asks for the first page with no cursor, and for the next page after the cursor of the page before", async () => {
+    const { transport, paths } = stubTransport({
+      "/chats": successReply({ items: [CHAT_ITEM], total: 2, next: "c1" }),
+      "/chats?after=c1": successReply({ items: [{ ...CHAT_ITEM, chat: 1 }], total: 2 }),
+    });
+    const queryClient = createAppQueryClient();
+    const options = chatListQuery(createClient(transport));
+
+    const first = await queryClient.infiniteQuery({ ...options, staleTime: "static" });
+    expect(first.pages).toEqual([{ data: { items: [CHAT_ITEM], total: 2, next: "c1" }, diagnostics: [] }]);
+    expect(options.getNextPageParam(first.pages[0]!, first.pages, undefined, [undefined])).toBe("c1");
+
+    const both = await queryClient.infiniteQuery({ ...options, pages: 2, staleTime: 0 });
+    expect(both.pages.map((page) => page.data.items[0]?.chat)).toEqual([2, 1]);
+    expect(options.getNextPageParam(both.pages[1]!, both.pages, "c1", [undefined, "c1"])).toBeUndefined();
+    expect(paths.filter((path) => path.startsWith("/chats"))).toEqual(["/chats", "/chats", "/chats?after=c1"]);
+    expect(queryClient.getQueryData(daemonKeys.chatList())).toEqual(both);
+  });
+});
+
+it("asks for one chat of the list by the id of its task", async () => {
+  const { transport, paths } = stubTransport({ "/chats/SAGA-1/2": successReply(CHAT_ITEM) });
+
+  const success = await createAppQueryClient().query({
+    ...chatItemQuery(createClient(transport), "SAGA-1", 2),
+    staleTime: "static",
+  });
+
+  expect(paths).toEqual(["/chats/SAGA-1/2"]);
+  expect(success).toEqual({ data: CHAT_ITEM, diagnostics: [] });
 });
 
 it("asks for the tasks of one project, with no filter", async () => {

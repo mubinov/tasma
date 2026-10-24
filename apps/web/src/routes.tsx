@@ -17,6 +17,7 @@ import {
   type TaskList,
 } from "@tasma/protocol";
 import {
+  chatListQuery,
   projectQuery,
   projectsQuery,
   taskQuery,
@@ -26,6 +27,7 @@ import {
   workflowsQuery,
 } from "./api/queries";
 import { AppShell } from "./components/app-shell";
+import { DashboardScreen } from "./components/dashboard-screen";
 import { ErrorScreen, RouteFailure } from "./components/error-boundary";
 import { PlaceholderScreen } from "./components/placeholder-screen";
 import { ProjectScreen } from "./components/project-screen";
@@ -36,7 +38,6 @@ import { TasksFailure, TasksScreen } from "./components/tasks-screen";
 import { WorkflowScreen } from "./components/workflow-screen";
 import { WorkflowsScreen } from "./components/workflows-screen";
 import { boardValue, readBoard, workflowNames } from "./lib/board";
-import { NAVIGATION_BY_PATH, type NavigationPath } from "./navigation";
 import { useUiStore } from "./store/ui";
 
 /** What every loader and every screen is handed: the cache, and the daemon. */
@@ -61,26 +62,31 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
   errorComponent: ErrorScreen,
 });
 
-// What a screen says before it exists is the screen's, not the sidebar's, so
-// the copy is declared beside the routes that render it.
-export const PLACEHOLDER_SUMMARIES = {
-  "/": "What needs a human and what the agents are working on will be summarised here.",
-} as const satisfies Partial<Record<NavigationPath, string>>;
+/** `task` and `chat` name the open chat, both or neither. */
+type DashboardSearch = { task?: string; chat?: string };
 
-type PlaceholderPath = keyof typeof PLACEHOLDER_SUMMARIES;
+/** A tag of the engine, a dash and a number. */
+const TASK_ID = /^[A-Z0-9]+-\d+$/;
 
-function placeholderFor(path: PlaceholderPath) {
-  const { label } = NAVIGATION_BY_PATH[path];
-
-  return () => <PlaceholderScreen title={label} summary={PLACEHOLDER_SUMMARIES[path]} />;
-}
+const CHAT_NUMBER = /^[1-9]\d*$/;
 
 // Explicit calls, never a map over the navigation arrays: a path produced inside
 // a .map() collapses to `string` and takes <Link to="…"> type safety with it.
 const dashboardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: placeholderFor("/"),
+  // As on the task page, a dropped value is set to undefined rather than left out.
+  validateSearch: (search: Record<string, unknown>): DashboardSearch => {
+    const { task, chat } = search;
+    const named = typeof task === "string" && TASK_ID.test(task) && typeof chat === "string" && CHAT_NUMBER.test(chat);
+
+    return named ? { task, chat } : { task: undefined, chat: undefined };
+  },
+  loader: ({ context: { queryClient, client } }) => queryClient.infiniteQuery({
+    ...chatListQuery(client),
+    staleTime: "static",
+  }),
+  component: DashboardScreen,
 });
 
 /**
@@ -168,7 +174,7 @@ const taskRoute = createRoute({
   validateSearch: (search: Record<string, unknown>): TaskSearch => {
     const { chat } = search;
 
-    return { chat: typeof chat === "string" && /^[1-9]\d*$/.test(chat) ? chat : undefined };
+    return { chat: typeof chat === "string" && CHAT_NUMBER.test(chat) ? chat : undefined };
   },
   beforeLoad: ({ params }) => {
     requirePath(daemonRoutes.readTask, { project: params.project, id: params.task });

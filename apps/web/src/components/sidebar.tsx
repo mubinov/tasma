@@ -18,8 +18,9 @@ function SidebarLink({ entry, collapsed }: { entry: NavigationEntry; collapsed: 
       <Link
         to={entry.path}
         // Every path starts with "/", so prefix matching would leave Dashboard
-        // marked current on every screen.
-        activeOptions={{ exact: entry.path === "/" }}
+        // marked current on every screen. The search of an address does not
+        // change the screen.
+        activeOptions={{ exact: entry.path === "/", includeSearch: false }}
         className={ROW_CLASS}
         // Set from one side or the other, never overridden: two utilities of the
         // same property are settled by the generated stylesheet's order.

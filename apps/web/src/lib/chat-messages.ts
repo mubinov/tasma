@@ -1,5 +1,5 @@
 import type { ThreadMessageLike, ToolCallMessagePartStatus } from "@assistant-ui/react";
-import type { ChatAgent, ChatOutside } from "@tasma/protocol";
+import { ProtocolError, type ChatAgent, type ChatOutside, type ChatStatus } from "@tasma/protocol";
 import { diffLines } from "diff";
 import type {
   ChatAgentMessage,
@@ -66,6 +66,26 @@ export function chatAgentName(agent: ChatAgent): string {
 
 export function chatOutsideName(where: ChatOutside): string {
   return OUTSIDE_NAMES[where];
+}
+
+export function chatStateText(status: ChatStatus): string {
+  switch (status.state) {
+    case "working":
+      return "Agent works";
+    case "needs-you":
+      return "Needs you";
+    case "failed":
+      return "Failed";
+    case "continued-outside":
+      return `Continued in ${chatOutsideName(status.where)}`;
+  }
+}
+
+const MISSING_CODES: ReadonlySet<string> = new Set(["chat-not-found", "task-not-found", "project-not-found"]);
+
+/** A refusal that says the chat, its task or its project does not exist. */
+export function isChatMissing(error: Error | null): boolean {
+  return error instanceof ProtocolError && MISSING_CODES.has(error.failure.code);
 }
 
 export function chatToolName(tool: ChatTool): string {

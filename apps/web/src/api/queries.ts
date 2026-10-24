@@ -1,8 +1,9 @@
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import {
   buildPath,
   ProtocolError,
   routes,
+  type ChatListPage,
   type Client,
   type Diagnostic,
   type Failure,
@@ -39,6 +40,9 @@ export const daemonKeys = {
   workflow: (name: string) => [...daemonKeys.workflows(), name] as const,
   workflowList: () => [...daemonKeys.all, "workflow-list"] as const,
   workflowRead: (name: string) => [...daemonKeys.all, "workflow-read", name] as const,
+  chats: () => [...daemonKeys.all, "chats"] as const,
+  chatList: () => [...daemonKeys.chats(), {}] as const,
+  chatItem: (id: string, chat: number) => [...daemonKeys.chats(), id, chat] as const,
 };
 
 /**
@@ -91,6 +95,22 @@ export function chatQuery(client: Client, tag: string, id: string, chat: number)
   return queryOptions({
     queryKey: daemonKeys.chat(tag, id, chat),
     queryFn: () => client.readChat(tag, id, chat),
+  });
+}
+
+export function chatListQuery(client: Client) {
+  return infiniteQueryOptions({
+    queryKey: daemonKeys.chatList(),
+    queryFn: ({ pageParam }) => client.listAllChats(pageParam === undefined ? {} : { after: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page: Success<ChatListPage>) => page.data.next,
+  });
+}
+
+export function chatItemQuery(client: Client, id: string, chat: number) {
+  return queryOptions({
+    queryKey: daemonKeys.chatItem(id, chat),
+    queryFn: () => client.readChatItem(id, chat),
   });
 }
 

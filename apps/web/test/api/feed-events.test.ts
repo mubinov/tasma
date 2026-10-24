@@ -42,11 +42,18 @@ const sample = {
   update: appKeys.update(),
 };
 
+const chatSample = {
+  chatList: daemonKeys.chatList(),
+  chatItem: daemonKeys.chatItem("ACME-4", 1),
+  chatRecord: daemonKeys.chat("SAGA", "SAGA-1", 2),
+  otherChatRecord: daemonKeys.chat("SAGA", "SAGA-2", 1),
+};
+
 describe("filtersOf", () => {
   it("returns one filter for each distinct key and match mode", () => {
     const event: FeedEvent = { kind: "task", tag: "SAGA", id: "SAGA-1", change: "changed" };
 
-    expect(filtersOf([event, { ...event, change: "deleted" }], FEED_MAPPINGS)).toEqual(
+    expect(filtersOf([event, { ...event, change: "created" }], FEED_MAPPINGS)).toEqual(
       filtersOf([event], FEED_MAPPINGS),
     );
   });
@@ -136,9 +143,34 @@ describe("FEED_MAPPINGS", () => {
     ]);
   });
 
-  it("makes a chat event refresh nothing", () => {
+  it("makes a chat event refresh the chats of all projects and their items, and nothing else", () => {
     const event: FeedEvent = { kind: "chat", tag: "SAGA", task: "SAGA-1", chat: 1, step: "build", state: "working" };
 
-    expect(keysMatched(event, sample)).toEqual([]);
+    expect(keysMatched(event, { ...sample, ...chatSample })).toEqual(["chatList", "chatItem"]);
+  });
+
+  it("makes a task event refresh the chats of all projects and their items", () => {
+    expect(keysMatched({ kind: "task", tag: "SAGA", id: "SAGA-1", change: "changed" }, chatSample)).toEqual([
+      "chatList",
+      "chatItem",
+    ]);
+  });
+
+  // A record read of a chat of a deleted task reads again, and then refuses.
+  it("makes a deleted task refresh the record reads of its own chats", () => {
+    expect(keysMatched({ kind: "task", tag: "SAGA", id: "SAGA-1", change: "deleted" }, chatSample)).toEqual([
+      "chatList",
+      "chatItem",
+      "chatRecord",
+    ]);
+  });
+
+  it("makes a project event refresh the chats of all projects, their items and the record reads of the project", () => {
+    expect(keysMatched({ kind: "project", tag: "SAGA", change: "deleted" }, chatSample)).toEqual([
+      "chatList",
+      "chatItem",
+      "chatRecord",
+      "otherChatRecord",
+    ]);
   });
 });
