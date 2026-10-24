@@ -1,7 +1,9 @@
-// The agents of the chats. One chat has one agent process, which the daemon
-// owns: the runner starts it with the first message of the chat, writes every
-// event of the agent into the chat log, and ends the process. The commands of
-// the clients on a chat run here too: a message, a cancel and an answer.
+// The agents of the chats. One chat has at most one agent process, which the
+// daemon owns: the runner starts it with the first message of the chat, writes
+// every event of the agent into the chat log, ends the process when the chat
+// is idle, and starts it again on the same session with the next message. The
+// commands of the clients on a chat run here too: a message, a cancel and an
+// answer.
 
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
@@ -9,7 +11,6 @@ import { RequestError } from "@agentclientprotocol/sdk";
 import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
 import { readProjectDeclaration, TaskStoreError } from "@tasma/engine";
 import type { TaskStoreErrorCode } from "@tasma/engine";
-import { DAEMON_NAME, printable } from "@tasma/protocol";
 import type {
   AcpObject,
   ChatAgent,
@@ -19,24 +20,21 @@ import type {
   PermissionAnswer,
   QuestionAnswer,
 } from "@tasma/protocol";
-import { AgentClosed, connectAgent, spawnAgent } from "../agents/acp.js";
+import { AgentClosed, connectAgent, SessionNotFound, spawnAgent } from "../agents/acp.js";
 import type { AgentConnection, AgentEnd, AgentHandlers, AgentProcess, AgentSession } from "../agents/acp.js";
 import type { AgentAdapter, AgentEnv, AgentLaunch } from "../agents/adapter.js";
 import { readShellEnv } from "../agents/shell-env.js";
 import type { ShellEnv } from "../agents/shell-env.js";
 import { causeOf, DaemonError } from "../http/failure.js";
-import type { ChatRegistry, LiveChat } from "./registry.js";
+import { AGENT_STEP_IDLE_MS, idleTimer } from "./idle.js";
+import type { IdleLimit, IdleTimer } from "./idle.js";
+import { CANCELLED, faultLine, resolution } from "./registry.js";
+import type { ChatRegistry, LiveChat, RequestKind } from "./registry.js";
 
 const AUTH_REQUIRED = RequestError.authRequired().code;
 
 /** The refusals of a chat write that mean the chat is gone: a delete of its project or of its task. */
 const GONE: ReadonlySet<TaskStoreErrorCode> = new Set(["chat-not-found", "task-not-found", "project-not-found"]);
-
-/** The outcome of a permission request and the answer to a question that nobody gives. */
-const CANCELLED = {
-  permission: { outcome: "cancelled" },
-  question: { action: "cancel" },
-} as const satisfies Record<OpenRequest["kind"], AcpObject>;
 
 const KIND_NAME = { permission: "permission request", question: "question" } as const;
 
@@ -51,7 +49,7 @@ export class ChatStartRefusal extends Error {
 }
 
 export type OpenRequest = {
-  kind: "permission" | "question";
+  kind: RequestKind;
   /** The params of the request, as the SDK gives them. */
   params: AcpObject;
   /** Sends the response to the agent. Only the runner calls it, once, after it takes the request out of `open`. */
@@ -60,7 +58,8 @@ export type OpenRequest = {
 
 export type RunningChat = {
   live: LiveChat;
-  process: AgentProcess;
+  /** Set at the spawn. A restart has none while it waits for the last process of the chat and while it launches. */
+  process: AgentProcess | undefined;
   /** Set once the agent has opened the session. */
   session: AgentSession | undefined;
   /** The requests of the agent that wait for an answer, keyed by the `request` of their log event, in open order. */
@@ -88,7 +87,14 @@ export type ChatRunner = {
     client: string;
   }): Promise<LiveChat>;
   running(live: LiveChat): RunningChat | undefined;
-  /** Writes the `user` event and starts a turn with the text. */
+  /**
+   * Writes the `user` event and starts a turn with the text, and with the
+   * earlier texts of the chat that the agent has still to get. A chat with no
+   * agent process gets its agent started again in the background, on the
+   * stored session, after the last process of the chat has ended. Refused with
+   * `turn-running` while a turn runs, and with `chat-not-running` once
+   * `stopStarts()` was called.
+   */
   message(live: LiveChat, input: ChatMessageInput): Promise<void>;
   /**
    * Cancels the turn that runs and resolves its open requests in the name of
@@ -98,19 +104,34 @@ export type ChatRunner = {
   answerPermission(live: LiveChat, request: string, answer: PermissionAnswer): Promise<void>;
   answerQuestion(live: LiveChat, request: string, answer: QuestionAnswer): Promise<void>;
   /**
-   * Aborts a read of the login shell in progress and does not wait for it. A
-   * start that has not spawned its agent yet then spawns none. `close()` does the same.
+   * Ends the agent of the chat with no event, and resolves when every process
+   * of the chat has ended. Refused with `turn-running` while a turn runs or a
+   * request of the agent is open.
+   */
+  stop(live: LiveChat): Promise<void>;
+  /**
+   * Aborts a read of the login shell in progress and does not wait for it, and
+   * clears every idle timer, so no idle stop starts after it. A start that has
+   * not spawned its agent yet then spawns none, and a later message is
+   * refused. `close()` does the same.
    */
   stopStarts(): void;
-  /** Ends every agent process and waits until all have exited, with no event in any log. */
+  /**
+   * Interrupts each chat in a turn or with an open request, as `LiveChat.interrupt`
+   * does, and ends every agent process. Resolves when every process has ended
+   * and every write is done; a fault of a write is reported.
+   */
   close(): Promise<void>;
 };
 
 type Run = RunningChat & {
-  adapter: AgentAdapter;
-  /** The requests to the agent that have not settled. */
-  requests: number;
-  /** Set when the run writes no more events: at a failure, once the chat is gone, and at a daemon stop. */
+  /** Set with the process. */
+  adapter: AgentAdapter | undefined;
+  /** Set with the process. */
+  idle: IdleTimer | undefined;
+  /** The texts of the chat that no prompt has taken to the agent, in log order. A new session takes every text. */
+  unsent: string[];
+  /** Set when the run writes no more events: at a failure, once the chat is gone, and at a stop. */
   quiet: boolean;
   /** Set at the first refusal or fault of the log. */
   halted: boolean;
@@ -163,16 +184,33 @@ function nameOf(live: LiveChat): string {
   return `chat ${live.chat.chat} of ${live.chat.task}`;
 }
 
-/** A resolution with no `client` is one of the daemon. */
-function resolution(kind: OpenRequest["kind"], request: string, result: AcpObject, client?: string): ChatEvent {
-  const by = client === undefined ? {} : { client };
-  return kind === "permission"
-    ? { kind: "permission-resolved", request, outcome: result, ...by }
-    : { kind: "question-resolved", request, answer: result, ...by };
-}
-
 function notRunning(live: LiveChat): DaemonError {
   return new DaemonError("chat-not-running", `${nameOf(live)} has no agent process`);
+}
+
+function daemonStopping(live: LiveChat): DaemonError {
+  return new DaemonError("chat-not-running", `${nameOf(live)} cannot run: the daemon is stopping`);
+}
+
+function turnRunning(live: LiveChat): DaemonError {
+  return new DaemonError("turn-running", `a turn of ${nameOf(live)} is running`);
+}
+
+function newRun(live: LiveChat): Run {
+  return {
+    live,
+    process: undefined,
+    session: undefined,
+    open: new Map(),
+    adapter: undefined,
+    idle: undefined,
+    unsent: [],
+    quiet: false,
+    halted: false,
+    turning: true,
+    cancelReachesAgent: false,
+    cancelledEarly: false,
+  };
 }
 
 export function createChatRunner(options: {
@@ -184,16 +222,23 @@ export function createChatRunner(options: {
   spawn?: (launch: AgentLaunch, folder: string) => AgentProcess;
   /** Reads the environment of the login shell, for an agent binary that is not on the `PATH` of `env`. */
   shellEnv?: (signal: AbortSignal) => Promise<ShellEnv>;
+  /** How long an agent with no turn and no open request runs before it is ended. */
+  idleLimit?: IdleLimit;
   /** Where a fault of a chat log is reported. */
   stderr?: { write(text: string): unknown };
 }): ChatRunner {
   const { root, chats, adapters, env } = options;
   const spawn = options.spawn ?? spawnAgent;
   const shellEnv = options.shellEnv ?? ((signal) => readShellEnv(env, { signal }));
+  const idleLimit = options.idleLimit ?? (() => Promise.resolve(AGENT_STEP_IDLE_MS));
   const stderr = options.stderr ?? process.stderr;
   const runs = new Map<LiveChat, Run>();
   /** Every agent process that has not exited, also of a chat that no longer runs. */
   const alive = new Set<AgentProcess>();
+  /** For the last agent process of each chat: its `ended`, and the handling of its exit. */
+  const ends = new WeakMap<LiveChat, Promise<unknown>>();
+  /** The last run of each chat in this daemon. */
+  const lastRuns = new WeakMap<LiveChat, Run>();
   const stopping = new AbortController();
   /** The last shell environment in which an agent binary was found. */
   let kept: AgentEnv | undefined;
@@ -230,12 +275,20 @@ export function createChatRunner(options: {
 
   function report(live: LiveChat, error: unknown): void {
     if (error instanceof TaskStoreError && GONE.has(error.code)) return;
-    stderr.write(`${DAEMON_NAME}: ${printable(`${nameOf(live)}: ${causeOf(error)}`)}\n`);
+    stderr.write(faultLine(live.chat, error));
+  }
+
+  function register(live: LiveChat): Run {
+    const run = newRun(live);
+    runs.set(live, run);
+    lastRuns.set(live, run);
+    return run;
   }
 
   function forget(run: Run): void {
     if (runs.get(run.live) === run) runs.delete(run.live);
     run.open.clear();
+    run.idle?.clear();
   }
 
   function silence(run: Run): void {
@@ -243,22 +296,31 @@ export function createChatRunner(options: {
     forget(run);
   }
 
+  /** Ends the process with no event. The chat keeps its state. */
+  async function quit(run: Run): Promise<void> {
+    silence(run);
+    await run.process?.end();
+  }
+
   /** After a refusal or a fault of the log: the run writes nothing more, and its process ends. */
   async function halt(run: Run, error: unknown): Promise<void> {
     if (!run.halted) report(run.live, error);
     run.halted = true;
-    silence(run);
-    await run.process.end();
+    await quit(run);
   }
 
-  /** Rejects with a fault of the log after the run halts. */
-  async function record(run: Run, event: ChatEvent): Promise<void> {
+  /** A fault of the call halts the run, and then rejects the call. */
+  async function haltOnFault<T>(run: Run, logCall: () => Promise<T>): Promise<T> {
     try {
-      await run.live.append(event);
+      return await logCall();
     } catch (error) {
       await halt(run, error);
       throw error;
     }
+  }
+
+  async function record(run: Run, event: ChatEvent): Promise<void> {
+    await haltOnFault(run, () => run.live.append(event));
   }
 
   async function append(run: Run, event: ChatEvent): Promise<void> {
@@ -269,36 +331,33 @@ export function createChatRunner(options: {
     if (run.quiet) return;
     silence(run);
     await append(run, { kind: "failed", reason });
-    await run.process.end();
+    await run.process?.end();
   }
 
   /**
    * After `AgentClosed` the process can still run, for example when the SDK
-   * closed the connection at a message over its size limit, so it is ended
-   * before its end is read.
+   * closed the connection at a message over its size limit, so it is ended.
+   * Its exit fails the run. Only a run with a process sends requests.
    */
-  async function failWith(run: Run, error: unknown): Promise<void> {
-    if (!(error instanceof AgentClosed)) return fail(run, errorReason(run.adapter, error));
-    await run.process.end();
-    await fail(run, endReason(await run.process.ended));
+  function failWith(run: Run, error: unknown): Promise<void> {
+    if (error instanceof AgentClosed) return run.process!.end();
+    return fail(run, errorReason(run.adapter!, error));
   }
 
   /** Sends one request to the agent. A failure of it fails the run, and gives undefined. */
   async function send<T>(run: Run, call: () => Promise<T>): Promise<T | undefined> {
-    run.requests += 1;
     try {
       return await call();
     } catch (error) {
       await failWith(run, error);
       return undefined;
-    } finally {
-      run.requests -= 1;
     }
   }
 
   /** Takes the request out of `open`, writes its resolution, and then sends the response to the agent. */
   function settle(run: Run, request: string, open: OpenRequest, result: AcpObject, client?: string): Promise<void> {
     run.open.delete(request);
+    run.idle?.touch();
     const written = record(run, resolution(open.kind, request, result, client));
     open.answer(open.kind === "permission" ? { outcome: result } : result);
     return written;
@@ -313,25 +372,30 @@ export function createChatRunner(options: {
     run.turning = false;
     if (run.quiet) return;
     void Promise.allSettled(cancelOpen(run));
+    run.idle?.touch();
     await append(run, { kind: "turn-end", stopReason });
   }
 
-  async function runTurn(run: Run, session: AgentSession, text: string): Promise<void> {
+  async function runTurn(run: Run, session: AgentSession): Promise<void> {
+    const text = run.unsent.join("\n\n");
+    run.unsent = [];
     const result = await send(run, () => session.prompt(text));
     if (result !== undefined) await endTurn(run, result.stopReason);
   }
 
   /** Each handler appends before its first await, so the log keeps the order in which the handlers run. */
-  function handlersOf(run: Run): AgentHandlers {
-    function ask(kind: OpenRequest["kind"]) {
+  function handlersOf(run: Run, adapter: AgentAdapter): AgentHandlers {
+    function ask(kind: RequestKind) {
       return (params: AcpObject, answer: (result: AcpObject) => void): () => void => {
         const request = randomUUID();
         if (!run.quiet) {
           run.open.set(request, { kind, params, answer });
+          run.idle?.touch();
           void append(run, kind === "permission" ? { kind, request, permission: params } : { kind, request, question: params });
         }
         return () => {
           if (!run.open.delete(request)) return;
+          run.idle?.touch();
           void append(run, resolution(kind, request, CANCELLED[kind]));
         };
       };
@@ -339,30 +403,136 @@ export function createChatRunner(options: {
 
     return {
       update(update) {
-        if (!run.quiet) void append(run, { kind: "update", update: run.adapter.filterUpdate(update) });
+        if (run.quiet) return;
+        run.idle?.touch();
+        void append(run, { kind: "update", update: adapter.filterUpdate(update) });
       },
       permission: ask("permission"),
       question: ask("question"),
     };
   }
 
-  async function begin(run: Run, connection: AgentConnection, folder: string, text: string): Promise<void> {
-    const session = await send(run, () => connection.open(folder));
-    if (session === undefined) return;
-    run.session = session;
+  /**
+   * Resumes the stored session of the chat, or opens a new one, which gets
+   * every text of the chat. An agent that never answered in a session may have
+   * saved nothing of it, so its loss then fails nothing.
+   */
+  async function openSession(run: Run, connection: AgentConnection): Promise<AgentSession | undefined> {
+    const { live } = run;
+    const { folder, session: stored } = live.chat;
+    if (stored !== undefined) {
+      const resumed = await send(run, () => connection.resume(folder, stored).catch((error: unknown) => {
+        if (error instanceof SessionNotFound) return "lost" as const;
+        throw error;
+      }));
+      if (resumed !== "lost") return resumed;
+      if (live.answered) {
+        await fail(run, run.adapter!.sessionGone);
+        return undefined;
+      }
+    }
+    run.unsent = [...live.unanswered];
+    const session = await send(run, () => connection.create(folder));
+    if (session === undefined) return undefined;
     try {
-      await run.live.setSession(session.sessionId);
+      await live.setSession(session.sessionId);
     } catch (error) {
       await halt(run, error);
-      return;
+      return undefined;
     }
+    return session;
+  }
+
+  async function begin(run: Run, connection: AgentConnection): Promise<void> {
+    await send(run, () => connection.initialize());
+    if (run.quiet) return;
+    const session = await openSession(run, connection);
+    if (session === undefined) return;
+    run.session = session;
     run.cancelReachesAgent = true;
-    if (run.cancelledEarly) await endTurn(run, "cancelled");
-    else await runTurn(run, session, text);
+    if (!run.cancelledEarly) return runTurn(run, session);
+    // As `LiveChat.unanswered` does at a cancelled turn end.
+    if (run.live.answered) run.unsent = [];
+    await endTurn(run, "cancelled");
+  }
+
+  /**
+   * Runs after the exit and the close of the connection, so after the handlers
+   * of every message the agent sent, and before the rest of the group of the
+   * process has ended.
+   */
+  function onExit(run: Run, end: AgentEnd): void {
+    forget(run);
+    if (run.turning || !cleanExit(end)) void fail(run, endReason(end));
+  }
+
+  /** Registered in the same step as the spawn, so `close()` sees every process. */
+  function spawnRun(
+    run: Run,
+    adapter: AgentAdapter,
+    launch: AgentLaunch,
+    folder: string,
+    limitMs: number,
+  ): AgentConnection {
+    const agentProcess = spawn(launch, folder);
+    run.process = agentProcess;
+    run.adapter = adapter;
+    run.idle = idleTimer({ limitMs, busy: () => run.turning || run.open.size > 0, expire: () => void quit(run) });
+    alive.add(agentProcess);
+    void agentProcess.ended.then(() => alive.delete(agentProcess));
+    const connection = connectAgent(agentProcess.stream, handlersOf(run, adapter));
+    // With its connection closed, the process can take no more requests.
+    void connection.closed.then(() => agentProcess.end());
+    const exit = Promise.all([agentProcess.exited, connection.closed]).then(([end]) => onExit(run, end));
+    // So a restart writes after the failure of the exit.
+    ends.set(run.live, Promise.all([agentProcess.ended, exit]));
+    return connection;
+  }
+
+  /** The background part of a restart, after its `user` event is written. */
+  async function relaunch(run: Run): Promise<void> {
+    const { live } = run;
+    const { agent, folder, task, step } = live.chat;
+    const adapter = adapters.find((one) => one.agent === agent);
+    if (adapter === undefined) return fail(run, `Tasma cannot run ${agent} yet`);
+    if (!(await isDirectory(folder))) {
+      return fail(run, `The folder of this chat no longer exists: ${folder}. Start a new chat for this step.`);
+    }
+    const launch = await launchOf(adapter);
+    const limitMs = await idleLimit(live.tag, task, step);
+    // The run stays in a turn, so `close()` interrupts it.
+    if (stopping.signal.aborted) return;
+    if ("failed" in launch) return fail(run, launch.failed);
+    await begin(run, spawnRun(run, adapter, launch, folder, limitMs));
+  }
+
+  /** A restart that the daemon stop overtakes before its `user` event writes nothing more. */
+  function refuseIfStopping(run: Run): void {
+    if (!run.quiet && !stopping.signal.aborted) return;
+    silence(run);
+    throw daemonStopping(run.live);
+  }
+
+  /**
+   * Registered before the first await, so a second message is refused and
+   * `close()` sees the chat. Two processes never run on one session.
+   */
+  async function restart(live: LiveChat, text: string, client: string): Promise<void> {
+    const last = lastRuns.get(live);
+    const run = register(live);
+    await ends.get(live);
+    // The log cannot show which texts of a cancelled turn with no answer reached the agent; the last run knows.
+    run.unsent = [...(last?.unsent ?? live.unanswered)];
+    refuseIfStopping(run);
+    await haltOnFault(run, () => live.interrupt());
+    refuseIfStopping(run);
+    await record(run, { kind: "user", text, client });
+    run.unsent.push(text);
+    void relaunch(run);
   }
 
   /** The open request an answer takes. The caller takes it out of `open` in the same synchronous step. */
-  function pending(live: LiveChat, request: string, kind: OpenRequest["kind"]): { run: Run; open: OpenRequest } {
+  function pending(live: LiveChat, request: string, kind: RequestKind): { run: Run; open: OpenRequest } {
     const run = runs.get(live);
     const open = run?.open.get(request);
     if (run === undefined && live.fold.open.includes(request)) throw notRunning(live);
@@ -378,17 +548,6 @@ export function createChatRunner(options: {
     return { run, open };
   }
 
-  /**
-   * Runs after the exit and the close of the connection, so after the handlers
-   * of every message the agent sent. An exit while a request runs is written by
-   * the failure of that request.
-   */
-  function onExit(run: Run, end: AgentEnd): void {
-    alive.delete(run.process);
-    forget(run);
-    if (run.requests === 0 && !cleanExit(end)) void fail(run, endReason(end));
-  }
-
   return {
     async start({ tag, task, step, agent, text, client }) {
       const adapter = adapters.find((one) => one.agent === agent);
@@ -399,6 +558,7 @@ export function createChatRunner(options: {
       }
 
       const launch = await launchOf(adapter);
+      const limitMs = await idleLimit(tag, task, step);
       const live = await chats.create(tag, task, { step, agent, folder: path }, { text, client });
       // After `stopStarts()`, the chat stays with no agent, as a daemon stop leaves every other chat.
       if (stopping.signal.aborted) return live;
@@ -411,28 +571,8 @@ export function createChatRunner(options: {
         return live;
       }
 
-      // Registered in the same step as the spawn, so `close()` sees every process.
-      const agentProcess = spawn(launch, path);
-      const run: Run = {
-        live,
-        process: agentProcess,
-        session: undefined,
-        open: new Map(),
-        adapter,
-        requests: 0,
-        quiet: false,
-        halted: false,
-        turning: true,
-        cancelReachesAgent: false,
-        cancelledEarly: false,
-      };
-      runs.set(live, run);
-      alive.add(agentProcess);
-      const connection = connectAgent(agentProcess.stream, handlersOf(run));
-      // With its connection closed, the process can take no more requests.
-      void connection.closed.then(() => agentProcess.end());
-      void Promise.all([agentProcess.ended, connection.closed]).then(([end]) => onExit(run, end));
-      void begin(run, connection, path, text);
+      const run = register(live);
+      void begin(run, spawnRun(run, adapter, launch, path, limitMs));
       return live;
     },
 
@@ -442,11 +582,14 @@ export function createChatRunner(options: {
 
     async message(live, { text, client }) {
       const run = runs.get(live);
-      if (run === undefined) throw notRunning(live);
-      if (run.turning) throw new DaemonError("turn-running", `a turn of ${nameOf(live)} is running`);
+      if (run?.turning) throw turnRunning(live);
+      if (stopping.signal.aborted) throw daemonStopping(live);
+      if (run === undefined) return restart(live, text, client);
       run.turning = true;
+      run.idle?.touch();
+      run.unsent.push(text);
       const written = record(run, { kind: "user", text, client });
-      void runTurn(run, run.session!, text);
+      void runTurn(run, run.session!);
       await written;
     },
 
@@ -473,14 +616,28 @@ export function createChatRunner(options: {
       await settle(run, request, open, result, answer.client);
     },
 
+    async stop(live) {
+      const run = runs.get(live);
+      if (run?.turning) throw turnRunning(live);
+      if (run !== undefined) {
+        if (run.open.size > 0) throw new DaemonError("turn-running", `${nameOf(live)} has a request open`);
+        void quit(run);
+      }
+      await ends.get(live);
+    },
+
     stopStarts() {
       stopping.abort();
+      for (const run of runs.values()) run.idle?.clear();
     },
 
     async close() {
       stopping.abort();
-      for (const run of [...runs.values()]) silence(run);
-      await Promise.all([...alive].map((agentProcess) => agentProcess.end()));
+      const writes = [...runs.values()].map((run) => {
+        silence(run);
+        return run.live.interrupt().catch((error: unknown) => report(run.live, error));
+      });
+      await Promise.all([...writes, ...[...alive].map((agentProcess) => agentProcess.end())]);
     },
   };
 }

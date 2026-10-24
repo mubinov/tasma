@@ -95,13 +95,17 @@ async function tree(): Promise<string> {
  * A daemon over a tree: the registry and the project and task routes, over one
  * host and one write queue. A second call over the same tree is a restart.
  */
-async function world(root: string, wrap: (host: ProjectHost) => ProjectHost = (host) => host): Promise<World> {
+async function world(
+  root: string,
+  wrap: (host: ProjectHost) => ProjectHost = (host) => host,
+  stderr?: { write(text: string): unknown },
+): Promise<World> {
   const inner = createProjectHost({ root });
   onTestFinished(() => inner.close());
   const host = wrap(inner);
   const writes = new WriteQueue();
   const events: FeedEvent[] = [];
-  const chats = createChatRegistry({ root, host, writes, publish: (event) => events.push(event) });
+  const chats = createChatRegistry({ root, host, writes, publish: (event) => events.push(event), stderr });
   const server = await startTestServer([...projectRoutes(host, writes, chats), ...taskRoutes(host, { writes, chats })]);
   return { chats, writes, events, server };
 }
@@ -424,7 +428,7 @@ describe("loading a chat", () => {
 
   it("keeps nothing of a load that failed", async () => {
     const root = await tree();
-    await (await world(root)).chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await (await (await world(root)).chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE)).append(TURN_END);
     const { chats } = await world(root);
     const record = join(chatFolder(root, "ALPHA", "1", 1), "chat.json");
     const text = await readFile(record, "utf8");
@@ -433,23 +437,178 @@ describe("loading a chat", () => {
     await expect(chats.get("ALPHA", "ALPHA-1", 1)).rejects.toMatchObject({ code: "chat-unreadable" });
     await writeFile(record, text, "utf8");
 
-    await expect(chats.get("ALPHA", "ALPHA-1", 1)).resolves.toMatchObject({ chat: { seq: 1, state: "working" } });
+    await expect(chats.get("ALPHA", "ALPHA-1", 1)).resolves.toMatchObject({ chat: { seq: 2, state: "needs-you" } });
   });
 
   it("reports the lines of a log that hold no entry", async () => {
     const root = await tree();
-    await (await world(root)).chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await (await (await world(root)).chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE)).append(TURN_END);
     const log = logFile(root, "ALPHA", "1", 1);
     await appendFile(log, "not an entry\n");
     const { chats } = await world(root);
 
     const live = await chats.get("ALPHA", "ALPHA-1", 1);
 
-    expect(live.chat.seq).toBe(1);
-    expect(live.diagnostics).toMatchObject([{ code: "chat-file-unreadable", path: log, line: 2 }]);
+    expect(live.chat.seq).toBe(2);
+    expect(live.diagnostics).toMatchObject([{ code: "chat-file-unreadable", path: log, line: 3 }]);
     await expect(chats.list("ALPHA", "ALPHA-1")).resolves.toMatchObject({
-      diagnostics: [{ code: "chat-file-unreadable", path: log, line: 2 }],
+      diagnostics: [{ code: "chat-file-unreadable", path: log, line: 3 }],
     });
+  });
+});
+
+describe("the answers of the agent in a chat", () => {
+  it("gives the messages after the last answer, after each append and after a restart", async () => {
+    const root = await tree();
+    const live = await (await world(root)).chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    expect([live.answered, live.unanswered]).toEqual([false, [MESSAGE.text]]);
+
+    await live.append({ kind: "update", update: { sessionUpdate: "available_commands_update" } });
+    await live.append({ kind: "turn-end", stopReason: "cancelled" });
+    await live.append({ kind: "user", text: "Add a printer", client: "web" });
+    expect([live.answered, live.unanswered]).toEqual([false, [MESSAGE.text, "Add a printer"]]);
+
+    await live.append(UPDATE);
+    expect([live.answered, live.unanswered]).toEqual([true, []]);
+    await live.append(TURN_END);
+    await live.append({ kind: "user", text: "Add a lexer", client: "web" });
+    await live.append({ kind: "failed", reason: "No agent here" });
+
+    const loaded = await (await world(root)).chats.get("ALPHA", "ALPHA-1", 1);
+    expect([loaded.answered, loaded.unanswered]).toEqual([true, ["Add a lexer"]]);
+  });
+
+  it("takes back the messages of a cancelled turn once the agent has answered, also after a restart", async () => {
+    const root = await tree();
+    const live = await (await world(root)).chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
+    await live.append({ kind: "user", text: "Delete the build folder", client: "web" });
+    await live.append({ kind: "turn-end", stopReason: "cancelled" });
+    expect([live.answered, live.unanswered]).toEqual([true, []]);
+
+    await live.append({ kind: "user", text: "Add a lexer", client: "web" });
+    await live.append({ kind: "interrupted" });
+
+    const loaded = await (await world(root)).chats.get("ALPHA", "ALPHA-1", 1);
+    expect([loaded.answered, loaded.unanswered]).toEqual([true, ["Add a lexer"]]);
+  });
+
+  it("loads a log whose events hold fields of another shape, and takes them for no answer and no message", async () => {
+    const root = await tree();
+    await (await world(root)).chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    const at = "2026-01-01T00:00:00.000Z";
+    const lines = [
+      { kind: "update", update: null },
+      { kind: "update" },
+      { kind: "update", update: "agent_message_chunk" },
+      { kind: "user", text: 7, client: "web" },
+    ].map((event, index) => `${JSON.stringify({ seq: index + 2, at, event })}\n`);
+    await appendFile(logFile(root, "ALPHA", "1", 1), lines.join(""));
+    const { chats } = await world(root);
+
+    const live = await chats.get("ALPHA", "ALPHA-1", 1);
+
+    expect([live.answered, live.unanswered]).toEqual([false, [MESSAGE.text]]);
+    expect(live.chat.state).toBe("needs-you");
+    await expect(chats.list("ALPHA", "ALPHA-1")).resolves.toMatchObject({ chats: [live], diagnostics: [] });
+  });
+
+  it.each([
+    ["a turn end", TURN_END],
+    ["a permission request", { kind: "permission", request: "r-1", permission: {} }],
+    ["a question", { kind: "question", request: "r-2", question: {} }],
+    ...["agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan"].map((kind) => [
+      `an update ${kind}`,
+      { kind: "update", update: { sessionUpdate: kind } },
+    ]),
+  ] as [string, ChatEvent][])("takes %s for an answer", async (_name, event) => {
+    const live = await (await world(await tree())).chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+
+    await live.append(event);
+
+    expect([live.answered, live.unanswered]).toEqual([true, []]);
+  });
+});
+
+describe("recovering a chat that an earlier daemon left in a turn or with an open request", () => {
+  const PERMISSION: ChatEvent = { kind: "permission", request: "r-1", permission: { toolCall: { toolCallId: "c-1" } } };
+  const QUESTION: ChatEvent = { kind: "question", request: "r-2", question: { message: "Which parser?" } };
+  const INTERRUPTED: ChatEvent = { kind: "interrupted" };
+
+  /** Writes chat 1 of ALPHA-1 with `events` through one daemon, and gives a new daemon over the tree. */
+  async function planted(events: ChatEvent[]) {
+    const root = await tree();
+    const before = await world(root);
+    const live = await before.chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    for (const event of events) await live.append(event);
+    const errors: string[] = [];
+    const after = await world(root, (host) => host, { write: (text: string) => errors.push(text) });
+    return { ...after, root, errors };
+  }
+
+  async function logOfChat(root: string): Promise<ChatEvent[]> {
+    return (await logEntries(logFile(root, "ALPHA", "1", 1))).map((entry) => entry.event);
+  }
+
+  it("interrupts a log that ends during a turn at the first get, and publishes the change of state", async () => {
+    const { chats, events, root } = await planted([UPDATE]);
+
+    const live = await chats.get("ALPHA", "ALPHA-1", 1);
+
+    expect(live.chat.state).toBe("needs-you");
+    expect(await logOfChat(root)).toEqual([{ kind: "user", ...MESSAGE }, UPDATE, INTERRUPTED]);
+    expect(events).toEqual([chatEvent(1, "needs-you")]);
+    await chats.get("ALPHA", "ALPHA-1", 1);
+    expect(await logOfChat(root)).toHaveLength(3);
+  });
+
+  it("resolves each open request as cancelled with no client, then interrupts, through list", async () => {
+    const { chats, root } = await planted([PERMISSION, QUESTION, TURN_END, { kind: "user", ...MESSAGE }, PERMISSION]);
+
+    const { chats: listed } = await chats.list("ALPHA", "ALPHA-1");
+
+    expect(listed[0]?.fold).toEqual({ turn: false, open: [], status: { state: "needs-you" } });
+    expect((await logOfChat(root)).slice(-3)).toEqual([
+      PERMISSION,
+      { kind: "permission-resolved", request: "r-1", outcome: { outcome: "cancelled" } },
+      INTERRUPTED,
+    ]);
+  });
+
+  it("resolves an open request outside a turn, and a question", async () => {
+    const { chats, root } = await planted([TURN_END, QUESTION]);
+
+    await chats.get("ALPHA", "ALPHA-1", 1);
+
+    expect((await logOfChat(root)).slice(-2)).toEqual([
+      { kind: "question-resolved", request: "r-2", answer: { action: "cancel" } },
+      INTERRUPTED,
+    ]);
+  });
+
+  it.each([
+    ["a turn end", [TURN_END]],
+    ["a failure", [{ kind: "failed", reason: "The agent process ended with exit code 1" }]],
+  ] as [string, ChatEvent[]][])("writes nothing to a log that ends with %s", async (_name, ended) => {
+    const { chats, root, events } = await planted(ended);
+
+    await chats.get("ALPHA", "ALPHA-1", 1);
+
+    expect(await logOfChat(root)).toEqual([{ kind: "user", ...MESSAGE }, ...ended]);
+    expect(events).toEqual([]);
+  });
+
+  it("keeps the chat as on disk when a write fails, reports the fault, and interrupts it at the next interrupt", async () => {
+    const { chats, root, errors } = await planted([]);
+    failNextAppend();
+
+    const live = await chats.get("ALPHA", "ALPHA-1", 1);
+
+    expect(live.chat.state).toBe("working");
+    expect(errors).toEqual(["tasma-daemon: chat 1 of ALPHA-1: the disk is gone\n"]);
+    await live.interrupt();
+    expect(await logOfChat(root)).toEqual([{ kind: "user", ...MESSAGE }, INTERRUPTED]);
+    expect(live.chat.state).toBe("needs-you");
   });
 });
 

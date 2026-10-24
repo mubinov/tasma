@@ -102,7 +102,11 @@ export type Client = {
     after?: number,
     options?: CallOptions,
   ): Promise<Success<ChatEventsReply>>;
-  /** Starts a turn with the message. Refused with `turn-running` while a turn runs. */
+  /**
+   * Starts a turn with the message. A chat with no agent process gets its agent
+   * started again, on the conversation of the chat. Refused with `turn-running`
+   * while a turn runs, and with `chat-not-running` only while the daemon stops.
+   */
   sendChatMessage(tag: string, id: string, chat: number, input: ChatMessageInput): Promise<Success<Chat>>;
   /** Cancels the turn that runs. Does nothing when no turn runs. */
   cancelChatTurn(tag: string, id: string, chat: number, input: ChatCancelInput): Promise<Success<Chat>>;

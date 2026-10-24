@@ -1,164 +1,32 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RequestError } from "@agentclientprotocol/sdk";
 import type { NewSessionResponse, PromptResponse } from "@agentclientprotocol/sdk";
 import { TaskStoreError } from "@tasma/engine";
-import type { AcpObject, ChatEvent, FeedEvent } from "@tasma/protocol";
 import { spawnAgent } from "../../src/agents/acp.js";
-import type { AgentProcess } from "../../src/agents/acp.js";
-import type { AgentAdapter, AgentEnv, AgentLaunch } from "../../src/agents/adapter.js";
+import type { AgentAdapter, AgentEnv } from "../../src/agents/adapter.js";
 import { claudeAdapter } from "../../src/agents/claude.js";
 import type { ShellEnv } from "../../src/agents/shell-env.js";
-import { createChatRegistry } from "../../src/chats/registry.js";
-import type { ChatRegistry } from "../../src/chats/registry.js";
-import { ChatStartRefusal, createChatRunner } from "../../src/chats/runner.js";
-import type { ChatRunner } from "../../src/chats/runner.js";
-import { createProjectHost } from "../../src/projects/host.js";
-import { projectRoutes } from "../../src/projects/routes.js";
-import { taskRoutes } from "../../src/tasks/routes.js";
-import { WriteQueue } from "../../src/tasks/serialize.js";
+import { ChatStartRefusal } from "../../src/chats/runner.js";
+import { logOf, logUntil, requestsOf, send, target, until } from "../helpers.js";
+import { forever, line, PERMISSION, QUESTION, SESSION, text, updateLine } from "../agents/fake-agent.js";
+import type { Script } from "../agents/fake-agent.js";
 import {
-  logOf,
-  logUntil,
-  plant,
-  projectConfig,
-  projectsRoot,
-  requestsOf,
-  send,
-  startTestServer,
-  target,
-  taskFile,
-  taskText,
-  until,
-} from "../helpers.js";
-import type { TestServer } from "../helpers.js";
-import { fakeAgent, forever, line, PERMISSION, QUESTION, SESSION, text, updateLine } from "../agents/fake-agent.js";
-import type { FakeProcess, Script } from "../agents/fake-agent.js";
-
-const START = { tag: "ALPHA", task: "ALPHA-1", step: "dev:build", agent: "claude", text: "Build the parser", client: "app" } as const;
-
-const LAUNCH: AgentLaunch = { command: "fake-agent", args: [], env: {} };
-
-/** An adapter that launches the fake agent, records the environment it gets, and marks each update it filters. */
-function fakeAdapter(launch: AgentLaunch | { failed: string } = LAUNCH) {
-  const envs: AgentEnv[] = [];
-  const adapter: AgentAdapter = {
-    agent: "claude",
-    launch(env) {
-      envs.push(env);
-      return launch;
-    },
-    notLoggedIn: "Log in to the agent first",
-    filterUpdate: (update) => ({ ...update, filtered: true }),
-  };
-  return { adapter, envs };
-}
-
-type World = {
-  folder: string;
-  chats: ChatRegistry;
-  runner: ChatRunner;
-  feed: FeedEvent[];
-  errors: string[];
-  processes: FakeProcess[];
-  envs: AgentEnv[];
-  server: TestServer;
-};
-
-type Options = {
-  script?: Script;
-  adapter?: AgentAdapter;
-  /** What the spawn does with each process it starts, before the runner gets it. */
-  started?: (fake: FakeProcess) => void;
-  config?: (folder: string) => string;
-  chats?: (chats: ChatRegistry) => ChatRegistry;
-  env?: AgentEnv;
-  /** Replaces the spawn of the fake agent. */
-  spawn?: (launch: AgentLaunch, folder: string) => AgentProcess;
-  /** The read of the login shell. Without it, a read fails the test. With `null`, the runner uses its own read. */
-  shellEnv?: ((signal: AbortSignal) => Promise<ShellEnv>) | null;
-};
-
-/** A daemon over project ALPHA, whose folder is a directory, with the task ALPHA-1. */
-async function world(options: Options = {}): Promise<World> {
-  const root = await projectsRoot("ALPHA");
-  const folder = await target();
-  await plant(projectConfig(root, "ALPHA"), options.config?.(folder) ?? `path: ${folder}\n`);
-  await plant(taskFile(root, "ALPHA", "ALPHA-1"), taskText("ALPHA-1"));
-  const host = createProjectHost({ root });
-  onTestFinished(() => host.close());
-  const writes = new WriteQueue();
-  const feed: FeedEvent[] = [];
-  const registry = createChatRegistry({ root, host, writes, publish: (event) => feed.push(event) });
-  const chats = options.chats?.(registry) ?? registry;
-  const server = await startTestServer([
-    ...projectRoutes(host, writes, registry),
-    ...taskRoutes(host, { writes, chats: registry }),
-  ]);
-  const agents = fakeAgent(options.script);
-  const { adapter, envs } = fakeAdapter();
-  const errors: string[] = [];
-  let unexpectedReads = 0;
-  if (options.shellEnv === undefined) onTestFinished(() => expect(unexpectedReads, "reads of the shell").toBe(0));
-  const unexpected = async (): Promise<ShellEnv> => {
-    unexpectedReads += 1;
-    return { failed: "The test reads no shell" };
-  };
-  const runner = createChatRunner({
-    root,
-    chats,
-    adapters: [options.adapter ?? adapter],
-    env: options.env ?? { PATH: "/usr/bin", HOME: "/home/alice" },
-    spawn: options.spawn ?? ((launch, at) => {
-      const fake = agents.spawn(launch, at);
-      options.started?.(fake);
-      return fake;
-    }),
-    shellEnv: options.shellEnv === null ? undefined : (options.shellEnv ?? unexpected),
-    stderr: { write: (line: string) => errors.push(line) },
-  });
-  onTestFinished(() => runner.close());
-  return { folder, chats, runner, feed, errors, processes: agents.processes, envs, server };
-}
-
-const USER: ChatEvent = { kind: "user", text: START.text, client: START.client };
-
-function filtered(update: AcpObject): ChatEvent {
-  return { kind: "update", update: { ...update, filtered: true } };
-}
-
-function chatState(state: "working" | "needs-you" | "failed"): FeedEvent {
-  return { kind: "chat", tag: "ALPHA", task: "ALPHA-1", chat: 1, step: START.step, state };
-}
-
-/** The id the daemon gave the open request of the log, which a resolution names. */
-function requestOf(log: ChatEvent[]): string {
-  const [first] = requestsOf(log);
-  if (first === undefined) throw new Error("the log holds no request");
-  return first;
-}
-
-/** Waits until the runner has ended the process. */
-async function endedByRunner(fake: FakeProcess | undefined): Promise<void> {
-  await until(() => (fake?.endCalls ?? 0) > 0, "the runner ended the process");
-}
-
-/**
- * Makes each process exit `ms` after the runner ends it, as a real agent does
- * after its stdin closes. `first` runs when the end starts.
- */
-function slowEnd(ms: number, first: () => void = () => {}): (fake: FakeProcess) => void {
-  return (fake) => {
-    const end = fake.end.bind(fake);
-    let ending: Promise<void> | undefined;
-    fake.end = () => (ending ??= (async () => {
-      first();
-      await new Promise((resolve) => setTimeout(resolve, ms));
-      await end();
-    })());
-  };
-}
+  chatState,
+  endedByRunner,
+  fakeAdapter,
+  filtered,
+  heldTurns,
+  LAUNCH,
+  NEXT,
+  requestOf,
+  slowEnd,
+  START,
+  USER,
+  world,
+} from "./runner-world.js";
+import type { World } from "./runner-world.js";
 
 describe("createChatRunner.start", () => {
   it("writes the updates, a permission request and the turn end in order, and keeps the session", async () => {
@@ -585,21 +453,6 @@ describe("createChatRunner.start with the environment of the login shell", () =>
   });
 });
 
-/**
- * A script whose prompts stay open until `finish`, or until a `session/cancel`
- * ends the oldest one with `cancelled`.
- */
-function heldTurns(): { script: Script; finish: () => void } {
-  const turns: ((result: PromptResponse) => void)[] = [];
-  const script: Script = {
-    prompt: () => new Promise((resolve) => turns.push(resolve)),
-    cancel: () => turns.shift()?.({ stopReason: "cancelled" }),
-  };
-  return { script, finish: () => turns.shift()?.({ stopReason: "end_turn" }) };
-}
-
-const NEXT = { text: "Now the printer", client: "web" } as const;
-
 describe("createChatRunner.message", () => {
   it("starts a turn after the end of the last one, and writes the message with its client first", async () => {
     const { runner, processes, feed } = await world({
@@ -719,22 +572,31 @@ describe("createChatRunner.message", () => {
     ]);
   });
 
-  describe("refuses with chat-not-running", () => {
-    it("a failed chat", async () => {
-      const { runner } = await world({ adapter: fakeAdapter({ failed: "No agent here" }).adapter });
-      const live = await runner.start(START);
-
-      await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "chat-not-running" });
-    });
-
-    it("a chat whose process exited with code 0 while idle", async () => {
+  describe("refuses with chat-not-running, and writes nothing", () => {
+    it("a chat with no process after stopStarts", async () => {
       const { runner, processes } = await world();
       const live = await runner.start(START);
       await logUntil(live, "turn-end");
       processes[0]?.exit({ code: 0, signal: null });
       await until(() => runner.running(live) === undefined, "the chat stopped running");
+      runner.stopStarts();
+
+      await expect(runner.message(live, NEXT)).rejects.toMatchObject({
+        code: "chat-not-running",
+        message: "chat 1 of ALPHA-1 cannot run: the daemon is stopping",
+      });
+      expect(await logOf(live)).toEqual([USER, { kind: "turn-end", stopReason: "end_turn" }]);
+      expect(processes).toHaveLength(1);
+    });
+
+    it("a running chat after stopStarts", async () => {
+      const { runner, processes } = await world();
+      const live = await runner.start(START);
+      await logUntil(live, "turn-end");
+      runner.stopStarts();
 
       await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "chat-not-running" });
+      expect(processes[0]?.prompts).toHaveLength(1);
     });
 
     it("a chat after close", async () => {
@@ -821,7 +683,10 @@ describe("createChatRunner.cancel", () => {
   });
 
   describe("before the first prompt is sent", () => {
-    /** Cancels while `held` holds the start: the first turn ends with no prompt, and a later message runs. */
+    /**
+     * Cancels while `held` holds the start: the first turn ends with no prompt,
+     * and a later message runs with the first text too.
+     */
     async function cancelled(setup: World, held: { started: () => boolean; release: () => void }): Promise<void> {
       const { runner, processes } = setup;
       const live = await runner.start(START);
@@ -837,7 +702,9 @@ describe("createChatRunner.cancel", () => {
 
       await runner.message(live, NEXT);
       await logUntil(live, "turn-end");
-      expect(processes[0]?.prompts.map((prompt) => prompt.prompt)).toEqual([[{ type: "text", text: NEXT.text }]]);
+      expect(processes[0]?.prompts.map((prompt) => prompt.prompt)).toEqual([
+        [{ type: "text", text: `${START.text}\n\n${NEXT.text}` }],
+      ]);
     }
 
     it("while session/new runs", async () => {
@@ -986,23 +853,37 @@ describe("createChatRunner.answerPermission", () => {
     ]);
   });
 
-  it("refuses after close with chat-not-running a request the log shows open, and with already-answered another", async () => {
-    const { runner } = await world({
-      script: {
-        async prompt(_params, agent) {
-          void agent.permission().catch(() => undefined);
-          return forever();
-        },
+  describe("after close", () => {
+    const asking: Script = {
+      async prompt(_params, agent) {
+        void agent.permission().catch(() => undefined);
+        return forever();
       },
-    });
-    const live = await runner.start(START);
-    const request = requestOf(await logUntil(live, "permission"));
-    await runner.close();
+    };
 
-    await expect(runner.answerPermission(live, request, { optionId: "allow", client: "web" }))
-      .rejects.toMatchObject({ code: "chat-not-running" });
-    await expect(runner.answerPermission(live, "unknown", { optionId: "allow", client: "web" }))
-      .rejects.toMatchObject({ code: "already-answered" });
+    it("refuses with already-answered a request that the close resolved", async () => {
+      const { runner } = await world({ script: asking });
+      const live = await runner.start(START);
+      const request = requestOf(await logUntil(live, "permission"));
+      await runner.close();
+
+      await expect(runner.answerPermission(live, request, { optionId: "allow", client: "web" }))
+        .rejects.toMatchObject({ code: "already-answered" });
+    });
+
+    it("refuses with chat-not-running a request the log shows open when the close could not resolve it", async () => {
+      const { runner, errors } = await world({ script: asking });
+      const live = await runner.start(START);
+      const request = requestOf(await logUntil(live, "permission"));
+      vi.spyOn(live, "interrupt").mockRejectedValue(new Error("the disk is gone"));
+      await runner.close();
+
+      await expect(runner.answerPermission(live, request, { optionId: "allow", client: "web" }))
+        .rejects.toMatchObject({ code: "chat-not-running" });
+      await expect(runner.answerPermission(live, "unknown", { optionId: "allow", client: "web" }))
+        .rejects.toMatchObject({ code: "already-answered" });
+      expect(errors).toEqual(["tasma-daemon: chat 1 of ALPHA-1: the disk is gone\n"]);
+    });
   });
 });
 
@@ -1407,19 +1288,21 @@ describe("createChatRunner when the chat is gone", () => {
 });
 
 describe("createChatRunner.close", () => {
-  it("ends every agent process, waits for each exit and writes no event", async () => {
-    const { runner, processes } = await world({
+  it("resolves each open request as cancelled and interrupts each chat in a turn, then ends every process", async () => {
+    const { runner, processes, feed } = await world({
       script: {
         async prompt(_params, agent) {
           void agent.permission();
+          void agent.update(text("late")).catch(() => undefined);
           return forever();
         },
       },
+      started: slowEnd(20),
     });
     const live = await runner.start(START);
     const second = await runner.start({ ...START, text: "Build the printer" });
-    await logUntil(live, "permission");
-    await logUntil(second, "permission");
+    await logUntil(live, "update");
+    await logUntil(second, "update");
     const before = [await logOf(live), await logOf(second)];
 
     await runner.close();
@@ -1430,11 +1313,20 @@ describe("createChatRunner.close", () => {
       { code: 0, signal: null },
     ]);
     await new Promise((resolve) => setImmediate(resolve));
-    expect([await logOf(live), await logOf(second)]).toEqual(before);
+    for (const [at, chat] of [live, second].entries()) {
+      const request = requestOf(before[at]!);
+      expect(await logOf(chat)).toEqual([
+        ...before[at]!,
+        { kind: "permission-resolved", request, outcome: { outcome: "cancelled" } },
+        { kind: "interrupted" },
+      ]);
+      expect(chat.chat.state).toBe("needs-you");
+    }
+    expect(feed.filter((event) => event.kind === "chat").at(-1)).toMatchObject({ state: "needs-you" });
     expect(runner.running(live)).toBeUndefined();
   });
 
-  it("writes nothing for an open request that the agent cancels while it ends", async () => {
+  it("writes no event of the agent after the interrupt, also for a request the agent cancels while it ends", async () => {
     const cancel = new AbortController();
     const { runner } = await world({
       script: {
@@ -1443,14 +1335,33 @@ describe("createChatRunner.close", () => {
           return forever();
         },
       },
-      started: slowEnd(20, () => cancel.abort()),
+      started: (fake) => slowEnd(20, () => {
+        cancel.abort();
+        void fake.update(text("late")).catch(() => undefined);
+      })(fake),
     });
     const live = await runner.start(START);
     const before = await logUntil(live, "permission");
 
     await runner.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(await logOf(live)).toEqual([
+      ...before,
+      { kind: "permission-resolved", request: requestOf(before), outcome: { outcome: "cancelled" } },
+      { kind: "interrupted" },
+    ]);
+  });
+
+  it("writes nothing for a chat with no turn and no open request", async () => {
+    const { runner, processes } = await world();
+    const live = await runner.start(START);
+    const before = await logUntil(live, "turn-end");
+
+    await runner.close();
 
     expect(await logOf(live)).toEqual(before);
+    expect(await processes[0]?.ended).toEqual({ code: 0, signal: null });
   });
 
   it("starts no agent for a start that the close overtakes", async () => {

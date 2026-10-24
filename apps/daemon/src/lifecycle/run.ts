@@ -16,6 +16,7 @@ import type { DaemonRecord } from "@tasma/protocol";
 import manifest from "../../../../package.json" with { type: "json" };
 import type { AgentAdapter, AgentEnv } from "../agents/adapter.js";
 import { claudeAdapter } from "../agents/claude.js";
+import { idleLimit } from "../chats/idle.js";
 import { chatListRoutes } from "../chats/list-routes.js";
 import { createChatRegistry } from "../chats/registry.js";
 import { chatRoutes } from "../chats/routes.js";
@@ -196,8 +197,15 @@ export async function startDaemon(options: {
   const { publish } = feed;
   const host = createProjectHost({ root, publish });
   const writes = new WriteQueue();
-  const chats = createChatRegistry({ root, host, writes, publish });
-  const runner = createChatRunner({ root, chats, adapters: AGENT_ADAPTERS, env, stderr });
+  const chats = createChatRegistry({ root, host, writes, publish, stderr });
+  const runner = createChatRunner({
+    root,
+    chats,
+    adapters: AGENT_ADAPTERS,
+    env,
+    idleLimit: idleLimit({ root, host }),
+    stderr,
+  });
   const server = createDaemonServer(
     [
       ...projectRoutes(host, writes, chats),

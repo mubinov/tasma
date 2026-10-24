@@ -1,11 +1,11 @@
 import { once } from "node:events";
-import { chmod } from "node:fs/promises";
+import { chmod, readFile } from "node:fs/promises";
 import { Agent, request as httpRequest } from "node:http";
 import type { IncomingHttpHeaders } from "node:http";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import type { DaemonRecord, EventsReply } from "@tasma/protocol";
+import type { Chat, ChatEntry, DaemonRecord, EventsReply } from "@tasma/protocol";
 import { daemonAnswers } from "../../src/lifecycle/probe.js";
 import { readRecord, recordPath } from "../../src/lifecycle/record.js";
 import { runDaemon, startDaemon } from "../../src/lifecycle/run.js";
@@ -18,6 +18,7 @@ import {
   get,
   logFile,
   plant,
+  plantChat,
   projectsRoot,
   seedRecord,
   send,
@@ -301,6 +302,28 @@ describe("starting a daemon", () => {
 
     expect(start.code).toBe(1);
     expect(start.message).toContain(recordPath(root));
+  });
+});
+
+describe("a chat that an earlier daemon left in a turn", () => {
+  it("is interrupted at its first read, with each open request resolved as cancelled", async () => {
+    const root = await projectsRoot("ONE");
+    await plant(taskFile(root, "ONE", "ONE-1"), taskText("ONE-1"));
+    await plantChat(root, { tag: "ONE", digits: "1", chat: 1 }, {}, [
+      { kind: "user", text: "Build the parser", client: "app" },
+      { kind: "permission", request: "r-1", permission: { toolCall: { toolCallId: "c-1" } } },
+    ]);
+    const start = await daemonOn(root);
+    const server: TestServer = { url: start.url, token: await tokenOf(root), close: start.stop };
+
+    const { data } = await success<Chat>(await get(server, "/projects/ONE/tasks/ONE-1/chats/1"));
+
+    expect(data).toMatchObject({ seq: 4, state: "needs-you" });
+    const log = (await readFile(logFile(root, "ONE", "1", 1), "utf8")).trimEnd().split("\n");
+    expect(log.slice(-2).map((line) => (JSON.parse(line) as ChatEntry).event)).toEqual([
+      { kind: "permission-resolved", request: "r-1", outcome: { outcome: "cancelled" } },
+      { kind: "interrupted" },
+    ]);
   });
 });
 

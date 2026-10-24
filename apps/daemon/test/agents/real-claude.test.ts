@@ -65,10 +65,56 @@ async function turnsEnded(live: LiveChat, turns: number): Promise<ChatEvent[]> {
   return log;
 }
 
+/** As `turnsEnded`, and allows each permission request with its first option of an allow kind. */
+async function turnsEndedAllowing(runner: ChatRunner, live: LiveChat, turns: number): Promise<ChatEvent[]> {
+  let log: ChatEvent[] = [];
+  const ended = () => log.filter((event) => event.kind === "turn-end").length >= turns;
+  const deadline = Date.now() + TURN_MS;
+  while (!ended() && log.at(-1)?.kind !== "failed" && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    log = await logOf(live);
+    for (const request of live.fold.open) {
+      const asked = log.find((event) => event.kind === "permission" && event.request === request);
+      if (asked?.kind !== "permission") continue;
+      const options = asked.permission.options as { optionId: string; kind: string }[];
+      const allow = options.find((option) => option.kind.startsWith("allow"));
+      if (allow !== undefined) await runner.answerPermission(live, request, { optionId: allow.optionId, client: "test" });
+    }
+  }
+  return log;
+}
+
+/**
+ * The last event of `log` that is not an update. After the first turn the
+ * adapter sends the title of the session, so an update can follow `turn-end`.
+ */
+function lastNonUpdate(log: ChatEvent[]): ChatEvent | undefined {
+  return log.findLast((event) => event.kind !== "update");
+}
+
+/** The text of the answers of the agent in `log`. */
+function answerText(log: ChatEvent[]): string {
+  return log.flatMap((event) => {
+    if (event.kind !== "update" || event.update.sessionUpdate !== "agent_message_chunk") return [];
+    const content = event.update.content as { type?: string; text?: string };
+    return content.type === "text" ? [content.text ?? ""] : [];
+  }).join("");
+}
+
+/** Whether a process whose command line holds `text` runs. */
+async function runs(text: string): Promise<boolean> {
+  try {
+    await promisify(execFile)("pgrep", ["-f", text]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Checks that the first turn ended with an answer of the agent. */
 async function answered(live: LiveChat): Promise<ChatEvent[]> {
   const log = await turnsEnded(live, 1);
-  expect(log.at(-1)).toMatchObject({ kind: "turn-end" });
+  expect(lastNonUpdate(log)).toMatchObject({ kind: "turn-end" });
   expect(log.some((event) => event.kind === "update" && event.update.sessionUpdate === "agent_message_chunk"))
     .toBe(true);
   return log;
@@ -86,13 +132,8 @@ describe.skipIf(process.env.TASMA_REAL_CLAUDE !== "1")("a chat with the real Cla
 
     await runner.message(live, { text: "Which word did you reply with?", client: "test" });
     const second = (await turnsEnded(live, 2)).slice(log.length);
-    expect(second.at(-1)).toMatchObject({ kind: "turn-end" });
-    const reply = second.flatMap((event) => {
-      if (event.kind !== "update" || event.update.sessionUpdate !== "agent_message_chunk") return [];
-      const content = event.update.content as { type?: string; text?: string };
-      return content.type === "text" ? [content.text ?? ""] : [];
-    });
-    expect(reply.join("").toLowerCase()).toContain("pong");
+    expect(lastNonUpdate(second)).toMatchObject({ kind: "turn-end" });
+    expect(answerText(second).toLowerCase()).toContain("pong");
 
     const launch = launched(claudeAdapter.launch(env));
     const { stdout } = await promisify(execFile)(
@@ -101,6 +142,36 @@ describe.skipIf(process.env.TASMA_REAL_CLAUDE !== "1")("a chat with the real Cla
       { cwd: folder, env: launch.env, timeout: TURN_MS },
     );
     expect(stdout.toLowerCase()).toContain("pong");
+  }, 3 * TURN_MS);
+
+  it("stops a background command with the agent, and keeps the conversation at the next message", async () => {
+    const { runner } = await world(claudeAdapter, { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token() });
+    const background = `sleep ${String(4000 + Math.floor(Math.random() * 5000))}`;
+    const live = await runner.start({
+      tag: "ALPHA",
+      task: "ALPHA-1",
+      step: "dev:build",
+      agent: "claude",
+      text: `Remember the word "lantern". Then run \`sh -c '${background}; echo done'\` with the Bash tool in the background, and end your turn without waiting for it.`,
+      client: "test",
+    });
+
+    const first = await turnsEndedAllowing(runner, live, 1);
+    expect(lastNonUpdate(first)).toMatchObject({ kind: "turn-end" });
+    expect(await runs(background)).toBe(true);
+
+    await runner.stop(live);
+    let left = await runs(background);
+    for (let tries = 0; left && tries < 10; tries += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      left = await runs(background);
+    }
+    expect(left).toBe(false);
+
+    await runner.message(live, { text: "Which word did I ask you to remember?", client: "test" });
+    const second = (await turnsEndedAllowing(runner, live, 2)).slice(first.length);
+    expect(lastNonUpdate(second)).toMatchObject({ kind: "turn-end" });
+    expect(answerText(second).toLowerCase()).toContain("lantern");
   }, 3 * TURN_MS);
 
   it.skipIf(!process.env.TASMA_COMPILED_DAEMON)("answers through the agent mode of the compiled daemon", async () => {

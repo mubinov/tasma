@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { PROTOCOL_VERSION, RequestError } from "@agentclientprotocol/sdk";
 import type { AcpObject } from "@tasma/protocol";
-import { AgentClosed, connectAgent, spawnAgent } from "../../src/agents/acp.js";
+import { AgentClosed, connectAgent, SessionNotFound, spawnAgent } from "../../src/agents/acp.js";
 import type { AgentHandlers } from "../../src/agents/acp.js";
 import type { AgentLaunch } from "../../src/agents/adapter.js";
 import { target, until } from "../helpers.js";
@@ -42,7 +42,8 @@ function recorder(reply: (params: AcpObject) => AcpObject | undefined = () => un
 async function started(script: Script = {}, handlers = recorder().handlers) {
   const fake = fakeAgent(script).spawn(LAUNCH, FOLDER);
   const connection = connectAgent(fake.stream, handlers);
-  const session = await connection.open(FOLDER);
+  await connection.initialize();
+  const session = await connection.create(FOLDER);
   return { fake, connection, session };
 }
 
@@ -72,6 +73,53 @@ describe("connectAgent", () => {
       },
     });
     expect(fake.newSession).toEqual({ cwd: FOLDER, mcpServers: [] });
+  });
+
+  it("opens a stored session again with session/resume in the folder, and prompts in it", async () => {
+    const fake = fakeAgent().spawn(LAUNCH, FOLDER);
+    const connection = connectAgent(fake.stream, recorder().handlers);
+    await connection.initialize();
+
+    const session = await connection.resume(FOLDER, "session-7");
+    await session.prompt("Go on");
+
+    expect(session.sessionId).toBe("session-7");
+    expect(fake.resumes).toEqual([{ sessionId: "session-7", cwd: FOLDER, mcpServers: [] }]);
+    expect(fake.newSession).toBeUndefined();
+    expect(fake.prompts).toEqual([{ sessionId: "session-7", prompt: [{ type: "text", text: "Go on" }] }]);
+  });
+
+  it("rejects a resume with SessionNotFound when the agent has no such session, and then creates one", async () => {
+    const fake = fakeAgent({
+      async resume() {
+        throw RequestError.resourceNotFound("session-7");
+      },
+    }).spawn(LAUNCH, FOLDER);
+    const connection = connectAgent(fake.stream, recorder().handlers);
+    await connection.initialize();
+
+    const error = await rejection(connection.resume(FOLDER, "session-7"));
+    const session = await connection.create(FOLDER);
+
+    expect(error).toBeInstanceOf(SessionNotFound);
+    expect(error).toMatchObject({ message: "the agent has no session session-7" });
+    expect(session.sessionId).toBe(SESSION);
+    expect(fake.newSession).toEqual({ cwd: FOLDER, mcpServers: [] });
+  });
+
+  it("rejects a resume with the error of the agent for another refusal", async () => {
+    const fake = fakeAgent({
+      async resume() {
+        throw RequestError.authRequired();
+      },
+    }).spawn(LAUNCH, FOLDER);
+    const connection = connectAgent(fake.stream, recorder().handlers);
+    await connection.initialize();
+
+    const error = await rejection(connection.resume(FOLDER, "session-7"));
+
+    expect(error).toBeInstanceOf(RequestError);
+    expect(error).toMatchObject({ code: -32000 });
   });
 
   it("sends a prompt as one text block, and gives the stop reason after the updates of the turn", async () => {
@@ -251,7 +299,7 @@ describe("connectAgent", () => {
       const fake = fakeAgent().spawn(LAUNCH, FOLDER);
       fake.exit({ error: new Error("spawn fake-agent ENOENT") });
 
-      expect(await rejection(connectAgent(fake.stream, recorder().handlers).open(FOLDER))).toBeInstanceOf(AgentClosed);
+      expect(await rejection(connectAgent(fake.stream, recorder().handlers).initialize())).toBeInstanceOf(AgentClosed);
     });
 
     it("with AgentClosed when the client closes the connection on a message it refuses", async () => {
@@ -272,7 +320,9 @@ describe("connectAgent", () => {
         },
       }).spawn(LAUNCH, FOLDER);
 
-      const error = await rejection(connectAgent(fake.stream, recorder().handlers).open(FOLDER));
+      const connection = connectAgent(fake.stream, recorder().handlers);
+      await connection.initialize();
+      const error = await rejection(connection.create(FOLDER));
 
       expect(error).toBeInstanceOf(RequestError);
       expect(error).toMatchObject({ code: -32000 });
@@ -396,9 +446,80 @@ describe("spawnAgent", () => {
 
     await agent.end();
 
-    expect(groupKill.mock.calls.filter(([pid]) => pid < 0)).toEqual([[expect.any(Number), "SIGKILL"]]);
+    expect(groupKill.mock.calls.filter(([pid, signal]) => pid < 0 && signal === "SIGKILL"))
+      .toEqual([[expect.any(Number), "SIGKILL"]]);
     expect(await agent.ended).toEqual({ code: null, signal: "SIGKILL" });
   }, 10_000);
+
+  describe("waits for the group of the process after its exit", () => {
+    /**
+     * A process that starts a child in its own group, which ends after
+     * `childMs` or never, writes the pid of the child, and exits with code 3
+     * by itself or with code 0 when its stdin closes.
+     */
+    function withChild(childMs: number | "never", exit: "itself" | "at-end"): AgentLaunch {
+      const life = childMs === "never" ? "setInterval(() => {}, 1000)" : `setTimeout(() => {}, ${childMs})`;
+      const script = `
+        const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(life)}], { stdio: "ignore" });
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "child", params: { pid: child.pid } }) + "\\n");
+        ${exit === "itself" ? "setTimeout(() => process.exit(3), 50);" : "process.stdin.on(\"end\", () => process.exit(0)); process.stdin.resume();"}
+      `;
+      return node(script);
+    }
+
+    async function childOf(agent: ReturnType<typeof spawnAgent>): Promise<number> {
+      const reader = agent.stream.readable.getReader();
+      const { params } = (await reader.read()).value as { params: { pid: number } };
+      reader.releaseLock();
+      onTestFinished(() => {
+        if (isAlive(params.pid)) process.kill(params.pid, "SIGKILL");
+      });
+      return params.pid;
+    }
+
+    function kills() {
+      const kill = vi.spyOn(process, "kill");
+      onTestFinished(() => kill.mockRestore());
+      return () => kill.mock.calls.filter(([, signal]) => signal === "SIGKILL");
+    }
+
+    it("resolves the end after a child that ends by itself, and kills nothing", async () => {
+      const killed = kills();
+      const agent = spawnAgent(withChild(600, "at-end"), await target());
+      const child = await childOf(agent);
+      const started = Date.now();
+
+      await agent.end();
+
+      expect(isAlive(child)).toBe(false);
+      expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+      expect(await agent.ended).toEqual({ code: 0, signal: null });
+      expect(killed()).toEqual([]);
+    }, 10_000);
+
+    it("kills a child that does not end when the grace time ends", async () => {
+      const killed = kills();
+      const agent = spawnAgent(withChild("never", "at-end"), await target());
+      const child = await childOf(agent);
+
+      await agent.end();
+
+      expect(await agent.ended).toEqual({ code: 0, signal: null });
+      expect(killed()).toEqual([[expect.any(Number), "SIGKILL"]]);
+      await until(() => !isAlive(child), "the child of the process ended");
+    }, 10_000);
+
+    it("waits the same way after an exit that end() did not cause, and gives the exit before", async () => {
+      const agent = spawnAgent(withChild(600, "itself"), await target());
+      const child = await childOf(agent);
+
+      expect(await agent.exited).toEqual({ code: 3, signal: null });
+      expect(isAlive(child)).toBe(true);
+      expect(await agent.ended).toEqual({ code: 3, signal: null });
+      expect(isAlive(child)).toBe(false);
+      await agent.end();
+    }, 10_000);
+  });
 
   it("gives the error of a process that cannot start", async () => {
     const dir = await target();
@@ -416,7 +537,7 @@ describe("spawnAgent", () => {
     const connection = connectAgent(agent.stream, recorder().handlers);
 
     expect(await agent.ended).toMatchObject({ error: { code: "E2BIG" } });
-    expect(await rejection(connection.open(dir))).toBeInstanceOf(AgentClosed);
+    expect(await rejection(connection.initialize())).toBeInstanceOf(AgentClosed);
     await connection.closed;
     await agent.end();
   });

@@ -59,6 +59,7 @@ const ADAPTER: AgentAdapter = {
   agent: "claude",
   launch: () => ({ command: "fake-agent", args: [], env: {} }),
   notLoggedIn: "Log in to the agent first",
+  sessionGone: "The agent lost the chat",
   filterUpdate: (update) => update,
 };
 
@@ -172,6 +173,7 @@ describe("GET …/chats/{chat}", () => {
   it("gives one chat with the findings of its log, which a read of the log leaves out", async () => {
     const root = await tree();
     const live = await (await world(root)).chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
     const log = logFile(root, "ALPHA", "1", 1);
     await appendFile(log, "not an entry\n");
     const { server } = await world(root);
@@ -180,7 +182,7 @@ describe("GET …/chats/{chat}", () => {
     const read = await success(await get(server, `${CHATS}/1/events?after=0`));
 
     expect(data).toEqual(live.chat);
-    expect(diagnostics).toMatchObject([{ code: "chat-file-unreadable", path: log, line: 2 }]);
+    expect(diagnostics).toMatchObject([{ code: "chat-file-unreadable", path: log, line: 3 }]);
     expect(read.diagnostics).toEqual([]);
   });
 });
@@ -450,12 +452,15 @@ describe("the chat commands", () => {
   });
 
   it("sends turn-running, chat-not-running and already-answered with 409, and a missing chat with 404", async () => {
-    const { live, server, chats } = await running({ prompt: forever });
+    const { live, server, chats, runner } = await running({ prompt: forever });
     await until(() => live.chat.seq === 1 && live.chat.state === "working", "the turn runs");
     const idle = await chats.create("ALPHA", "ALPHA-2", INPUT, MESSAGE);
+    await idle.append(TURN_END);
+    const turnRunning = await send(server, "POST", `${CHATS}/1/messages`, MESSAGE);
+    runner.stopStarts();
 
     const refusals = [
-      [await send(server, "POST", `${CHATS}/1/messages`, MESSAGE), "turn-running", 409],
+      [turnRunning, "turn-running", 409],
       [await send(server, "POST", `/projects/ALPHA/tasks/ALPHA-2/chats/${idle.chat.chat}/messages`, MESSAGE), "chat-not-running", 409],
       [await send(server, "POST", `${CHATS}/1/permissions/unknown`, { optionId: "allow", client: "web" }), "already-answered", 409],
       [await send(server, "POST", `${CHATS}/7/cancel`, { client: "web" }), "chat-not-found", 404],

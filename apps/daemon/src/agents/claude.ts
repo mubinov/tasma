@@ -100,6 +100,7 @@ export function createClaudeAdapter(host: ClaudeHost = {
   return {
     agent: "claude",
     notLoggedIn: 'Claude is not logged in. Run "claude /login" in a terminal.',
+    sessionGone: "Claude no longer has the conversation of this chat. Start a new chat for this step.",
     launch(env): LaunchResult {
       const path = agentPath(env.PATH);
       const claude = findClaude(path);

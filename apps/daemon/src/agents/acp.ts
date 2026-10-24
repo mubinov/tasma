@@ -13,22 +13,23 @@ import type {
 } from "@agentclientprotocol/sdk";
 import type { AcpObject } from "@tasma/protocol";
 import type { AgentLaunch } from "./adapter.js";
-import { killGroup } from "./process.js";
-
-/** How long `end()` waits for the process to exit after its stdin closes. */
-const END_GRACE_MS = 2000;
+import { endGroup } from "./process.js";
 
 const REQUEST_CANCELLED = RequestError.requestCancelled().code;
+
+const RESOURCE_NOT_FOUND = RequestError.resourceNotFound().code;
 
 export type AgentEnd = { code: number | null; signal: NodeJS.Signals | null } | { error: Error };
 
 export type AgentProcess = {
   stream: Stream;
-  /** Resolves one time: at the exit of the process, or when it cannot start. */
+  /** Resolves one time with the exit of the process, or when it cannot start. */
+  exited: Promise<AgentEnd>;
+  /** Resolves as `exited` does, once every process of the group of the process has ended too. */
   ended: Promise<AgentEnd>;
   /**
-   * Closes stdin, and kills the process with its group if it has not exited
-   * after a grace time. Resolves at the exit.
+   * Closes stdin, and kills the group of the process if it has not ended
+   * after a grace time. Resolves as `ended` does.
    */
   end(): Promise<void>;
 };
@@ -43,8 +44,12 @@ export type AgentSession = {
 export type AgentConnection = {
   /** Resolves when the connection closes, after the handlers of every message the agent sent before. */
   closed: Promise<void>;
-  /** Initializes the agent and opens a session in `folder`. */
-  open(folder: string): Promise<AgentSession>;
+  /** The first request on a connection. */
+  initialize(): Promise<void>;
+  /** Opens a new session in `folder`. */
+  create(folder: string): Promise<AgentSession>;
+  /** Opens a session of an earlier process again. Rejects with `SessionNotFound` when the agent no longer has it. */
+  resume(folder: string, sessionId: string): Promise<AgentSession>;
 };
 
 /**
@@ -67,6 +72,14 @@ export class AgentClosed extends Error {
   }
 }
 
+/** The agent refused to resume a session with `resource_not_found` (-32002). */
+export class SessionNotFound extends Error {
+  constructor(sessionId: string) {
+    super(`the agent has no session ${sessionId}`);
+    this.name = "SessionNotFound";
+  }
+}
+
 /** A process that did not start. Its connection closes at once. */
 function notStarted(ended: Promise<AgentEnd>): AgentProcess {
   const done = ended.then(() => undefined);
@@ -75,6 +88,7 @@ function notStarted(ended: Promise<AgentEnd>): AgentProcess {
       readable: new ReadableStream<AnyMessage>({ start: (controller) => controller.close() }),
       writable: new WritableStream<AnyMessage>(),
     },
+    exited: ended,
     ended,
     end: () => done,
   };
@@ -82,7 +96,8 @@ function notStarted(ended: Promise<AgentEnd>): AgentProcess {
 
 /**
  * The process has a group of its own, so the signals of a terminal that runs
- * the daemon do not reach it. It still exits when its stdin closes.
+ * the daemon do not reach it. It still exits when its stdin closes. At its
+ * exit, whatever the cause, the end of its group starts.
  */
 export function spawnAgent(launch: AgentLaunch, folder: string): AgentProcess {
   let child: ChildProcessByStdio<Writable, Readable, null>;
@@ -97,28 +112,33 @@ export function spawnAgent(launch: AgentLaunch, folder: string): AgentProcess {
     // Node throws most errors of the system call, for example E2BIG, and emits only a few, for example ENOENT.
     return notStarted(Promise.resolve({ error: error as Error }));
   }
-  const ended = new Promise<AgentEnd>((resolve) => {
+  const exited = new Promise<AgentEnd>((resolve) => {
     // A spawn that fails emits `error` before `close`.
     child.on("error", (error) => resolve({ error }));
     child.once("close", (code, signal) => resolve({ code, signal }));
   });
   const { pid } = child;
   // At EMFILE and ENFILE, a process that did not start has no stdio either.
-  if (pid === undefined) return notStarted(ended);
+  if (pid === undefined) return notStarted(exited);
+
+  let groupEnding: Promise<void> | undefined;
+  const endGroupOnce = () => (groupEnding ??= endGroup(child, pid));
+  child.once("exit", () => void endGroupOnce());
+  const ended = exited.then(async (end) => {
+    await endGroupOnce();
+    return end;
+  });
 
   const end = async (): Promise<void> => {
     child.stdin.end();
-    // After the exit, the system can give the group id to a new process.
-    if (child.exitCode === null && child.signalCode === null) {
-      const kill = setTimeout(() => killGroup(child, pid), END_GRACE_MS);
-      child.once("exit", () => clearTimeout(kill));
-    }
+    void endGroupOnce();
     await ended;
   };
   let ending: Promise<void> | undefined;
 
   return {
     stream: ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>),
+    exited,
     ended,
     end: () => (ending ??= end()),
   };
@@ -180,9 +200,25 @@ export function connectAgent(stream: Stream, handlers: AgentHandlers): AgentConn
     }
   }
 
+  function sessionOf(sessionId: string): AgentSession {
+    return {
+      sessionId,
+      async prompt(text) {
+        const { stopReason } = await call(connection.agent.request("session/prompt", {
+          sessionId,
+          prompt: [{ type: "text", text }],
+        }));
+        return { stopReason };
+      },
+      cancel() {
+        void connection.agent.notify("session/cancel", { sessionId }).catch(() => undefined);
+      },
+    };
+  }
+
   return {
     closed: connection.closed,
-    async open(folder) {
+    async initialize() {
       await call(connection.agent.request("initialize", {
         protocolVersion: PROTOCOL_VERSION,
         clientCapabilities: {
@@ -192,21 +228,19 @@ export function connectAgent(stream: Stream, handlers: AgentHandlers): AgentConn
           _meta: { terminal_output: true },
         },
       }));
+    },
+    async create(folder) {
       const { sessionId } = await call(connection.agent.request("session/new", { cwd: folder, mcpServers: [] }));
-
-      return {
-        sessionId,
-        async prompt(text) {
-          const { stopReason } = await call(connection.agent.request("session/prompt", {
-            sessionId,
-            prompt: [{ type: "text", text }],
-          }));
-          return { stopReason };
-        },
-        cancel() {
-          void connection.agent.notify("session/cancel", { sessionId }).catch(() => undefined);
-        },
-      };
+      return sessionOf(sessionId);
+    },
+    async resume(folder, sessionId) {
+      try {
+        await call(connection.agent.request("session/resume", { sessionId, cwd: folder, mcpServers: [] }));
+      } catch (error) {
+        if (error instanceof RequestError && error.code === RESOURCE_NOT_FOUND) throw new SessionNotFound(sessionId);
+        throw error;
+      }
+      return sessionOf(sessionId);
     },
   };
 }

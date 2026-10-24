@@ -265,7 +265,7 @@ describe("GET /chats", () => {
 
     expect(data.items.map((listed) => [listed.task, listed.chat, listed.status])).toEqual([
       ["ALPHA-2", 1, { state: "continued-outside", where: "vscode" }],
-      ["ALPHA-1", 2, { state: "working" }],
+      ["ALPHA-1", 2, { state: "needs-you" }],
       ["ALPHA-1", 1, undefined],
     ]);
     expect(data.items[1]!.status).toEqual((await chats.get("ALPHA", "ALPHA-1", 2)).fold.status);
@@ -304,7 +304,7 @@ describe("GET /chats", () => {
 
     const { data, diagnostics } = await page(server);
 
-    expect(data.items.map((listed) => [listed.chat, listed.status])).toEqual([[1, { state: "working" }]]);
+    expect(data.items.map((listed) => [listed.chat, listed.status])).toEqual([[1, { state: "needs-you" }]]);
     expect(diagnostics).toMatchObject([{ code: "chat-file-unreadable", path: join(chatFolder(root, "ALPHA", "1", 2), "chat.json") }]);
   });
 
@@ -451,7 +451,7 @@ describe("GET /chats/{id}/{chat}", () => {
 
     const { data, diagnostics } = await item(server, "/chats/ALPHA-1/1");
 
-    expect(data.status).toEqual({ state: "working" });
+    expect(data.status).toEqual({ state: "needs-you" });
     expect(diagnostics).toMatchObject([{ code: "chat-file-unreadable" }]);
   });
 

@@ -19,14 +19,36 @@ import {
   updateChat,
 } from "@tasma/engine";
 import type { ChatInput, ChatLog, ChatRecord, TaskStoreErrorCode } from "@tasma/engine";
-import { CHAT_START, foldChat } from "@tasma/protocol";
-import type { Chat, ChatEntry, ChatEvent, ChatFold, ChatStatus, Diagnostic } from "@tasma/protocol";
+import { CHAT_START, DAEMON_NAME, foldChat, printable } from "@tasma/protocol";
+import type { AcpObject, Chat, ChatEntry, ChatEvent, ChatFold, ChatStatus, Diagnostic } from "@tasma/protocol";
 import type { Publish } from "../events/feed.js";
 import { createHold, HOLD_MS } from "../events/hold.js";
 import type { Hold } from "../events/hold.js";
+import { causeOf } from "../http/failure.js";
 import type { ProjectHost } from "../projects/host.js";
 import { taskKey } from "../tasks/serialize.js";
 import type { WriteQueue } from "../tasks/serialize.js";
+
+export type RequestKind = "permission" | "question";
+
+/** The outcome of a permission request and the answer to a question that nobody gives. */
+export const CANCELLED = {
+  permission: { outcome: "cancelled" },
+  question: { action: "cancel" },
+} as const satisfies Record<RequestKind, AcpObject>;
+
+/** A resolution with no `client` is one of the daemon. */
+export function resolution(kind: RequestKind, request: string, result: AcpObject, client?: string): ChatEvent {
+  const by = client === undefined ? {} : { client };
+  return kind === "permission"
+    ? { kind: "permission-resolved", request, outcome: result, ...by }
+    : { kind: "question-resolved", request, answer: result, ...by };
+}
+
+/** The line on the error output for a fault of a chat. */
+export function faultLine(chat: { task: string; chat: number }, error: unknown): string {
+  return `${DAEMON_NAME}: ${printable(`chat ${chat.chat} of ${chat.task}: ${causeOf(error)}`)}\n`;
+}
 
 /**
  * One chat as the daemon holds it. The handle stays the same object through a
@@ -34,12 +56,27 @@ import type { WriteQueue } from "../tasks/serialize.js";
  * project or its task, and once a write finds its chat gone.
  */
 export type LiveChat = {
+  /** The tag of the project of the chat; a rename of the project changes it. */
+  readonly tag: string;
   readonly chat: Chat;
   readonly fold: ChatFold;
   /** What the open of the log found; an append adds nothing to it. */
   readonly diagnostics: Diagnostic[];
+  /** Whether the log holds an answer of the agent. */
+  readonly answered: boolean;
+  /**
+   * The texts of the `user` events after the last answer of the agent, in log
+   * order. Once the chat has an answer, a cancelled turn end clears them too.
+   */
+  readonly unanswered: readonly string[];
   /** Calls on one handle write in call order. */
   append(event: ChatEvent): Promise<ChatEntry>;
+  /**
+   * When the fold has a turn or an open request, writes a cancelled resolution
+   * of the daemon for each open request, and then `interrupted`. It reads the
+   * fold in its turn of the write order, so it sees every write called before it.
+   */
+  interrupt(): Promise<void>;
   setSession(session: string): Promise<void>;
   /** Takes no turn, so a read never waits for a write. */
   read(after: number, maxBytes?: number): Promise<ChatEntry[]>;
@@ -77,7 +114,60 @@ type Context = {
   forget: (live: Live) => void;
 };
 
-type Opened = { log: ChatLog; fold: ChatFold };
+/** The kind of each open request of a fold, in open order. */
+type Asked = Map<string, RequestKind>;
+
+type Answers = { answered: boolean; unanswered: string[] };
+
+type Opened = { log: ChatLog; fold: ChatFold; asked: Asked; answers: Answers };
+
+/** The kinds of update that an agent sends only while it works on a prompt. */
+const WORK_UPDATES: ReadonlySet<unknown> = new Set([
+  "agent_message_chunk",
+  "agent_thought_chunk",
+  "tool_call",
+  "tool_call_update",
+  "plan",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * An agent sends some updates when a session opens, before any prompt, and a
+ * cancel before the first prompt writes a `cancelled` turn end, so neither is
+ * an answer. The engine checks only that an event is an object.
+ */
+function isAnswer(event: ChatEvent): boolean {
+  switch (event.kind) {
+    case "turn-end":
+      return event.stopReason !== "cancelled";
+    case "permission":
+    case "question":
+      return true;
+    case "update": {
+      const update: unknown = event.update;
+      return isRecord(update) && WORK_UPDATES.has(update.sessionUpdate);
+    }
+    default:
+      return false;
+  }
+}
+
+function trackAnswers(answers: Answers, event: ChatEvent): void {
+  if (event.kind === "user") {
+    const text: unknown = event.text;
+    if (typeof text === "string") answers.unanswered.push(text);
+  } else if (isAnswer(event)) {
+    answers.answered = true;
+    answers.unanswered = [];
+  } else if (event.kind === "turn-end" && answers.answered) {
+    // A cancel takes the texts of its turn back. A chat with no answer keeps
+    // them: only such a chat gets a new session, which needs every text.
+    answers.unanswered = [];
+  }
+}
 
 /** The refusals that mean, inside the turns of a chat, that the chat is gone: no rename or delete runs then. */
 const GONE: ReadonlySet<TaskStoreErrorCode> = new Set(["chat-not-found", "task-not-found", "project-not-found"]);
@@ -102,13 +192,26 @@ function sameStatus(one: ChatStatus, other: ChatStatus): boolean {
   return one.state === other.state && whereOf(one) === whereOf(other);
 }
 
+/** Keeps `asked` to the open requests of `fold`, the fold after `event`. */
+function trackAsked(asked: Asked, fold: ChatFold, event: ChatEvent): void {
+  if (event.kind === "permission" || event.kind === "question") asked.set(event.request, event.kind);
+  for (const request of asked.keys()) {
+    if (!fold.open.includes(request)) asked.delete(request);
+  }
+}
+
 /** Opens the log of a chat and folds it in the same read. */
 async function openFolded(root: string | undefined, tag: string, record: ChatRecord): Promise<Opened> {
   let fold = CHAT_START;
+  const asked: Asked = new Map();
+  const answers: Answers = { answered: false, unanswered: [] };
   const log = await openChatLog({ project: tag, root }, record.task, record.chat, (entry) => {
-    fold = foldChat(fold, entry.event as ChatEvent);
+    const event = entry.event as ChatEvent;
+    fold = foldChat(fold, event);
+    trackAsked(asked, fold, event);
+    trackAnswers(answers, event);
   });
-  return { log, fold };
+  return { log, fold, asked, answers };
 }
 
 class Live implements LiveChat {
@@ -119,6 +222,8 @@ class Live implements LiveChat {
   #record: ChatRecord;
   #log: ChatLog;
   #fold: ChatFold;
+  #asked: Asked;
+  #answers: Answers;
   /** Set by a failed append that the engine did not refuse: its line can be on disk, which only a new open reads. */
   #stale = false;
   #writes: Promise<unknown> = Promise.resolve();
@@ -129,6 +234,8 @@ class Live implements LiveChat {
     this.#record = record;
     this.#log = opened.log;
     this.#fold = opened.fold;
+    this.#asked = opened.asked;
+    this.#answers = opened.answers;
     this.hold = createHold({ holdMs: context.holdMs });
   }
 
@@ -152,8 +259,20 @@ class Live implements LiveChat {
     return this.#log.diagnostics;
   }
 
+  get answered(): boolean {
+    return this.#answers.answered;
+  }
+
+  get unanswered(): readonly string[] {
+    return this.#answers.unanswered;
+  }
+
   append(event: ChatEvent): Promise<ChatEntry> {
     return this.#queued(() => this.appendInHeldTurns(event));
+  }
+
+  interrupt(): Promise<void> {
+    return this.#queued(() => this.interruptInHeldTurns());
   }
 
   setSession(session: string): Promise<void> {
@@ -191,9 +310,21 @@ class Live implements LiveChat {
       throw error;
     }
     this.#fold = next;
+    trackAsked(this.#asked, next, event);
+    trackAnswers(this.#answers, event);
     this.#announce(before);
     this.hold.notify();
     return entry as ChatEntry;
+  }
+
+  /** As `interrupt`; the caller holds the turns of the handle. */
+  async interruptInHeldTurns(): Promise<void> {
+    if (this.#stale) await this.#reopen();
+    if (!this.#fold.turn && this.#fold.open.length === 0) return;
+    for (const [request, kind] of [...this.#asked]) {
+      await this.appendInHeldTurns(resolution(kind, request, CANCELLED[kind]));
+    }
+    await this.appendInHeldTurns({ kind: "interrupted" });
   }
 
   /**
@@ -258,6 +389,8 @@ class Live implements LiveChat {
     const opened = await openFolded(this.#context.root, this.#tag, this.#record);
     this.#log = opened.log;
     this.#fold = opened.fold;
+    this.#asked = opened.asked;
+    this.#answers = opened.answers;
     this.#stale = false;
     this.#announce(before);
     if (this.#log.last !== last) this.hold.notify();
@@ -282,9 +415,12 @@ export function createChatRegistry(options: {
   /** Receives a `chat` event at the create of a chat and at each change of its status. */
   publish?: Publish;
   holdMs?: number;
+  /** Where a fault of the recovery of a chat is reported. */
+  stderr?: { write(text: string): unknown };
 }): ChatRegistry {
   const { root, host, writes, publish } = options;
   const holdMs = options.holdMs ?? HOLD_MS;
+  const stderr = options.stderr ?? process.stderr;
   let closed = false;
   /**
    * The loaded handles, by the place each one stands for now. Only `keep` adds
@@ -314,8 +450,22 @@ export function createChatRegistry(options: {
     const present = loaded.get(chatKey(tag, record.task, record.chat));
     if (present !== undefined) return present;
     const live = new Live(context, tag, record, await openFolded(root, tag, record));
+    await recover(live);
     keep(live);
     return live;
+  }
+
+  /**
+   * A chat loaded from disk has no agent process in this daemon: the runner
+   * runs only the chats it created or got from here. So a turn or a request
+   * that its log leaves open ended with an earlier daemon.
+   */
+  async function recover(live: Live): Promise<void> {
+    try {
+      await live.interruptInHeldTurns();
+    } catch (error) {
+      stderr.write(faultLine(live.chat, error));
+    }
   }
 
   function forgetWhere(test: (live: Live) => boolean): void {

@@ -14,6 +14,8 @@ import type {
   PromptRequest,
   PromptResponse,
   RequestPermissionRequest,
+  ResumeSessionRequest,
+  ResumeSessionResponse,
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
 import type { AgentEnd, AgentProcess } from "../../src/agents/acp.js";
@@ -56,6 +58,8 @@ export type FakeProcess = AgentProcess & {
   folder: string;
   initialize?: InitializeRequest;
   newSession?: NewSessionRequest;
+  /** The params of each `session/resume`. */
+  resumes: ResumeSessionRequest[];
   prompts: PromptRequest[];
   /** The JSON-RPC id of each prompt, in the order of `prompts`. */
   promptIds: JsonRpcId[];
@@ -63,6 +67,8 @@ export type FakeProcess = AgentProcess & {
   cancels: CancelNotification[];
   /** The calls of `end()`, which ends the process one time and exits with code 0. */
   endCalls: number;
+  /** The end of the other processes of the group, which `ended` waits for after the exit. */
+  group: Promise<void>;
   /** The agent side of the connection, once the client has connected. */
   client: AgentContext;
   /** Sends one session update to the client. Rejects when the connection is closed. */
@@ -71,13 +77,15 @@ export type FakeProcess = AgentProcess & {
   question(params?: Partial<CreateElicitationRequest>, signal?: AbortSignal): Promise<unknown>;
   /** Writes text to the client as it is, as a broken agent would. */
   raw(text: string): void;
-  /** Ends the process: both pipes close and `ended` gives `end`. */
+  /** Ends the process: both pipes close, `exited` gives `end`, and `ended` gives it after `group`. */
   exit(end: AgentEnd): void;
 };
 
 /** What the fake agent does. A handler that never settles keeps its request open. */
 export type Script = {
   newSession?(params: NewSessionRequest, fake: FakeProcess): Promise<NewSessionResponse>;
+  /** Without it, every resume succeeds. An agent with no such session refuses with `RequestError.resourceNotFound`. */
+  resume?(params: ResumeSessionRequest, fake: FakeProcess): Promise<ResumeSessionResponse>;
   prompt?(params: PromptRequest, fake: FakeProcess): Promise<PromptResponse>;
   /** Runs at each `session/cancel`, for example to end the running prompt with `cancelled`. */
   cancel?(params: CancelNotification, fake: FakeProcess): void;
@@ -132,17 +140,24 @@ export function fakeAgent(script: Script = {}): {
     const toAgent = pipe();
     const toClient = pipe();
     let settle!: (end: AgentEnd) => void;
-    const ended = new Promise<AgentEnd>((resolve) => (settle = resolve));
+    const exited = new Promise<AgentEnd>((resolve) => (settle = resolve));
+    const ended = exited.then(async (end) => {
+      await fake.group;
+      return end;
+    });
     let ending: Promise<void> | undefined;
 
     const fake: FakeProcess = {
       launch,
       folder,
+      resumes: [],
       prompts: [],
       promptIds: [],
       cancels: [],
       endCalls: 0,
+      group: Promise.resolve(),
       stream: ndJsonStream(toAgent.writable, toClient.readable),
+      exited,
       ended,
       get client() {
         return connection.client;
@@ -187,6 +202,10 @@ export function fakeAgent(script: Script = {}): {
       .onRequest("session/new", ({ params }) => {
         fake.newSession = params;
         return script.newSession?.(params, fake) ?? { sessionId: SESSION };
+      })
+      .onRequest("session/resume", ({ params }) => {
+        fake.resumes.push(params);
+        return script.resume?.(params, fake) ?? {};
       })
       .onRequest("session/prompt", ({ params, requestId }) => {
         fake.prompts.push(params);
