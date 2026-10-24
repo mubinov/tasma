@@ -570,7 +570,7 @@ describe("the search", () => {
       const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
       await settle();
       act(() => {
-        screen.getByRole("link", { name: "Task 1" }).focus();
+        screen.getByRole("link", { name: "SAGA-1 Task 1" }).focus();
       });
 
       await go(router, { q: "docs" });
@@ -584,8 +584,8 @@ describe("the search", () => {
       const { transport } = searchDaemon();
       const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
       await settle();
-      const card = screen.getByRole("link", { name: "Task 1" }).closest<HTMLElement>("[data-task-id]")!;
-      await user.click(within(card).getByRole("button", { name: "Task menu" }));
+      const card = screen.getByRole("link", { name: "SAGA-1 Task 1" }).closest<HTMLElement>("[data-task-id]")!;
+      await user.click(within(card).getByRole("button", { name: "Task menu SAGA-1" }));
       await screen.findByRole("menu");
 
       await go(router, { q: "docs" });
@@ -597,7 +597,7 @@ describe("the search", () => {
       const { transport } = searchDaemon();
       const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
       await settle();
-      const link = screen.getByRole("link", { name: "Task 2" });
+      const link = screen.getByRole("link", { name: "SAGA-2 Task 2" });
       act(() => {
         link.focus();
       });
@@ -641,14 +641,14 @@ describe("the search", () => {
       const { transport } = searchDaemon({ "PATCH /projects/SAGA/tasks/SAGA-1": heldBack().reply });
       await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
       await settle();
-      const card = screen.getByRole("link", { name: "Task 1" }).closest<HTMLElement>("[data-task-id]")!;
-      await user.click(within(card).getByRole("button", { name: "Task menu" }));
+      const card = screen.getByRole("link", { name: "SAGA-1 Task 1" }).closest<HTMLElement>("[data-task-id]")!;
+      await user.click(within(card).getByRole("button", { name: "Task menu SAGA-1" }));
       const menu = await screen.findByRole("menu");
       await user.click(within(menu).getByRole("menuitemradio", { name: "To Do" }));
       await settle();
 
-      const moved = within(column("To Do")).getByRole("link", { name: "Task 1" }).closest<HTMLElement>("[data-task-id]")!;
-      expect(document.activeElement).toBe(within(moved).getByRole("button", { name: "Task menu" }));
+      const moved = within(column("To Do")).getByRole("link", { name: "SAGA-1 Task 1" }).closest<HTMLElement>("[data-task-id]")!;
+      expect(document.activeElement).toBe(within(moved).getByRole("button", { name: "Task menu SAGA-1" }));
     });
   });
 
@@ -711,7 +711,7 @@ describe("the search", () => {
       await create(user);
 
       await waitFor(() => {
-        expect(document.activeElement).toBe(screen.getByRole("link", { name: "Task 7" }));
+        expect(document.activeElement).toBe(screen.getByRole("link", { name: "SAGA-7 Task 7" }));
       });
       await waitFor(() => {
         expect(announced()).toContain("SAGA-7 was created.");
@@ -729,7 +729,7 @@ describe("the search", () => {
       await create(user);
 
       await waitFor(() => {
-        expect(document.activeElement).toBe(screen.getByRole("link", { name: "Task 7" }));
+        expect(document.activeElement).toBe(screen.getByRole("link", { name: "SAGA-7 Task 7" }));
       });
       expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2", "Task 7"]);
     });

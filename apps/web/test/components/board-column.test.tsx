@@ -79,7 +79,9 @@ async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnPr
 }
 
 function menuButton(title: string): HTMLElement {
-  return within(screen.getByText(title).closest<HTMLElement>("[data-task-id]")!).getByRole("button", { name: "Task menu" });
+  const card = screen.getByText(title).closest<HTMLElement>("[data-task-id]")!;
+
+  return within(card).getByRole("button", { name: `Task menu ${card.dataset.taskId}` });
 }
 
 /** The names of the place items in the card's menu. */
@@ -205,8 +207,15 @@ describe("cards of two projects in one column", () => {
   it("links each title to the task in its own project", async () => {
     await renderToDo([task("ALPHA-1"), task("BETA-2")]);
 
-    expect(screen.getByRole("link", { name: "Task ALPHA-1" }).getAttribute("href")).toBe("/tasks/ALPHA/ALPHA-1");
-    expect(screen.getByRole("link", { name: "Task BETA-2" }).getAttribute("href")).toBe("/tasks/BETA/BETA-2");
+    expect(screen.getByRole("link", { name: "ALPHA-1 Task ALPHA-1" }).getAttribute("href")).toBe("/tasks/ALPHA/ALPHA-1");
+    expect(screen.getByRole("link", { name: "BETA-2 Task BETA-2" }).getAttribute("href")).toBe("/tasks/BETA/BETA-2");
+  });
+
+  it("names each menu button by the id of its task", async () => {
+    await renderToDo([task("ALPHA-1"), task("BETA-2")]);
+
+    expect(within(cardOf("ALPHA-1")).getByRole("button", { name: "Task menu ALPHA-1" })).toBeTruthy();
+    expect(within(cardOf("BETA-2")).getByRole("button", { name: "Task menu BETA-2" })).toBeTruthy();
   });
 
   it("opens the task from Edit in its own project, with an edit request that names that project", async () => {
@@ -422,7 +431,7 @@ describe("a focus card under and above the cap", () => {
     await renderColumn({ final: true, matching: entries(25), total: 25 }, { focusCard: { id: "SAGA-24", part: "title" } });
 
     expect(cardTitles()).toHaveLength(25);
-    expect(document.activeElement).toBe(screen.getByRole("link", { name: "Task 24" }));
+    expect(document.activeElement).toBe(screen.getByRole("link", { name: "SAGA-24 Task 24" }));
   });
 
   it("keeps the column folded for a focus card above the cap", async () => {

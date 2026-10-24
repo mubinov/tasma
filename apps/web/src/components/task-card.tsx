@@ -122,7 +122,7 @@ export function TaskCard({
           // against the card's own.
           <Link
             ref={titleRef}
-            id={titleId}
+            aria-label={`${id} ${title}`}
             to="/tasks/$project/$task"
             params={{ project: tag, task: id }}
             draggable={false}
@@ -135,7 +135,9 @@ export function TaskCard({
             }}
             className={CARD_TITLE_CLASS}
           >
-            {title}
+            {/* Describes the menu button. On the link, the description would take the link's name
+                and repeat the task id. */}
+            <span id={titleId}>{title}</span>
           </Link>
         )}
         menu={<CardMenu buttonRef={menuButtonRef} titleId={titleId} onOpenChange={setMenuOpen} {...menu} />}

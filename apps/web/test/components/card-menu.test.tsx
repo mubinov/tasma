@@ -33,7 +33,7 @@ async function renderMenu(status = "In Progress", handlers: Partial<Omit<CardPro
 
 async function openFromButton() {
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Task menu" }));
+  await user.click(screen.getByRole("button", { name: "Task menu SAGA-7" }));
 
   return { user, menu: await screen.findByRole("menu") };
 }
@@ -49,6 +49,13 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+it("names the menu of the button by the task id", async () => {
+  await renderMenu();
+  const { menu } = await openFromButton();
+
+  expect(menu).toBe(screen.getByRole("menu", { name: "Task menu SAGA-7" }));
 });
 
 describe("the items", () => {
@@ -107,7 +114,7 @@ describe("choosing an item", () => {
     await renderMenu("In Progress", { onMove });
     const user = userEvent.setup();
 
-    screen.getByRole("button", { name: "Task menu" }).focus();
+    screen.getByRole("button", { name: "Task menu SAGA-7" }).focus();
     await user.keyboard("{Enter}");
     const menu = await screen.findByRole("menu");
     await waitFor(() => {

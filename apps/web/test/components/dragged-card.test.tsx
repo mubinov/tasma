@@ -34,8 +34,8 @@ describe("the card a drag carries", () => {
     const { wrapper, card } = await renderLifted();
 
     expect(card.className).toContain("border-graphic");
-    expect(screen.queryByRole("button", { name: "Task menu" })).toBeNull();
-    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.queryByRole("button", { hidden: true })).toBeNull();
+    expect(screen.queryByRole("link", { hidden: true })).toBeNull();
     expect(wrapper.querySelector("a, button, [tabindex]")).toBeNull();
     expect(wrapper.querySelector("[data-task-id]")).toBeNull();
   });

@@ -450,7 +450,7 @@ describe("Edit in the card menu", () => {
     vi.stubGlobal("scrollTo", () => {});
     await renderWithRouter(BOARD, daemon().transport);
 
-    await user.click(screen.getByRole("button", { name: "Task menu" }));
+    await user.click(screen.getByRole("button", { name: "Task menu SAGA-3" }));
     await act(async () => {
       await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
     });
@@ -465,7 +465,7 @@ describe("Edit in the card menu", () => {
     vi.stubGlobal("scrollTo", () => {});
     const router = await renderWithRouter(BOARD, daemon().transport);
     const editFromMenu = async () => {
-      await user.click(screen.getByRole("button", { name: "Task menu" }));
+      await user.click(screen.getByRole("button", { name: "Task menu SAGA-3" }));
       await act(async () => {
         await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
       });
@@ -494,7 +494,7 @@ describe("Edit in the card menu", () => {
       code: "task-not-found",
       message: "SAGA-3 is not a task",
     });
-    await user.click(screen.getByRole("button", { name: "Task menu" }));
+    await user.click(screen.getByRole("button", { name: "Task menu SAGA-3" }));
     await act(async () => {
       await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
     });
@@ -522,7 +522,7 @@ describe("Edit in the card menu", () => {
     const { transport } = daemon();
     const router = await renderWithRouter(BOARD, transport);
 
-    await user.click(screen.getByRole("button", { name: "Task menu" }));
+    await user.click(screen.getByRole("button", { name: "Task menu SAGA-3" }));
     await act(async () => {
       await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
     });

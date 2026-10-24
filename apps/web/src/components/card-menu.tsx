@@ -90,7 +90,7 @@ function CardMenuItems(
         )}
       </Menu.RadioGroup>
       <Menu.Separator className="my-1.5 h-px bg-line" />
-      {/* The popup takes its name from the trigger, so the item names the task itself. */}
+      {/* The right-click popup has no name, so the item names the task itself. */}
       <Menu.Item
         aria-label={`Delete ${id}`}
         onClick={() => {
@@ -107,7 +107,10 @@ function CardMenuItems(
 
 type CardMenuProps = CardMenuItemsProps & {
   buttonRef?: Ref<HTMLButtonElement>;
-  /** The id of the card's title, which tells the menu buttons of a board apart. */
+  /**
+   * The id of the card's title, which describes the menu button.
+   * The task id in the button's name tells the menu buttons of a board apart.
+   */
   titleId?: string;
   onOpenChange?: (open: boolean) => void;
 };
@@ -118,7 +121,7 @@ export function CardMenu({ buttonRef, titleId, onOpenChange, ...menu }: CardMenu
     <Menu.Root highlightItemOnHover={false} onOpenChange={onOpenChange}>
       <Menu.Trigger
         ref={buttonRef}
-        aria-label="Task menu"
+        aria-label={`Task menu ${menu.id}`}
         aria-describedby={titleId}
         className="absolute top-1.5 right-2 flex size-6 items-center justify-center rounded-control text-dim opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 hover:bg-surface-2 hover:text-text data-[popup-open]:bg-surface-2 data-[popup-open]:text-text data-[popup-open]:opacity-100"
       >

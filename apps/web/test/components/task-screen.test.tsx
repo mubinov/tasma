@@ -774,7 +774,7 @@ describe("opening a task from the board", () => {
     const router = await renderWithRouter("/tasks?projects=SAGA", transport);
     paths.length = 0;
 
-    await user.click(screen.getByRole("link", { name: "Build the parser" }));
+    await user.click(screen.getByRole("link", { name: "SAGA-3 Build the parser" }));
 
     expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-3");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Build the parser");

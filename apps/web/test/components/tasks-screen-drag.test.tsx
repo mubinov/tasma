@@ -208,7 +208,7 @@ describe("dragging a card to a place", () => {
       const { transport } = daemon({ "/projects/SAGA/tasks": listing([entry(1)]) });
       await renderWithRouter("/tasks?projects=SAGA", transport);
 
-      send(within(cardIn("Backlog", "Task 1")).getByRole("button", { name: "Task menu" }), "pointerdown", { x: 20, y: 120 });
+      send(within(cardIn("Backlog", "Task 1")).getByRole("button", { name: "Task menu SAGA-1" }), "pointerdown", { x: 20, y: 120 });
       movePointer(atRow(0, 2));
 
       expect(lifted()).toBeNull();
@@ -299,7 +299,7 @@ describe("dragging a card to a place", () => {
       const { transport } = daemon({ "/projects/SAGA/tasks": listing([entry(1)]) });
       await renderWithRouter("/tasks?projects=SAGA", transport);
 
-      await user.click(within(cardIn("Backlog", "Task 1")).getByRole("button", { name: "Task menu" }));
+      await user.click(within(cardIn("Backlog", "Task 1")).getByRole("button", { name: "Task menu SAGA-1" }));
       const menu = await screen.findByRole("menu");
       send(menu, "pointerdown", { x: 20, y: 120 });
       movePointer(atRow(1, 0));

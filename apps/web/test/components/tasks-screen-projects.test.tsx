@@ -44,7 +44,9 @@ function cardLink(title: string): HTMLElement {
 }
 
 function menuButton(title: string): HTMLElement {
-  return within(card(title)).getByRole("button", { name: "Task menu" });
+  const taskCard = card(title);
+
+  return within(taskCard).getByRole("button", { name: `Task menu ${taskCard.dataset.taskId}` });
 }
 
 function patches(requests: { method: string; path: string; body?: unknown }[]) {

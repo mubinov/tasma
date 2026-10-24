@@ -70,7 +70,7 @@ it("shows the id and the title, with the right side of the top row kept free and
   await renderCard(entry({ priority: "high" }));
 
   const id = screen.getByText("SAGA-7");
-  const title = screen.getByText("Build the parser");
+  const title = screen.getByRole("link");
   expect(id.className).toContain("font-mono");
   expect(classesOf(id.parentElement)).toContain("pr-6");
   expect(id.parentElement?.lastElementChild?.textContent).toBe("high");
@@ -85,24 +85,30 @@ describe("opening the task", () => {
     const { card } = await renderCard();
 
     const stops = [...card.querySelectorAll<HTMLElement>("a, button, [tabindex]")];
-    expect(stops.map((stop) => stop.textContent || stop.getAttribute("aria-label"))).toEqual(["Build the parser", "Task menu"]);
+    expect(stops.map((stop) => stop.textContent || stop.getAttribute("aria-label"))).toEqual(["Build the parser", "Task menu SAGA-7"]);
     expect(stops[0]?.getAttribute("href")).toBe(TASK_PATH);
     expect(stops.map((stop) => stop.tabIndex)).toEqual([0, 0]);
     expect(card.tabIndex).toBe(-1);
     expect(card.getAttribute("role")).toBeNull();
   });
 
-  it("describes the menu button by the title, so the menu buttons of a board are told apart", async () => {
+  it("names the title link by the id and the title, and shows the title alone", async () => {
     await renderCard();
 
-    expect(screen.getByRole("button", { name: "Task menu", description: "Build the parser" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "SAGA-7 Build the parser" }).textContent).toBe("Build the parser");
+  });
+
+  it("names the menu button by the id and describes it by the title alone", async () => {
+    await renderCard();
+
+    expect(screen.getByRole("button", { name: "Task menu SAGA-7", description: "Build the parser" })).toBeTruthy();
   });
 
   it("stays on the board when the click is on the menu button", async () => {
     const user = userEvent.setup();
     const { router } = await renderCard();
 
-    await user.click(screen.getByRole("button", { name: "Task menu" }));
+    await user.click(screen.getByRole("button", { name: "Task menu SAGA-7" }));
 
     expect(router.state.location.pathname).toBe("/");
     expect(await screen.findByRole("menu")).toBeTruthy();
@@ -112,7 +118,7 @@ describe("opening the task", () => {
     const user = userEvent.setup();
     const { router } = await renderCard();
 
-    await user.click(screen.getByRole("link", { name: "Build the parser" }));
+    await user.click(screen.getByRole("link", { name: "SAGA-7 Build the parser" }));
 
     expect(router.state.location.pathname).toBe(TASK_PATH);
   });
@@ -299,7 +305,7 @@ describe("the menu button", () => {
   it("sits at the right end of the top row, shown only while the card is hovered or holds focus or the menu is open", async () => {
     const { card } = await renderCard();
 
-    const button = screen.getByRole("button", { name: "Task menu" });
+    const button = screen.getByRole("button", { name: "Task menu SAGA-7" });
     expect(classesOf(card)).toEqual(expect.arrayContaining(["group/card", "relative"]));
     expect(classesOf(button)).toEqual(
       expect.arrayContaining([
@@ -320,7 +326,7 @@ describe("the menu button", () => {
     const user = userEvent.setup();
     await renderCard(entry(), { kind: "none" }, false, { onDelete });
 
-    await user.click(screen.getByRole("button", { name: "Task menu" }));
+    await user.click(screen.getByRole("button", { name: "Task menu SAGA-7" }));
     await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Delete SAGA-7" }));
 
     expect(onDelete.mock.calls).toEqual([["SAGA-7"]]);
@@ -357,7 +363,7 @@ describe("focus the board hands the card", () => {
 
     const { card } = await renderCard(entry(), { kind: "none" }, false, { focusPart: "menu", onFocused });
 
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Task menu" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Task menu SAGA-7" }));
     expect(scrollIntoView.mock.contexts).toEqual([card]);
     expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
     expect(onFocused).toHaveBeenCalledOnce();
@@ -370,7 +376,7 @@ describe("focus the board hands the card", () => {
 
     const { card } = await renderCard(entry(), { kind: "none" }, false, { focusPart: "title", onFocused });
 
-    expect(document.activeElement).toBe(screen.getByRole("link", { name: "Build the parser" }));
+    expect(document.activeElement).toBe(screen.getByRole("link", { name: "SAGA-7 Build the parser" }));
     expect(scrollIntoView.mock.contexts).toEqual([card]);
     expect(onFocused).toHaveBeenCalledOnce();
   });
@@ -389,7 +395,7 @@ it("names the task on the card and marks the title link, for the board to find b
   const { card } = await renderCard();
 
   expect(card.getAttribute("data-task-id")).toBe("SAGA-7");
-  expect(card.querySelector("[data-task-title]")).toBe(screen.getByRole("link", { name: "Build the parser" }));
+  expect(card.querySelector("[data-task-title]")).toBe(screen.getByRole("link", { name: "SAGA-7 Build the parser" }));
 });
 
 describe("dragging a card", () => {

@@ -267,7 +267,7 @@ describe("the board", () => {
     });
     const router = await renderWithRouter("/tasks?projects=SAGA", transport);
 
-    await user.click(within(column("Backlog")).getByRole("link", { name: "Task 2" }));
+    await user.click(within(column("Backlog")).getByRole("link", { name: "SAGA-2 Task 2" }));
 
     expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-2");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Task 2");
@@ -413,7 +413,9 @@ describe("moving a task from the card menu", () => {
   }
 
   function menuButton(title: string): HTMLElement {
-    return within(card(title)).getByRole("button", { name: "Task menu" });
+    const taskCard = card(title);
+
+    return within(taskCard).getByRole("button", { name: `Task menu ${taskCard.dataset.taskId}` });
   }
 
   /** Opens the card's menu and picks the status. */
@@ -592,7 +594,7 @@ describe("moving a task from the card menu", () => {
       expect(noticeTitles()).toEqual(["SAGA-1 was not moved"]);
     });
 
-    await user.click(screen.getByRole("link", { name: "Task 1" }));
+    await user.click(screen.getByRole("link", { name: "SAGA-1 Task 1" }));
 
     expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-1");
     expect(bottomNotice().textContent).toContain(`${DAEMON_URL} · HTTP 502`);
@@ -1053,7 +1055,7 @@ describe("the board a card was opened from", () => {
     const { transport } = boardDaemon();
     const router = await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
 
-    await user.click(within(card("Task 2")).getByRole("button", { name: "Task menu" }));
+    await user.click(within(card("Task 2")).getByRole("button", { name: "Task menu SAGA-2" }));
     await act(async () => {
       await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Open task" }));
     });
@@ -1423,8 +1425,8 @@ describe("creating a task", () => {
     return screen.getByRole("dialog", { name: "New task" });
   }
 
-  function titleLink(title: string): HTMLElement {
-    return screen.getByRole("link", { name: title });
+  function titleLink(name: string): HTMLElement {
+    return screen.getByRole("link", { name });
   }
 
   /** Opens the dialog from the control, types the title and presses Create. */
@@ -1490,7 +1492,7 @@ describe("creating a task", () => {
     await create(user, within(column("To Do")).getByRole("button", { name: "New task in To Do" }), "Task 7");
 
     await waitFor(() => {
-      expect(document.activeElement).toBe(titleLink("Task 7"));
+      expect(document.activeElement).toBe(titleLink("SAGA-7 Task 7"));
     });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(titlesIn("To Do")).toEqual(["Task 7"]);
@@ -1584,7 +1586,7 @@ describe("creating a task", () => {
     await create(user, within(column("Done")).getByRole("button", { name: "New task in Done" }), "Task 30");
 
     await waitFor(() => {
-      expect(document.activeElement).toBe(titleLink("Task 30"));
+      expect(document.activeElement).toBe(titleLink("SAGA-30 Task 30"));
     });
     expect(titlesIn("Done")).toHaveLength(26);
     expect(within(column("Done")).queryByRole("button", { name: "Show all" })).toBeNull();
@@ -1614,7 +1616,9 @@ describe("deleting a task", () => {
   }
 
   function menuButton(title: string): HTMLElement {
-    return within(card(title)).getByRole("button", { name: "Task menu" });
+    const taskCard = card(title);
+
+    return within(taskCard).getByRole("button", { name: `Task menu ${taskCard.dataset.taskId}` });
   }
 
   function announced(): string[] {
