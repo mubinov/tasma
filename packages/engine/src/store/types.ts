@@ -36,6 +36,8 @@ export type StoreDiagnosticCode
     | "task-file-unexpected"
     | "temp-file-left"
     | "chat-file-unreadable"
+    // What the daemon raises for a project it leaves out of a list, and no store call does.
+    | "project-unreadable"
     // What the index raises and no store call does.
     | "blocked-by-unresolved"
     | "task-file-misnamed"

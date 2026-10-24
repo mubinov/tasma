@@ -11,8 +11,8 @@ import {
   replaceFile,
 } from "./atomic.js";
 import { causeOf, errnoOf, fail, pathOf, TaskStoreError } from "./errors.js";
-import { type ProjectPaths, projectPaths, taskChatsPath } from "./paths.js";
-import { checkChatDirectories, checkTaskFile, now, openProjectDirectory } from "./store.js";
+import { type ProjectPaths, projectPaths, taskChatsPath, taskNumber } from "./paths.js";
+import { checkChatDirectories, checkChatsDirectory, checkTaskFile, now, openProjectDirectory } from "./store.js";
 import type { ProjectOptions, StoreDiagnostic } from "./types.js";
 
 export type ChatAgent = "claude" | "codex";
@@ -195,6 +195,22 @@ export async function readChat(options: ProjectOptions, task: string, chat: numb
   return recordOf(task, chat, await readRecord(chatDirectory(taskChats, chat)));
 }
 
+/** One chat as `listChats` gives it. A chat the list leaves out is refused as its finding states. */
+export async function readListedChat(options: ProjectOptions, task: string, chat: number): Promise<ChatRecord> {
+  const { taskChats } = await openTaskChats(options, task);
+  return readListed(chatDirectory(taskChats, chat), task, chat);
+}
+
+async function readListed(directory: string, task: string, chat: number): Promise<ChatRecord> {
+  const record = recordOf(task, chat, await readRecord(directory));
+  const log = join(directory, LOG_FILE);
+  const entry = await entryAt(log);
+  if (entry?.isFile() !== true || entry.nlink !== 1) {
+    fail("chat-unreadable", "the event log of this chat is missing, or is not a regular file with one name", log);
+  }
+  return record;
+}
+
 /** The finding that leaves one chat out of a list, for a refusal and for a fault of the filesystem alike. */
 export function chatFinding(error: unknown, directory: string): StoreDiagnostic {
   const message = error instanceof TaskStoreError ? error.description : `this chat cannot be read: ${causeOf(error)}`;
@@ -208,19 +224,48 @@ export function chatFinding(error: unknown, directory: string): StoreDiagnostic 
  */
 export async function listChats(options: ProjectOptions, task: string): Promise<ChatList> {
   const { taskChats, exists } = await openTaskChats(options, task);
+  return exists ? readChats(taskChats, task) : { chats: [], diagnostics: [] };
+}
+
+/**
+ * Every chat of every task of a project, under the rules of `listChats`, the
+ * tasks in no fixed order. No task file is read, so a chat whose task is gone
+ * is listed too. A directory of the chats of one task that cannot be read is
+ * left out and reported, as one broken chat is.
+ */
+export async function listProjectChats(options: ProjectOptions): Promise<ChatList> {
+  const paths = projectPaths(options);
+  await openProjectDirectory(paths);
   const list: ChatList = { chats: [], diagnostics: [] };
-  if (!exists) return list;
+  if (!(await checkChatsDirectory(paths))) return list;
+  for (const name of await readdir(paths.chats)) {
+    const task = `${paths.project}-${name}`;
+    if (taskNumber(paths.project, `${task}.md`) === undefined) continue;
+    const found = await readOrReportTaskChats(join(paths.chats, name), task);
+    list.chats.push(...found.chats);
+    list.diagnostics.push(...found.diagnostics);
+  }
+  return list;
+}
+
+async function readOrReportTaskChats(taskChats: string, task: string): Promise<ChatList> {
+  let message;
+  try {
+    if ((await entryAt(taskChats))?.isDirectory() === true) return await readChats(taskChats, task);
+    message = "the name of the chats of this task holds no directory";
+  } catch (error) {
+    message = `the chats of this task cannot be read: ${causeOf(error)}`;
+  }
+  return { chats: [], diagnostics: [{ code: "chat-file-unreadable", message, path: taskChats }] };
+}
+
+async function readChats(taskChats: string, task: string): Promise<ChatList> {
+  const list: ChatList = { chats: [], diagnostics: [] };
   const numbers = (await readdir(taskChats)).map(chatNumber).filter((chat) => chat !== undefined);
   for (const chat of numbers.sort((a, b) => a - b)) {
     const directory = join(taskChats, String(chat));
     try {
-      const record = recordOf(task, chat, await readRecord(directory));
-      const log = join(directory, LOG_FILE);
-      const entry = await entryAt(log);
-      if (entry?.isFile() !== true || entry.nlink !== 1) {
-        fail("chat-unreadable", "the event log of this chat is missing, or is not a regular file with one name", log);
-      }
-      list.chats.push(record);
+      list.chats.push(await readListed(directory, task, chat));
     } catch (error) {
       list.diagnostics.push(chatFinding(error, directory));
     }

@@ -236,6 +236,24 @@ const invocations: Invocation[] = [
     body: { action: "decline", client: "app" },
   },
   {
+    name: "listAllChats",
+    send: (client) => client.listAllChats({ project: "SAGA", q: "parse tree", after: "c0ffee" }),
+    method: "GET",
+    path: "/chats?project=SAGA&q=parse%20tree&after=c0ffee",
+  },
+  {
+    name: "listAllChats with no query",
+    send: (client) => client.listAllChats(),
+    method: "GET",
+    path: "/chats",
+  },
+  {
+    name: "readChatItem",
+    send: (client) => client.readChatItem("SAGA-3", 2),
+    method: "GET",
+    path: "/chats/SAGA-3/2",
+  },
+  {
     name: "listWorkflows",
     send: (client) => client.listWorkflows(),
     method: "GET",

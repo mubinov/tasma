@@ -1,4 +1,13 @@
-export { chatFinding, chatPath, createChat, listChats, readChat, updateChat } from "./chat.js";
+export {
+  chatFinding,
+  chatPath,
+  createChat,
+  listChats,
+  listProjectChats,
+  readChat,
+  readListedChat,
+  updateChat,
+} from "./chat.js";
 export type { ChatAgent, ChatChange, ChatInput, ChatList, ChatRecord } from "./chat.js";
 export { openChatLog } from "./chat-log.js";
 export type { ChatLog, ChatLogEntry } from "./chat-log.js";

@@ -115,6 +115,23 @@ describe("the listing", () => {
   });
 });
 
+describe("the tags of the tree", () => {
+  it("answers with every tag, also of a project whose directory cannot be read", async () => {
+    const root = await projectsRoot("SAGA", "ACME");
+    await chmod(projectDir(root, "SAGA"), 0o000);
+    onTestFinished(() => chmod(projectDir(root, "SAGA"), 0o755));
+
+    await expect(host(root).tags()).resolves.toEqual(["ACME", "SAGA"]);
+  });
+
+  it("answers with the one tag named, and refuses a tag the tree does not list", async () => {
+    const opened = host(await projectsRoot("SAGA", "ACME"));
+
+    await expect(opened.tags("SAGA")).resolves.toEqual(["SAGA"]);
+    expect((await storeError(opened.tags("GAMMA"))).code).toBe("project-not-found");
+  });
+});
+
 describe("opening one project", () => {
   it("opens one index however many calls name the tag", async () => {
     const root = await projectsRoot("SAGA");
@@ -284,14 +301,17 @@ describe("a project the tree no longer holds", () => {
     expect((await storeError(index.config())).code).toBe("index-closed");
   });
 
-  it("is closed by a listing too", async () => {
+  it.each([
+    ["a listing", (opened: ProjectHost) => opened.list()],
+    ["a read of the tags", (opened: ProjectHost) => opened.tags()],
+  ])("is closed by %s too", async (_name, call) => {
     const root = await projectsRoot("SAGA");
     const opened = host(root);
     const { index } = await opened.open("SAGA");
 
     await rm(projectDir(root, "SAGA"), { recursive: true, force: true });
 
-    await expect(opened.list()).resolves.toEqual([]);
+    await expect(call(opened)).resolves.toEqual([]);
     expect((await storeError(index.config())).code).toBe("index-closed");
   });
 });
@@ -308,11 +328,13 @@ describe("a host that is closing", () => {
     expect((await storeError(second.index.config())).code).toBe("index-closed");
     expect((await storeError(opened.open("SAGA"))).code).toBe("index-closed");
     expect((await storeError(opened.list())).code).toBe("index-closed");
+    expect((await storeError(opened.tags())).code).toBe("index-closed");
   });
 
   it.each([
     ["an open", (opened: ProjectHost) => opened.open("SAGA")],
     ["a listing", (opened: ProjectHost) => opened.list()],
+    ["a read of the tags", (opened: ProjectHost) => opened.tags()],
   ])("refuses %s that was reading the tree when the close completed", async (_name, call) => {
     const opened = host(await projectsRoot("SAGA"));
 

@@ -43,6 +43,8 @@ const REPAIR_INTERVAL_MS = 5000;
 export type ProjectHost = {
   /** Every project of the tree, with the name and the path each one declares. */
   list(): Promise<ProjectSummary[]>;
+  /** The tag of every project of the tree, or the one tag named once the tree lists it. Reads no file of a project. */
+  tags(tag?: string): Promise<string[]>;
   /** The project of the tree that holds a directory, with the findings of the comparison. */
   locate(directory: string): Promise<LocateResult>;
   /** The open index for one tag, and whether it is still live. */
@@ -299,6 +301,15 @@ export function createProjectHost(options: {
       assertServing();
       // One read of one file per project, so a listing opens no index.
       return summarizeAll(tags);
+    },
+
+    async tags(tag) {
+      assertServing();
+      const tags = await discover();
+      assertServing();
+      if (tag === undefined) return tags;
+      assertListed(tags, tag);
+      return [tag];
     },
 
     async locate(directory) {

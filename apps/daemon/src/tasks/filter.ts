@@ -2,7 +2,8 @@
 // a listing keeps. Every route that reads a query reads it here — the task listing its
 // filter, the read of one task its options, the read of a task's text its
 // selection, the resolution of a project the directory it asks about, the read of
-// the feed and the read of a chat log their cursors, and every route over the
+// the feed and the read of a chat log their cursors, the list of the chats of all
+// projects its filter and its cursor, and every route over the
 // store that takes no query the assertion that none was sent — so one set of
 // rules covers them all. The liveness route stands outside them: the server
 // answers it ahead of every table and reads no request to answer it.
@@ -16,6 +17,7 @@
 import type { ListedEntry, TextSelection } from "@tasma/engine";
 import type {
   ChatEventsQuery,
+  ChatListQuery,
   EventsQuery,
   ProjectQuery,
   TaskFilter,
@@ -50,6 +52,8 @@ const RESOLVE_KEYS = Object.keys({ path: true } satisfies Record<keyof ProjectQu
 const EVENTS_KEYS = Object.keys({ after: true } satisfies Record<keyof EventsQuery, true>);
 
 const CHAT_EVENTS_KEYS = Object.keys({ after: true } satisfies Record<keyof ChatEventsQuery, true>);
+
+const CHAT_LIST_KEYS = Object.keys({ project: true, q: true, after: true } satisfies Record<keyof ChatListQuery, true>);
 
 const UNSIGNED_DECIMAL = /^\d+$/;
 
@@ -174,6 +178,12 @@ export function readChatEventsQuery(query: URLSearchParams): Required<ChatEvents
     throw new DaemonError("malformed-request", 'the query key "after" takes a decimal integer from 0 to 2^53 - 1');
   }
   return { after };
+}
+
+/** What a list of the chats of all projects keeps, and where its page starts. An empty value reads as none. */
+export function readChatListQuery(query: URLSearchParams): ChatListQuery {
+  assertDeclared(query, CHAT_LIST_KEYS);
+  return { project: text(query, "project"), q: text(query, "q"), after: text(query, "after") };
 }
 
 /**

@@ -36,6 +36,8 @@ export const routes = {
   cancelChatTurn: { method: "POST", template: "/projects/{project}/tasks/{id}/chats/{chat}/cancel" },
   answerChatPermission: { method: "POST", template: "/projects/{project}/tasks/{id}/chats/{chat}/permissions/{request}" },
   answerChatQuestion: { method: "POST", template: "/projects/{project}/tasks/{id}/chats/{chat}/questions/{request}" },
+  listAllChats: { method: "GET", template: "/chats" },
+  readChatItem: { method: "GET", template: "/chats/{id}/{chat}" },
   listWorkflows: { method: "GET", template: "/workflows" },
   createWorkflow: { method: "POST", template: "/workflows" },
   readWorkflow: { method: "GET", template: "/workflows/{workflow}" },
@@ -69,6 +71,15 @@ export type EventsQuery = { after?: string };
  * last entry holds until the next entry or the end of the hold.
  */
 export type ChatEventsQuery = { after?: number };
+
+/**
+ * Which chats a list of the chats of all projects gives. `project` keeps the
+ * chats of one project. `q` is free text: the daemon splits it on whitespace,
+ * and a chat matches when each word is a case-insensitive substring of the id
+ * of its task, the title of its task or its step. `after` is the `next` of the
+ * page before, passed back unchanged.
+ */
+export type ChatListQuery = { project?: string; q?: string; after?: string };
 
 /**
  * Which tasks a listing returns. The daemon applies the filter, so a caller
@@ -123,9 +134,9 @@ export type TaskTextOptions = { collapsed?: boolean; comment?: never } | { comme
  * What `buildPath` appends to a path, and what a client method may pass as one.
  *
  * Every type written to be passed as one — `ProjectQuery`, `EventsQuery`,
- * `ChatEventsQuery`, `TaskFilter`, `TaskReadOptions`, `TaskTextOptions` — is a
- * type alias rather than an interface, because only an alias carries the
- * implicit index signature a record of this shape requires.
+ * `ChatEventsQuery`, `ChatListQuery`, `TaskFilter`, `TaskReadOptions`,
+ * `TaskTextOptions` — is a type alias rather than an interface, because only an
+ * alias carries the implicit index signature a record of this shape requires.
  */
 export type PathQuery = Record<string, string | string[] | boolean | number | undefined>;
 

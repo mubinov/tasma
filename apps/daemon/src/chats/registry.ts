@@ -82,6 +82,10 @@ type Opened = { log: ChatLog; fold: ChatFold };
 /** The refusals that mean, inside the turns of a chat, that the chat is gone: no rename or delete runs then. */
 const GONE: ReadonlySet<TaskStoreErrorCode> = new Set(["chat-not-found", "task-not-found", "project-not-found"]);
 
+export function assertChatNumber(chat: number): void {
+  if (!Number.isSafeInteger(chat) || chat < 1) throw new TaskStoreError("chat-not-found", "this is not a chat number");
+}
+
 function chatKey(tag: string, task: string, chat: number): string {
   return `${tag}\u0000${task}\u0000${chat}`;
 }
@@ -339,7 +343,7 @@ export function createChatRegistry(options: {
     async get(tag, task, chat) {
       await host.open(tag);
       // A malformed chat number gives chat-not-found also for a missing task; the engine checks the task first.
-      if (!Number.isSafeInteger(chat) || chat < 1) throw new TaskStoreError("chat-not-found", "this is not a chat number");
+      assertChatNumber(chat);
       return loaded.get(chatKey(tag, task, chat))
         ?? writes.runAll(turnsOf(tag, task), async () =>
           loaded.get(chatKey(tag, task, chat)) ?? load(tag, await readChat({ project: tag, root }, task, chat)));

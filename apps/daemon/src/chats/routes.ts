@@ -40,8 +40,8 @@ const ACCEPT_KEYS = Object.keys({ action: true, content: true, client: true } sa
 
 const DECLINE_KEYS = Object.keys({ action: true, client: true } satisfies Record<keyof Decline, true>);
 
-/** The chat a path names. Any other text is 0, which `chats.get` refuses as no chat. */
-function chatOf(segment: string): number {
+/** The chat a path names. Any other text is 0, which `assertChatNumber` refuses as no chat. */
+export function chatOf(segment: string): number {
   const chat = Number(segment);
   return CHAT_NUMBER.test(segment) && Number.isSafeInteger(chat) ? chat : 0;
 }

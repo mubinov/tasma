@@ -4,6 +4,7 @@ import type { TaskFilter } from "@tasma/protocol";
 import {
   assertNoQuery,
   readChatEventsQuery,
+  readChatListQuery,
   readEventsQuery,
   readProjectQuery,
   readTaskFilter,
@@ -292,6 +293,34 @@ describe("readChatEventsQuery", () => {
 
   it("refuses the cursor stated twice", () => {
     expect(refused(() => readChatEventsQuery(query("after=1&after=2"))).code).toBe("malformed-request");
+  });
+});
+
+describe("readChatListQuery", () => {
+  it("reads every key the list declares", () => {
+    expect(readChatListQuery(query("project=ALPHA&q=parse%20tree&after=c0ffee"))).toEqual({
+      project: "ALPHA",
+      q: "parse tree",
+      after: "c0ffee",
+    });
+  });
+
+  it.each([
+    ["states nothing", ""],
+    ["states every key empty", "project=&q=&after="],
+  ])("reads a query that %s as the whole list from the start", (_name, search) => {
+    expect(readChatListQuery(query(search))).toEqual({ project: undefined, q: undefined, after: undefined });
+  });
+
+  it("refuses a key the list does not declare, and names it", () => {
+    const error = refused(() => readChatListQuery(query("status=Done")));
+
+    expect(error.code).toBe("malformed-request");
+    expect(error.message).toContain("status");
+  });
+
+  it.each(["project", "q", "after"])("refuses %s stated twice", (key) => {
+    expect(refused(() => readChatListQuery(query(`${key}=a&${key}=b`))).code).toBe("malformed-request");
   });
 });
 

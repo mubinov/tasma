@@ -20,6 +20,8 @@ export type {
   ChatEvent,
   ChatEventsReply,
   ChatFold,
+  ChatListItem,
+  ChatListPage,
   ChatMessageInput,
   ChatOutside,
   ChatState,
@@ -50,6 +52,7 @@ export type { Config, Project, ProjectChange, ProjectInput, ProjectRename, Proje
 export { buildPath, OPEN_ROUTES, routes, UNSAFE_IN_SEGMENT } from "./routes.js";
 export type {
   ChatEventsQuery,
+  ChatListQuery,
   EventsQuery,
   Method,
   PathQuery,

@@ -166,6 +166,20 @@ export async function plant(path: string, text: string): Promise<void> {
   await writeFile(path, text, "utf8");
 }
 
+/** A chat as the engine writes one: its record, and a log of the events in order. */
+export async function plantChat(
+  root: string,
+  place: { tag: string; digits: string; chat: number },
+  record: { step?: string; created?: string } = {},
+  events: ChatEvent[] = [],
+): Promise<void> {
+  const { tag, digits, chat } = place;
+  const stored = { step: "dev:build", agent: "claude", folder: "/srv/alpha", created: TIMESTAMP, ...record };
+  await plant(join(chatFolder(root, tag, digits, chat), "chat.json"), JSON.stringify(stored));
+  const lines = events.map((event, at) => `${JSON.stringify({ seq: at + 1, at: TIMESTAMP, event })}\n`);
+  await plant(logFile(root, tag, digits, chat), lines.join(""));
+}
+
 // The workflow planters below carry the names the engine's own test helpers
 // use, so one thing is not named twice across the two suites.
 
@@ -208,11 +222,11 @@ export async function plantSteps(root: string, name: string, ...steps: string[])
 }
 
 /** A task file as a hand edit or an earlier write leaves it. */
-export function taskText(id: string): string {
+export function taskText(id: string, title = "Planted", status = "To Do"): string {
   return `---
 id: ${id}
-title: Planted
-status: To Do
+title: ${title}
+status: ${status}
 created: "${TIMESTAMP}"
 updated: "${TIMESTAMP}"
 next_comment_id: 1

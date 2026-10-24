@@ -4,9 +4,12 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   type ChatInput,
   chatPath,
+  type ChatRecord,
   createChat,
   listChats,
+  listProjectChats,
   readChat,
+  readListedChat,
   removeProject,
   updateChat,
 } from "@tasma/engine";
@@ -347,6 +350,179 @@ describe("readChat and listChats", () => {
 
     expect((await storeError(listChats(options(root), "SAGA-2"))).code).toBe("task-not-found");
     expect((await storeError(readChat(options(root), "SAGA-2", 1))).code).toBe("task-not-found");
+  });
+});
+
+describe("readListedChat", () => {
+  it("reads the record that listChats lists", async () => {
+    const root = await withTasks();
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+
+    const listed = await listChats(options(root), "SAGA-1");
+
+    await expect(readListedChat(options(root), "SAGA-1", 2)).resolves.toEqual(listed.chats[1]);
+  });
+
+  it.each([
+    ["no event log", "chat-unreadable", (chat: string) => rm(join(chat, "events.jsonl"))],
+    ["an event log with a second name", "chat-unreadable", (chat: string) => link(join(chat, "events.jsonl"), join(chat, "copy.jsonl"))],
+    ["an event log that is a directory", "chat-unreadable", async (chat: string) => {
+      await rm(join(chat, "events.jsonl"));
+      await mkdir(join(chat, "events.jsonl"));
+    }],
+    ["a broken record", "chat-unreadable", (chat: string) => writeFile(join(chat, "chat.json"), "{")],
+    ["no record", "chat-not-found", (chat: string) => rm(join(chat, "chat.json"))],
+  ])("refuses a chat with %s as the finding of listChats states it", async (_name, code, build) => {
+    const root = await withTasks();
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    await build(chatDir(root, "1", 1));
+
+    const refusal = await storeError(readListedChat(options(root), "SAGA-1", 1));
+
+    const [finding] = (await listChats(options(root), "SAGA-1")).diagnostics;
+    expect(refusal).toMatchObject({ code, description: finding!.message, path: finding!.path });
+  });
+
+  it.each([0, 3])("refuses chat %d, which the task does not hold", async (chat) => {
+    const root = await withTasks();
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+
+    expect((await storeError(readListedChat(options(root), "SAGA-1", chat))).code).toBe("chat-not-found");
+  });
+});
+
+describe("listProjectChats", () => {
+  /** The records in one order, because the tasks of a project come in no fixed order. */
+  function sorted(records: ChatRecord[]): ChatRecord[] {
+    return records.toSorted((a, b) => (a.task === b.task ? a.chat - b.chat : a.task < b.task ? -1 : 1));
+  }
+
+  it("lists every chat of every task, each record as the list of its task gives it", async () => {
+    const root = await withTasks(2);
+    await plant(taskFile(root, "SAGA-007"), taskText("SAGA-007"));
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    await createChat(options(root), "SAGA-1", { ...CHAT_INPUT, step: "review" });
+    await createChat(options(root), "SAGA-2", CHAT_INPUT);
+    await createChat(options(root), "SAGA-007", CHAT_INPUT);
+
+    const listed = await listProjectChats(options(root));
+
+    const expected = [];
+    for (const task of ["SAGA-007", "SAGA-1", "SAGA-2"]) expected.push(...(await listChats(options(root), task)).chats);
+    expect(sorted(listed.chats)).toEqual(expected);
+    expect(listed.chats.map((record) => record.task).toSorted()).toEqual(["SAGA-007", "SAGA-1", "SAGA-1", "SAGA-2"]);
+    expect(listed.diagnostics).toEqual([]);
+  });
+
+  it("lists the chats of a task whose file is gone", async () => {
+    const root = await withTasks();
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    await rm(taskFile(root, "SAGA-1"));
+
+    expect((await listProjectChats(options(root))).chats).toMatchObject([{ task: "SAGA-1", chat: 1 }]);
+  });
+
+  it("lists nothing for a project with no chats directory", async () => {
+    const root = await withTasks();
+
+    await expect(listProjectChats(options(root))).resolves.toEqual({ chats: [], diagnostics: [] });
+  });
+
+  it("passes over a name that is no task number or no chat number", async () => {
+    const root = await withTasks();
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    await mkdir(join(chatsDir(root), "notes"));
+    await mkdir(join(chatsDir(root), "1a"));
+    await mkdir(join(chatsDir(root), "9".repeat(20)));
+    await plant(join(chatsDir(root), "notes.txt"), "not a task");
+    await mkdir(join(chatsDir(root), "1", "01"));
+    await plant(join(chatsDir(root), "1", "notes.txt"), "not a chat");
+
+    await expect(listProjectChats(options(root))).resolves.toEqual({
+      chats: [expect.objectContaining({ task: "SAGA-1", chat: 1 })],
+      diagnostics: [],
+    });
+  });
+
+  it("lists a broken record and a record with no event log as findings, and the other chats", async () => {
+    const root = await withTasks(2);
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    await createChat(options(root), "SAGA-2", CHAT_INPUT);
+    await writeFile(join(chatDir(root, "1", 2), "chat.json"), "{");
+    await rm(join(chatDir(root, "2", 1), "events.jsonl"));
+
+    const listed = await listProjectChats(options(root));
+
+    expect(listed.chats).toMatchObject([{ task: "SAGA-1", chat: 1 }]);
+    expect(listed.diagnostics.toSorted((a, b) => (a.path! < b.path! ? -1 : 1))).toEqual([
+      { code: "chat-file-unreadable", message: expect.any(String) as string, path: join(chatDir(root, "1", 2), "chat.json") },
+      { code: "chat-file-unreadable", message: expect.any(String) as string, path: join(chatDir(root, "2", 1), "events.jsonl") },
+    ]);
+  });
+
+  it.each([
+    ["the chats of a task", "a file", async (root: string) => plant(join(chatsDir(root), "2"), "no directory"), ["2"]],
+    ["the chats of a task", "a symbolic link", async (root: string) => symlink(join(root, "outside"), join(chatsDir(root), "2")), ["2"]],
+    ["one chat", "a file", async (root: string) => {
+      await mkdir(join(chatsDir(root), "2"));
+      await plant(chatDir(root, "2", 1), "no directory");
+    }, ["2", "1"]],
+    ["one chat", "a symbolic link", async (root: string) => {
+      await mkdir(join(chatsDir(root), "2"));
+      await symlink(join(root, "outside"), chatDir(root, "2", 1));
+    }, ["2", "1"]],
+  ])("lists %s whose name holds %s as a finding, and the other tasks", async (_what, _name, build, segments) => {
+    const root = await withTasks();
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    await mkdir(join(root, "outside", "1"), { recursive: true });
+    await build(root);
+
+    const listed = await listProjectChats(options(root));
+
+    expect(listed.chats).toMatchObject([{ task: "SAGA-1", chat: 1 }]);
+    expect(listed.diagnostics).toEqual([
+      { code: "chat-file-unreadable", message: expect.any(String) as string, path: join(chatsDir(root), ...segments) },
+    ]);
+  });
+
+  it("lists the chats of a task the filesystem refuses to read as a finding, and the other tasks", async () => {
+    const root = await withTasks(2);
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    await createChat(options(root), "SAGA-2", CHAT_INPUT);
+    await chmod(join(chatsDir(root), "2"), 0o000);
+    onTestFinished(() => chmod(join(chatsDir(root), "2"), 0o700));
+
+    const listed = await listProjectChats(options(root));
+
+    expect(listed.chats).toMatchObject([{ task: "SAGA-1", chat: 1 }]);
+    expect(listed.diagnostics).toEqual([
+      {
+        code: "chat-file-unreadable",
+        message: expect.stringMatching(/^the chats of this task cannot be read: .*EACCES/) as string,
+        path: join(chatsDir(root), "2"),
+      },
+    ]);
+  });
+
+  it.each([
+    ["a file", (root: string) => plant(chatsDir(root), "no directory")],
+    ["a symbolic link", async (root: string) => {
+      await mkdir(join(root, "outside"));
+      await symlink(join(root, "outside"), chatsDir(root));
+    }],
+  ])("refuses a chats directory that is %s", async (_name, build) => {
+    const root = await withTasks();
+    await build(root);
+
+    expect((await storeError(listProjectChats(options(root)))).code).toBe("project-invalid");
+  });
+
+  it("refuses a project that does not exist", async () => {
+    const root = await withTasks();
+
+    expect((await storeError(listProjectChats({ project: "OTHER", root }))).code).toBe("project-not-found");
   });
 });
 

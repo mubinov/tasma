@@ -274,9 +274,16 @@ function checkStorageDirectory(path: string, entry: Stats | undefined, subject: 
  * tree. Answers whether the directory of the task's chats stands.
  */
 export async function checkChatDirectories(paths: ProjectPaths, taskChats: string): Promise<boolean> {
-  checkStorageDirectory(paths.chats, await entryAt(paths.chats), "the chats directory of this project");
+  await checkChatsDirectory(paths);
   const entry = await entryAt(taskChats);
   checkStorageDirectory(taskChats, entry, "the chats directory of this task");
+  return entry !== undefined;
+}
+
+/** `chats/` alone under the same rule. Answers whether it stands. */
+export async function checkChatsDirectory(paths: ProjectPaths): Promise<boolean> {
+  const entry = await entryAt(paths.chats);
+  checkStorageDirectory(paths.chats, entry, "the chats directory of this project");
   return entry !== undefined;
 }
 

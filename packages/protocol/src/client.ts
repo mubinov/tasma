@@ -2,6 +2,8 @@ import type {
   Chat,
   ChatCancelInput,
   ChatEventsReply,
+  ChatListItem,
+  ChatListPage,
   ChatMessageInput,
   PermissionAnswer,
   QuestionAnswer,
@@ -14,6 +16,7 @@ import type { Health } from "./health.js";
 import type { Project, ProjectChange, ProjectInput, ProjectRename, ProjectSummary } from "./project.js";
 import type {
   ChatEventsQuery,
+  ChatListQuery,
   EventsQuery,
   Method,
   PathQuery,
@@ -122,6 +125,10 @@ export type Client = {
     request: string,
     answer: QuestionAnswer,
   ): Promise<Success<Chat>>;
+  /** One page of the chats of all projects, newest first. */
+  listAllChats(query?: ChatListQuery): Promise<Success<ChatListPage>>;
+  /** One chat as `listAllChats` gives it, by the id of its task. */
+  readChatItem(id: string, chat: number): Promise<Success<ChatListItem>>;
   listWorkflows(): Promise<Success<string[]>>;
   createWorkflow(input: WorkflowInput): Promise<Success<Workflow>>;
   readWorkflow(name: string): Promise<Success<Workflow>>;
@@ -250,6 +257,8 @@ export function createClient(transport: Transport): Client {
       call<Chat>(routes.answerChatPermission, { project: tag, id, chat, request }, { body: answer }),
     answerChatQuestion: (tag, id, chat, request, answer) =>
       call<Chat>(routes.answerChatQuestion, { project: tag, id, chat, request }, { body: answer }),
+    listAllChats: (query) => call<ChatListPage>(routes.listAllChats, {}, { query }),
+    readChatItem: (id, chat) => call<ChatListItem>(routes.readChatItem, { id, chat }),
     listWorkflows: () => call<string[]>(routes.listWorkflows, {}),
     createWorkflow: (input) => call<Workflow>(routes.createWorkflow, {}, { body: input }),
     readWorkflow: (name) => call<Workflow>(routes.readWorkflow, { workflow: name }),

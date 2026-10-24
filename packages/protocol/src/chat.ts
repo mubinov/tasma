@@ -53,6 +53,29 @@ export type Chat = {
   seq: number;
 } & ChatStatus;
 
+/** One chat in the list of the chats of all projects. */
+export type ChatListItem = {
+  tag: string;
+  /** The id of the task, for example `ALPHA-3`. */
+  task: string;
+  title: string;
+  chat: number;
+  step: string;
+  agent: ChatAgent;
+  created: string;
+  /** Only on the latest chat of a task whose status is not final. */
+  status?: ChatStatus;
+};
+
+/** One page of the list of the chats of all projects, newest first. */
+export type ChatListPage = {
+  items: ChatListItem[];
+  /** The count of all chats that match `project` and `q`, on all pages. */
+  total: number;
+  /** The `after` of the next page. Absent on the last page. */
+  next?: string;
+};
+
 /**
  * The answer to a read of a chat log. `cursor` is the `seq` of the last entry
  * of the answer, or the `after` of the read for an answer with no entries, and
