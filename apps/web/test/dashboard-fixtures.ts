@@ -3,18 +3,15 @@ import {
   routes,
   type ChatListItem,
   type ChatListPage,
-  type FeedEvent,
   type ProjectSummary,
   type Transport,
   type TransportReply,
 } from "@tasma/protocol";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
-import { createElement } from "react";
-import { expect, vi } from "vitest";
-import { FeedSubscriber } from "../src/components/feed-subscriber";
+import { screen, within } from "@testing-library/react";
+import { vi } from "vitest";
 import { tagOf } from "../src/lib/board";
 import { chatPath, chatRecord, stubChatLog } from "./chat-daemon";
-import { heldBack, renderWithRouter, successReply } from "./helpers";
+import { renderWithRouter, stubFeed, successReply } from "./helpers";
 import { daemon } from "./task-screen-fixtures";
 
 /** The time the tests take as now: 22 October 2026, 12:00 UTC. */
@@ -83,10 +80,9 @@ function filterItems(items: readonly ChatListItem[], { project, q }: Filter): Ch
 
 /**
  * The daemon of the dashboard: the projects, the list, the task page of SAGA-3,
- * the record of the open chat with a held log, and a feed that answers the
- * first read with the cursor `c0` and holds each read after it until the test
- * sends events. The first page of a filter that has no reply of its own holds
- * the items of `ITEMS` that the filter keeps.
+ * the record of the open chat with a held log, and the feed of `stubFeed`. The
+ * first page of a filter that has no reply of its own holds the items of
+ * `ITEMS` that the filter keeps.
  */
 export function stubDashboard(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
   const log = stubChatLog({
@@ -94,9 +90,9 @@ export function stubDashboard(replies: Record<string, TransportReply | Promise<T
     "/projects": successReply(PROJECTS),
     "/chats": pageReply(ITEMS),
     [chatPath()]: successReply(chatRecord({ step: "dev:review" })),
-    "/events": successReply({ cursor: "c0", events: [] }),
     ...replies,
   });
+  const feed = stubFeed(log);
   const transport: Transport = (request) => {
     const url = new URL(request.path, "http://stub");
     const filter = Object.fromEntries(url.searchParams) as Filter & { after?: string };
@@ -105,31 +101,8 @@ export function stubDashboard(replies: Record<string, TransportReply | Promise<T
     }
     return log.transport(request);
   };
-  let count = 0;
-  let held = hold(0);
 
-  function hold(index: number): (reply: TransportReply) => void {
-    const { reply, answer } = heldBack();
-    log.replies[`/events?after=c${String(index)}`] = reply;
-    return answer;
-  }
-
-  return {
-    ...log,
-    transport,
-    /** Answers the held read of the feed with the events, and waits for the read after it. */
-    async send(events: FeedEvent[]): Promise<void> {
-      const current = held;
-      count += 1;
-      held = hold(count);
-      await act(async () => {
-        current(successReply({ cursor: `c${String(count)}`, events }));
-        await vi.waitFor(() => {
-          expect(log.paths).toContain(`/events?after=c${String(count)}`);
-        });
-      });
-    },
-  };
+  return { ...log, transport, mount: feed.mount, send: feed.send };
 }
 
 export type DashboardStub = ReturnType<typeof stubDashboard>;
@@ -137,11 +110,7 @@ export type DashboardStub = ReturnType<typeof stubDashboard>;
 /** The app at `path`, with the feed subscriber that main.tsx mounts beside it. */
 export async function renderDashboard(stub: DashboardStub, path = "/") {
   const router = await renderWithRouter(path, stub.transport);
-  const { queryClient, client } = router.options.context;
-  render(createElement(FeedSubscriber, { queryClient, client }));
-  await waitFor(() => {
-    expect(stub.paths).toContain("/events?after=c0");
-  });
+  await stub.mount(router);
   return router;
 }
 

@@ -1,9 +1,8 @@
 import type { Chat, ChatState } from "@tasma/protocol";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SELECTED_ROW_CLASS } from "../../src/components/control-classes";
-import { FeedSubscriber } from "../../src/components/feed-subscriber";
 import { fullChatTime, shortChatTime } from "../../src/lib/chat-time";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
@@ -38,12 +37,8 @@ function chat(number: number, state: ChatState = "working", step = "build"): Cha
 /** The task page at `path`, with the feed subscriber that main.tsx mounts beside it. */
 async function openPage(stub: TaskChatsStub, path = PAGE): Promise<Router> {
   const router = await renderWithRouter(path, stub.transport);
-  const { queryClient, client } = router.options.context;
-  render(<FeedSubscriber queryClient={queryClient} client={client} />);
   await screen.findByRole("heading", { level: 1 });
-  await waitFor(() => {
-    expect(stub.paths).toContain("/events?after=c0");
-  });
+  await stub.mount(router);
   return router;
 }
 

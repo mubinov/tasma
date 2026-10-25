@@ -1,9 +1,8 @@
 import type { Chat, TransportReply } from "@tasma/protocol";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chatStartKey } from "../../src/api/mutations";
-import { FeedSubscriber } from "../../src/components/feed-subscriber";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
 import { daemon as boardDaemon, entry, listing } from "../board-fixtures";
@@ -53,12 +52,8 @@ function stub(chats: Chat[]): TaskChatsStub {
 
 async function openBoard(daemon: TaskChatsStub): Promise<Router> {
   const router = await renderWithRouter(BOARD, daemon.transport);
-  const { queryClient, client } = router.options.context;
-  render(<FeedSubscriber queryClient={queryClient} client={client} />);
   await screen.findByRole("button", { name: "Task menu SAGA-3" });
-  await waitFor(() => {
-    expect(daemon.paths).toContain("/events?after=c0");
-  });
+  await daemon.mount(router);
   return router;
 }
 

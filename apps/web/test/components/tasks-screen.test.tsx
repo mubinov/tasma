@@ -1,4 +1,4 @@
-import type { Diagnostic, ExcludedFile, TransportReply } from "@tasma/protocol";
+import type { Diagnostic, ExcludedFile, FeedEvent, TransportReply } from "@tasma/protocol";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,7 +20,17 @@ import {
   titlesIn,
   WORKFLOW,
 } from "../board-fixtures";
-import { heldBack, refusalReply, renderWithRouter, successReply } from "../helpers";
+import {
+  countReads,
+  heldBack,
+  openWithFeed,
+  projectEvent,
+  refusalReply,
+  renderWithRouter,
+  successReply,
+  taskEvent,
+  type FeedStub,
+} from "../helpers";
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -375,20 +385,6 @@ describe("polling", () => {
     expect(titlesIn("Done")).toEqual(["Task 1"]);
   });
 
-  it("opens the first project that appears in an empty tree", async () => {
-    const { transport, replies } = daemon({ "/projects": successReply([]) });
-    const router = await renderWithRouter("/tasks", transport);
-    expect(screen.getByText(/^No projects yet/)).toBeTruthy();
-
-    replies["/projects"] = successReply(PROJECTS);
-    await poll();
-
-    await vi.waitFor(() => {
-      expect(screen.getByText("No tasks in Saga yet.")).toBeTruthy();
-    });
-    expect(router.state.location.search).toEqual({ projects: "SAGA" });
-  });
-
   it("asks nothing while the page is hidden", async () => {
     const { transport, paths } = daemon({ "/projects/SAGA/tasks": listing([entry(1)]) });
     await renderWithRouter("/tasks?projects=SAGA", transport);
@@ -400,17 +396,45 @@ describe("polling", () => {
 
     expect(paths).toHaveLength(asked);
   });
+});
 
-  it("shows the stale step of a workflow a poll brings until its read lands", async () => {
+describe("changes from the feed", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  /** The events, then the zero-delay timer the query cache notifies its observers through. */
+  async function sendAndSettle(feed: FeedStub, events: FeedEvent[]) {
+    await feed.send(events);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+  }
+
+  it("opens the first project that appears in an empty tree", async () => {
+    const stub = daemon({ "/projects": successReply([]) });
+    const { router, feed } = await openWithFeed("/tasks", stub);
+    expect(screen.getByText(/^No projects yet/)).toBeTruthy();
+
+    stub.replies["/projects"] = successReply(PROJECTS);
+    await sendAndSettle(feed, [projectEvent("SAGA", "created")]);
+
+    await vi.waitFor(() => {
+      expect(screen.getByText("No tasks in Saga yet.")).toBeTruthy();
+    });
+    expect(router.state.location.search).toEqual({ projects: "SAGA" });
+  });
+
+  it("shows the stale step of a workflow a read brings until its read lands", async () => {
     let answer: (reply: TransportReply) => void = () => {};
     const late = new Promise<TransportReply>((resolve) => {
       answer = resolve;
     });
-    const { transport, replies } = daemon({ "/projects/SAGA/tasks": listing([entry(1)]), "/workflows/dev": late });
-    await renderWithRouter("/tasks?projects=SAGA", transport);
+    const stub = daemon({ "/projects/SAGA/tasks": listing([entry(1)]), "/workflows/dev": late });
+    const { feed } = await openWithFeed("/tasks?projects=SAGA", stub);
 
-    replies["/projects/SAGA/tasks"] = listing([entry(1, { workflow: "dev", step: "approve" })]);
-    await poll();
+    stub.replies["/projects/SAGA/tasks"] = listing([entry(1, { workflow: "dev", step: "approve" })]);
+    await sendAndSettle(feed, [taskEvent("SAGA-1")]);
 
     expect(screen.getByText("approve").className).toContain("text-dim");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Tasks");
@@ -663,7 +687,7 @@ describe("moving a task from the card menu", () => {
     expect(useNoticeStore.getState().notices[0]?.words).toEqual(["label-case-converted · label \"Web\" was converted to \"web\""]);
   });
 
-  it("keeps the card at its new place when a poll lands while the write is pending", async () => {
+  it("keeps the card at its new place when a read lands while the write is pending", async () => {
     const write = heldBack();
     const { transport } = daemon({ "/projects/SAGA/tasks": listing([entry(1), entry(2)]), [TASK_1]: write.reply });
     const router = await renderWithRouter("/tasks?projects=SAGA", transport);
@@ -898,11 +922,9 @@ describe("the notice for a refused read", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
-  /** One poll interval, the retry of an unreadable answer, and the notification of the cache. */
-  async function poll() {
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
-    });
+  /** The events, the retry of an unreadable answer, and the notification of the cache. */
+  async function sendAndWaitPastRetry(feed: FeedStub, events: FeedEvent[]) {
+    await feed.send(events);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_010);
     });
@@ -912,13 +934,13 @@ describe("the notice for a refused read", () => {
     return useNoticeStore.getState().announced.map(({ words }) => words);
   }
 
-  it("opens on one refused poll of the listing, and closes with a spoken line after a successful poll", async () => {
-    const { transport, replies } = daemon({ [LISTING]: listing([entry(1)]) });
-    const router = await renderWithRouter("/tasks?projects=SAGA", transport);
+  it("opens on one refused read of the listing, and closes with a spoken line after a successful read", async () => {
+    const stub = daemon({ [LISTING]: listing([entry(1)]) });
+    const { router, feed } = await openWithFeed("/tasks?projects=SAGA", stub);
     const readAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA", "tasks"])!.dataUpdatedAt;
 
-    replies[LISTING] = INVALID;
-    await poll();
+    stub.replies[LISTING] = INVALID;
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
     expect(useNoticeStore.getState().notices).toMatchObject([
       {
         key: "board-refusal:SAGA",
@@ -930,37 +952,42 @@ describe("the notice for a refused read", () => {
     ]);
     expect(titlesIn("Backlog")).toEqual(["Task 1"]);
 
-    replies[LISTING] = listing([entry(1)]);
-    await poll();
+    stub.replies[LISTING] = listing([entry(1)]);
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
     expect(useNoticeStore.getState().notices).toEqual([]);
     expect(announced()).toContain("The board is up to date.");
     expect(titlesIn("Backlog")).toEqual(["Task 1"]);
   });
 
-  it("opens no notice when the polls of the listing get no envelope", async () => {
-    const { transport, replies } = daemon({ [LISTING]: listing([entry(1)]) });
-    await renderWithRouter("/tasks?projects=SAGA", transport);
+  it("opens no notice when the reads of the listing get no envelope", async () => {
+    const stub = daemon({ [LISTING]: listing([entry(1)]) });
+    const { feed } = await openWithFeed("/tasks?projects=SAGA", stub);
 
-    replies[LISTING] = UNREADABLE;
-    await poll();
-    await poll();
+    stub.replies[LISTING] = UNREADABLE;
+    const reads = countReads(stub, LISTING);
+    await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1")]);
+    expect(reads()).toBeGreaterThan(0);
+    await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1")]);
+    expect(reads()).toBeGreaterThan(0);
 
     expect(useNoticeStore.getState().notices).toEqual([]);
     expect(titlesIn("Backlog")).toEqual(["Task 1"]);
   });
 
-  it("opens on one refused poll of the project, and keeps the notice as it is while the listing polls succeed", async () => {
-    const { transport, replies } = daemon({ [LISTING]: listing([entry(1)]) });
-    const router = await renderWithRouter("/tasks?projects=SAGA", transport);
+  it("opens on one refused read of the project, and keeps the notice as it is while the listing reads succeed", async () => {
+    const stub = daemon({ [LISTING]: listing([entry(1)]) });
+    const { router, feed } = await openWithFeed("/tasks?projects=SAGA", stub);
     const readAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA"])!.dataUpdatedAt;
 
-    replies["/projects/SAGA"] = INVALID;
-    await poll();
+    stub.replies["/projects/SAGA"] = INVALID;
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
     const [notice] = useNoticeStore.getState().notices;
     expect(notice?.words).toEqual(["store/config-invalid · priorities is empty"]);
     expect(notice?.line).toBe(`The daemon refused a read of SAGA. The board shows the tasks as they were at ${formatClock(readAt)}.`);
 
-    await poll();
+    const reads = countReads(stub, LISTING);
+    await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1")]);
+    expect(reads()).toBeGreaterThan(0);
     expect(useNoticeStore.getState().notices).toHaveLength(1);
     expect(useNoticeStore.getState().notices[0]).toBe(notice);
     expect(titlesIn("Backlog")).toEqual(["Task 1"]);
@@ -968,10 +995,10 @@ describe("the notice for a refused read", () => {
   });
 
   it("closes when another project opens", async () => {
-    const { transport, replies } = daemon({ [LISTING]: listing([entry(1)]) });
-    const router = await renderWithRouter("/tasks?projects=SAGA", transport);
-    replies[LISTING] = INVALID;
-    await poll();
+    const stub = daemon({ [LISTING]: listing([entry(1)]) });
+    const { router, feed } = await openWithFeed("/tasks?projects=SAGA", stub);
+    stub.replies[LISTING] = INVALID;
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
     expect(useNoticeStore.getState().notices.map(({ key }) => key)).toEqual(["board-refusal:SAGA"]);
 
     await act(async () => {
@@ -1882,26 +1909,27 @@ describe("deleting a task", () => {
     expect(deletes(requests)).toBe(0);
   });
 
-  it("still sends the delete of a card a poll removed while the dialog was open, and focuses its column's heading", async () => {
+  it("still sends the delete of a card a read removed while the dialog was open, and focuses its column's heading", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
-    const { transport, requests, replies } = daemon({
+    const stub = daemon({
       "/projects/SAGA/tasks": listing([entry(1), entry(2), entry(3)]),
       [DELETE_2]: refusalReply(404, { kind: "store", code: "task-not-found", message: "no task SAGA-2" }),
     });
-    await renderWithRouter("/tasks?projects=SAGA", transport);
+    const { feed } = await openWithFeed("/tasks?projects=SAGA", stub);
     const dialog = await askDelete(user, "Task 2");
 
-    replies["/projects/SAGA/tasks"] = listing([entry(1), entry(3)]);
+    stub.replies["/projects/SAGA/tasks"] = listing([entry(1), entry(3)]);
+    await feed.send([taskEvent("SAGA-2", "deleted")]);
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_010);
+      await vi.advanceTimersByTimeAsync(10);
     });
     expect(screen.queryByText("Task 2")).toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
     expect(screen.queryByRole("alertdialog")).toBeNull();
     await vi.waitFor(() => {
-      expect(deletes(requests)).toBe(1);
+      expect(deletes(stub.requests)).toBe(1);
     });
     await vi.waitFor(() => {
       expect(announced()).toContain("SAGA-2 was deleted.");

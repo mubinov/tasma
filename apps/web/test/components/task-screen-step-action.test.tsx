@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CHAT_CLIENT } from "../../src/api/mutations";
 import { BUTTON_FILLED_CLASS } from "../../src/components/control-classes";
-import { FeedSubscriber } from "../../src/components/feed-subscriber";
 import { FindShortcut } from "../../src/components/find-shortcut";
 import { STEP_ACTION_SELECTOR } from "../../src/lib/step-action";
 import { useNoticeStore } from "../../src/store/notices";
@@ -53,12 +52,8 @@ function stub(chats: Chat[], replies: Record<string, TransportReply | Promise<Tr
 /** The task page at `path`, with the feed subscriber that main.tsx mounts beside it. */
 async function openPage(daemon: TaskChatsStub, path = PAGE): Promise<Router> {
   const router = await renderWithRouter(path, daemon.transport);
-  const { queryClient, client } = router.options.context;
-  render(<FeedSubscriber queryClient={queryClient} client={client} />);
   await screen.findByRole("heading", { level: 1 });
-  await waitFor(() => {
-    expect(daemon.paths).toContain("/events?after=c0");
-  });
+  await daemon.mount(router);
   return router;
 }
 

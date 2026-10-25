@@ -68,7 +68,7 @@ export function listing(
   return successReply({ entries, excluded }, diagnostics);
 }
 
-/** A daemon whose replies a test can change between polls. */
+/** A daemon whose replies a test can change between reads. */
 export function daemon(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
   return stubTransport({
     "/projects": successReply(PROJECTS),
@@ -104,7 +104,7 @@ export function titlesIn(status: string): string[] {
   return within(column(status)).queryAllByText(/^Task \d+$/).map((title) => title.textContent);
 }
 
-/** The first of the board's two status regions: what a poll can change about the projects. */
+/** The first of the board's two status regions: what a read can change about the projects. */
 export function boardStateRegion(): HTMLElement {
   return screen.getAllByRole("status")[0]!;
 }

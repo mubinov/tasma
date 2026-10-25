@@ -241,7 +241,7 @@ describe("dragging a card to a place", () => {
       expect(lifted()?.textContent).toContain("Task 1");
     });
 
-    it("measures the card again when a poll replaced its element between the press and the drag", async () => {
+    it("measures the card again when a read replaced its element between the press and the drag", async () => {
       const { transport, replies } = daemon({
         "/projects/SAGA/tasks": listing([entry(1), entry(2, { status: "To Do" })]),
       });
@@ -276,7 +276,7 @@ describe("dragging a card to a place", () => {
       expect(lifted()).toBeNull();
     });
 
-    it("starts no drag when a poll takes the card off the board first", async () => {
+    it("starts no drag when a read takes the card off the board first", async () => {
       const { transport, replies } = daemon({ "/projects/SAGA/tasks": listing([entry(1), entry(2)]) });
       const router = await renderWithRouter("/tasks?projects=SAGA", transport);
 
@@ -628,7 +628,7 @@ describe("dragging a card to a place", () => {
       expect(document.activeElement).toBe(document.body);
     });
 
-    it("keeps a folded final column folded when a later poll carries the dropped card past its cap", async () => {
+    it("keeps a folded final column folded when a later read carries the dropped card past its cap", async () => {
       const done = Array.from({ length: 25 }, (_, index) => entry(index + 10, {
         status: "Done",
         order: (index + 1) * 1_000,
@@ -648,7 +648,7 @@ describe("dragging a card to a place", () => {
         expect(cardIn("Backlog", "Task 1").getAttribute("aria-busy")).toBeNull();
       });
 
-      // The poll puts the same task at the end of Done, past the cap. Nothing
+      // The read puts the same task at the end of Done, past the cap. Nothing
       // the user did asks for that column to open.
       replies["/projects/SAGA/tasks"] = listing([
         entry(2, { order: 2_000 }),
@@ -667,8 +667,8 @@ describe("dragging a card to a place", () => {
     });
   });
 
-  describe("a poll that lands during the drag", () => {
-    async function pollDuringDrag(moved: TaskEntry) {
+  describe("a read that lands during the drag", () => {
+    async function readDuringDrag(moved: TaskEntry) {
       const { transport, requests, replies } = daemon({
         "/projects/SAGA/tasks": listing([
           entry(1, { order: 1_000 }),
@@ -690,7 +690,7 @@ describe("dragging a card to a place", () => {
     }
 
     it("leaves the board as the drag started it, and writes from that board", async () => {
-      const { requests } = await pollDuringDrag(entry(1, { status: "Done", order: 1_000 }));
+      const { requests } = await readDuringDrag(entry(1, { status: "Done", order: 1_000 }));
 
       expect(titlesIn("Backlog")).toEqual(["Task 1"]);
       expect(titlesIn("Done")).toEqual([]);
@@ -700,8 +700,8 @@ describe("dragging a card to a place", () => {
       expect(patches(requests)).toEqual([["/projects/SAGA/tasks/SAGA-1", { status: "To Do", order: 2_000 }]]);
     });
 
-    it("shows the listing the poll brought once the drag has ended", async () => {
-      await pollDuringDrag(entry(1, { title: "Task 1", status: "Done", order: 1_000 }));
+    it("shows the listing the read brought once the drag has ended", async () => {
+      await readDuringDrag(entry(1, { title: "Task 1", status: "Done", order: 1_000 }));
 
       act(() => {
         fireEvent.keyDown(window, { key: "Escape" });

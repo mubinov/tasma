@@ -276,13 +276,13 @@ export function useCardDrag({ board, onDrop }: CardDragOptions): CardDrag {
   function liftCard(current: Session): void {
     const snapshot = latestRef.current.board;
     const found = cardPlace(snapshot.columns, current.taskId);
-    // A poll since the press can have replaced the card's element, and the box
+    // A read since the press can have replaced the card's element, and the box
     // of an element off the page is all zeros. The id comes off the wire, so it
     // is escaped before it stands in a selector.
     const selector = `[${DRAG_ATTRIBUTE.card}="${CSS.escape(current.taskId)}"]`;
     const card = document.querySelector<HTMLElement>(selector) ?? current.card;
 
-    // A poll can also have taken the card off the board, or off the page while
+    // A read can also have taken the card off the board, or off the page while
     // it stands on the board: a virtualised column renders a window of its cards.
     if (found === null || !card.isConnected) {
       end(current);

@@ -1,12 +1,32 @@
-import type { TransportReply } from "@tasma/protocol";
+import type { FeedEvent, TransportReply } from "@tasma/protocol";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BUSY_ANNOUNCE_DELAY } from "../../src/lib/use-board-search";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { CONFIG, column, countOf, daemon, entry, filterRegion, filterResult, listing, titlesIn } from "../board-fixtures";
-import { heldBack, refusalReply, renderWithRouter, successReply } from "../helpers";
+import {
+  CONFIG,
+  column,
+  countOf,
+  daemon,
+  entry,
+  filterRegion,
+  filterResult,
+  listing,
+  titlesIn,
+} from "../board-fixtures";
+import {
+  countReads,
+  heldBack,
+  openWithFeed,
+  projectEvent,
+  refusalReply,
+  renderWithRouter,
+  successReply,
+  taskEvent,
+  type FeedStub,
+} from "../helpers";
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -65,11 +85,9 @@ describe("the search", () => {
     });
   }
 
-  /** One poll interval, the retry of an unreadable answer, and the notification of the cache. */
-  async function poll() {
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
-    });
+  /** The events, the retry of an unreadable answer, and the notification of the cache. */
+  async function sendAndWaitPastRetry(feed: FeedStub, events: FeedEvent[]) {
+    await feed.send(events);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_010);
     });
@@ -433,27 +451,31 @@ describe("the search", () => {
       expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2", "Task 3"]);
     });
 
-    it("turns no spinner while a poll of a text with a result runs", async () => {
-      const { transport, replies } = searchDaemon();
-      await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+    it("turns no spinner while a read of a text with a result runs", async () => {
+      const stub = searchDaemon();
+      const { feed } = await openWithFeed("/tasks?projects=SAGA&q=parser", stub);
       await settle();
 
-      replies[PARSER] = heldBack().reply;
-      await poll();
+      stub.replies[PARSER] = heldBack().reply;
+      const reads = countReads(stub, PARSER);
+      await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1")]);
 
+      expect(reads()).toBeGreaterThan(0);
       expect(spinning()).toBe(false);
       expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2"]);
       expect(filterResult()).not.toContain("Searching");
     });
 
-    it("turns no spinner while a poll of a failed text runs", async () => {
-      const { transport, replies } = searchDaemon({ [PARSER]: REFUSED });
-      await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+    it("turns no spinner while a read of a failed text runs", async () => {
+      const stub = searchDaemon({ [PARSER]: REFUSED });
+      const { feed } = await openWithFeed("/tasks?projects=SAGA&q=parser", stub);
       await settle();
 
-      replies[PARSER] = heldBack().reply;
-      await poll();
+      stub.replies[PARSER] = heldBack().reply;
+      const reads = countReads(stub, PARSER);
+      await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1")]);
 
+      expect(reads()).toBeGreaterThan(0);
       expect(spinning()).toBe(false);
       expect(screen.getByText(FAILED_LINE, { selector: "p" })).toBeTruthy();
       expect(filterResult()).not.toContain("Searching");
@@ -502,42 +524,45 @@ describe("the search", () => {
       expect(filterResult()).toBe(`${FAILED_LINE} 2 of 4 tasks carry a selected label.`);
     });
 
-    it("asks again on each poll, keeps q, and applies the first result", async () => {
-      const { transport, replies, paths } = searchDaemon({ [PARSER]: REFUSED });
-      const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+    it("asks again on each event, keeps q, and applies the first result", async () => {
+      const stub = searchDaemon({ [PARSER]: REFUSED });
+      const { router, feed } = await openWithFeed("/tasks?projects=SAGA&q=parser", stub);
       await settle();
-      const asked = paths.filter((path) => path === PARSER).length;
+      const reads = countReads(stub, PARSER);
 
-      replies[PARSER] = listing([ENTRIES[0]!]);
-      await poll();
+      stub.replies[PARSER] = listing([ENTRIES[0]!]);
+      await sendAndWaitPastRetry(feed, [taskEvent("SAGA-2")]);
 
-      expect(paths.filter((path) => path === PARSER).length).toBeGreaterThan(asked);
+      expect(reads()).toBeGreaterThan(0);
       expect(router.state.location.search).toEqual({ projects: "SAGA", q: "parser" });
       expect(screen.queryByText(FAILED_LINE, { selector: "p" })).toBeNull();
       expect(titlesIn("Backlog")).toEqual(["Task 1"]);
     });
 
-    it("keeps the result that polls of the same text with no envelope leave, and opens no board notice", async () => {
-      const { transport, replies } = searchDaemon();
-      await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+    it("keeps the result that reads of the same text with no envelope leave, and opens no board notice", async () => {
+      const stub = searchDaemon();
+      const { feed } = await openWithFeed("/tasks?projects=SAGA&q=parser", stub);
       await settle();
 
-      replies[PARSER] = UNREADABLE;
-      await poll();
-      await poll();
+      stub.replies[PARSER] = UNREADABLE;
+      const reads = countReads(stub, PARSER);
+      await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1")]);
+      expect(reads()).toBeGreaterThan(0);
+      await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1")]);
+      expect(reads()).toBeGreaterThan(0);
 
       expect(useNoticeStore.getState().notices).toEqual([]);
       expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2"]);
       expect(screen.queryByText(FAILED_LINE, { selector: "p" })).toBeNull();
     });
 
-    it("opens the board notice on a refused poll of a search with a result, with the words of the refusal", async () => {
-      const { transport, replies } = searchDaemon();
-      await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+    it("opens the board notice on a refused read of a search with a result, with the words of the refusal", async () => {
+      const stub = searchDaemon();
+      const { feed } = await openWithFeed("/tasks?projects=SAGA&q=parser", stub);
       await settle();
 
-      replies[PARSER] = REFUSED;
-      await poll();
+      stub.replies[PARSER] = REFUSED;
+      await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
 
       expect(useNoticeStore.getState().notices).toMatchObject([
         {
@@ -549,13 +574,17 @@ describe("the search", () => {
     });
 
     it("opens no board notice while a search with no result is refused", async () => {
-      const { transport } = searchDaemon({ [PARSER]: REFUSED });
-      await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      const stub = searchDaemon({ [PARSER]: REFUSED });
+      const { feed } = await openWithFeed("/tasks?projects=SAGA&q=parser", stub);
       await settle();
 
-      await poll();
-      await poll();
-      await poll();
+      const reads = countReads(stub, PARSER);
+      await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1")]);
+      expect(reads()).toBeGreaterThan(0);
+      await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1")]);
+      expect(reads()).toBeGreaterThan(0);
+      await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1")]);
+      expect(reads()).toBeGreaterThan(0);
 
       expect(useNoticeStore.getState().notices).toEqual([]);
     });

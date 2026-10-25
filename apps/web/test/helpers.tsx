@@ -11,14 +11,17 @@ import {
   createClient,
   type Diagnostic,
   type Failure,
+  type FeedEvent,
   type Transport,
   type TransportReply,
   type TransportRequest,
 } from "@tasma/protocol";
-import { act, render } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { onTestFinished, vi } from "vitest";
+import { expect, onTestFinished, vi } from "vitest";
 import { createAppQueryClient } from "../src/api/client";
+import { FeedSubscriber } from "../src/components/feed-subscriber";
+import { tagOf } from "../src/lib/board";
 import { createAppRouter, type RouterContext } from "../src/routes";
 
 /**
@@ -264,6 +267,82 @@ export async function renderWithRouter(initialPath = "/", transport?: Transport)
   });
 
   return router;
+}
+
+type TestRouter = Awaited<ReturnType<typeof renderWithRouter>>;
+
+/**
+ * The change feed of a stub daemon: the first read gets the cursor `c0`, and
+ * each read after it is held until the test sends events.
+ */
+export function stubFeed(stub: Pick<ReturnType<typeof stubTransport>, "replies" | "paths">) {
+  stub.replies["/events"] = successReply({ cursor: "c0", events: [] });
+  let count = 0;
+  let held = hold(0);
+
+  function hold(index: number): (reply: TransportReply) => void {
+    const { reply, answer } = heldBack();
+    stub.replies[`/events?after=c${String(index)}`] = reply;
+    return answer;
+  }
+
+  /** Mounts the feed subscriber beside the router, as main.tsx does, and waits for its held read. */
+  async function mount(router: TestRouter): Promise<void> {
+    const { queryClient, client } = router.options.context;
+    render(<FeedSubscriber queryClient={queryClient} client={client} />);
+    // Unlike `vi.waitFor`, this wait does not move a fake clock, so the test keeps the time it set.
+    await waitFor(() => {
+      expect(stub.paths).toContain("/events?after=c0");
+    });
+  }
+
+  /**
+   * Answers the held read of the feed with the events, and waits for the read
+   * after it. The reads the events make old can still be on their way.
+   */
+  async function send(events: FeedEvent[]): Promise<void> {
+    const current = held;
+    count += 1;
+    held = hold(count);
+    await act(async () => {
+      current(successReply({ cursor: `c${String(count)}`, events }));
+      await vi.waitFor(() => {
+        expect(stub.paths).toContain(`/events?after=c${String(count)}`);
+      });
+    });
+  }
+
+  return { mount, send };
+}
+
+export type FeedStub = ReturnType<typeof stubFeed>;
+
+/** The app at `path` over the stub, with the feed subscriber that main.tsx mounts beside it. */
+export async function openWithFeed(path: string, stub: ReturnType<typeof stubTransport>) {
+  const feed = stubFeed(stub);
+  const router = await renderWithRouter(path, stub.transport);
+  await feed.mount(router);
+
+  return { router, feed };
+}
+
+export function taskEvent(id: string, change: "created" | "changed" | "deleted" = "changed"): FeedEvent {
+  return { kind: "task", tag: tagOf(id), id, change };
+}
+
+export function projectEvent(tag: string, change: "created" | "changed" | "deleted" = "changed"): FeedEvent {
+  return { kind: "project", tag, change };
+}
+
+/** Counts the reads of `path` from now on: each call gives the count since the call before it. */
+export function countReads(stub: Pick<ReturnType<typeof stubTransport>, "requests">, path: string): () => number {
+  let counted = stub.requests.length;
+
+  return () => {
+    const reads = stub.requests.slice(counted).filter((request) => request.method === "GET" && request.path === path);
+    counted = stub.requests.length;
+    return reads.length;
+  };
 }
 
 /** Replaces ResizeObserver with one that reports a target only when a test asks. */

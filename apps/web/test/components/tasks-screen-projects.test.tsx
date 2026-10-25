@@ -1,4 +1,4 @@
-import type { Diagnostic, ExcludedFile, Frontmatter, TaskEntry } from "@tasma/protocol";
+import type { Diagnostic, ExcludedFile, FeedEvent, Frontmatter, TaskEntry } from "@tasma/protocol";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -21,7 +21,17 @@ import {
   twoProjects,
   WORKFLOW,
 } from "../board-fixtures";
-import { heldBack, refusalReply, renderWithRouter, successReply } from "../helpers";
+import {
+  countReads,
+  heldBack,
+  openWithFeed,
+  projectEvent,
+  refusalReply,
+  renderWithRouter,
+  successReply,
+  taskEvent,
+  type FeedStub,
+} from "../helpers";
 import { frame } from "../setup/notice-store";
 import { backLink, topBar } from "../task-screen-fixtures";
 
@@ -98,6 +108,14 @@ async function poll() {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(5_000);
   });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1_010);
+  });
+}
+
+/** The events, the retry of an unreadable answer, and the notification of the cache. */
+async function sendAndWaitPastRetry(feed: FeedStub, events: FeedEvent[]) {
+  await feed.send(events);
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1_010);
   });
@@ -331,24 +349,24 @@ describe("the board of all projects", () => {
     expect(screen.queryByRole("button", { name: "New task" })).toBeNull();
   });
 
-  it("shows a project added to the tree after a poll, and leaves out a project removed from it", async () => {
-    const { transport, replies } = twoProjects({
+  it("shows a project added to the tree after an event, and leaves out a project removed from it", async () => {
+    const stub = twoProjects({
       "/projects": successReply([SAGA]),
       "/projects/SAGA/tasks": listing([entry(1)]),
       "/projects/DELTA/tasks": listing([delta(11, { status: "Review" })]),
     });
-    const router = await renderWithRouter("/tasks?projects=all", transport);
+    const { router, feed } = await openWithFeed("/tasks?projects=all", stub);
     expect(columnNames()).toEqual(CONFIG.statuses);
 
-    replies["/projects"] = successReply(SORTED);
-    await poll();
+    stub.replies["/projects"] = successReply(SORTED);
+    await sendAndWaitPastRetry(feed, [projectEvent("DELTA", "created")]);
     await vi.waitFor(() => {
       expect(titlesIn("Review")).toEqual(["Task 11"]);
     });
     expect(columnNames()).toEqual(MERGED);
 
-    replies["/projects"] = successReply([DELTA]);
-    await poll();
+    stub.replies["/projects"] = successReply([DELTA]);
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA", "deleted")]);
     await vi.waitFor(() => {
       expect(columnNames()).toEqual(OTHER_CONFIG.statuses);
     });
@@ -357,12 +375,12 @@ describe("the board of all projects", () => {
   });
 
   it("shows the empty-tree screen on an empty tree, and the board of all projects when a project appears", async () => {
-    const { transport, replies } = twoProjects({ "/projects": successReply([]) });
-    const router = await renderWithRouter("/tasks?projects=all", transport);
+    const stub = twoProjects({ "/projects": successReply([]) });
+    const { router, feed } = await openWithFeed("/tasks?projects=all", stub);
     expect(screen.getByText(/^No projects yet/)).toBeTruthy();
 
-    replies["/projects"] = successReply([SAGA]);
-    await poll();
+    stub.replies["/projects"] = successReply([SAGA]);
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA", "created")]);
 
     await vi.waitFor(() => {
       expect(screen.getByText("No tasks in these projects yet.")).toBeTruthy();
@@ -411,22 +429,24 @@ describe("the board of all projects", () => {
       return scrollTo;
     }
 
-    it("stays where it is when a project joins after a poll, and goes to the top on a label change", async () => {
-      const { transport, replies } = twoProjects({
+    it("stays where it is when a project joins after an event, and goes to the top on a label change", async () => {
+      const stub = twoProjects({
         "/projects": successReply([SAGA]),
         "/projects/SAGA/tasks": listing([entry(1)]),
         "/projects/DELTA/tasks": listing([delta(11, { status: "Review" })]),
       });
-      const router = await renderWithRouter("/tasks?projects=all", transport);
+      const { router, feed } = await openWithFeed("/tasks?projects=all", stub);
       const scrollTo = stubWindowScroll(600);
 
-      replies["/projects"] = successReply(SORTED);
-      await poll();
+      stub.replies["/projects"] = successReply(SORTED);
+      await sendAndWaitPastRetry(feed, [projectEvent("DELTA", "created")]);
       await vi.waitFor(() => {
         expect(titlesIn("Review")).toEqual(["Task 11"]);
       });
-      await poll();
+      const reads = countReads(stub, "/projects/DELTA/tasks");
+      await sendAndWaitPastRetry(feed, [projectEvent("DELTA")]);
 
+      expect(reads()).toBeGreaterThan(0);
       expect(window.scrollY).toBe(600);
       expect(scrollTo).not.toHaveBeenCalled();
 
@@ -461,17 +481,17 @@ describe("the board of all projects", () => {
     it("stays on a card when a project joins with a column before it, and Show all stays open", async () => {
       const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
       const done = Array.from({ length: 25 }, (_, index) => entry(index + 10, { status: "Done" }));
-      const { transport, replies } = twoProjects({
+      const stub = twoProjects({
         "/projects": successReply([SAGA]),
         "/projects/SAGA/tasks": listing([entry(1, { status: "In Progress" }), ...done]),
         "/projects/DELTA/tasks": listing([delta(2, { status: "Review" })]),
       });
-      await renderWithRouter("/tasks?projects=all", transport);
+      const { feed } = await openWithFeed("/tasks?projects=all", stub);
       await user.click(screen.getByRole("button", { name: "Show all" }));
       await focusOn(cardLink("Task 1"));
 
-      replies["/projects"] = successReply(SORTED);
-      await poll();
+      stub.replies["/projects"] = successReply(SORTED);
+      await sendAndWaitPastRetry(feed, [projectEvent("DELTA", "created")]);
       await vi.waitFor(() => {
         expect(columnNames()).toEqual(MERGED);
       });
@@ -481,15 +501,15 @@ describe("the board of all projects", () => {
     });
 
     it("stays on a card when a project leaves and takes a column before it", async () => {
-      const { transport, replies } = twoProjects({
+      const stub = twoProjects({
         "/projects/SAGA/tasks": listing([entry(1, { status: "In Progress" })]),
         "/projects/DELTA/tasks": listing([delta(2, { status: "Review" })]),
       });
-      await renderWithRouter("/tasks?projects=all", transport);
+      const { feed } = await openWithFeed("/tasks?projects=all", stub);
       await focusOn(cardLink("Task 1"));
 
-      replies["/projects"] = successReply([SAGA]);
-      await poll();
+      stub.replies["/projects"] = successReply([SAGA]);
+      await sendAndWaitPastRetry(feed, [projectEvent("DELTA", "deleted")]);
       await vi.waitFor(() => {
         expect(columnNames()).toEqual(CONFIG.statuses);
       });
@@ -498,17 +518,17 @@ describe("the board of all projects", () => {
     });
 
     it("goes to the heading of the column of a focused card whose project leaves", async () => {
-      const { transport, replies } = twoProjects({
+      const stub = twoProjects({
         "/projects/DELTA": project("DELTA", { config: TRIAGE_CONFIG }),
         "/projects/SAGA/tasks": listing([entry(1)]),
         "/projects/DELTA/tasks": listing([delta(2, { status: "To Do" })]),
       });
-      await renderWithRouter("/tasks?projects=all", transport);
+      const { feed } = await openWithFeed("/tasks?projects=all", stub);
       expect(columnNames()).toEqual(["Triage", "Backlog", "To Do", "In Progress", "Done"]);
       await focusOn(cardLink("Task 2"));
 
-      replies["/projects"] = successReply([SAGA]);
-      await poll();
+      stub.replies["/projects"] = successReply([SAGA]);
+      await sendAndWaitPastRetry(feed, [projectEvent("DELTA", "deleted")]);
 
       await vi.waitFor(() => {
         expect(document.activeElement).toBe(columnHeading("To Do"));
@@ -516,15 +536,15 @@ describe("the board of all projects", () => {
     });
 
     it("goes to the heading of the column at the old place when the card's column left with its project", async () => {
-      const { transport, replies } = twoProjects({
+      const stub = twoProjects({
         "/projects/SAGA/tasks": listing([entry(1)]),
         "/projects/DELTA/tasks": listing([delta(2, { status: "Review" })]),
       });
-      await renderWithRouter("/tasks?projects=all", transport);
+      const { feed } = await openWithFeed("/tasks?projects=all", stub);
       await focusOn(cardLink("Task 2"));
 
-      replies["/projects"] = successReply([SAGA]);
-      await poll();
+      stub.replies["/projects"] = successReply([SAGA]);
+      await sendAndWaitPastRetry(feed, [projectEvent("DELTA", "deleted")]);
 
       await vi.waitFor(() => {
         expect(document.activeElement).toBe(columnHeading("In Progress"));
@@ -532,12 +552,12 @@ describe("the board of all projects", () => {
     });
 
     it("goes to the heading of the column at the old place when a focused heading's column leaves with its project", async () => {
-      const { transport, replies } = twoProjects({ "/projects/DELTA/tasks": listing([delta(2, { status: "Review" })]) });
-      await renderWithRouter("/tasks?projects=all", transport);
+      const stub = twoProjects({ "/projects/DELTA/tasks": listing([delta(2, { status: "Review" })]) });
+      const { feed } = await openWithFeed("/tasks?projects=all", stub);
       await focusOn(columnHeading("Review"));
 
-      replies["/projects"] = successReply([SAGA]);
-      await poll();
+      stub.replies["/projects"] = successReply([SAGA]);
+      await sendAndWaitPastRetry(feed, [projectEvent("DELTA", "deleted")]);
 
       await vi.waitFor(() => {
         expect(document.activeElement).toBe(columnHeading("In Progress"));
@@ -546,18 +566,18 @@ describe("the board of all projects", () => {
 
     it("goes to the heading of the column at the old place when Show all leaves with its project", async () => {
       const closed = Array.from({ length: 25 }, (_, index) => delta(index + 1, { status: "Closed" }));
-      const { transport, replies } = twoProjects({
+      const stub = twoProjects({
         "/projects/DELTA": project("DELTA", {
           config: { ...OTHER_CONFIG, statuses: ["To Do", "Review", "Closed"], final_statuses: ["Closed"] },
         }),
         "/projects/DELTA/tasks": listing(closed),
       });
-      await renderWithRouter("/tasks?projects=all", transport);
+      const { feed } = await openWithFeed("/tasks?projects=all", stub);
       expect(columnNames()).toEqual(["Backlog", "To Do", "Review", "Closed", "In Progress", "Done"]);
       await focusOn(screen.getByRole("button", { name: "Show all" }));
 
-      replies["/projects"] = successReply([SAGA]);
-      await poll();
+      stub.replies["/projects"] = successReply([SAGA]);
+      await sendAndWaitPastRetry(feed, [projectEvent("DELTA", "deleted")]);
 
       await vi.waitFor(() => {
         expect(document.activeElement).toBe(columnHeading("Done"));
@@ -565,15 +585,15 @@ describe("the board of all projects", () => {
     });
 
     it("goes to the main region when the last project leaves", async () => {
-      const { transport, replies } = twoProjects({
+      const stub = twoProjects({
         "/projects": successReply([SAGA]),
         "/projects/SAGA/tasks": listing([entry(1)]),
       });
-      await renderWithRouter("/tasks?projects=all", transport);
+      const { feed } = await openWithFeed("/tasks?projects=all", stub);
       await focusOn(cardLink("Task 1"));
 
-      replies["/projects"] = successReply([]);
-      await poll();
+      stub.replies["/projects"] = successReply([]);
+      await sendAndWaitPastRetry(feed, [projectEvent("SAGA", "deleted")]);
 
       await vi.waitFor(() => {
         expect(screen.getByText(/^No projects yet/)).toBeTruthy();
@@ -607,17 +627,17 @@ describe("a project that fails while the board is open", () => {
     };
   }
 
-  it("takes out the cards of a project a poll refuses, and brings them back when a poll succeeds", async () => {
+  it("takes out the cards of a project a read refuses, and brings them back when a read succeeds", async () => {
     const words = recordAnnounced();
-    const { transport, replies } = twoProjects({
+    const stub = twoProjects({
       "/projects/SAGA/tasks": listing([entry(1, { status: "To Do" })]),
       "/projects/DELTA/tasks": listing([delta(11, { status: "Review" })]),
     });
-    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+    const { feed } = await openWithFeed("/tasks?projects=DELTA,SAGA", stub);
     await focusOn(cardLink("Task 1"));
 
-    replies["/projects/SAGA/tasks"] = INVALID;
-    await poll();
+    stub.replies["/projects/SAGA/tasks"] = INVALID;
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
 
     await vi.waitFor(() => {
       expect(document.activeElement).toBe(columnHeading("To Do"));
@@ -626,12 +646,14 @@ describe("a project that fails while the board is open", () => {
     expect(columnNames()).toEqual(OTHER_CONFIG.statuses);
     expect(screen.getByRole("note").textContent).toContain("store/config-invalid · statuses is empty");
     expect(boardState()).toBe("SAGA did not load.");
-    await poll();
+    const reads = countReads(stub, "/projects/SAGA/tasks");
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
+    expect(reads()).toBeGreaterThan(0);
     expect(useNoticeStore.getState().notices).toEqual([]);
     expect(words.filter((said) => said.includes("is not up to date"))).toEqual([]);
 
-    replies["/projects/SAGA/tasks"] = listing([entry(1, { status: "To Do" })]);
-    await poll();
+    stub.replies["/projects/SAGA/tasks"] = listing([entry(1, { status: "To Do" })]);
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
 
     await vi.waitFor(() => {
       expect(titlesIn("To Do")).toEqual(["Task 1"]);
@@ -644,11 +666,11 @@ describe("a project that fails while the board is open", () => {
   });
 
   it("moves the focus before the board state says that the project of the focused card did not load", async () => {
-    const { transport, replies } = twoProjects({
+    const stub = twoProjects({
       "/projects/SAGA/tasks": listing([entry(1, { status: "To Do" })]),
       "/projects/DELTA/tasks": listing([delta(11, { status: "Review" })]),
     });
-    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+    const { feed } = await openWithFeed("/tasks?projects=DELTA,SAGA", stub);
     await focusOn(cardLink("Task 1"));
     const region = boardStateRegion();
     const saidAtFocus: (string | null)[] = [];
@@ -660,8 +682,8 @@ describe("a project that fails while the board is open", () => {
       document.removeEventListener("focusin", record);
     });
 
-    replies["/projects/SAGA/tasks"] = INVALID;
-    await poll();
+    stub.replies["/projects/SAGA/tasks"] = INVALID;
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
 
     await vi.waitFor(() => {
       expect(boardState()).toBe("SAGA did not load.");
@@ -670,20 +692,20 @@ describe("a project that fails while the board is open", () => {
     expect(saidAtFocus).toEqual([""]);
   });
 
-  it("keeps the status regions out of what the delete dialog hides, and hides a block that a poll adds", async () => {
+  it("keeps the status regions out of what the delete dialog hides, and hides a block that a read adds", async () => {
     const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
-    const { transport, replies } = twoProjects({
+    const stub = twoProjects({
       "/projects/SAGA/tasks": listing([entry(1)]),
       "/projects/DELTA/tasks": listing([delta(11, { status: "Review" })]),
     });
-    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+    const { feed } = await openWithFeed("/tasks?projects=DELTA,SAGA", stub);
     await user.click(menuButton("Task 11"));
     await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /^Delete / }));
     await screen.findByRole("alertdialog");
 
-    replies["/projects/SAGA/tasks"] = INVALID;
-    replies["/projects/DELTA/tasks"] = listing([delta(11, { status: "Review" })], [], [BLOCKER]);
-    await poll();
+    stub.replies["/projects/SAGA/tasks"] = INVALID;
+    stub.replies["/projects/DELTA/tasks"] = listing([delta(11, { status: "Review" })], [], [BLOCKER]);
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA"), taskEvent("DELTA-11")]);
 
     await vi.waitFor(() => {
       expect(boardState()).toBe("SAGA did not load. 1 warning about DELTA.");
@@ -701,19 +723,19 @@ describe("a project that fails while the board is open", () => {
 
   it("gives the focus to the delete dialog when a focused notice closes while the dialog is open", async () => {
     const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
-    const { transport, replies } = twoProjects({ "/projects/SAGA/tasks": listing([entry(1)]) });
-    await renderWithRouter("/tasks?projects=SAGA", transport);
+    const stub = twoProjects({ "/projects/SAGA/tasks": listing([entry(1)]) });
+    const { feed } = await openWithFeed("/tasks?projects=SAGA", stub);
     await user.click(menuButton("Task 1"));
     await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /^Delete / }));
     const dialog = await screen.findByRole("alertdialog");
 
-    replies["/projects/SAGA/tasks"] = INVALID;
-    await poll();
+    stub.replies["/projects/SAGA/tasks"] = INVALID;
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
     await focusOn(screen.getByRole("button", { name: "Dismiss" }));
 
     const words = recordAnnounced();
-    replies["/projects/SAGA/tasks"] = listing([entry(1)]);
-    await poll();
+    stub.replies["/projects/SAGA/tasks"] = listing([entry(1)]);
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
 
     await vi.waitFor(() => {
       expect(useNoticeStore.getState().notices).toEqual([]);
@@ -724,17 +746,17 @@ describe("a project that fails while the board is open", () => {
     });
   });
 
-  it("shows no column and gives the focus to the main region when a poll refuses every project", async () => {
-    const { transport, replies } = twoProjects({
+  it("shows no column and gives the focus to the main region when a read refuses every project", async () => {
+    const stub = twoProjects({
       "/projects/SAGA/tasks": listing([entry(1)]),
       "/projects/DELTA/tasks": listing([delta(11, { status: "Review" })]),
     });
-    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+    const { feed } = await openWithFeed("/tasks?projects=DELTA,SAGA", stub);
     await focusOn(cardLink("Task 11"));
 
-    replies["/projects/SAGA"] = INVALID;
-    replies["/projects/DELTA"] = INVALID;
-    await poll();
+    stub.replies["/projects/SAGA"] = INVALID;
+    stub.replies["/projects/DELTA"] = INVALID;
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA"), projectEvent("DELTA")]);
 
     await vi.waitFor(() => {
       expect(document.activeElement).toBe(screen.getByRole("main"));
@@ -743,15 +765,15 @@ describe("a project that fails while the board is open", () => {
     expect(screen.queryByText("No tasks in these projects yet.")).toBeNull();
     expect(blocksUnderHeading()).toEqual(["DELTA did not load", "SAGA did not load"]);
 
-    replies["/projects/DELTA"] = project("DELTA", { config: OTHER_CONFIG });
-    await poll();
+    stub.replies["/projects/DELTA"] = project("DELTA", { config: OTHER_CONFIG });
+    await sendAndWaitPastRetry(feed, [projectEvent("DELTA")]);
     await vi.waitFor(() => {
       expect(titlesIn("Review")).toEqual(["Task 11"]);
     });
     await focusOn(cardLink("Task 11"));
 
-    replies["/projects/DELTA/tasks"] = listing([]);
-    await poll();
+    stub.replies["/projects/DELTA/tasks"] = listing([]);
+    await sendAndWaitPastRetry(feed, [taskEvent("DELTA-11", "deleted")]);
 
     await vi.waitFor(() => {
       expect(document.activeElement).toBe(columnHeading("Review"));
@@ -760,19 +782,19 @@ describe("a project that fails while the board is open", () => {
 
   it("gives the focus to the main region after a delete confirmed when no column is left", async () => {
     const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
-    const { transport, replies } = twoProjects({
+    const stub = twoProjects({
       "/projects/SAGA/tasks": listing([entry(1)]),
       "/projects/DELTA/tasks": listing([delta(11, { status: "Review" })]),
       "DELETE /projects/DELTA/tasks/DELTA-11": heldBack().reply,
     });
-    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+    const { feed } = await openWithFeed("/tasks?projects=DELTA,SAGA", stub);
     await user.click(menuButton("Task 11"));
     await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /^Delete / }));
     const dialog = await screen.findByRole("alertdialog");
 
-    replies["/projects/SAGA"] = INVALID;
-    replies["/projects/DELTA"] = INVALID;
-    await poll();
+    stub.replies["/projects/SAGA"] = INVALID;
+    stub.replies["/projects/DELTA"] = INVALID;
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA"), projectEvent("DELTA")]);
     await vi.waitFor(() => {
       expect(columnNames()).toEqual([]);
     });
@@ -785,19 +807,19 @@ describe("a project that fails while the board is open", () => {
 
   it("brings back the cards of a project refused at the load once both of its reads succeed, and says so", async () => {
     const words = recordAnnounced();
-    const { transport, replies } = twoProjects({
+    const stub = twoProjects({
       "/projects/SAGA": INVALID,
       "/projects/DELTA/tasks": listing([delta(11, { status: "Review" })]),
     });
-    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+    const { feed } = await openWithFeed("/tasks?projects=DELTA,SAGA", stub);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(100);
     });
     expect(words).toEqual([]);
 
-    replies["/projects/SAGA"] = project("SAGA");
-    replies["/projects/SAGA/tasks"] = listing([entry(1)]);
-    await poll();
+    stub.replies["/projects/SAGA"] = project("SAGA");
+    stub.replies["/projects/SAGA/tasks"] = listing([entry(1)]);
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
 
     await vi.waitFor(() => {
       expect(titlesIn("Backlog")).toEqual(["Task 1"]);
@@ -810,12 +832,12 @@ describe("a project that fails while the board is open", () => {
 
   it("shows no words in the note of a refused project whose reads succeed while its load runs", async () => {
     const workflowRead = heldBack();
-    const { transport, replies } = twoProjects({ "/projects/SAGA": INVALID, "/workflows/dev": workflowRead.reply });
-    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+    const stub = twoProjects({ "/projects/SAGA": INVALID, "/workflows/dev": workflowRead.reply });
+    const { feed } = await openWithFeed("/tasks?projects=DELTA,SAGA", stub);
 
-    replies["/projects/SAGA"] = project("SAGA");
-    replies["/projects/SAGA/tasks"] = listing([entry(1, { workflow: "dev", step: "approve" })]);
-    await poll();
+    stub.replies["/projects/SAGA"] = project("SAGA");
+    stub.replies["/projects/SAGA/tasks"] = listing([entry(1, { workflow: "dev", step: "approve" })]);
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
 
     await vi.waitFor(() => {
       expect(screen.getByRole("note").textContent).toBe(
@@ -831,17 +853,17 @@ describe("a project that fails while the board is open", () => {
     });
   });
 
-  it("shows a tag the project list did not hold once a poll of the list holds it, and says so", async () => {
+  it("shows a tag the project list did not hold once a read of the list holds it, and says so", async () => {
     const words = recordAnnounced();
-    const { transport, replies } = twoProjects({
+    const stub = twoProjects({
       "/projects/ECHO": project("ECHO"),
       "/projects/ECHO/tasks": listing([taggedEntry("ECHO", 21)]),
     });
-    await renderWithRouter("/tasks?projects=DELTA,ECHO", transport);
+    const { feed } = await openWithFeed("/tasks?projects=DELTA,ECHO", stub);
     expect(blocksUnderHeading()).toEqual(["ECHO is not a project"]);
 
-    replies["/projects"] = successReply([DELTA, { tag: "ECHO" }, SAGA]);
-    await poll();
+    stub.replies["/projects"] = successReply([DELTA, { tag: "ECHO" }, SAGA]);
+    await sendAndWaitPastRetry(feed, [projectEvent("ECHO", "created")]);
 
     await vi.waitFor(() => {
       expect(titlesIn("Backlog")).toEqual(["Task 21"]);
@@ -852,22 +874,22 @@ describe("a project that fails while the board is open", () => {
     });
   });
 
-  it("shows the old cards of a failing project whose next poll gets no answer, with no word that it loaded", async () => {
+  it("shows the old cards of a failing project whose next read gets no answer, with no word that it loaded", async () => {
     const words = recordAnnounced();
-    const { transport, replies } = twoProjects({
+    const stub = twoProjects({
       "/projects/SAGA/tasks": listing([entry(1)]),
       "/projects/DELTA/tasks": listing([delta(11, { status: "Review" })]),
     });
-    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
-    replies["/projects/SAGA/tasks"] = INVALID;
-    await poll();
+    const { feed } = await openWithFeed("/tasks?projects=DELTA,SAGA", stub);
+    stub.replies["/projects/SAGA/tasks"] = INVALID;
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
     await vi.waitFor(() => {
       expect(screen.queryByText("Task 1")).toBeNull();
     });
 
-    replies["/projects/SAGA/tasks"] = { status: 502 };
-    replies["/projects/DELTA/tasks"] = { status: 502 };
-    await poll();
+    stub.replies["/projects/SAGA/tasks"] = { status: 502 };
+    stub.replies["/projects/DELTA/tasks"] = { status: 502 };
+    await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1"), taskEvent("DELTA-11")]);
 
     await vi.waitFor(() => {
       expect(titlesIn("Backlog")).toEqual(["Task 1"]);
@@ -875,33 +897,41 @@ describe("a project that fails while the board is open", () => {
     expect(screen.queryByRole("note")).toBeNull();
     expect(useNoticeStore.getState().notices).toEqual([]);
 
-    await poll();
+    const sagaReads = countReads(stub, "/projects/SAGA/tasks");
+    const deltaReads = countReads(stub, "/projects/DELTA/tasks");
+    await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1"), taskEvent("DELTA-11")]);
+    expect(sagaReads()).toBeGreaterThan(0);
+    expect(deltaReads()).toBeGreaterThan(0);
     expect(useNoticeStore.getState().notices).toEqual([]);
 
-    replies["/projects/SAGA/tasks"] = listing([entry(1)]);
-    replies["/projects/DELTA/tasks"] = listing([delta(11, { status: "Review" })]);
-    await poll();
+    stub.replies["/projects/SAGA/tasks"] = listing([entry(1)]);
+    stub.replies["/projects/DELTA/tasks"] = listing([delta(11, { status: "Review" })]);
+    await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1"), taskEvent("DELTA-11")]);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(100);
     });
+    expect(sagaReads()).toBeGreaterThan(0);
     expect(words).not.toContain("SAGA loaded.");
   });
 
-  it("starts no load on a poll of an unchanged project list of all projects with a refused project", async () => {
-    const { transport } = twoProjects({ "/projects/SAGA": INVALID });
-    const router = await renderWithRouter("/tasks?projects=all", transport);
+  it("starts no load on a read of an unchanged project list of all projects with a refused project", async () => {
+    const stub = twoProjects({ "/projects/SAGA": INVALID });
+    const { router, feed } = await openWithFeed("/tasks?projects=all", stub);
     const invalidate = vi.spyOn(router, "invalidate");
+    const reads = countReads(stub, "/projects");
 
-    await poll();
-    await poll();
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
+    expect(reads()).toBeGreaterThan(0);
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
+    expect(reads()).toBeGreaterThan(0);
 
     expect(invalidate).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { level: 2, name: "SAGA did not load" })).toBeTruthy();
   });
 
-  it("changes only the filter result on a label change, and only the board state on a poll that changes a warning", async () => {
-    const { transport, replies } = twoProjects({ "/projects/SAGA/tasks": listing([entry(1, { labels: ["web"] }), entry(2)]) });
-    const router = await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+  it("changes only the filter result on a label change, and only the board state on a read that changes a warning", async () => {
+    const stub = twoProjects({ "/projects/SAGA/tasks": listing([entry(1, { labels: ["web"] }), entry(2)]) });
+    const { router, feed } = await openWithFeed("/tasks?projects=DELTA,SAGA", stub);
     const state = boardStateRegion();
     const filter = filterRegion();
     const stateChanges = watch(state);
@@ -916,8 +946,8 @@ describe("a project that fails while the board is open", () => {
     expect(stateChanges()).toBe(0);
     const filterChanged = filterChanges();
 
-    replies["/projects/SAGA/tasks"] = listing([entry(1, { labels: ["web"] }), entry(2)], [], [BLOCKER]);
-    await poll();
+    stub.replies["/projects/SAGA/tasks"] = listing([entry(1, { labels: ["web"] }), entry(2)], [], [BLOCKER]);
+    await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1")]);
 
     await vi.waitFor(() => {
       expect(state.textContent).toBe("1 warning about SAGA.");
