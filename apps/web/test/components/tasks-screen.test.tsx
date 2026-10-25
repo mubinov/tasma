@@ -277,6 +277,7 @@ describe("the board", () => {
     const { transport } = daemon({
       "/projects/SAGA/tasks": listing([entry(1), entry(2)]),
       "/projects/SAGA/tasks/SAGA-2": successReply({ frontmatter: entry(2).frontmatter, body: "", comments: [] }),
+      "/projects/SAGA/tasks/SAGA-2/chats": successReply([]),
     });
     const router = await renderWithRouter("/tasks?projects=SAGA", transport);
 
@@ -554,6 +555,7 @@ describe("moving a task from the card menu", () => {
     const { transport } = daemon({
       "/projects/SAGA/tasks": listing([entry(1)]),
       "/projects/SAGA/tasks/SAGA-1": successReply({ frontmatter: entry(1).frontmatter, body: "", comments: [] }),
+      "/projects/SAGA/tasks/SAGA-1/chats": successReply([]),
     });
     const router = await renderWithRouter("/tasks?projects=SAGA", transport);
 
@@ -603,6 +605,7 @@ describe("moving a task from the card menu", () => {
     const { transport } = daemon({
       "/projects/SAGA/tasks": listing([entry(1)]),
       "/projects/SAGA/tasks/SAGA-1": successReply({ frontmatter: entry(1).frontmatter, body: "", comments: [] }),
+      "/projects/SAGA/tasks/SAGA-1/chats": successReply([]),
       [TASK_1]: { status: 502 },
     });
     const router = await renderWithRouter("/tasks?projects=SAGA", transport);
@@ -977,6 +980,7 @@ describe("the board a card was opened from", () => {
       "/projects/SAGA/tasks": listing(ENTRIES),
       [PARSER]: listing([ENTRIES[1]!, ENTRIES[2]!]),
       "/projects/SAGA/tasks/SAGA-2": successReply({ frontmatter: ENTRIES[1]!.frontmatter, body: "", comments: [] }),
+      "/projects/SAGA/tasks/SAGA-2/chats": successReply([]),
     });
   }
 
@@ -1287,6 +1291,7 @@ describe("the board a card was opened from", () => {
         "/projects/SAGA/tasks": listing(many),
         [PARSER]: listing(many),
         "/projects/SAGA/tasks/SAGA-50": successReply({ frontmatter: many[49]!.frontmatter, body: "", comments: [] }),
+        "/projects/SAGA/tasks/SAGA-50/chats": successReply([]),
       });
       const router = await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
       await waitFor(() => {

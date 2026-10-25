@@ -69,6 +69,7 @@ function daemon(comments: Comment[], replies: Record<string, TransportReply | Pr
     "/projects": successReply([{ tag: "SAGA", name: "Saga", path: "/repos/saga" }]),
     "/projects/SAGA": successReply(PROJECT),
     [TASK_PATH]: task(comments),
+    [`${TASK_PATH}/chats`]: successReply([]),
     [LISTING_PATH]: successReply({ entries: [entry("SAGA-3", "Build the parser")], excluded: [] }),
     ...replies,
   });
@@ -981,6 +982,7 @@ describe("leaving for another task", () => {
         body: "Later.\n",
         comments: [comment(3, { title: "Note of the next task" })],
       }),
+      [`${OTHER_PATH}/chats`]: successReply([]),
       [LISTING_PATH]: successReply({
         entries: [entry("SAGA-3", "Build the parser"), entry("SAGA-4", "Write the docs")],
         excluded: [],

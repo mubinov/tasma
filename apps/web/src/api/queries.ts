@@ -38,8 +38,9 @@ export const daemonKeys = {
   project: (tag: string) => [...daemonKeys.projects(), tag] as const,
   tasks: (tag: string) => [...daemonKeys.project(tag), "tasks"] as const,
   task: (tag: string, id: string) => [...daemonKeys.tasks(tag), id] as const,
-  // Under the task, but an exact invalidation of the task does not reach it.
-  chat: (tag: string, id: string, chat: number) => [...daemonKeys.task(tag, id), "chats", chat] as const,
+  // Under the task, but an exact invalidation of the task does not reach them.
+  taskChats: (tag: string, id: string) => [...daemonKeys.task(tag, id), "chats"] as const,
+  chat: (tag: string, id: string, chat: number) => [...daemonKeys.taskChats(tag, id), chat] as const,
   // "search" is no task id, which is always `<TAG>-<number>`.
   taskSearches: (tag: string) => [...daemonKeys.tasks(tag), "search"] as const,
   taskSearch: (tag: string, q: string) => [...daemonKeys.taskSearches(tag), q] as const,
@@ -95,6 +96,13 @@ export function taskQuery(client: Client, tag: string, id: string) {
   return queryOptions({
     queryKey: daemonKeys.task(tag, id),
     queryFn: () => client.readTask(tag, id),
+  });
+}
+
+export function taskChatsQuery(client: Client, tag: string, id: string) {
+  return queryOptions({
+    queryKey: daemonKeys.taskChats(tag, id),
+    queryFn: () => client.listChats(tag, id),
   });
 }
 

@@ -45,7 +45,9 @@ const sample = {
 const chatSample = {
   chatList: daemonKeys.chatList({}),
   chatItem: daemonKeys.chatItem("ACME-4", 1),
+  taskChats: daemonKeys.taskChats("SAGA", "SAGA-1"),
   chatRecord: daemonKeys.chat("SAGA", "SAGA-1", 2),
+  otherTaskChats: daemonKeys.taskChats("SAGA", "SAGA-2"),
   otherChatRecord: daemonKeys.chat("SAGA", "SAGA-2", 1),
 };
 
@@ -143,10 +145,19 @@ describe("FEED_MAPPINGS", () => {
     ]);
   });
 
-  it("makes a chat event refresh the chats of all projects and their items, and nothing else", () => {
+  it("makes a chat event refresh the chats of all projects, their items and the chats of its task, and nothing else", () => {
     const event: FeedEvent = { kind: "chat", tag: "SAGA", task: "SAGA-1", chat: 1, step: "build", state: "working" };
 
-    expect(keysMatched(event, { ...sample, ...chatSample })).toEqual(["chatList", "chatItem"]);
+    expect(keysMatched(event, { ...sample, ...chatSample })).toEqual(["chatList", "chatItem", "taskChats"]);
+  });
+
+  it("gives a chat event the exact filter of the chats of its task", () => {
+    const event: FeedEvent = { kind: "chat", tag: "SAGA", task: "SAGA-1", chat: 1, step: "build", state: "working" };
+
+    expect(filtersOf([event], FEED_MAPPINGS)).toEqual([
+      { queryKey: daemonKeys.chats() },
+      { queryKey: daemonKeys.taskChats("SAGA", "SAGA-1"), exact: true },
+    ]);
   });
 
   it("makes a task event refresh the chats of all projects and their items", () => {
@@ -157,19 +168,22 @@ describe("FEED_MAPPINGS", () => {
   });
 
   // A record read of a chat of a deleted task reads again, and then refuses.
-  it("makes a deleted task refresh the record reads of its own chats", () => {
+  it("makes a deleted task refresh its own chats and their record reads", () => {
     expect(keysMatched({ kind: "task", tag: "SAGA", id: "SAGA-1", change: "deleted" }, chatSample)).toEqual([
       "chatList",
       "chatItem",
+      "taskChats",
       "chatRecord",
     ]);
   });
 
-  it("makes a project event refresh the chats of all projects, their items and the record reads of the project", () => {
+  it("makes a project event refresh the chats of all projects, their items, and the chats and record reads of the project", () => {
     expect(keysMatched({ kind: "project", tag: "SAGA", change: "deleted" }, chatSample)).toEqual([
       "chatList",
       "chatItem",
+      "taskChats",
       "chatRecord",
+      "otherTaskChats",
       "otherChatRecord",
     ]);
   });

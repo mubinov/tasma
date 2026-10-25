@@ -20,7 +20,9 @@ import {
   stubReducedMotion,
   stubSystemTheme,
   stubResizeObservers,
+  successReply,
 } from "../helpers";
+import { chatRecord } from "../chat-daemon";
 import { TASK_PATH, backLink, caret, comment, commentCard, daemon, task, topBar } from "../task-screen-fixtures";
 
 vi.mock(import("../../src/lib/mermaid"), () => ({ renderMermaid: vi.fn(() => new Promise<never>(() => {})) }));
@@ -793,6 +795,19 @@ describe("the matches", () => {
     await openPage({ body: "draw the flowchart\n\n```mermaid\nflowchart LR\n  a --> b\n```" });
 
     await openFind(user, "flowchart");
+
+    expect(counter()).toBe("1 of 1");
+  });
+
+  it("does not search the list of chats", async () => {
+    const user = userEvent.setup();
+    await renderWithRouter(PAGE, daemon({
+      [TASK_PATH]: task({ body: "Deploy on Friday." }),
+      [`${TASK_PATH}/chats`]: successReply([chatRecord({ chat: 1, step: "deploy" })]),
+    }).transport);
+    await screen.findByRole("region", { name: "Chats 1" });
+
+    await openFind(user, "deploy");
 
     expect(counter()).toBe("1 of 1");
   });

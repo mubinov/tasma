@@ -13,6 +13,7 @@ import {
   projectQuery,
   projectsQuery,
   readUpdate,
+  taskChatsQuery,
   taskQuery,
   taskSearchQuery,
   tasksQuery,
@@ -185,8 +186,22 @@ it("asks for one chat of a task", async () => {
   expect(success).toEqual({ data: chat, diagnostics: [] });
 });
 
-it("nests a chat inside its task, apart from the exact key of the task", () => {
-  expect(daemonKeys.chat("SAGA", "SAGA-1", 2)).toEqual([...daemonKeys.task("SAGA", "SAGA-1"), "chats", 2]);
+it("asks for the chats of a task", async () => {
+  const chats = [{ task: "SAGA-1", chat: 1, step: "build", agent: "claude", folder: "/repos/saga", seq: 4, state: "working" }];
+  const paths = stubDaemon(chats);
+
+  const success = await createAppQueryClient().query({
+    ...taskChatsQuery(createDaemonClient(), "SAGA", "SAGA-1"),
+    staleTime: "static",
+  });
+
+  expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects/SAGA/tasks/SAGA-1/chats`]);
+  expect(success).toEqual({ data: chats, diagnostics: [] });
+});
+
+it("nests the chats of a task inside the task, and each chat inside them, apart from the exact key of the task", () => {
+  expect(daemonKeys.taskChats("SAGA", "SAGA-1")).toEqual([...daemonKeys.task("SAGA", "SAGA-1"), "chats"]);
+  expect(daemonKeys.chat("SAGA", "SAGA-1", 2)).toEqual([...daemonKeys.taskChats("SAGA", "SAGA-1"), 2]);
 });
 
 it("nests the list of the chats of all projects and one item of it under one prefix", () => {

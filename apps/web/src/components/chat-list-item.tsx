@@ -6,6 +6,7 @@ import { chatStateText } from "../lib/chat-messages";
 import { fullChatTime, shortChatTime } from "../lib/chat-time";
 import { matchRanges } from "../lib/match-ranges";
 import { StateMark } from "./chat-panel";
+import { SELECTED_ROW_CLASS } from "./control-classes";
 
 type ChatListItemProps = {
   item: Item;
@@ -16,8 +17,6 @@ type ChatListItemProps = {
   /** The words of the search, which the id, the title and the step mark. */
   words: readonly string[];
 };
-
-const SELECTED_CLASS = "bg-surface-2 before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-text";
 
 /** The look of `::highlight(task-find)` in `global.css`, the find matches of the task page. */
 const MARK_CLASS = "bg-match text-text underline decoration-dotted decoration-1 decoration-text";
@@ -50,7 +49,7 @@ export function ChatListItem({ item, selected, now, tabIndex, words }: ChatListI
       aria-label={label.join(", ")}
       aria-current={selected ? "page" : undefined}
       data-chat-key={chatKey(item)}
-      className={`relative block border-b border-line py-2.5 pr-3 pl-3.5 text-text hover:bg-surface-2 focus-visible:-outline-offset-2 ${selected ? SELECTED_CLASS : ""}`}
+      className={`relative block border-b border-line py-2.5 pr-3 pl-3.5 text-text hover:bg-surface-2 focus-visible:-outline-offset-2 ${selected ? SELECTED_ROW_CLASS : ""}`}
     >
       <span className="flex min-w-0 items-center gap-2">
         <span className="min-w-0 font-mono text-xs text-dim wrap-anywhere"><Marked text={task} words={words} /></span>

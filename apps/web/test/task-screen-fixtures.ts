@@ -75,6 +75,7 @@ export function daemon(replies: Record<string, TransportReply> = {}) {
     "/projects/SAGA": successReply(PROJECT),
     "/workflows/dev": successReply(WORKFLOW),
     [TASK_PATH]: task(),
+    [`${TASK_PATH}/chats`]: successReply([]),
     [LISTING_PATH]: listing(),
     ...replies,
   });

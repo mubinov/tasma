@@ -1,12 +1,13 @@
 import { useSuspenseInfiniteQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import type { ChatListItem as Item, ProjectSummary } from "@tasma/protocol";
-import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { chatListQuery, type ChatFilter } from "../api/queries";
 import { chatKey } from "../lib/chat-list-announcements";
 import { searchWords } from "../lib/match-ranges";
 import { filterKey, type FailedFields } from "../lib/use-chat-filter";
 import { useFocusLost } from "../lib/use-focus-lost";
+import { useMinute } from "../lib/use-minute";
 import { usePendingFocus } from "../lib/use-pending-focus";
 import { ChatFilterBar } from "./chat-filter-bar";
 import { ChatListItem } from "./chat-list-item";
@@ -17,8 +18,6 @@ const route = getRouteApi("/");
 
 /** The height of an item with three lines, before it is measured. */
 const ITEM_HEIGHT = 79;
-
-const MINUTE = 60_000;
 
 type ChatListProps = {
   /** The filter of the items on the screen. */
@@ -41,22 +40,6 @@ type ChatListProps = {
   /** Called when the column, or the project filter, goes away while the focus is in it. */
   onFocusLost: () => void;
 };
-
-/** The time the items count from, a new one each minute. */
-function useMinute(): number {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setNow(Date.now());
-    }, MINUTE);
-    return () => {
-      clearInterval(timer);
-    };
-  }, []);
-
-  return now;
-}
 
 function emptyText({ project, q }: ChatFilter): string {
   if (q !== undefined) {

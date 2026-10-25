@@ -16,7 +16,7 @@ import {
 } from "react";
 import { taskDeleteOptions } from "../api/mutations";
 import { usePollNotice } from "../api/poll-notice";
-import { POLL_INTERVAL, projectQuery, taskQuery, tasksQuery, workflowQuery } from "../api/queries";
+import { POLL_INTERVAL, projectQuery, taskChatsQuery, taskQuery, tasksQuery, workflowQuery } from "../api/queries";
 import { isFinalStatus, isTopPriority, stepView } from "../lib/board";
 import { formatClock } from "../lib/clock";
 import { deleteTaskWords } from "../lib/delete-words";
@@ -35,6 +35,7 @@ import {
 } from "../lib/icons";
 import { HIDDEN_TEXT } from "../lib/page-find";
 import { blockingRows, relationRows, type RelationRow } from "../lib/task-page";
+import { useChatAnnouncements } from "../lib/use-chat-announcements";
 import { useCommentList } from "../lib/use-comment-list";
 import { useHiddenFocus } from "../lib/use-hidden-focus";
 import { useScrolledPast } from "../lib/use-scrolled-past";
@@ -66,6 +67,7 @@ import { ScrollToTop, type PageColumn } from "./scroll-to-top";
 import { StepMark } from "./step-view";
 import { ChangedOnDisk } from "./changed-on-disk";
 import { ChatPanel } from "./chat-panel";
+import { TaskChats } from "./task-chats";
 import { TaskEditor } from "./task-editor";
 import type { Outline } from "./task-outline";
 import { TaskSidebar } from "./task-sidebar";
@@ -432,6 +434,7 @@ export function TaskScreen(): ReactNode {
     ...tasksQuery(client, tag),
     refetchInterval: POLL_INTERVAL,
   });
+  const { data: { data: chats }, isFetching: chatsFetching } = useSuspenseQuery(taskChatsQuery(client, tag, taskId));
   const { frontmatter, body, comments = [] } = task;
   // The heading, the document title and the editor's start text read the disk
   // values; every value a property control writes comes from the overlay below.
@@ -467,7 +470,8 @@ export function TaskScreen(): ReactNode {
   // frontmatter the pending writes leave.
   const live = properties.frontmatter;
   const { status, priority } = live;
-  const view = stepView(live, isFinalStatus(status, config.final_statuses), workflow);
+  const final = isFinalStatus(status, config.final_statuses);
+  const view = stepView(live, final, workflow);
   const relations = relationRows(live, listing.entries, config.final_statuses);
   const blocking = blockingRows(relations.blockers);
   const barRef = useRef<HTMLDivElement>(null);
@@ -507,6 +511,7 @@ export function TaskScreen(): ReactNode {
   const navigate = route.useNavigate();
   // In edit mode the h1 is clipped and takes no focus, so the title field takes it.
   const { chat, opened: chatOpened, close: closeChat } = useTaskChat(scrolledRef);
+  useChatAnnouncements({ chats, fetching: chatsFetching, stateful: !final, openChat: chat, quiet: false });
   const column: PageColumn = chat === undefined ? "sidebar" : "chat";
   const layout = COLUMN_LAYOUT[column];
   const { mutate: sendDelete } = useMutation(taskDeleteOptions(queryClient, client));
@@ -634,8 +639,9 @@ export function TaskScreen(): ReactNode {
                     {idLine}
                   </div>
                   {metaLine}
+                  <TaskChats tag={tag} task={taskId} chats={chats} stateful={!final} openChat={chat} />
                   {body.trim() !== "" && (
-                    <div ref={bodyRef} data-find-scope="body" className="mt-8 max-w-2xl">
+                    <div ref={bodyRef} data-find-scope="body" className={`${chats.length > 0 ? "mt-10" : "mt-8"} max-w-2xl`}>
                       <Markdown text={body} base={2} title={title} />
                     </div>
                   )}

@@ -55,6 +55,7 @@ function daemon(replies: Record<string, TransportReply | Promise<TransportReply>
     "/projects": successReply([{ tag: "SAGA", name: "Saga", path: "/repos/saga" }]),
     "/projects/SAGA": successReply(PROJECT),
     [TASK_PATH]: task(),
+    [`${TASK_PATH}/chats`]: successReply([]),
     [LISTING_PATH]: successReply({ entries: [entry("SAGA-3", "Build the parser")], excluded: [] }),
     ...replies,
   });

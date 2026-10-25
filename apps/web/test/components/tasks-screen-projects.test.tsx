@@ -1271,6 +1271,7 @@ describe("the board a card was opened from", () => {
       "/projects/SAGA/tasks": listing([entry(2, { labels: ["web"] })]),
       "/projects/DELTA/tasks": listing([delta(11, { status: "To Do", labels: ["web"] })]),
       "/projects/SAGA/tasks/SAGA-2": successReply({ frontmatter: entry(2, { labels: ["web"] }).frontmatter, body: "", comments: [] }),
+      "/projects/SAGA/tasks/SAGA-2/chats": successReply([]),
     });
   }
 

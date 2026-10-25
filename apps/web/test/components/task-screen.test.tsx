@@ -417,6 +417,7 @@ describe("the contents outline", () => {
     expect(within(outline()).getAllByRole("list")).toHaveLength(1);
 
     replies["/projects/SAGA/tasks/SAGA-4"] = task({ fields: { id: "SAGA-4", title: "Write the docs" }, body: "Text." });
+    replies["/projects/SAGA/tasks/SAGA-4/chats"] = successReply([]);
     await act(async () => {
       await router.navigate({ to: "/tasks/$project/$task", params: { project: "SAGA", task: "SAGA-4" } });
     });
@@ -765,7 +766,7 @@ describe("the blocked summary", () => {
 describe("opening a task from the board", () => {
   const ENTRY: TaskEntry = { id: "SAGA-3", path: "/repos/saga/tasks/SAGA-3.md", blocked: false, frontmatter: frontmatter({ workflow: "dev", step: "research" }) };
 
-  it("asks the daemon for the task alone when the board's reads are in the cache", async () => {
+  it("asks the daemon for the task and its chats alone when the board's reads are in the cache", async () => {
     const user = userEvent.setup();
     const { transport, paths } = daemon({
       "/projects/SAGA/tasks": successReply({ entries: [ENTRY], excluded: [] }),
@@ -778,7 +779,7 @@ describe("opening a task from the board", () => {
 
     expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-3");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Build the parser");
-    expect(paths).toEqual([TASK_PATH]);
+    expect(paths).toEqual([TASK_PATH, `${TASK_PATH}/chats`]);
   });
 });
 
@@ -951,6 +952,7 @@ describe("the warnings of the task read", () => {
     const { transport } = daemon({
       [TASK_PATH]: task({ comments: [comment(1, { collapsed: true })], diagnostics: [BLOCKER] }),
       "/projects/SAGA/tasks/SAGA-4": task({ fields: { id: "SAGA-4", title: "Write the docs" }, comments: [comment(1)] }),
+      "/projects/SAGA/tasks/SAGA-4/chats": successReply([]),
     });
     const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
     expect(caret("Note 1").getAttribute("aria-expanded")).toBe("false");

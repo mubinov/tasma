@@ -26,10 +26,13 @@ export const FEED_MAPPINGS: FeedMappings = {
     ...(event.change === "renamed" ? [{ queryKey: daemonKeys.project(event.to) }] : []),
     { queryKey: daemonKeys.chats() },
   ],
-  // Only the list of all chats reads again. The chat panel reads the state from
-  // the log, and the `seq` of the record when it opens and after each reset of
-  // the log.
-  chat: () => [{ queryKey: daemonKeys.chats() }],
+  // The list of all chats and the chats of the task read again, and the record
+  // reads do not. The chat panel reads the state from the log, and the `seq` of
+  // the record when it opens and after each reset of the log.
+  chat: ({ tag, task }) => [
+    { queryKey: daemonKeys.chats() },
+    { queryKey: daemonKeys.taskChats(tag, task), exact: true },
+  ],
   // The main config gives the statuses of a project that has none, and its
   // `workflows_path` moves every workflow.
   config: () => [{ queryKey: daemonKeys.all }],

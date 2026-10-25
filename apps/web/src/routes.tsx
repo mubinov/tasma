@@ -20,6 +20,7 @@ import {
   chatListQuery,
   projectQuery,
   projectsQuery,
+  taskChatsQuery,
   taskQuery,
   tasksQuery,
   workflowQuery,
@@ -240,6 +241,7 @@ const taskRoute = createRoute({
       queryClient.query({ ...projectQuery(client, project), staleTime: "static" }),
       queryClient.query({ ...taskQuery(client, project, task), staleTime: "static" }),
       queryClient.query({ ...tasksQuery(client, project), staleTime: "static" }),
+      queryClient.query({ ...taskChatsQuery(client, project, task), staleTime: "static" }),
     ]);
     const { workflow } = read.frontmatter;
 

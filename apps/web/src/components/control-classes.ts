@@ -127,3 +127,6 @@ export const NOTE_SIGNAL_TITLE_CLASS = "font-chrome text-base font-medium text-s
 
 /** The words a daemon or the transport gave for a failure, as a notice shows them. */
 export const NOTICE_WORDS_CLASS = "mt-2 space-y-1 rounded-control bg-surface-2 px-2.5 py-2 font-mono text-xs-plus text-dim wrap-anywhere";
+
+/** The open chat in a list of chats, on a `relative` row. Its bar is the mark that keeps 3:1. */
+export const SELECTED_ROW_CLASS = "bg-surface-2 before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-text";

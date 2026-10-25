@@ -125,7 +125,13 @@ function ChatPanelBody({ tag, task, chat, onClose, focusOnMount = false }: ChatP
     <section aria-labelledby={headingId} className="flex h-full min-h-0 flex-col">
       <div className="flex items-start gap-3 border-b border-line px-6 py-3">
         <div className="min-w-0 flex-1">
-          <h2 ref={headingRef} id={headingId} tabIndex={-1} className="font-chrome text-base font-semibold wrap-anywhere">
+          <h2
+            ref={headingRef}
+            id={headingId}
+            tabIndex={-1}
+            data-chat-heading=""
+            className="font-chrome text-base font-semibold wrap-anywhere"
+          >
             {record === undefined ? `Chat ${String(chat)}` : `${chatAgentName(record.agent)} · ${record.step}`}
           </h2>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
