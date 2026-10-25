@@ -1,5 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
-import { EventEmitter } from "node:events";
+import { spawn } from "node:child_process";
 import { existsSync, type FSWatcher } from "node:fs";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,7 +8,7 @@ import { type IndexChange, type IndexedProject, openIndexedProject, type StoreDi
 import { type ReadIdentity, Watches, type WatchHandlers } from "../../src/index-cache/watch.js";
 import { projectPaths } from "../../src/store/paths.js";
 import { plant, project, projectDir, PROJECT, taskFile, tasksDir, taskText, tempRoot } from "../store/helpers.js";
-import { ids, listener, until } from "./helpers.js";
+import { Fake, HAS_BUN, ids, listener, until } from "./helpers.js";
 
 /** An index that watches the temp tree, closed when the test ends. */
 async function watching(root: string, on?: (diagnostic: StoreDiagnostic) => void): Promise<IndexedProject> {
@@ -17,9 +16,6 @@ async function watching(root: string, on?: (diagnostic: StoreDiagnostic) => void
   onTestFinished(() => indexed.close());
   return indexed;
 }
-
-/** Whether a `bun` is on PATH to run the watcher under, as the compiled daemon runs it. */
-const HAS_BUN = spawnSync("bun", ["--version"]).error === undefined;
 
 /** A change the index under Bun reported, with the title it then held for the task. */
 type BunChange = IndexChange & { title?: string };
@@ -200,26 +196,6 @@ describe("the watcher under Bun", { timeout: 8000, retry: 3 }, () => {
 });
 
 describe("the two watches themselves", () => {
-  /** A watch a test drives by hand, in place of one the operating system feeds. */
-  class Fake extends EventEmitter {
-    closed = 0;
-    readonly #listener: (event: string, name: string | null) => void;
-
-    constructor(listener: (event: string, name: string | null) => void) {
-      super();
-      this.#listener = listener;
-    }
-
-    /** What the operating system reports for one change under the directory. */
-    change(name: string | null, event = "change"): void {
-      this.#listener(event, name);
-    }
-
-    close(): void {
-      this.closed += 1;
-    }
-  }
-
   /** Handlers that do nothing, for a test that hears one of them at most. */
   const QUIET: WatchHandlers = {
     onTask: () => {},

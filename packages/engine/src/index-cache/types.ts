@@ -41,6 +41,12 @@ export type IndexOptions = {
    * `close()` has returned.
    */
   onChange?: (change: IndexChange) => void;
+  /**
+   * The index follows the disk again after a loss it reported. It is never
+   * called at the build, which reports no loss. What the listener throws is
+   * caught and dropped, and nothing reaches it once `close()` has returned.
+   */
+  onRecovered?: () => void;
 };
 
 /**

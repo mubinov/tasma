@@ -67,7 +67,14 @@ export type ProjectHost = {
    * is healthy.
    */
   rename(tag: string, rename: ProjectRename): Promise<Diagnostic[]>;
-  /** Closes every open index. */
+  /**
+   * Repairs each held project whose index stopped following the disk and is due
+   * for a repair, as a read of it would, with no request. It reads the tree
+   * first, so the index of a project whose folder went by hand is closed and not
+   * repaired. It never rejects.
+   */
+  repairDue(): Promise<void>;
+  /** Closes every open index, after the repairs that run. */
   close(): Promise<void>;
 };
 
@@ -96,7 +103,12 @@ class Held {
   /** As `project changed`: a client that reads nothing learns of the flag only from the feed. */
   readonly publishLiveChange: () => void;
 
-  constructor(tag: string, root: string | undefined, publish: Publish | undefined) {
+  constructor(
+    tag: string,
+    root: string | undefined,
+    publish: Publish | undefined,
+    onRecovered: (entry: Held) => void,
+  ) {
     this.publishLiveChange = () => publish?.({ kind: "project", tag, change: "changed" });
     this.index = openIndexedProject(openProject({ project: tag, root }), {
       onDiagnostic: (diagnostic) => {
@@ -106,6 +118,7 @@ class Held {
         this.live = false;
       },
       onChange: ({ id, change }) => publish?.({ kind: "task", tag, id, change }),
+      onRecovered: () => onRecovered(this),
     });
   }
 }
@@ -181,6 +194,33 @@ export function createProjectHost(options: {
   const repairInterval = options.repairInterval ?? REPAIR_INTERVAL_MS;
   const held = new Map<string, Held>();
   let closing = false;
+
+  /**
+   * The repair running over one index, after it starts one for a project that is
+   * due. A closing host starts none, because `close()` waits only for the
+   * repairs that run when it starts.
+   */
+  function joinOrStartRepair(entry: Held, index: IndexedProject): Promise<void> | undefined {
+    if (!closing && entry.repair === undefined && dueForRepair(entry, repairInterval)) {
+      entry.repair = runRepair(entry, index);
+    }
+    return entry.repair;
+  }
+
+  /**
+   * Repairs at once an index that follows the disk again by itself, because only
+   * a repair raises the flag. The repair checks again: a watch failure can still
+   * stand when the tasks directory comes back, and only a rescan answers that.
+   */
+  function recover(entry: Held): void {
+    void entry.index
+      .then((index) => {
+        if (closing || entry.live || entry.repair !== undefined) return undefined;
+        entry.repair = runRepair(entry, index);
+        return entry.repair;
+      })
+      .catch(() => undefined);
+  }
 
   /**
    * Refuses everything once the host is closing. The flag is what makes the
@@ -333,7 +373,7 @@ export function createProjectHost(options: {
 
       let entry = held.get(tag);
       if (entry === undefined) {
-        const started = new Held(tag, root, publish);
+        const started = new Held(tag, root, publish, recover);
         held.set(tag, started);
         // An open that failed holds nothing, so the next request opens again.
         void started.index.catch(() => {
@@ -347,11 +387,7 @@ export function createProjectHost(options: {
       // flag this answer carries is the outcome of a rescan that returned. The
       // running one is what a call arriving before the flag is raised joins:
       // the raised flag is no guard once a repair has begun.
-      let running = entry.repair;
-      if (running === undefined && dueForRepair(entry, repairInterval)) {
-        running = runRepair(entry, index);
-        entry.repair = running;
-      }
+      const running = joinOrStartRepair(entry, index);
       if (running !== undefined) await running;
       return { index, live: entry.live };
     },
@@ -420,8 +456,32 @@ export function createProjectHost(options: {
       return diagnostics;
     },
 
+    async repairDue() {
+      if (closing) return;
+      try {
+        await discover();
+      } catch {
+        // A tree that cannot be listed is read again at the next call.
+        return;
+      }
+      await Promise.all(
+        [...held].map(async ([tag, entry]) => {
+          const index = await entry.index.catch(() => undefined);
+          if (index === undefined || held.get(tag) !== entry) return;
+          await joinOrStartRepair(entry, index)?.catch(() => undefined);
+        }),
+      );
+    },
+
     async close() {
       closing = true;
+      // Before the indexes close, so that a repair whose rescan runs ends with
+      // the answer of that rescan.
+      await Promise.all(
+        [...held.values()].map(async (entry) => {
+          await entry.repair?.catch(() => undefined);
+        }),
+      );
       const open = [...held.values()];
       held.clear();
       await Promise.all(open.map(drop));

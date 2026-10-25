@@ -1,4 +1,4 @@
-import { chmod, rm } from "node:fs/promises";
+import { chmod, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { TaskStoreError } from "@tasma/engine";
@@ -7,6 +7,7 @@ import { createProjectHost } from "../../src/projects/host.js";
 import type { ProjectHost } from "../../src/projects/host.js";
 import {
   loseTasks,
+  nudge,
   plant,
   projectConfig,
   projectDir,
@@ -375,7 +376,7 @@ describe("a host that is closing", () => {
 });
 
 describe("the live flag", { timeout: 20000, retry: 3 }, () => {
-  it("clears when the index stops following the disk, and the next open repairs it", async () => {
+  it("clears when the index stops following the disk, and is up again once the tasks directory is back", async () => {
     const root = await projectsRoot("SAGA");
     const tasks = tasksDir(root, "SAGA");
     // Planted before the open, so the index holds a task and a tasks directory
@@ -387,6 +388,8 @@ describe("the live flag", { timeout: 20000, retry: 3 }, () => {
 
     await loseTasks(root, "SAGA", index);
 
+    // The return of the directory starts a repair, which the open joins, or
+    // which raised the flag before the open.
     await plant(join(tasks, "SAGA-2.md"), taskText("SAGA-2"));
     const again = await opened.open("SAGA");
 
@@ -430,35 +433,38 @@ describe("the live flag", { timeout: 20000, retry: 3 }, () => {
 
   it("leaves a project whose repair did not take alone until the interval has passed", async () => {
     const root = await projectsRoot("SAGA");
-    const tasks = tasksDir(root, "SAGA");
-    await plant(join(tasks, "SAGA-1.md"), taskText("SAGA-1"));
+    const directory = projectDir(root, "SAGA");
+    // The watch on the project directory is refused at the open and again in
+    // the repair the open runs.
+    await chmod(directory, 0o111);
+    onTestFinished(() => chmod(directory, 0o755));
     const opened = host(root);
-    const { index } = await opened.open("SAGA");
-    await loseTasks(root, "SAGA", index);
     await expect(opened.open("SAGA")).resolves.toMatchObject({ live: false });
 
-    // The directory is back, but the repair that found it gone ran a moment
-    // ago, so this read answers from what that one found rather than paying for
-    // a rescan of its own.
-    await plant(join(tasks, "SAGA-2.md"), taskText("SAGA-2"));
+    // The cause is gone, but the repair that did not take ran a moment ago, so
+    // this read answers from what that one found rather than paying for a
+    // rescan of its own.
+    await chmod(directory, 0o755);
 
     await expect(opened.open("SAGA")).resolves.toMatchObject({ live: false });
   });
 
   it("repairs again once the interval has passed", async () => {
     const root = await projectsRoot("SAGA");
-    const tasks = tasksDir(root, "SAGA");
-    await plant(join(tasks, "SAGA-1.md"), taskText("SAGA-1"));
+    const directory = projectDir(root, "SAGA");
+    await plant(join(tasksDir(root, "SAGA"), "SAGA-1.md"), taskText("SAGA-1"));
+    await chmod(directory, 0o111);
+    onTestFinished(() => chmod(directory, 0o755));
     // An interval every read stands outside of, which is the state a host
     // whose last repair is old enough is in.
     const opened = host(root, 0);
-    const { index } = await opened.open("SAGA");
-    await loseTasks(root, "SAGA", index);
     await expect(opened.open("SAGA")).resolves.toMatchObject({ live: false });
 
-    await plant(join(tasks, "SAGA-2.md"), taskText("SAGA-2"));
+    await chmod(directory, 0o755);
+    const again = await opened.open("SAGA");
 
-    await expect(opened.open("SAGA")).resolves.toMatchObject({ live: true });
+    expect(again.live).toBe(true);
+    expect(again.index.query().entries.map((entry) => entry.id)).toEqual(["SAGA-1"]);
   });
 
   it("stays down when the repair itself fails, so the open after it repairs again", async () => {
@@ -536,18 +542,135 @@ describe("the live flag", { timeout: 20000, retry: 3 }, () => {
 
   it("publishes no project event for a second loss while the flag is down", async () => {
     const root = await projectsRoot("SAGA");
-    const tasks = tasksDir(root, "SAGA");
-    await plant(join(tasks, "SAGA-1.md"), taskText("SAGA-1"));
+    const directory = projectDir(root, "SAGA");
+    await plant(join(tasksDir(root, "SAGA"), "SAGA-1.md"), taskText("SAGA-1"));
+    await chmod(directory, 0o111);
+    onTestFinished(() => chmod(directory, 0o755));
+    const { opened, projectEvents } = publishing(root);
+    const { index } = await opened.open("SAGA");
+    await chmod(directory, 0o755);
+
+    // A rescan of the index alone takes the watch back but raises no flag; only
+    // a repair of the host does.
+    await rm(tasksDir(root, "SAGA"), { recursive: true });
+    await index.rescan();
+
+    expect(index.query().entries).toEqual([]);
+    expect(projectEvents).toEqual([SAGA_CHANGED]);
+  });
+});
+
+describe("a repair with no request", { timeout: 20000, retry: 3 }, () => {
+  it("runs when the tasks directory comes back by hand, and publishes the flag going up", async () => {
+    const root = await projectsRoot("SAGA");
+    await plant(join(tasksDir(root, "SAGA"), "SAGA-1.md"), taskText("SAGA-1"));
     const { opened, projectEvents } = publishing(root);
     const { index } = await opened.open("SAGA");
     await loseTasks(root, "SAGA", index);
 
-    // The index takes the tasks directory back by itself; only a repair raises the flag.
-    const back = () => plant(join(tasks, "SAGA-2.md"), taskText("SAGA-2"));
-    await until(() => index.query().entries.length > 0, "the index took the tasks directory back", back);
+    await plant(join(tasksDir(root, "SAGA"), "SAGA-2.md"), taskText("SAGA-2"));
+    await until(() => projectEvents.length === 2, "the repair was published", nudge(projectDir(root, "SAGA")));
+
+    expect(projectEvents).toEqual([SAGA_CHANGED, SAGA_CHANGED]);
+    const again = await opened.open("SAGA");
+    expect(again.live).toBe(true);
+    expect(again.index.query().entries.map((entry) => entry.id)).toEqual(["SAGA-2"]);
+  });
+
+  it("is waited for by the close of the host", async () => {
+    const root = await projectsRoot("SAGA");
+    await plant(join(tasksDir(root, "SAGA"), "SAGA-1.md"), taskText("SAGA-1"));
+    const { opened, projectEvents } = publishing(root);
+    const { index } = await opened.open("SAGA");
     await loseTasks(root, "SAGA", index);
 
+    // Enough files that the repair still reads them when the close comes. They
+    // arrive in one rename, so no recovery starts before all of them are there.
+    const staged = join(root, "staged");
+    for (let number = 2; number <= 200; number += 1) await plant(join(staged, `SAGA-${number}.md`), taskText(`SAGA-${number}`));
+    await rename(staged, tasksDir(root, "SAGA"));
+    // The index follows the disk again from the read that finds the directory,
+    // which is the read that starts the repair.
+    await until(() => index.followsDisk(), "the index took the tasks directory back", nudge(projectDir(root, "SAGA")));
+    await opened.close();
+
+    expect(projectEvents).toEqual([SAGA_CHANGED, SAGA_CHANGED]);
+  });
+
+  it("repairs a held project whose watch failed once it is due, and publishes once when the repair takes", async () => {
+    const root = await projectsRoot("SAGA");
+    const directory = projectDir(root, "SAGA");
+    await chmod(directory, 0o111);
+    onTestFinished(() => chmod(directory, 0o755));
+    const { opened, projectEvents } = publishing(root, 0);
+    await expect(opened.open("SAGA")).resolves.toMatchObject({ live: false });
+    await chmod(directory, 0o755);
+
+    await opened.repairDue();
+    await opened.repairDue();
+
+    expect(projectEvents).toEqual([SAGA_CHANGED, SAGA_CHANGED]);
+    await expect(opened.open("SAGA")).resolves.toMatchObject({ live: true });
+  });
+
+  it("leaves a held project alone inside the interval", async () => {
+    const root = await projectsRoot("SAGA");
+    const directory = projectDir(root, "SAGA");
+    await chmod(directory, 0o111);
+    onTestFinished(() => chmod(directory, 0o755));
+    const { opened, projectEvents } = publishing(root);
+    await expect(opened.open("SAGA")).resolves.toMatchObject({ live: false });
+    await chmod(directory, 0o755);
+
+    await opened.repairDue();
+
     expect(projectEvents).toEqual([SAGA_CHANGED]);
+  });
+
+  it("does nothing for a live project", async () => {
+    const root = await projectsRoot("SAGA");
+    const { opened, projectEvents } = publishing(root, 0);
+    await opened.open("SAGA");
+
+    await opened.repairDue();
+
+    expect(projectEvents).toEqual([]);
+  });
+
+  it("does not repair a held project whose folder went by hand, and closes its index", async () => {
+    const root = await projectsRoot("SAGA");
+    const directory = projectDir(root, "SAGA");
+    await chmod(directory, 0o111);
+    onTestFinished(() => chmod(directory, 0o755).catch(() => undefined));
+    const { opened, projectEvents } = publishing(root, 0);
+    const { index } = await opened.open("SAGA");
+    await chmod(directory, 0o755);
+    await rm(directory, { recursive: true });
+
+    await opened.repairDue();
+
+    expect(projectEvents).toEqual([SAGA_CHANGED]);
+    expect((await storeError(index.config())).code).toBe("index-closed");
+  });
+
+  it("resolves when the tree cannot be listed, when a repair fails and when the host is closed", async () => {
+    const root = await projectsRoot("SAGA");
+    const directory = projectDir(root, "SAGA");
+    const projects = join(root, "projects");
+    await plant(join(tasksDir(root, "SAGA"), "SAGA-1.md"), taskText("SAGA-1"));
+    const opened = host(root, 0);
+    const { index } = await opened.open("SAGA");
+    await loseTasks(root, "SAGA", index);
+
+    await chmod(projects, 0o000);
+    onTestFinished(() => chmod(projects, 0o755));
+    await expect(opened.repairDue()).resolves.toBeUndefined();
+    await chmod(projects, 0o755);
+    await chmod(directory, 0o000);
+    onTestFinished(() => chmod(directory, 0o755));
+    await expect(opened.repairDue()).resolves.toBeUndefined();
+    await opened.close();
+    await expect(opened.repairDue()).resolves.toBeUndefined();
   });
 });
 

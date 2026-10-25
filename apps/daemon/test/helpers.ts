@@ -284,13 +284,23 @@ Second body.
  * The report that clears the flag is the one that empties the index, so what the
  * index holds is what a test can watch the flag by. Reading it through the host
  * would run a repair instead.
+ *
+ * The tasks directory is removed once and never comes back, because its return
+ * starts a repair. A scratch file in the project folder repeats the change: the
+ * project watch reads the tasks name again at each event.
  */
 export async function loseTasks(root: string, tag: string, index: IndexedProject): Promise<void> {
-  const tasks = tasksDir(root, tag);
-  await until(() => index.query().entries.length === 0, "the index dropped what it held", async () => {
-    await plant(join(tasks, `${tag}-1.md`), taskText(`${tag}-1`));
-    await rm(tasks, { recursive: true, force: true });
-  });
+  await rm(tasksDir(root, tag), { recursive: true, force: true });
+  await until(() => index.query().entries.length === 0, "the index dropped what it held", nudge(projectDir(root, tag)));
+}
+
+/**
+ * A change of one folder that a test makes again at each call, as the change an
+ * `until` repeats: a scratch file whose content differs each time.
+ */
+export function nudge(directory: string): () => Promise<void> {
+  let round = 0;
+  return () => writeFile(join(directory, "scratch"), String(++round));
 }
 
 /**

@@ -4,15 +4,12 @@
 import type { ChatStatus } from "./chat.js";
 
 /**
- * One change the daemon found or made. A `task` event comes from a project the
- * daemon holds an index for, and covers a direct edit of the file on disk. A
- * `project` event with `changed` also comes when the index of a held project
- * stops following the disk, and when a repair makes it follow the disk again.
- * A `chat` event comes at the create of a chat and at each change of its
- * status, and carries the new status but never the text of the chat; a rename
- * or a delete of its project or task sends none. The other events come from the
- * daemon's own writes alone: a hand edit of a project's registry entry, of a
- * configuration file or of a workflow file sends no event.
+ * One change the daemon found or made, also by a hand edit of the tree. An
+ * event can repeat, and one write can bring more events than its own. A hand
+ * rename of a project folder comes as `deleted` and `created`. A `task` event
+ * comes only from a project the daemon holds. `project` with `changed` also
+ * comes when `live` changes. A `chat` event never carries the text, and a
+ * rename or a delete of its project or task sends none.
  */
 export type FeedEvent
   = | { kind: "task"; tag: string; id: string; change: "created" | "changed" | "deleted" }

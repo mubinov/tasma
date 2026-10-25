@@ -481,3 +481,69 @@ describe("the listener of changes", () => {
     expect(seen.seen).toEqual([]);
   });
 });
+
+describe("the report of a recovery", () => {
+  it("comes once when a lost tasks directory comes back, and not at the build", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    let recovered = 0;
+    const indexed = await unwatched(project(root), { onRecovered: () => void (recovered += 1) });
+    expect(recovered).toBe(0);
+
+    await rm(tasksDir(root), { recursive: true });
+    await indexed.rescan();
+    await indexed.rescan();
+    expect(recovered).toBe(0);
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    await indexed.rescan();
+    await indexed.rescan();
+
+    expect(recovered).toBe(1);
+    expect(ids(indexed)).toEqual(["SAGA-1"]);
+  });
+
+  it("does not come for a project that never had a tasks directory", async () => {
+    const root = await tempRoot();
+    let recovered = 0;
+    const indexed = await unwatched(project(root), { onRecovered: () => void (recovered += 1) });
+
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    await indexed.rescan();
+
+    expect(recovered).toBe(0);
+  });
+
+  it("does not come once the index is closed", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    let recovered = 0;
+    const cache = new TaskIndex(projectPaths({ project: PROJECT, root }), { onRecovered: () => void (recovered += 1) });
+    await cache.reconcile();
+    await rm(tasksDir(root), { recursive: true });
+    await cache.reconcile();
+
+    cache.close();
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    await cache.reconcile();
+
+    expect(recovered).toBe(0);
+  });
+
+  it("drops what the listener throws", async () => {
+    const root = await tempRoot();
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    const indexed = await unwatched(project(root), {
+      onRecovered: () => {
+        throw new Error("the listener failed");
+      },
+    });
+    await rm(tasksDir(root), { recursive: true });
+    await indexed.rescan();
+
+    await plant(taskFile(root, "SAGA-1"), taskText("SAGA-1"));
+    await indexed.rescan();
+
+    expect(ids(indexed)).toEqual(["SAGA-1"]);
+    expect(indexed.followsDisk()).toBe(true);
+  });
+});

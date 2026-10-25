@@ -11,6 +11,13 @@ import { createHold, HOLD_MS } from "./hold.js";
 /** How many of the last events the feed keeps. A cursor older than these gets `reset`. */
 const FEED_SIZE = 1024;
 
+/**
+ * How long after a read returns the feed still counts a client as reading it.
+ * The web app reads again at once after each reply, so this covers the gap
+ * between two reads.
+ */
+const LISTEN_MS = 30_000;
+
 const RUN_BYTES = 6;
 
 /** The sequence part of a cursor in the one form the feed writes: a decimal integer with no leading zero. */
@@ -25,6 +32,11 @@ export type Feed = {
   read(after: string | undefined): Promise<EventsReply>;
   /** Answers every held read at once, and makes later reads answer without a hold. */
   close(): void;
+  /**
+   * Whether a client reads the feed: a read is held now, or a read returned less
+   * than `LISTEN_MS` ago. A closed feed has none.
+   */
+  listening(): boolean;
 };
 
 export function createFeed(options: { holdMs?: number; size?: number } = {}): Feed {
@@ -36,6 +48,8 @@ export function createFeed(options: { holdMs?: number; size?: number } = {}): Fe
   const events: FeedEvent[] = [];
   let sequence = 0;
   let closed = false;
+  let holding = 0;
+  let returnedAt: number | undefined;
 
   function current(): string {
     return `${prefix}${sequence}`;
@@ -55,6 +69,19 @@ export function createFeed(options: { holdMs?: number; size?: number } = {}): Fe
     return { cursor: current(), events: events.slice(known - before) };
   }
 
+  async function answer(after: string | undefined): Promise<EventsReply> {
+    if (after === undefined) return { cursor: current(), events: [] };
+
+    const known = sequenceOf(after);
+    if (known === undefined || known > sequence) return { reset: true, cursor: current() };
+    if (known < sequence) return replyAfter(known);
+
+    holding += 1;
+    await hold.wait();
+    holding -= 1;
+    return replyAfter(known);
+  }
+
   return {
     publish(event) {
       if (closed) return;
@@ -65,19 +92,19 @@ export function createFeed(options: { holdMs?: number; size?: number } = {}): Fe
     },
 
     async read(after) {
-      if (after === undefined) return { cursor: current(), events: [] };
-
-      const known = sequenceOf(after);
-      if (known === undefined || known > sequence) return { reset: true, cursor: current() };
-      if (known < sequence) return replyAfter(known);
-
-      await hold.wait();
-      return replyAfter(known);
+      const reply = await answer(after);
+      returnedAt = performance.now();
+      return reply;
     },
 
     close() {
       closed = true;
       hold.close();
+    },
+
+    listening() {
+      if (closed) return false;
+      return holding > 0 || (returnedAt !== undefined && performance.now() - returnedAt < LISTEN_MS);
     },
   };
 }

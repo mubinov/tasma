@@ -1,11 +1,12 @@
 import { once } from "node:events";
-import { chmod, readFile } from "node:fs/promises";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { Agent, request as httpRequest } from "node:http";
 import type { IncomingHttpHeaders } from "node:http";
 import { connect } from "node:net";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it, onTestFinished } from "vitest";
-import type { Chat, ChatEntry, DaemonRecord, EventsReply } from "@tasma/protocol";
+import type { Chat, ChatEntry, DaemonRecord, EventsReply, FeedEvent } from "@tasma/protocol";
 import { daemonAnswers } from "../../src/lifecycle/probe.js";
 import { readRecord, recordPath } from "../../src/lifecycle/record.js";
 import { runDaemon, startDaemon } from "../../src/lifecycle/run.js";
@@ -33,6 +34,7 @@ import {
   taskText,
   TIMESTAMP,
   until,
+  userConfig,
 } from "../helpers.js";
 import type { TestServer } from "../helpers.js";
 
@@ -204,14 +206,32 @@ describe("starting a daemon", () => {
     ];
     for (const [method, path, body] of writes) expect((await send(server, method, path, body)).status).toBe(200);
 
-    await expect(read(`/events?after=${cursor}`)).resolves.toMatchObject({
-      events: [
-        { kind: "project", tag: "BETA", change: "created" },
-        { kind: "task", tag: "BETA", id: "BETA-1", change: "created" },
-        { kind: "workflow", name: "flow-a", change: "created" },
-        { kind: "config" },
-      ],
-    });
+    // The tree watch can send a second event for each write, between them.
+    const expected: FeedEvent[] = [
+      { kind: "project", tag: "BETA", change: "created" },
+      { kind: "task", tag: "BETA", id: "BETA-1", change: "created" },
+      { kind: "workflow", name: "flow-a", change: "created" },
+      { kind: "config" },
+    ];
+    const reply = await read(`/events?after=${cursor}`);
+    const found: FeedEvent[] = [];
+    for (const event of "events" in reply ? reply.events : []) {
+      if (isDeepStrictEqual(event, expected[found.length])) found.push(event);
+    }
+    expect(found).toEqual(expected);
+  });
+
+  it("ends a held read of the feed with a config event for a hand edit of the root config.yml", { timeout: 10_000, retry: 3 }, async () => {
+    const root = await projectsRoot();
+    const start = await daemonOn(root);
+    const server: TestServer = { url: start.url, token: await tokenOf(root), close: start.stop };
+    const read = async (path: string) => (await success<EventsReply>(await get(server, path))).data;
+    const { cursor } = await read("/events");
+    const held = read(`/events?after=${cursor}`);
+
+    await writeFile(userConfig(root), "priorities: [urgent, later]\n");
+
+    await expect(held).resolves.toMatchObject({ events: [{ kind: "config" }] });
   });
 
   it("finds the daemon already serving this tree and binds nothing", async () => {

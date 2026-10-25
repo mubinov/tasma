@@ -89,6 +89,7 @@ export class TaskIndex {
   readonly #paths: ProjectPaths;
   readonly #onDiagnostic: ((diagnostic: StoreDiagnostic) => void) | undefined;
   readonly #onChange: ((change: IndexChange) => void) | undefined;
+  readonly #onRecovered: (() => void) | undefined;
   readonly #entries = new Map<string, { file: TaskEntry; entry: IndexEntry; identity: FileIdentity }>();
   readonly #excluded = new Map<
     string,
@@ -139,6 +140,7 @@ export class TaskIndex {
     this.#paths = paths;
     this.#onDiagnostic = options.onDiagnostic;
     this.#onChange = options.onChange;
+    this.#onRecovered = options.onRecovered;
     this.#open = open;
     this.#readers = readers;
   }
@@ -313,7 +315,10 @@ export class TaskIndex {
     const holding = await this.#holding();
     if ("identity" in holding) {
       this.#lostCause = undefined;
-      this.#lostStanding = false;
+      if (this.#lostStanding) {
+        this.#lostStanding = false;
+        this.#reportRecovery();
+      }
       return holding.identity;
     }
     this.#lose(holding.lost);
@@ -372,6 +377,15 @@ export class TaskIndex {
     } catch {
       // A listener that throws must corrupt neither the map nor the write that
       // led here.
+    }
+  }
+
+  #reportRecovery(): void {
+    if (this.#closed) return;
+    try {
+      this.#onRecovered?.();
+    } catch {
+      // A listener that throws harms neither the map nor the read that led here.
     }
   }
 

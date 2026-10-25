@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { onTestFinished } from "vitest";
 import type { IndexedProject, IndexOptions, Project, QueryResult, StoreDiagnostic } from "@tasma/engine";
 import type { ChunkSource } from "../../src/index-cache/frontmatter.js";
@@ -8,6 +12,38 @@ import { project, PROJECT, taskFile } from "../store/helpers.js";
 
 /** The byte-order mark an editor may put in front of a file it writes as UTF-8. */
 export const BOM = "\uFEFF";
+
+/** Whether a `bun` is on PATH to run a watch under, as the compiled daemon runs it. */
+export const HAS_BUN = spawnSync("bun", ["--version"]).error === undefined;
+
+/** A watch a test drives by hand, in place of one the operating system feeds. */
+export class Fake extends EventEmitter {
+  closed = 0;
+  readonly #listener: (event: string, name: string | null) => void;
+
+  constructor(listener: (event: string, name: string | null) => void) {
+    super();
+    this.#listener = listener;
+  }
+
+  /** What the operating system reports for one change under the directory. */
+  change(name: string | null, event = "change"): void {
+    this.#listener(event, name);
+  }
+
+  close(): void {
+    this.closed += 1;
+  }
+}
+
+/**
+ * A change of one folder that a test makes again at each call, as the change an
+ * `until` repeats: a scratch file whose content differs each time.
+ */
+export function nudge(directory: string): () => Promise<void> {
+  let round = 0;
+  return () => writeFile(join(directory, "scratch"), String(++round));
+}
 
 /** A source over text in fixed-size chunks, recording what a read asked of it. */
 export type Source = ChunkSource & { requested: number; closed: number };

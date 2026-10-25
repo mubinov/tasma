@@ -11,6 +11,7 @@ import { once } from "node:events";
 import type { Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { parseArgs } from "node:util";
+import { type TreeWatch, watchTree } from "@tasma/engine";
 import { DAEMON_NAME, DEFAULT_DAEMON_HOST, printable } from "@tasma/protocol";
 import type { DaemonRecord } from "@tasma/protocol";
 import manifest from "../../../../package.json" with { type: "json" };
@@ -24,6 +25,7 @@ import { createChatRunner } from "../chats/runner.js";
 import { createStepChats } from "../chats/start.js";
 import { configRoutes } from "../config/routes.js";
 import { createFeed } from "../events/feed.js";
+import { type Rescans, startRescans } from "../events/rescan.js";
 import { eventRoutes } from "../events/routes.js";
 import { causeOf } from "../http/failure.js";
 import { createDaemonServer } from "../http/server.js";
@@ -221,6 +223,8 @@ export async function startDaemon(options: {
     { token },
   );
   const connections = connectionsOf(server);
+  // Taken only by a daemon whose claim worked; one that stands down to another watches nothing.
+  const watching: { tree?: TreeWatch; rescans?: Rescans } = {};
 
   async function closeServing(): Promise<void> {
     // Before the holds close, so the reply of each released held read closes its connection.
@@ -234,6 +238,9 @@ export async function startDaemon(options: {
     // open would hold its pipes or its watch handle and the process would never
     // end.
     await runner.close();
+    // Before the host, because a tick repairs through it.
+    await watching.rescans?.close();
+    await watching.tree?.close();
     await host.close();
   }
 
@@ -272,6 +279,9 @@ export async function startDaemon(options: {
 
     return { started: false, code: 0, message: `a daemon is already serving this tree at ${daemonUrl(held.port)}` };
   }
+
+  watching.tree = await watchTree({ root, onChange: publish });
+  watching.rescans = startRescans({ feed, tree: watching.tree, host });
 
   let stopping: Promise<void> | undefined;
 

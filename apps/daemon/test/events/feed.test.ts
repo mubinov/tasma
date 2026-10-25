@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { EventsReply, FeedEvent } from "@tasma/protocol";
 import { createFeed } from "../../src/events/feed.js";
 import type { Feed } from "../../src/events/feed.js";
@@ -194,5 +194,42 @@ describe("a closed feed", () => {
     feed.publish(taskEvent("ALPHA-1"));
 
     await expect(feed.read(cursor)).resolves.toEqual({ cursor, events: [] });
+  });
+});
+
+describe("whether a client reads the feed", () => {
+  it("is false at start, true while a read is held, and true for 30 s after a read returns", async () => {
+    vi.useFakeTimers();
+    onTestFinished(() => void vi.useRealTimers());
+    const feed = createFeed({ holdMs: 60_000 });
+    expect(feed.listening()).toBe(false);
+
+    const { cursor } = await feed.read(undefined);
+    expect(feed.listening()).toBe(true);
+    vi.advanceTimersByTime(30_000);
+    expect(feed.listening()).toBe(false);
+
+    const held = feed.read(cursor);
+    vi.advanceTimersByTime(40_000);
+    expect(feed.listening()).toBe(true);
+    feed.publish(taskEvent("ALPHA-1"));
+    vi.advanceTimersByTime(1);
+    await held;
+    vi.advanceTimersByTime(29_000);
+    expect(feed.listening()).toBe(true);
+    vi.advanceTimersByTime(1000);
+    expect(feed.listening()).toBe(false);
+  });
+
+  it("is false once the feed is closed, also for a read the close released", async () => {
+    const feed = createFeed({ holdMs: LONG_HOLD_MS });
+    const { cursor } = await feed.read(undefined);
+    const held = feed.read(cursor);
+    expect(feed.listening()).toBe(true);
+
+    feed.close();
+    await held;
+
+    expect(feed.listening()).toBe(false);
   });
 });

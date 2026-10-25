@@ -1,4 +1,4 @@
-import type { Stats } from "node:fs";
+import type { Dirent, Stats } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { parse } from "yaml";
@@ -127,6 +127,18 @@ async function entryThrough(path: string): Promise<Stats | undefined> {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * What one entry of a workflows directory stands as: a workflow folder, which is
+ * a directory or a symbolic link to one under a workflow name; a directory under
+ * any other name; or `undefined` for an entry that holds no workflow. The listing
+ * and the tree watch keep the same entries through this one rule.
+ */
+export async function workflowEntryKind(path: string, entry: Dirent): Promise<"workflow" | "misnamed" | undefined> {
+  const directory = entry.isDirectory() || (entry.isSymbolicLink() && (await entryThrough(path))?.isDirectory());
+  if (directory !== true) return undefined;
+  return workflowNameFault(entry.name) === undefined ? "workflow" : "misnamed";
 }
 
 /** Whether one step entry of a loaded workflow carries this name. */
@@ -366,10 +378,10 @@ class WorkflowStore implements Workflows {
     }
     for (const entry of entries) {
       const path = join(this.directory, entry.name);
-      const directory = entry.isDirectory() || (entry.isSymbolicLink() && (await entryThrough(path))?.isDirectory());
+      const kind = await workflowEntryKind(path, entry);
       // A name of any other form holds no workflow and is passed over.
-      if (directory !== true) continue;
-      if (workflowNameFault(entry.name) !== undefined) {
+      if (kind === undefined) continue;
+      if (kind === "misnamed") {
         diagnostics.push({
           code: "workflow-missing",
           message: `the name of this directory is no workflow name, which ${WORKFLOW_NAME_EXPECTATION}`,
