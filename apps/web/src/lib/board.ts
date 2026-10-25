@@ -427,6 +427,13 @@ export function boardValue({ all, tags }: BoardAddress): string {
   return all ? ALL_PROJECTS : tags.join(",");
 }
 
+/** Whether the board of the `projects` value `board` shows the project `tag`. */
+export function boardHolds(board: string, tag: string): boolean {
+  const { all, tags } = readBoard(board);
+
+  return all || tags.includes(tag);
+}
+
 /**
  * The identity of each column, which a project that joins or leaves the board
  * does not change: its status without case, and `#<n>` from the second column of

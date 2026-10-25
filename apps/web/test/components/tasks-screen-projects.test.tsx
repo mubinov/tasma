@@ -23,6 +23,7 @@ import {
 } from "../board-fixtures";
 import { heldBack, refusalReply, renderWithRouter, successReply } from "../helpers";
 import { frame } from "../setup/notice-store";
+import { backLink, topBar } from "../task-screen-fixtures";
 
 /** The project list as the daemon sends it: sorted by tag. */
 const SORTED = [DELTA, SAGA];
@@ -108,6 +109,7 @@ beforeEach(() => {
     lastTasksProject: null,
     boardReturn: null,
     boardRestorePending: false,
+    lastBoard: null,
     revealedColumns: new Set(),
   });
   useNoticeStore.setState({ notices: [], dismissed: new Map() });
@@ -1200,6 +1202,13 @@ describe("the board a card was opened from", () => {
       "/projects/DELTA/tasks": listing([delta(11, { status: "To Do", labels: ["web"] })]),
       "/projects/SAGA/tasks/SAGA-2": successReply({ frontmatter: entry(2, { labels: ["web"] }).frontmatter, body: "", comments: [] }),
       "/projects/SAGA/tasks/SAGA-2/chats": successReply([]),
+      "/projects/DELTA/tasks/DELTA-11": successReply({
+        frontmatter: delta(11, { status: "To Do", labels: ["web"] }).frontmatter,
+        body: "",
+        comments: [],
+      }),
+      "/projects/DELTA/tasks/DELTA-11/chats": successReply([]),
+      "DELETE /projects/SAGA/tasks/SAGA-2": successReply({ id: "SAGA-2" }),
     });
   }
 
@@ -1227,21 +1236,65 @@ describe("the board a card was opened from", () => {
     });
   }
 
-  it("leads back to the task's own project, without the labels and the scroll of the merged board", async () => {
+  it.each([
+    { address: "/tasks?projects=DELTA,SAGA&labels=web", search: { projects: "DELTA,SAGA", labels: "web" } },
+    { address: "/tasks?projects=all", search: { projects: "all" } },
+  ])("leads back from $address with its labels, scrolled where it was, with the card in focus", async ({ address, search }) => {
+    const user = userEvent.setup();
+    const scrollTo = watchScroll();
+    const { transport } = boardDaemon();
+    const router = await renderWithRouter(address, transport);
+
+    await user.click(cardLink("Task 2"));
+    expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-2");
+
+    await user.click(backLink());
+
+    expect(router.state.location.search).toEqual(search);
+    await waitFor(() => {
+      expect(restoredTo(scrollTo)).toEqual([SCROLL_X, SCROLL_Y]);
+    });
+    await nextFrame();
+    expect(document.activeElement).toBe(cardLink("Task 2"));
+  });
+
+  it("puts the merged board back from a task page reached with no board visit after the card open", async () => {
     const user = userEvent.setup();
     const scrollTo = watchScroll();
     const { transport } = boardDaemon();
     const router = await renderWithRouter("/tasks?projects=DELTA,SAGA&labels=web", transport);
 
     await user.click(cardLink("Task 2"));
-    expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-2");
-    expect(useUiStore.getState().boardReturn).toMatchObject({ projects: "DELTA,SAGA", labels: "web", taskId: "SAGA-2" });
+    await act(async () => {
+      await router.navigate({ to: "/tasks/$project/$task", params: { project: "DELTA", task: "DELTA-11" } });
+    });
+    await user.click(backLink());
 
-    await user.click(within(screen.getByRole("main")).getByRole("link", { name: "Tasks" }));
+    expect(router.state.location.search).toEqual({ projects: "DELTA,SAGA", labels: "web" });
+    await waitFor(() => {
+      expect(restoredTo(scrollTo)).toEqual([SCROLL_X, SCROLL_Y]);
+    });
     await nextFrame();
+    expect(document.activeElement).toBe(cardLink("Task 2"));
+  });
 
-    expect(router.state.location.search).toEqual({ projects: "SAGA" });
-    expect(restoredTo(scrollTo)).toBeNull();
+  it("replaces the task page with the merged board after a delete", async () => {
+    const user = userEvent.setup();
+    watchScroll();
+    const { transport } = boardDaemon();
+    const router = await renderWithRouter("/tasks?projects=DELTA,SAGA&labels=web", transport);
+
+    await user.click(cardLink("Task 2"));
+    const entries = router.history.length;
+    await user.click(within(topBar()).getByRole("button", { name: "Task menu" }));
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Delete task" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/tasks");
+    });
+    expect(router.state.location.search).toEqual({ projects: "DELTA,SAGA", labels: "web" });
+    expect(router.history.length).toBe(entries);
   });
 
   it("puts the merged board back after the browser Back button", async () => {

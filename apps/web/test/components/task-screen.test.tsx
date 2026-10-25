@@ -40,6 +40,7 @@ beforeEach(() => {
     lastTasksProject: null,
     boardReturn: null,
     boardRestorePending: false,
+    lastBoard: null,
     revealedColumns: new Set(),
   });
   useNoticeStore.setState({ notices: [], dismissed: new Map() });
@@ -113,9 +114,7 @@ describe("the page", () => {
 
   it("carries the label filter and the search of the board the reader left", async () => {
     const user = userEvent.setup();
-    useUiStore.setState({
-      boardReturn: { projects: "SAGA", labels: "web,infra", q: "parser error", scrollX: 0, scrollY: 1200, taskId: "SAGA-3" },
-    });
+    useUiStore.setState({ lastBoard: { projects: "SAGA", labels: "web,infra", q: "parser error" } });
     const { transport } = daemon();
     const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
@@ -126,12 +125,34 @@ describe("the page", () => {
     expect(router.state.location.search).toEqual({ projects: "SAGA", labels: "web,infra", q: "parser error" });
   });
 
-  // A page opened directly holds no record, and a record of another board is not this page's to return to.
   it.each([
-    { what: "no record", record: null },
-    { what: "a record for another project", record: { projects: "DELTA", labels: "web", q: "parser", scrollX: 0, scrollY: 80, taskId: "DELTA-1" } },
-  ])("opens the project's board unfiltered with $what", async ({ record }) => {
-    useUiStore.setState({ boardReturn: record });
+    { what: "a list that holds the project", board: { projects: "DELTA,SAGA", labels: "web" }, href: "/tasks?projects=DELTA,SAGA&labels=web" },
+    { what: "all projects", board: { projects: "all" }, href: "/tasks?projects=all" },
+  ])("leads back to the last board shown on $what", async ({ board, href }) => {
+    useUiStore.setState({ lastBoard: board });
+    const { transport } = daemon();
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    expect(backLink().getAttribute("href")).toBe(href);
+  });
+
+  it.each([
+    { what: "no board shown", board: null },
+    { what: "a board of another project", board: { projects: "DELTA", labels: "web", q: "parser" } },
+    { what: "a list without the project", board: { projects: "DELTA,GAMMA", labels: "web" } },
+  ])("opens the project's board unfiltered with $what", async ({ board }) => {
+    useUiStore.setState({ lastBoard: board });
+    const { transport } = daemon();
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    expect(backLink().getAttribute("href")).toBe("/tasks?projects=SAGA");
+  });
+
+  it("leaves out the labels of a restore record when no board was shown", async () => {
+    useUiStore.setState({
+      boardReturn: { projects: "SAGA", labels: "web", q: "parser", scrollX: 0, scrollY: 80, taskId: "SAGA-3" },
+      lastBoard: null,
+    });
     const { transport } = daemon();
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
@@ -1215,11 +1236,25 @@ describe("deleting the task", () => {
     expect(deletes(requests)).toBe(0);
   });
 
+  it("replaces the page with the last board shown when that list holds the project", async () => {
+    const user = userEvent.setup();
+    useUiStore.setState({ lastBoard: { projects: "DELTA,SAGA", labels: "web" } });
+    const { transport } = daemon({ [DELETE]: successReply({ id: "SAGA-3" }) });
+    const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    const entries = router.history.length;
+
+    await user.click(within(await askDelete(user)).getByRole("button", { name: "Delete" }));
+
+    await vi.waitFor(() => {
+      expect(router.state.location.pathname).toBe("/tasks");
+    });
+    expect(router.state.location.search).toEqual({ projects: "DELTA,SAGA", labels: "web" });
+    expect(router.history.length).toBe(entries);
+  });
+
   it("closes, replaces the page with the board of the reader's labels and search and sends the delete", async () => {
     const user = userEvent.setup();
-    useUiStore.setState({
-      boardReturn: { projects: "SAGA", labels: "web", q: "parser", scrollX: 0, scrollY: 0, taskId: "SAGA-3" },
-    });
+    useUiStore.setState({ lastBoard: { projects: "SAGA", labels: "web", q: "parser" } });
     const { transport, requests } = daemon({ [DELETE]: successReply({ id: "SAGA-3" }) });
     const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
     const entries = router.history.length;

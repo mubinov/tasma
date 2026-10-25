@@ -2,6 +2,7 @@ import type { Diagnostic, Frontmatter, TaskEntry, Workflow } from "@tasma/protoc
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyPending,
+  boardHolds,
   boardValue,
   boardWarnings,
   type BoardProject,
@@ -133,6 +134,21 @@ describe("isSeveral", () => {
     { value: "", several: false },
   ])("reads $value as several: $several", ({ value, several }) => {
     expect(isSeveral(readBoard(value))).toBe(several);
+  });
+});
+
+describe("boardHolds", () => {
+  it.each([
+    { board: "SAGA", tag: "SAGA", holds: true },
+    { board: "SAGA", tag: "DELTA", holds: false },
+    { board: "DELTA,SAGA", tag: "SAGA", holds: true },
+    { board: "DELTA,SAGA", tag: "GAMMA", holds: false },
+    { board: "all", tag: "SAGA", holds: true },
+    { board: "ALL", tag: "ALL", holds: true },
+    { board: "ALL", tag: "DELTA", holds: false },
+    { board: "", tag: "SAGA", holds: false },
+  ])("reads $board as holding $tag: $holds", ({ board, tag, holds }) => {
+    expect(boardHolds(board, tag)).toBe(holds);
   });
 });
 

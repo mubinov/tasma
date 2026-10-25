@@ -28,6 +28,7 @@ beforeEach(() => {
     lastTasksProject: null,
     boardReturn: null,
     boardRestorePending: false,
+    lastBoard: null,
     revealedColumns: new Set(),
   });
   useNoticeStore.setState({ notices: [], dismissed: new Map() });
@@ -1191,6 +1192,47 @@ describe("the board a card was opened from", () => {
     expect(restoredTo(scrollTo)).toEqual([SCROLL_X, SCROLL_Y]);
     expect(document.activeElement).toBe(screen.getByRole("main"));
     expect(useUiStore.getState().boardRestorePending).toBe(false);
+  });
+
+  it("leads a task page opened not from a card back to the labels the board shows now", async () => {
+    const user = userEvent.setup();
+    const scrollTo = watchScroll();
+    const { transport } = boardDaemon();
+    const router = await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+
+    await user.click(cardLink("Task 2"));
+    await user.click(backLink());
+    await nextFrame();
+    await act(async () => {
+      await router.navigate({ to: "/tasks", search: { projects: "SAGA", labels: "infra" } });
+    });
+    await act(async () => {
+      await router.navigate({ to: "/tasks/$project/$task", params: { project: "SAGA", task: "SAGA-2" } });
+    });
+    scrollTo.mockClear();
+    await user.click(backLink());
+    await nextFrame();
+
+    expect(router.state.location.search).toEqual({ projects: "SAGA", labels: "infra" });
+    expect(restoredTo(scrollTo)).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+  });
+
+  it("leads a task page back to its own project when the last board shown is another project's", async () => {
+    const user = userEvent.setup();
+    const scrollTo = watchScroll();
+    const { transport } = boardDaemon();
+    const router = await renderWithRouter("/tasks?projects=DELTA", transport);
+
+    await act(async () => {
+      await router.navigate({ to: "/tasks/$project/$task", params: { project: "SAGA", task: "SAGA-2" } });
+    });
+    await user.click(backLink());
+    await nextFrame();
+
+    expect(router.state.location.search).toEqual({ projects: "SAGA" });
+    expect(restoredTo(scrollTo)).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("main"));
   });
 
   describe("with a search", () => {

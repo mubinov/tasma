@@ -63,14 +63,18 @@ export function setPreferenceStorage(next: PreferenceStorage): void {
   storage = next;
 }
 
-/** The board a task page returns to: its address, where it was scrolled, and the card that was opened. */
-export type BoardReturn = {
+/** The address of a board. */
+export type LastBoard = {
   /** The board value of the board's address, as `boardValue` gives it. */
   projects: string;
   /** The `labels` of the board's address, absent while no label is selected. */
   labels?: string;
   /** The `q` of the board's address, absent while the address has none. */
   q?: string;
+};
+
+/** A board as a card open left it: its address, where it was scrolled, and the card that was opened. */
+export type BoardReturn = LastBoard & {
   scrollX: number;
   scrollY: number;
   taskId: string;
@@ -91,12 +95,15 @@ type UiState = {
   setSidebarCollapsed: (collapsed: boolean) => void;
   lastTasksProject: string | null;
   setLastTasksProject: (tag: string) => void;
-  /** Where the open task page's back link leads. Never persisted: a reload has no board behind the page. */
+  /** What the next board visit puts back. Never persisted: a reload has no board behind the page. */
   boardReturn: BoardReturn | null;
   /** Whether a board that matches `boardReturn` still has to put itself back. One board visit consumes it. */
   boardRestorePending: boolean;
   setBoardReturn: (record: BoardReturn) => void;
   endBoardRestore: () => void;
+  /** The address of the last board shown, where a task page's back link leads. Never persisted. */
+  lastBoard: LastBoard | null;
+  setLastBoard: (board: LastBoard) => void;
   /** The final columns "Show all" has opened, by `revealedColumnKey`. Never persisted: a reload folds them again. */
   revealedColumns: ReadonlySet<string>;
   revealColumn: (board: string, columnKey: string) => void;
@@ -171,6 +178,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
   endBoardRestore: () => {
     set({ boardRestorePending: false });
+  },
+  lastBoard: null,
+  setLastBoard: (board) => {
+    set({ lastBoard: board });
   },
   revealedColumns: new Set<string>(),
   revealColumn: (board, columnKey) => {

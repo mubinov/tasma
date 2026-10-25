@@ -17,7 +17,7 @@ import {
 import { taskDeleteOptions, useFailedChatStart, usePendingChatStart } from "../api/mutations";
 import { POLL_INTERVAL, projectQuery, taskChatsQuery, taskQuery, tasksQuery, workflowQuery } from "../api/queries";
 import { useRefusalNotice } from "../api/refusal-notice";
-import { isFinalStatus, isTopPriority, stepView } from "../lib/board";
+import { boardHolds, isFinalStatus, isTopPriority, stepView } from "../lib/board";
 import { formatClock } from "../lib/clock";
 import { deleteTaskWords } from "../lib/delete-words";
 import { useDocumentTitle } from "../lib/document-title";
@@ -492,15 +492,10 @@ export function TaskScreen(): ReactNode {
     ...workflowQuery(client, workflowName ?? ""),
     enabled: workflowName !== undefined,
   });
-  const boardReturn = useUiStore((state) => state.boardReturn);
-  // A page opened directly, or reached from the board of another project, has
-  // no board to go back to: "Tasks" then opens this project's, unfiltered.
-  const { labels: boardLabels, q: boardQ } = boardReturn?.projects === tag ? boardReturn : {};
-  const boardSearch = {
-    projects: tag,
-    ...(boardLabels === undefined ? {} : { labels: boardLabels }),
-    ...(boardQ === undefined ? {} : { q: boardQ }),
-  };
+  const lastBoard = useUiStore((state) => state.lastBoard);
+  // "Tasks" opens the last board shown when it holds this project, else this
+  // project's board, unfiltered.
+  const boardSearch = lastBoard !== null && boardHolds(lastBoard.projects, tag) ? lastBoard : { projects: tag };
   const { config } = project;
   const workflow = workflowRead === null ? null : workflowRead?.data;
   const properties = useTaskProperties({

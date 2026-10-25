@@ -27,6 +27,9 @@ function focusReturnCard(taskId: string): void {
  * `scroll` does not: the router's reset and the restore itself scroll too.
  * A waiting restore acts only while its record is still the pending one: a
  * card opened meanwhile records a restore of its own.
+ *
+ * It also keeps the board's address in `lastBoard`, where a task page's back
+ * link leads.
  */
 export function useBoardReturn(
   board: string,
@@ -38,6 +41,7 @@ export function useBoardReturn(
   const boardReturn = useUiStore((state) => state.boardReturn);
   const pending = useUiStore((state) => state.boardRestorePending);
   const endBoardRestore = useUiStore((state) => state.endBoardRestore);
+  const setLastBoard = useUiStore((state) => state.setLastBoard);
   const [waitingFor, setWaitingFor] = useState<BoardReturn | null>(null);
   const waiting = waitingFor === boardReturn && pending ? waitingFor : null;
   const isSettled = useEffectEvent(() => settled);
@@ -54,6 +58,14 @@ export function useBoardReturn(
   useEffect(() => () => {
     endIfWaiting();
   }, []);
+
+  useEffect(() => {
+    setLastBoard({
+      projects: board,
+      ...(labels === undefined ? {} : { labels }),
+      ...(q === undefined ? {} : { q }),
+    });
+  }, [board, labels, q, setLastBoard]);
 
   useLayoutEffect(() => {
     if (boardReturn === null || !pending) {

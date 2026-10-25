@@ -24,6 +24,7 @@ beforeEach(() => {
     lastTasksProject: null,
     boardReturn: null,
     boardRestorePending: false,
+    lastBoard: null,
     revealedColumns: new Set(),
     editRequest: null,
   });
@@ -182,7 +183,7 @@ describe("the preference list", () => {
   });
 });
 
-describe("the board a task page returns to", () => {
+describe("the restore a card open asks for", () => {
   const RECORD = { projects: "SAGA", labels: "web,infra", scrollX: 40, scrollY: 1200, taskId: "SAGA-7" };
 
   it("starts on null, with no restore to make", () => {
@@ -227,9 +228,40 @@ describe("the board a task page returns to", () => {
 
     useUiStore.getState().setBoardReturn(RECORD);
     useUiStore.getState().endBoardRestore();
+    useUiStore.getState().setLastBoard({ projects: "DELTA,SAGA", labels: "web" });
 
     expect(written).toEqual([]);
     expect(hydrateUiStore()).toEqual({ themePreference: "system", sidebarCollapsed: false, lastTasksProject: null });
+    expect(useUiStore.getState().lastBoard).toEqual({ projects: "DELTA,SAGA", labels: "web" });
+  });
+});
+
+describe("the last board shown", () => {
+  const RECORD = { projects: "SAGA", labels: "web", scrollX: 40, scrollY: 1200, taskId: "SAGA-7" };
+
+  it("starts on null", () => {
+    expect(useUiStore.getInitialState().lastBoard).toBeNull();
+    expect(useUiStore.getState().lastBoard).toBeNull();
+  });
+
+  it("is replaced by each write, and leaves the restore record and its pending flag as they are", () => {
+    useUiStore.getState().setBoardReturn(RECORD);
+    useUiStore.getState().endBoardRestore();
+
+    useUiStore.getState().setLastBoard({ projects: "all", q: "parser" });
+    useUiStore.getState().setLastBoard({ projects: "DELTA,SAGA", labels: "infra" });
+
+    expect(useUiStore.getState().lastBoard).toEqual({ projects: "DELTA,SAGA", labels: "infra" });
+    expect(useUiStore.getState().boardReturn).toEqual(RECORD);
+    expect(useUiStore.getState().boardRestorePending).toBe(false);
+  });
+
+  it("does not end a restore that is pending", () => {
+    useUiStore.getState().setBoardReturn(RECORD);
+
+    useUiStore.getState().setLastBoard({ projects: "DELTA" });
+
+    expect(useUiStore.getState().boardRestorePending).toBe(true);
   });
 });
 
