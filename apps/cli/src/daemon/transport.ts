@@ -200,8 +200,8 @@ async function readJson(response: Response, timeoutMs: number): Promise<unknown>
  * The token goes on every call but the open routes, which the daemon serves to
  * any caller.
  *
- * Nothing in production passes `timeoutMs`; it is there so the budget can be
- * driven in milliseconds.
+ * In production only `chat start` passes `timeoutMs`: its route answers after
+ * the agent starts.
  */
 export function createFetchTransport(
   baseUrl: string,
@@ -235,6 +235,6 @@ export function createFetchTransport(
   };
 }
 
-export function createDaemonClient(url: string, token?: string): Client {
-  return createClient(createFetchTransport(url, { token }));
+export function createDaemonClient(url: string, token?: string, timeoutMs?: number): Client {
+  return createClient(createFetchTransport(url, { token, timeoutMs }));
 }

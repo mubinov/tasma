@@ -188,7 +188,8 @@ async function locate(target: Target, reach: Reach): Promise<Located> {
 
 /**
  * One daemon call, with every way the call itself can fail already written, so
- * no command handles a transport or a protocol fault.
+ * no command handles a transport or a protocol fault. A second read inside
+ * `call` that the command does not need goes through `readOrNothing`.
  *
  * `print` returns the exit code because `attempt` classifies the call and not
  * the content: a command that has to refuse a well-formed answer says so by
@@ -222,6 +223,8 @@ async function locate(target: Target, reach: Reach): Promise<Located> {
  * tree. The start is what tells the two apart, since a daemon already holding
  * that port stands the new one down and names the tree it serves.
  *
+ * `timeoutMs` replaces the budget of each request the client sends.
+ *
  * Nothing else is caught. An unexpected throw escapes to Node, which prints a
  * stack a hand-written wrapper would replace with a worse message.
  */
@@ -230,7 +233,7 @@ export async function attempt<T>(
   target: Target,
   call: (client: Client) => Promise<Success<T>>,
   print: (data: T, url: string) => number,
-  options: { start?: boolean; reach?: Reach; prove?: boolean } = {},
+  options: { start?: boolean; reach?: Reach; prove?: boolean; timeoutMs?: number } = {},
 ): Promise<number> {
   const reach = options.reach ?? REACH;
 
@@ -246,7 +249,7 @@ export async function attempt<T>(
     let success: Success<T>;
 
     try {
-      success = await call(createDaemonClient(url, credential.token));
+      success = await call(createDaemonClient(url, credential.token, options.timeoutMs));
     } catch (error) {
       if (error instanceof TransportError) return error;
 
@@ -359,4 +362,18 @@ export async function attempt<T>(
   }
 
   return second;
+}
+
+/**
+ * The answer of a read, or `undefined` when the read got no usable answer or the
+ * daemon refused it. It writes no error and lets every other throw escape.
+ */
+export async function readOrNothing<T>(read: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await read();
+  } catch (error) {
+    if (error instanceof TransportError || error instanceof ProtocolError) return undefined;
+
+    throw error;
+  }
 }

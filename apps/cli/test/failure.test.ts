@@ -6,7 +6,7 @@ import { recordPath } from "../src/daemon/record.js";
 import type { Probed, RecordRead } from "../src/daemon/record.js";
 import type { StartOutcome } from "../src/daemon/start.js";
 import { REQUEST_TIMEOUT_MS, RequestTimeoutError } from "../src/daemon/transport.js";
-import { attempt, reportForeign } from "../src/failure.js";
+import { attempt, readOrNothing, reportForeign } from "../src/failure.js";
 import type { Reach } from "../src/failure.js";
 import type { Target } from "../src/types.js";
 import { capture, startServer } from "./helpers.js";
@@ -220,6 +220,17 @@ describe("attempt", () => {
       expect(await attempt(io, EXPLICIT, throwing(error), () => 0)).toBe(3);
       expect(err.join("")).toBe(`tasma: the daemon at ${DAEMON_URL} did not answer within ${seconds} seconds\n`);
     }
+  });
+
+  it("gives each request the budget timeoutMs states", async () => {
+    const server = await startServer(() => {});
+    onTestFinished(() => server.close());
+    const { io, err } = capture();
+    const stated: Target = { kind: "explicit", url: server.url, stated: "--daemon", home: HOME };
+    const { reach } = reaching(undefined);
+
+    expect(await attempt(io, stated, (client) => client.listWorkflows(), () => 0, { reach, timeoutMs: 50 })).toBe(3);
+    expect(err.join("")).toBe(`tasma: the daemon at ${server.url} did not answer within 0.05 seconds\n`);
   });
 
   it("reports an answer that carried no envelope, with the status it arrived under", async () => {
@@ -515,6 +526,23 @@ describe("reportForeign", () => {
     expect(err[1]).toContain("\"\\u001b[2Jtasma-daemon\"");
     expect(err[2]).toContain('"{"toString":"x"}"');
     expect(err[3]).toContain('"[unprintable]"');
+  });
+});
+
+describe("readOrNothing", () => {
+  it("gives back the answer of a read", async () => {
+    expect(await readOrNothing(() => Promise.resolve(7))).toBe(7);
+  });
+
+  it("gives undefined for a read that got no usable answer or that the daemon refused", async () => {
+    const refused = new ProtocolError({ kind: "store", code: "chat-not-found", message: "no chat 3" }, 404);
+
+    expect(await readOrNothing(() => Promise.reject(UNREACHED))).toBeUndefined();
+    expect(await readOrNothing(() => Promise.reject(refused))).toBeUndefined();
+  });
+
+  it("lets any other throw escape", async () => {
+    await expect(readOrNothing(() => Promise.reject(new Error("a defect")))).rejects.toThrow("a defect");
   });
 });
 

@@ -31,7 +31,7 @@ The daemon refuses each request without its token, except its health check and t
 | Code | Meaning |
 |---|---|
 | 0 | Success. |
-| 1 | The daemon refused the request, or `project current` found no project. |
+| 1 | The daemon refused the request, `project current` found no project, or `chat start` made a chat that failed at its start. |
 | 2 | Usage error: bad arguments, flags or daemon address, or no project holds the working directory. |
 | 3 | No usable answer from the daemon, or the daemon could not be started or stopped. |
 
@@ -47,7 +47,7 @@ The daemon refuses each request without its token, except its health check and t
 - To remove a field, use `--clear <field>`, one time for each field. You cannot use `--clear` and a flag for the same field together.
 - `--append` adds the new body after the stored body, with one empty line between them. It needs `--body` or `--body-file`. The read and the write are two requests: a change made between them is lost.
 
-**Output.** stdout carries the result: a table, a text, the id, tag or workflow name that a write command changed, or the line of a `daemon` command. The help and the version also go to stdout. Tables have no header row, columns are separated by 2 or more spaces, and `-` marks an empty value. Notes and errors go to stderr, and each note and error line starts with `tasma:`.
+**Output.** stdout carries the result: a table, a text, the id, tag or workflow name that a write command changed, the number of a chat, or the line of a `daemon` command. The help and the version also go to stdout. Tables have no header row, columns are separated by 2 or more spaces, and `-` marks an empty value. Notes and errors go to stderr, and each note and error line starts with `tasma:`.
 
 ## project
 
@@ -187,6 +187,16 @@ Change the fields or the body of a comment. Prints the comment id.
 ### `tasma comment delete <task-id> <n>`
 
 Remove a comment. Prints the comment id.
+
+## chat
+
+A chat runs a coding agent on one step of a task. The Tasma app shows it.
+
+### `tasma chat start <task-id>`
+
+Start the chat of the task's current step. For a task with no step, the chat is for the first step of its workflow. If the latest chat of the task is for the same step and has not failed, the command gives back that chat and starts no new one. The agent is Claude. Its first message asks it to run the current step of the task.
+
+Prints the chat number. A note on stderr says whether the chat is new or was already open. Exits 1 when the task has no workflow, when its step is not in its workflow, when the project has no folder, or when the chat fails at its start.
 
 ## workflow
 
