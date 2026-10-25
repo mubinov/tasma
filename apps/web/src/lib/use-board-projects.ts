@@ -1,7 +1,8 @@
 import { useQueries, useSuspenseQueries, type QueryClient } from "@tanstack/react-query";
-import { ProtocolError, type Client, type Project, type Success, type TaskList } from "@tasma/protocol";
+import type { Client, Project, Success, TaskList } from "@tasma/protocol";
 import { useEffect, useRef } from "react";
 import { POLL_INTERVAL, projectQuery, tasksQuery } from "../api/queries";
+import { isRefused } from "../api/refusal-notice";
 import { useNoticeStore } from "../store/notices";
 import { boardOrder } from "./board";
 
@@ -29,14 +30,6 @@ export type BoardProjects = {
   /** The projects the board names and does not show, in board order. */
   failed: readonly FailedProject[];
 };
-
-/**
- * True when the daemon refused the last poll of the read. Such a read keeps its
- * data, so it does not suspend the board.
- */
-function isRefused({ status, error }: { status: string; error: unknown }): boolean {
-  return status === "error" && error instanceof ProtocolError;
-}
 
 /**
  * Polls the reads of the projects the loader read, and splits the projects of

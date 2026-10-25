@@ -888,9 +888,10 @@ describe("moving a task from the card menu", () => {
   });
 });
 
-describe("the notice for failed polls", () => {
+describe("the notice for a refused read", () => {
   const LISTING = "/projects/SAGA/tasks";
   const UNREADABLE: TransportReply = { status: 502 };
+  const INVALID = refusalReply(422, { kind: "store", code: "config-invalid", message: "priorities is empty" });
 
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -906,23 +907,24 @@ describe("the notice for failed polls", () => {
     });
   }
 
-  it("opens after two failed polls, not after one, and closes after a successful poll", async () => {
+  function announced(): string[] {
+    return useNoticeStore.getState().announced.map(({ words }) => words);
+  }
+
+  it("opens on one refused poll of the listing, and closes with a spoken line after a successful poll", async () => {
     const { transport, replies } = daemon({ [LISTING]: listing([entry(1)]) });
     const router = await renderWithRouter("/tasks?projects=SAGA", transport);
     const readAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA", "tasks"])!.dataUpdatedAt;
 
-    replies[LISTING] = UNREADABLE;
-    await poll();
-    expect(useNoticeStore.getState().notices).toEqual([]);
-
+    replies[LISTING] = INVALID;
     await poll();
     expect(useNoticeStore.getState().notices).toMatchObject([
       {
-        key: "board-poll:SAGA",
+        key: "board-refusal:SAGA",
         form: "failure",
         title: "The board is not up to date",
-        line: `The last reads of SAGA failed. The board shows the tasks as they were at ${formatClock(readAt)}.`,
-        words: [`${DAEMON_URL} · HTTP 502 · GET ${LISTING} answered with no envelope`],
+        line: `The daemon refused a read of SAGA. The board shows the tasks as they were at ${formatClock(readAt)}.`,
+        words: ["store/config-invalid · priorities is empty"],
       },
     ]);
     expect(titlesIn("Backlog")).toEqual(["Task 1"]);
@@ -930,19 +932,32 @@ describe("the notice for failed polls", () => {
     replies[LISTING] = listing([entry(1)]);
     await poll();
     expect(useNoticeStore.getState().notices).toEqual([]);
+    expect(announced()).toContain("The board is up to date.");
+    expect(titlesIn("Backlog")).toEqual(["Task 1"]);
   });
 
-  it("keeps the notice as it is while the project read fails and the listing polls succeed", async () => {
+  it("opens no notice when the polls of the listing get no envelope", async () => {
+    const { transport, replies } = daemon({ [LISTING]: listing([entry(1)]) });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    replies[LISTING] = UNREADABLE;
+    await poll();
+    await poll();
+
+    expect(useNoticeStore.getState().notices).toEqual([]);
+    expect(titlesIn("Backlog")).toEqual(["Task 1"]);
+  });
+
+  it("opens on one refused poll of the project, and keeps the notice as it is while the listing polls succeed", async () => {
     const { transport, replies } = daemon({ [LISTING]: listing([entry(1)]) });
     const router = await renderWithRouter("/tasks?projects=SAGA", transport);
     const readAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA"])!.dataUpdatedAt;
 
-    replies["/projects/SAGA"] = refusalReply(422, { kind: "store", code: "config-invalid", message: "priorities is empty" });
-    await poll();
+    replies["/projects/SAGA"] = INVALID;
     await poll();
     const [notice] = useNoticeStore.getState().notices;
     expect(notice?.words).toEqual(["store/config-invalid · priorities is empty"]);
-    expect(notice?.line).toBe(`The last reads of SAGA failed. The board shows the tasks as they were at ${formatClock(readAt)}.`);
+    expect(notice?.line).toBe(`The daemon refused a read of SAGA. The board shows the tasks as they were at ${formatClock(readAt)}.`);
 
     await poll();
     expect(useNoticeStore.getState().notices).toHaveLength(1);
@@ -954,10 +969,9 @@ describe("the notice for failed polls", () => {
   it("closes when another project opens", async () => {
     const { transport, replies } = daemon({ [LISTING]: listing([entry(1)]) });
     const router = await renderWithRouter("/tasks?projects=SAGA", transport);
-    replies[LISTING] = UNREADABLE;
+    replies[LISTING] = INVALID;
     await poll();
-    await poll();
-    expect(useNoticeStore.getState().notices.map(({ key }) => key)).toEqual(["board-poll:SAGA"]);
+    expect(useNoticeStore.getState().notices.map(({ key }) => key)).toEqual(["board-refusal:SAGA"]);
 
     await act(async () => {
       await router.navigate({ to: "/tasks", search: { projects: "DELTA" } });

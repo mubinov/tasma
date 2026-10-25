@@ -2,7 +2,6 @@ import type { TransportReply } from "@tasma/protocol";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DAEMON_URL } from "../../src/api/transport";
 import { BUSY_ANNOUNCE_DELAY } from "../../src/lib/use-board-search";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
@@ -518,29 +517,39 @@ describe("the search", () => {
       expect(titlesIn("Backlog")).toEqual(["Task 1"]);
     });
 
-    it("keeps the result a failed poll of the same text leaves, and opens the poll notice after two", async () => {
+    it("keeps the result that polls of the same text with no envelope leave, and opens no board notice", async () => {
       const { transport, replies } = searchDaemon();
       await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
       await settle();
 
       replies[PARSER] = UNREADABLE;
       await poll();
+      await poll();
+
       expect(useNoticeStore.getState().notices).toEqual([]);
       expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2"]);
       expect(screen.queryByText(FAILED_LINE, { selector: "p" })).toBeNull();
+    });
 
+    it("opens the board notice on a refused poll of a search with a result, with the words of the refusal", async () => {
+      const { transport, replies } = searchDaemon();
+      await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+      await settle();
+
+      replies[PARSER] = REFUSED;
       await poll();
+
       expect(useNoticeStore.getState().notices).toMatchObject([
         {
-          key: "board-poll:SAGA",
+          key: "board-refusal:SAGA",
           title: "The board is not up to date",
-          words: [`${DAEMON_URL} · HTTP 502 · GET ${PARSER} answered with no envelope`],
+          words: ["store/project-invalid · config.yml is broken"],
         },
       ]);
     });
 
-    it("opens no poll notice while a search with no result fails", async () => {
-      const { transport } = searchDaemon({ [PARSER]: UNREADABLE });
+    it("opens no board notice while a search with no result is refused", async () => {
+      const { transport } = searchDaemon({ [PARSER]: REFUSED });
       await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
       await settle();
 

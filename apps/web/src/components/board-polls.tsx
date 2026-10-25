@@ -1,53 +1,38 @@
 import { useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, useRouter } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
-import { usePollNotice, type NamedPollRead } from "../api/poll-notice";
 import { POLL_INTERVAL, projectQuery, projectsQuery, taskSearchQuery, tasksQuery } from "../api/queries";
+import { useRefusalNotice, type RefusalRead } from "../api/refusal-notice";
 import { formatClock } from "../lib/clock";
 
 // Reached by id rather than imported: routes.tsx imports this file through the tasks screen.
 const route = getRouteApi("/tasks");
 
-type BoardPollNoticeProps = {
-  /** The projects the board shows. */
-  tags: readonly string[];
-  /** The project of the picker, which the search reads. The board need not show it. */
-  tag: string;
-  board: string;
-  several: boolean;
-  searchText: string;
-};
-
 /**
- * Apart from the board, so a poll that changes nothing re-renders this alone.
- * Its reads fetch nothing: the board polls them.
+ * For a board of one project only: on a board of several, a refused project
+ * leaves the board, and its inline note gives the refusal.
  *
- * The search read counts only once it has a result: until then the board shows
+ * Apart from the board, so a read that changes nothing re-renders this alone.
+ * Its reads fetch nothing: the board reads them.
+ *
+ * The search read joins only once it has a result: until then the board shows
  * the full listing, and the search's own line reports its failure.
  */
-export function BoardPollNotice({ tags, tag, board, several, searchText }: BoardPollNoticeProps): ReactNode {
+export function BoardRefusalNotice({ tag, searchText }: { tag: string; searchText: string }): ReactNode {
   const { client } = route.useRouteContext();
-  const projectReads = useQueries({
-    queries: tags.map((shownTag) => ({ ...projectQuery(client, shownTag), enabled: false })),
-  });
-  const listingReads = useQueries({
-    queries: tags.map((shownTag) => ({ ...tasksQuery(client, shownTag), enabled: false })),
-  });
+  const listingRead = useQuery({ ...tasksQuery(client, tag), enabled: false });
+  const projectRead = useQuery({ ...projectQuery(client, tag), enabled: false });
   const searchRead = useQuery({ ...taskSearchQuery(client, tag, searchText), enabled: false });
-  const reads: NamedPollRead[] = tags.flatMap((shownTag, index) => [
-    { name: `${shownTag}:tasks`, read: listingReads[index]! },
-    { name: `${shownTag}:project`, read: projectReads[index]! },
-  ]);
+  const reads: RefusalRead[] = [listingRead, projectRead];
 
   if (searchText !== "" && searchRead.dataUpdatedAt > 0) {
-    reads.push({ name: "search", read: searchRead });
+    reads.push(searchRead);
   }
 
-  usePollNotice(`board-poll:${board}`, reads, {
+  useRefusalNotice(`board-refusal:${tag}`, reads, {
     title: "The board is not up to date",
-    line: (readAt) => (several
-      ? `The last reads of one or more of these projects failed. The board shows the tasks of those projects as they were at ${formatClock(readAt)}.`
-      : `The last reads of ${tag} failed. The board shows the tasks as they were at ${formatClock(readAt)}.`),
+    line: (readAt) => `The daemon refused a read of ${tag}. The board shows the tasks as they were at ${formatClock(readAt)}.`,
+    upToDate: "The board is up to date.",
   });
 
   return null;

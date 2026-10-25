@@ -45,10 +45,11 @@ type NoticeState = {
   announced: readonly Announcement[];
   /** The newest notice's Dismiss takes focus once its panel mounts. */
   noticeFocusRequested: boolean;
-  /** Opens or replaces the notice under its key, and announces it. */
-  showNotice: (notice: Notice) => void;
+  /** Opens or replaces the notice under its key, and announces it. True when it opened or replaced the notice. */
+  showNotice: (notice: Notice) => boolean;
   dismissNotice: (key: string) => void;
-  closeNotice: (key: string) => void;
+  /** Closes the notice under its key and ends its dismissal. True when the key was open or dismissed. */
+  closeNotice: (key: string) => boolean;
   requestNoticeFocus: () => void;
   clearNoticeFocusRequest: () => void;
   /**
@@ -74,7 +75,7 @@ export function asSentences(parts: readonly string[]): string {
 }
 
 /** What the panel says. */
-function noticeText({ title, line, words }: NoticeContent): string {
+export function noticeText({ title, line, words }: NoticeContent): string {
   return asSentences([title, ...(line === undefined ? [] : [line]), ...words]);
 }
 
@@ -90,13 +91,14 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
     const { notices, dismissed } = get();
     const standing = notices.find(({ key }) => key === notice.key) ?? dismissed.get(notice.key);
     if (standing !== undefined && sameContent(standing, notice)) {
-      return;
+      return false;
     }
 
     set((state) => ({
       notices: [...state.notices.filter(({ key }) => key !== notice.key), { ...notice, serial: ++lastSerial }],
     }));
     get().announce(noticeText(notice));
+    return true;
   },
   dismissNotice: (key) => {
     set((state) => {
@@ -114,19 +116,15 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
     });
   },
   closeNotice: (key) => {
-    set((state) => {
-      if (!state.dismissed.has(key) && !state.notices.some((notice) => notice.key === key)) {
-        return state;
-      }
+    const { notices, dismissed } = get();
+    if (!dismissed.has(key) && !notices.some((notice) => notice.key === key)) {
+      return false;
+    }
 
-      const dismissed = new Map(state.dismissed);
-      dismissed.delete(key);
-      return {
-        notices: state.notices.filter((notice) => notice.key !== key),
-        dismissed,
-        noticeFocusRequested: false,
-      };
-    });
+    const remaining = new Map(dismissed);
+    remaining.delete(key);
+    set({ notices: notices.filter((notice) => notice.key !== key), dismissed: remaining, noticeFocusRequested: false });
+    return true;
   },
   requestNoticeFocus: () => {
     set({ noticeFocusRequested: true });

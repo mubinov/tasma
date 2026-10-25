@@ -15,8 +15,8 @@ import {
   type RefObject,
 } from "react";
 import { taskDeleteOptions } from "../api/mutations";
-import { usePollNotice } from "../api/poll-notice";
 import { POLL_INTERVAL, projectQuery, taskChatsQuery, taskQuery, tasksQuery, workflowQuery } from "../api/queries";
+import { useRefusalNotice } from "../api/refusal-notice";
 import { isFinalStatus, isTopPriority, stepView } from "../lib/board";
 import { formatClock } from "../lib/clock";
 import { deleteTaskWords } from "../lib/delete-words";
@@ -396,24 +396,19 @@ function EditControls(
 }
 
 /**
- * Apart from the page, so a poll that changes nothing re-renders this alone. Its
- * reads fetch nothing: the page polls them.
+ * Apart from the page, so a read that changes nothing re-renders this alone. Its
+ * reads fetch nothing: the page reads them.
  */
-function TaskPollNotice({ tag, id }: { tag: string; id: string }): ReactNode {
+function TaskRefusalNotice({ tag, id }: { tag: string; id: string }): ReactNode {
   const { client } = route.useRouteContext();
   const taskRead = useQuery({ ...taskQuery(client, tag, id), enabled: false });
   const projectRead = useQuery({ ...projectQuery(client, tag), enabled: false });
   const listingRead = useQuery({ ...tasksQuery(client, tag), enabled: false });
 
-  const reads = [
-    { name: "task", read: taskRead },
-    { name: "project", read: projectRead },
-    { name: "tasks", read: listingRead },
-  ];
-
-  usePollNotice(`task-poll:${id}`, reads, {
+  useRefusalNotice(`task-refusal:${id}`, [taskRead, projectRead, listingRead], {
     title: `${id} is not up to date`,
-    line: (readAt) => `The last reads of ${id} failed. The page shows the task as it was at ${formatClock(readAt)}.`,
+    line: (readAt) => `The daemon refused a read of ${id}. The page shows the task as it was at ${formatClock(readAt)}.`,
+    upToDate: `${id} is up to date.`,
   });
 
   return null;
@@ -514,7 +509,7 @@ export function TaskScreen(): ReactNode {
   useChatAnnouncements({ chats, fetching: chatsFetching, stateful: !final, openChat: chat, quiet: false });
   const column: PageColumn = chat === undefined ? "sidebar" : "chat";
   const layout = COLUMN_LAYOUT[column];
-  const { mutate: sendDelete } = useMutation(taskDeleteOptions(queryClient, client));
+  const { mutate: sendDelete, isIdle: deleteUnsent } = useMutation(taskDeleteOptions(queryClient, client));
   const [deleteAsked, setDeleteAsked] = useState(false);
   const deleteFocusRef = useRef<FinalFocus>(null);
 
@@ -789,7 +784,8 @@ export function TaskScreen(): ReactNode {
         onConfirm={confirmDelete}
         finalFocus={deleteFocusRef}
       />
-      <TaskPollNotice tag={tag} id={taskId} />
+      {/* A sent delete leaves the page, which stays until the board commits: the task read can refuse until then. */}
+      {deleteUnsent && <TaskRefusalNotice tag={tag} id={taskId} />}
     </div>
   );
 }

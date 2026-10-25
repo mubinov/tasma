@@ -2,7 +2,6 @@ import type { Diagnostic, ExcludedFile, Frontmatter, TaskEntry } from "@tasma/pr
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { formatClock } from "../../src/lib/clock";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
 import {
@@ -580,28 +579,6 @@ describe("the board of all projects", () => {
       expect(document.activeElement).toBe(screen.getByRole("main"));
     });
   });
-
-  it("opens one notice about these projects when the reads of both projects fail two polls in a row", async () => {
-    const { transport, replies } = twoProjects({ "/projects/SAGA/tasks": listing([entry(1)]) });
-    const router = await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
-    const readAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "DELTA", "tasks"])!.dataUpdatedAt;
-
-    replies["/projects/SAGA/tasks"] = { status: 502 };
-    replies["/projects/DELTA/tasks"] = { status: 502 };
-    await poll();
-    expect(useNoticeStore.getState().notices).toEqual([]);
-
-    await poll();
-    expect(useNoticeStore.getState().notices).toMatchObject([
-      {
-        key: "board-poll:DELTA,SAGA",
-        title: "The board is not up to date",
-        line: "The last reads of one or more of these projects failed. "
-          + `The board shows the tasks of those projects as they were at ${formatClock(readAt)}.`,
-      },
-    ]);
-    expect(titlesIn("Backlog")).toEqual(["Task 1"]);
-  });
 });
 
 describe("a project that fails while the board is open", () => {
@@ -649,6 +626,7 @@ describe("a project that fails while the board is open", () => {
     expect(boardState()).toBe("SAGA did not load.");
     await poll();
     expect(useNoticeStore.getState().notices).toEqual([]);
+    expect(words.filter((said) => said.includes("is not up to date"))).toEqual([]);
 
     replies["/projects/SAGA/tasks"] = listing([entry(1, { status: "To Do" })]);
     await poll();
@@ -721,29 +699,27 @@ describe("a project that fails while the board is open", () => {
 
   it("gives the focus to the delete dialog when a focused notice closes while the dialog is open", async () => {
     const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
-    const { transport, replies } = twoProjects({
-      "/projects/SAGA/tasks": listing([entry(1)]),
-      "/projects/DELTA/tasks": listing([delta(11, { status: "Review" })]),
-    });
-    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
-    await user.click(menuButton("Task 11"));
+    const { transport, replies } = twoProjects({ "/projects/SAGA/tasks": listing([entry(1)]) });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+    await user.click(menuButton("Task 1"));
     await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /^Delete / }));
     const dialog = await screen.findByRole("alertdialog");
 
-    replies["/projects/SAGA/tasks"] = { status: 502 };
-    replies["/projects/DELTA/tasks"] = { status: 502 };
-    await poll();
+    replies["/projects/SAGA/tasks"] = INVALID;
     await poll();
     await focusOn(screen.getByRole("button", { name: "Dismiss" }));
 
+    const words = recordAnnounced();
     replies["/projects/SAGA/tasks"] = listing([entry(1)]);
-    replies["/projects/DELTA/tasks"] = listing([delta(11, { status: "Review" })]);
     await poll();
 
     await vi.waitFor(() => {
       expect(useNoticeStore.getState().notices).toEqual([]);
     });
     expect(document.activeElement).toBe(dialog);
+    await vi.waitFor(() => {
+      expect(words).toContain("The board is up to date.");
+    });
   });
 
   it("shows no column and gives the focus to the main region when a poll refuses every project", async () => {
@@ -898,7 +874,7 @@ describe("a project that fails while the board is open", () => {
     expect(useNoticeStore.getState().notices).toEqual([]);
 
     await poll();
-    expect(useNoticeStore.getState().notices.map(({ key }) => key)).toEqual(["board-poll:DELTA,SAGA"]);
+    expect(useNoticeStore.getState().notices).toEqual([]);
 
     replies["/projects/SAGA/tasks"] = listing([entry(1)]);
     replies["/projects/DELTA/tasks"] = listing([delta(11, { status: "Review" })]);
@@ -945,54 +921,6 @@ describe("a project that fails while the board is open", () => {
       expect(state.textContent).toBe("1 warning about SAGA.");
     });
     expect(filterChanges()).toBe(filterChanged);
-  });
-
-  describe("the general notice on the board of all projects", () => {
-    async function failTwice() {
-      const { transport, replies } = twoProjects({ "/projects": successReply([SAGA]) });
-      await renderWithRouter("/tasks?projects=all", transport);
-
-      replies["/projects/SAGA/tasks"] = { status: 502 };
-      await poll();
-      await poll();
-      expect(useNoticeStore.getState().notices.map(({ key }) => key)).toEqual(["board-poll:all"]);
-      return replies;
-    }
-
-    it("stays open when a project joins before the project whose reads fail", async () => {
-      const replies = await failTwice();
-      let closed = false;
-      onTestFinished(useNoticeStore.subscribe(({ notices }) => {
-        closed ||= notices.length === 0;
-      }));
-
-      replies["/projects"] = successReply(SORTED);
-      await poll();
-      await vi.waitFor(() => {
-        expect(columnNames()).toEqual(MERGED);
-      });
-      await poll();
-
-      expect(closed).toBe(false);
-      expect(useNoticeStore.getState().notices.map(({ key }) => key)).toEqual(["board-poll:all"]);
-    });
-
-    it("stays closed after Dismiss when a project joins before the project whose reads fail", async () => {
-      const replies = await failTwice();
-      act(() => {
-        useNoticeStore.getState().dismissNotice("board-poll:all");
-      });
-
-      replies["/projects"] = successReply(SORTED);
-      await poll();
-      await vi.waitFor(() => {
-        expect(columnNames()).toEqual(MERGED);
-      });
-      await poll();
-      await poll();
-
-      expect(useNoticeStore.getState().notices).toEqual([]);
-    });
   });
 });
 

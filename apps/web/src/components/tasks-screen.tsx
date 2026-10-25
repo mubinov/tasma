@@ -54,7 +54,7 @@ import { NAVIGATION_BY_PATH } from "../navigation";
 import { useNoticeStore } from "../store/notices";
 import { useUiStore } from "../store/ui";
 import { BoardColumn } from "./board-column";
-import { BoardPollNotice, ProjectListPoll, RefusedProjectsPoll } from "./board-polls";
+import { BoardRefusalNotice, ProjectListPoll, RefusedProjectsPoll } from "./board-polls";
 import { ConfirmDialog } from "./confirm-dialog";
 import { BUTTON_CLASS } from "./control-classes";
 import { CreateTaskDialog } from "./create-task-dialog";
@@ -618,7 +618,7 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
           )}
         />
       )}
-      <BoardPollNotice tags={shown} tag={tag} board={board} several={several} searchText={searchText} />
+      {!several && <BoardRefusalNotice tag={tag} searchText={searchText} />}
       {(all || missing.length > 0) && <ProjectListPoll all={all} tags={boardOrder(tags, refused)} missing={missing} />}
       {refused.length > 0 && <RefusedProjectsPoll tags={refused} />}
       {creating !== null && !several && (

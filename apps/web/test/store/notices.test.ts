@@ -52,6 +52,16 @@ describe("showNotice", () => {
     expect(useNoticeStore.getState()).toBe(before);
   });
 
+  it("tells whether it opened or replaced the notice", () => {
+    const changed: Notice = { ...FIRST, title: "2 warnings about SAGA-56" };
+
+    expect(useNoticeStore.getState().showNotice(FIRST)).toBe(true);
+    expect(useNoticeStore.getState().showNotice({ ...FIRST, words: [...FIRST.words] })).toBe(false);
+    expect(useNoticeStore.getState().showNotice(changed)).toBe(true);
+    useNoticeStore.getState().dismissNotice(FIRST.key);
+    expect(useNoticeStore.getState().showNotice(changed)).toBe(false);
+  });
+
   it("replaces the notice under the key and moves it to the bottom when the content differs", () => {
     const changed: Notice = { ...FIRST, title: "2 warnings about SAGA-56", words: [...FIRST.words, "unterminated-fence · a fence is not closed"] };
     useNoticeStore.getState().showNotice(FIRST);
@@ -176,6 +186,16 @@ describe("closeNotice", () => {
     useNoticeStore.getState().closeNotice(SECOND.key);
 
     expect(useNoticeStore.getState()).toBe(before);
+  });
+
+  it("tells whether the key was open or dismissed", () => {
+    useNoticeStore.getState().showNotice(FIRST);
+    useNoticeStore.getState().showNotice(SECOND);
+    useNoticeStore.getState().dismissNotice(SECOND.key);
+
+    expect(useNoticeStore.getState().closeNotice(FIRST.key)).toBe(true);
+    expect(useNoticeStore.getState().closeNotice(SECOND.key)).toBe(true);
+    expect(useNoticeStore.getState().closeNotice(FIRST.key)).toBe(false);
   });
 });
 

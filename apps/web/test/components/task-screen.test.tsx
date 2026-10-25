@@ -7,7 +7,14 @@ import { FIND_OPEN_WIDTHS } from "../../src/components/find-open-classes";
 import { formatClock } from "../../src/lib/clock";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { refusalReply, renderWithRouter, stubIntersectionObserver, stubResizeObservers, successReply } from "../helpers";
+import {
+  heldBack,
+  refusalReply,
+  renderWithRouter,
+  stubIntersectionObserver,
+  stubResizeObservers,
+  successReply,
+} from "../helpers";
 import {
   LISTING_PATH,
   TASK_PATH,
@@ -1046,38 +1053,36 @@ describe("a failed load", () => {
   });
 });
 
-describe("the notice for failed polls", () => {
+describe("the notice for a refused read", () => {
   const GONE = refusalReply(404, { kind: "store", code: "task-not-found", message: "no task SAGA-3" });
 
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
+  /** One poll interval, the retry of a read that reached no daemon, and the notification of the cache. */
   async function poll() {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5_000);
     });
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(1_010);
     });
   }
 
-  it("opens after two failed polls, naming a task deleted while its page is open, and closes after a successful poll", async () => {
+  it("opens on one refused poll, naming a task deleted while its page is open, and closes with a spoken line after a successful poll", async () => {
     const { transport, replies } = daemon();
     const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
     const readAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA", "tasks", "SAGA-3"])!.dataUpdatedAt;
 
     replies[TASK_PATH] = GONE;
     await poll();
-    expect(useNoticeStore.getState().notices).toEqual([]);
-
-    await poll();
     expect(useNoticeStore.getState().notices).toMatchObject([
       {
-        key: "task-poll:SAGA-3",
+        key: "task-refusal:SAGA-3",
         form: "failure",
         title: "SAGA-3 is not up to date",
-        line: `The last reads of SAGA-3 failed. The page shows the task as it was at ${formatClock(readAt)}.`,
+        line: `The daemon refused a read of SAGA-3. The page shows the task as it was at ${formatClock(readAt)}.`,
         words: ["store/task-not-found · no task SAGA-3"],
       },
     ]);
@@ -1086,9 +1091,10 @@ describe("the notice for failed polls", () => {
     replies[TASK_PATH] = task();
     await poll();
     expect(useNoticeStore.getState().notices).toEqual([]);
+    expect(useNoticeStore.getState().announced.map(({ words }) => words)).toContain("SAGA-3 is up to date.");
   });
 
-  it("counts the failed polls of the listing too, keeps the notice while the task reads succeed, and closes when the reader leaves the page", async () => {
+  it("opens on one refused poll of the listing, keeps the notice while the task reads succeed, and closes when the reader leaves the page", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     const { transport, replies } = daemon();
     const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
@@ -1096,10 +1102,9 @@ describe("the notice for failed polls", () => {
 
     replies[LISTING_PATH] = refusalReply(422, { kind: "store", code: "config-invalid", message: "priorities is empty" });
     await poll();
-    await poll();
     const [notice] = useNoticeStore.getState().notices;
     expect(useNoticeStore.getState().notices.map(({ words }) => words)).toEqual([["store/config-invalid · priorities is empty"]]);
-    expect(notice?.line).toBe(`The last reads of SAGA-3 failed. The page shows the task as it was at ${formatClock(readAt)}.`);
+    expect(notice?.line).toBe(`The daemon refused a read of SAGA-3. The page shows the task as it was at ${formatClock(readAt)}.`);
 
     await poll();
     expect(useNoticeStore.getState().notices).toHaveLength(1);
@@ -1107,7 +1112,50 @@ describe("the notice for failed polls", () => {
 
     await user.click(backLink());
 
-    expect(useNoticeStore.getState().notices.filter(({ key }) => key === "task-poll:SAGA-3")).toEqual([]);
+    expect(useNoticeStore.getState().notices.filter(({ key }) => key === "task-refusal:SAGA-3")).toEqual([]);
+  });
+
+  it("opens no notice when the delete of the page makes the task read refuse before the board replaces the page", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    const board = heldBack();
+    const { transport, replies } = daemon({ [`DELETE ${TASK_PATH}`]: successReply({ id: "SAGA-3" }) });
+    const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    replies["/projects"] = board.reply;
+
+    await user.click(within(topBar()).getByRole("button", { name: "Task menu" }));
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Delete task" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+    await vi.waitFor(() => {
+      expect(useNoticeStore.getState().announced.map(({ words }) => words)).toContain("SAGA-3 was deleted.");
+    });
+    replies[TASK_PATH] = GONE;
+    await poll();
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Build the parser");
+    expect(useNoticeStore.getState().notices.filter(({ key }) => key === "task-refusal:SAGA-3")).toEqual([]);
+    expect(useNoticeStore.getState().announced.map(({ words }) => words)).not.toContainEqual(
+      expect.stringContaining("is not up to date"),
+    );
+
+    board.answer(successReply([{ tag: "SAGA", name: "Saga", path: "/repos/saga" }]));
+    await vi.waitFor(() => {
+      expect(router.state.location.pathname).toBe("/tasks");
+    });
+  });
+
+  it("opens no notice when the polls of the task reach no daemon", async () => {
+    const { transport: answering } = daemon();
+    let reached = true;
+    const transport: Transport = (request) =>
+      request.path === TASK_PATH && !reached ? Promise.reject(new Error("connection refused")) : answering(request);
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    reached = false;
+    await poll();
+    await poll();
+
+    expect(useNoticeStore.getState().notices).toEqual([]);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Build the parser");
   });
 });
 
