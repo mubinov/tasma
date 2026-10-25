@@ -1,10 +1,21 @@
-import type { Comment, Diagnostic, Frontmatter, SerializeErrorCode, TaskEntry, TransportReply } from "@tasma/protocol";
+import type { Comment, Diagnostic, FeedEvent, Frontmatter, SerializeErrorCode, TaskEntry, TransportReply } from "@tasma/protocol";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { heldBack, refusalReply, renderWithRouter, stubAnimations, stubTransport, successReply } from "../helpers";
+import {
+  countReads,
+  heldBack,
+  openWithFeed,
+  refusalReply,
+  renderWithRouter,
+  stubAnimations,
+  stubTransport,
+  successReply,
+  taskEvent,
+  type FeedStub,
+} from "../helpers";
 import { frame } from "../setup/notice-store";
 
 const CONFIG = {
@@ -551,11 +562,9 @@ describe("Changed on disk", () => {
     vi.useRealTimers();
   });
 
-  /** One poll interval, then the zero-delay timer the query cache notifies its observers through. */
-  async function poll() {
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
-    });
+  /** The events, then the zero-delay timer the query cache notifies its observers through. */
+  async function sendAndSettle(feed: FeedStub, events: FeedEvent[]) {
+    await feed.send(events);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -565,23 +574,23 @@ describe("Changed on disk", () => {
     return screen.queryByRole("button", { name: /Discard and reload/ })?.parentElement ?? null;
   }
 
-  async function openWithPolling(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
+  async function openEditorWithFeed(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
-    const read = daemon(replies);
-    await renderWithRouter(PAGE, read.transport);
+    const stub = daemon(replies);
+    const { feed } = await openWithFeed(PAGE, stub);
     await user.click(control("Edit"));
     await waitFor(() => {
       expect(document.activeElement).toBe(titleInput());
     });
 
-    return { user, read };
+    return { user, stub, feed };
   }
 
   it("shows the line, with the time of the read that first differed, and says so", async () => {
-    const { read } = await openWithPolling();
+    const { stub, feed } = await openEditorWithFeed();
 
-    read.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" } });
-    await poll();
+    stub.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" } });
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     const at = new Date("2026-09-01T11:20:00Z").toTimeString().slice(0, 5);
     expect(line()?.textContent).toContain(`Changed on disk at ${at}, since you began.`);
@@ -590,55 +599,61 @@ describe("Changed on disk", () => {
       expect(announced()).toEqual([`The task text changed on disk at ${at}. Saving overwrites that change.`]);
     });
 
-    read.replies[TASK_PATH] = task({ fields: { title: "Renamed twice", updated: "2026-09-01T12:30:00Z" } });
-    await poll();
+    stub.replies[TASK_PATH] = task({ fields: { title: "Renamed twice", updated: "2026-09-01T12:30:00Z" } });
+    const reads = countReads(stub, TASK_PATH);
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
+    expect(reads()).toBeGreaterThan(0);
     expect(line()?.textContent).toContain(`Changed on disk at ${at}, since you began.`);
   });
 
   it("shows nothing for a read that moves only the time", async () => {
-    const { read } = await openWithPolling();
+    const { stub, feed } = await openEditorWithFeed();
 
-    read.replies[TASK_PATH] = task({ fields: { updated: "2026-09-01T11:20:00Z" } });
-    await poll();
+    stub.replies[TASK_PATH] = task({ fields: { updated: "2026-09-01T11:20:00Z" } });
+    const reads = countReads(stub, TASK_PATH);
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
     await frame();
 
+    expect(reads()).toBeGreaterThan(0);
     expect(line()).toBeNull();
     expect(announced()).toEqual([]);
   });
 
   it("shows nothing where the disk already holds the text in the editor", async () => {
-    const { user, read } = await openWithPolling();
+    const { user, stub, feed } = await openEditorWithFeed();
 
     await user.clear(titleInput());
     await user.type(titleInput(), "Renamed");
-    read.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" } });
-    await poll();
+    stub.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" } });
+    const reads = countReads(stub, TASK_PATH);
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
+    expect(reads()).toBeGreaterThan(0);
     expect(line()).toBeNull();
   });
 
   it("saves the text the editor opened with, which the line says the Save overwrites", async () => {
-    const { user, read } = await openWithPolling({ [`PATCH ${TASK_PATH}`]: successReply({ id: "SAGA-3" }) });
+    const { user, stub, feed } = await openEditorWithFeed({ [`PATCH ${TASK_PATH}`]: successReply({ id: "SAGA-3" }) });
 
-    read.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" } });
-    await poll();
+    stub.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" } });
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     expect(line()).not.toBeNull();
 
     await user.click(control("Save"));
 
     await waitFor(() => {
-      expect(patches(read.requests)).toEqual([{ path: TASK_PATH, body: { title: "Build the parser", body: BODY } }]);
+      expect(patches(stub.requests)).toEqual([{ path: TASK_PATH, body: { title: "Build the parser", body: BODY } }]);
     });
   });
 
   it("moves the caret to Save when the line's control started the write", async () => {
     const write = heldBack();
-    const { user, read } = await openWithPolling({ [`PATCH ${TASK_PATH}`]: write.reply });
+    const { user, stub, feed } = await openEditorWithFeed({ [`PATCH ${TASK_PATH}`]: write.reply });
 
-    read.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" } });
-    await poll();
+    stub.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" } });
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     screen.getByRole("button", { name: /Discard and reload/ }).focus();
     await user.keyboard("{Meta>}{Enter}{/Meta}");
@@ -652,26 +667,26 @@ describe("Changed on disk", () => {
   });
 
   it("moves the caret to the title input when a read takes the line away under it", async () => {
-    const { read } = await openWithPolling();
+    const { stub, feed } = await openEditorWithFeed();
 
-    read.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" } });
-    await poll();
+    stub.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" } });
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     screen.getByRole("button", { name: /Discard and reload/ }).focus();
-    read.replies[TASK_PATH] = task();
-    await poll();
+    stub.replies[TASK_PATH] = task();
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     expect(line()).toBeNull();
     expect(document.activeElement).toBe(titleInput());
   });
 
   it("says the change while the discard dialog is open, and nothing more after Discard", async () => {
-    const { user, read } = await openWithPolling();
+    const { user, stub, feed } = await openEditorWithFeed();
     await user.type(titleInput(), " II");
     await user.click(control("Cancel"));
 
-    read.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" } });
-    await poll();
+    stub.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" } });
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     const at = new Date("2026-09-01T11:20:00Z").toTimeString().slice(0, 5);
     await waitFor(() => {
@@ -690,10 +705,10 @@ describe("Changed on disk", () => {
   });
 
   it("replaces the text from Discard and reload, and moves focus to the title input", async () => {
-    const { user, read } = await openWithPolling();
+    const { user, stub, feed } = await openEditorWithFeed();
     await user.type(titleInput(), " II");
-    read.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" }, body: "Other.\n" });
-    await poll();
+    stub.replies[TASK_PATH] = task({ fields: { title: "Renamed", updated: "2026-09-01T11:20:00Z" }, body: "Other.\n" });
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     await user.click(screen.getByRole("button", { name: /Discard and reload/ }));
 

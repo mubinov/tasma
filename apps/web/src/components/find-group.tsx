@@ -57,7 +57,7 @@ export function FindGroup({ find }: { find: TaskFind }): ReactNode {
           {counter}
         </span>
       </div>
-      {/* Focusable while disabled, so a poll that takes every match away keeps focus on the button. */}
+      {/* Focusable while disabled, so a read that takes every match away keeps focus on the button. */}
       <Button
         aria-label="Previous match"
         disabled={!hasMatches}

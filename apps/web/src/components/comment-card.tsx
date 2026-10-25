@@ -139,7 +139,7 @@ export function CommentCard({
   // whole refetch, and say nothing at all where they press Esc in that gap.
   const checked = usePendingCollapsed(tag, taskId, id, collapsed === true);
 
-  // The header is a new element when a poll gives the comment text.
+  // The header is a new element when a read gives the comment text.
   useLayoutEffect(() => {
     const item = itemRef.current;
     const header = headerRef.current;
@@ -223,7 +223,7 @@ export function CommentCard({
 
   return (
     <li ref={itemRef}>
-      {/* The open state starts again when a poll gives the comment text or takes it away. */}
+      {/* The open state starts again when a read gives the comment text or takes it away. */}
       <CommentFold
         key={hasBody ? "text" : "marker"}
         id={id}

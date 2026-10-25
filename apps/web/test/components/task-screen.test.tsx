@@ -1,4 +1,4 @@
-import type { Diagnostic, Frontmatter, TaskEntry, Transport, TransportReply } from "@tasma/protocol";
+import type { Diagnostic, FeedEvent, Frontmatter, TaskEntry, Transport, TransportReply } from "@tasma/protocol";
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,12 +8,18 @@ import { formatClock } from "../../src/lib/clock";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
 import {
+  countReads,
   heldBack,
+  openWithFeed,
+  projectEvent,
   refusalReply,
   renderWithRouter,
+  stubFeed,
   stubIntersectionObserver,
   stubResizeObservers,
   successReply,
+  taskEvent,
+  type FeedStub,
 } from "../helpers";
 import {
   LISTING_PATH,
@@ -33,6 +39,14 @@ import {
   task,
   topBar,
 } from "../task-screen-fixtures";
+
+/** The events, then the zero-delay timer the query cache notifies its observers through. */
+async function sendAndSettle(feed: FeedStub, events: FeedEvent[]) {
+  await feed.send(events);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10);
+  });
+}
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -837,67 +851,73 @@ describe("polling", () => {
     expect(paths.toSorted()).toEqual(["/projects/SAGA", LISTING_PATH, TASK_PATH]);
     expect(screen.getByRole("region", { name: "Comments 2" })).toBeTruthy();
   });
+});
 
-  it("measures the new header when a poll gives a comment its first text", async () => {
+describe("changes from the feed", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  it("measures the new header when a read gives a comment its first text", async () => {
     const resize = stubResizeObservers();
-    const { transport, replies } = daemon({ [TASK_PATH]: task({ comments: [comment(1, { body: "" })] }) });
-    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    const stub = daemon({ [TASK_PATH]: task({ comments: [comment(1, { body: "" })] }) });
+    const { feed } = await openWithFeed("/tasks/SAGA/SAGA-3", stub);
     const before = commentCard("Note 1").children[1]!;
     expect(resize.observed(before)).toBe(false);
 
-    replies[TASK_PATH] = task({ comments: [comment(1)] });
-    await poll();
+    stub.replies[TASK_PATH] = task({ comments: [comment(1)] });
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     const header = commentCard("Note 1").children[1]!;
     expect(header).not.toBe(before);
     expect(resize.observed(header)).toBe(true);
   });
 
-  it("reads the contents outline again when a poll changes the task", async () => {
-    const { transport, replies } = daemon({ [TASK_PATH]: task({ body: "## Plan", comments: [comment(1)] }) });
-    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+  it("reads the contents outline again when a read changes the task", async () => {
+    const stub = daemon({ [TASK_PATH]: task({ body: "## Plan", comments: [comment(1)] }) });
+    const { feed } = await openWithFeed("/tasks/SAGA/SAGA-3", stub);
     const outline = () => within(sidebar()).getByRole("navigation", { name: "Contents" });
 
-    replies[TASK_PATH] = task({ body: "## Plan\n\n## Ship", comments: [comment(1), comment(2, { title: "Shipped" })] });
-    await poll();
+    stub.replies[TASK_PATH] = task({ body: "## Plan\n\n## Ship", comments: [comment(1), comment(2, { title: "Shipped" })] });
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     expect(within(outline()).getAllByRole("button").map((line) => line.textContent)).toEqual(["Plan", "Ship", "Note 1", "Shipped"]);
     expect(within(outline()).getByText(/^Comments/).textContent).toBe("Comments 2");
   });
 
-  it("keeps the DOM of a comment a poll did not change", async () => {
-    const { transport, replies } = daemon({ [TASK_PATH]: task({ comments: [comment(1), comment(2)] }) });
-    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+  it("keeps the DOM of a comment a read did not change", async () => {
+    const stub = daemon({ [TASK_PATH]: task({ comments: [comment(1), comment(2)] }) });
+    const { feed } = await openWithFeed("/tasks/SAGA/SAGA-3", stub);
     const unchanged = screen.getByText("Body of note 1.");
 
-    replies[TASK_PATH] = task({ comments: [comment(1), comment(2, { body: "Rewritten." })] });
-    await poll();
+    stub.replies[TASK_PATH] = task({ comments: [comment(1), comment(2, { body: "Rewritten." })] });
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     expect(screen.getByText("Rewritten.")).toBeTruthy();
     expect(screen.getByText("Body of note 1.")).toBe(unchanged);
   });
 
-  it("opens a comment a poll gives text, unless its file says collapsed", async () => {
-    const { transport, replies } = daemon({
+  it("opens a comment a read gives text, unless its file says collapsed", async () => {
+    const stub = daemon({
       [TASK_PATH]: task({ comments: [comment(1, { body: "" }), comment(2, { body: "", collapsed: true })] }),
     });
-    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    const { feed } = await openWithFeed("/tasks/SAGA/SAGA-3", stub);
 
-    replies[TASK_PATH] = task({ comments: [comment(1), comment(2, { collapsed: true })] });
-    await poll();
+    stub.replies[TASK_PATH] = task({ comments: [comment(1), comment(2, { collapsed: true })] });
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     expect(caret("Note 1").getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText("Body of note 1.")).toBeTruthy();
     expect(caret("Note 2").getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("gives an open comment whose text a poll removes the closed header", async () => {
-    const { transport, replies } = daemon({ [TASK_PATH]: task({ comments: [comment(1)] }) });
-    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+  it("gives an open comment whose text a read removes the closed header", async () => {
+    const stub = daemon({ [TASK_PATH]: task({ comments: [comment(1)] }) });
+    const { feed } = await openWithFeed("/tasks/SAGA/SAGA-3", stub);
     expect(commentCard("Note 1").hasAttribute("data-open")).toBe(true);
 
-    replies[TASK_PATH] = task({ comments: [comment(1, { body: "" })] });
-    await poll();
+    stub.replies[TASK_PATH] = task({ comments: [comment(1, { body: "" })] });
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     const card = commentCard("Note 1");
     expect(card.hasAttribute("data-open")).toBe(false);
@@ -905,28 +925,28 @@ describe("polling", () => {
     expect(noCaret("Note 1")).toBeNull();
   });
 
-  it("drops a blocker from the blocked summary once a poll of the listing finds it resolved", async () => {
-    const { transport, replies } = daemon({
+  it("drops a blocker from the blocked summary once a read of the listing finds it resolved", async () => {
+    const stub = daemon({
       [TASK_PATH]: task({ fields: { blocked_by: ["SAGA-2"] } }),
       [LISTING_PATH]: listing([entry("SAGA-2", "In Progress", "Lex the input")]),
     });
-    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    const { feed } = await openWithFeed("/tasks/SAGA/SAGA-3", stub);
     expect(metaLine().children).toHaveLength(2);
 
-    replies[LISTING_PATH] = listing([entry("SAGA-2", "Done", "Lex the input")]);
-    await poll();
+    stub.replies[LISTING_PATH] = listing([entry("SAGA-2", "Done", "Lex the input")]);
+    await sendAndSettle(feed, [taskEvent("SAGA-2")]);
 
     expect(metaLine().children).toHaveLength(1);
     expect(within(field("Blocked by")).getByRole("link").textContent.trim()).toBe("[Done] SAGA-2 Lex the input");
   });
 
-  it("shows the step of a workflow a poll brings once its read lands", async () => {
-    const { transport, replies } = daemon();
-    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+  it("shows the step of a workflow an event brings once its read lands", async () => {
+    const stub = daemon();
+    const { feed } = await openWithFeed("/tasks/SAGA/SAGA-3", stub);
     expect(metaLine().children).toHaveLength(1);
 
-    replies[TASK_PATH] = task({ fields: { workflow: "dev", step: "research" } });
-    await poll();
+    stub.replies[TASK_PATH] = task({ fields: { workflow: "dev", step: "research" } });
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     await vi.waitFor(() => {
       expect(metaLine().children[1]?.textContent).toBe("research, step 1 of 2, an agent's step");
@@ -943,21 +963,21 @@ describe("the warnings of the task read", () => {
     return within(screen.getByRole("main").nextElementSibling as HTMLElement).queryAllByText(/warnings? about SAGA-/);
   }
 
-  it("opens one warning notice, which a poll with the same warnings does not open again", async () => {
+  it("opens one warning notice, which a read with the same warnings does not open again", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    const { transport, replies } = daemon({ [TASK_PATH]: task({ diagnostics: [BLOCKER, STALE] }) });
-    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    const stub = daemon({ [TASK_PATH]: task({ diagnostics: [BLOCKER, STALE] }) });
+    const { feed } = await openWithFeed("/tasks/SAGA/SAGA-3", stub);
 
     const [title] = notices();
     expect(title?.textContent).toBe("2 warnings about SAGA-3");
     const words = within(title!.parentElement!).getAllByRole("listitem").map((item) => item.textContent);
     expect(words).toEqual(["blocked-by-unresolved · SAGA-9 names no task", "stale-next-comment-id · next_comment_id is below 4"]);
 
-    replies[TASK_PATH] = task({ diagnostics: [{ ...BLOCKER }, { ...STALE }] });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_010);
-    });
+    stub.replies[TASK_PATH] = task({ diagnostics: [{ ...BLOCKER }, { ...STALE }] });
+    const reads = countReads(stub, TASK_PATH);
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
+    expect(reads()).toBeGreaterThan(0);
     expect(notices()).toEqual([title]);
     expect(screen.queryByRole("heading", { level: 2, name: /warning/ })).toBeNull();
   });
@@ -1081,23 +1101,21 @@ describe("the notice for a refused read", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
-  /** One poll interval, the retry of a read that reached no daemon, and the notification of the cache. */
-  async function poll() {
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
-    });
+  /** The events, the retry of a read that reached no daemon, and the notification of the cache. */
+  async function sendAndWaitPastRetry(feed: FeedStub, events: FeedEvent[]) {
+    await feed.send(events);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_010);
     });
   }
 
-  it("opens on one refused poll, naming a task deleted while its page is open, and closes with a spoken line after a successful poll", async () => {
-    const { transport, replies } = daemon();
-    const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+  it("opens on one refused read, naming a task deleted while its page is open, and closes with a spoken line after a successful read", async () => {
+    const stub = daemon();
+    const { router, feed } = await openWithFeed("/tasks/SAGA/SAGA-3", stub);
     const readAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA", "tasks", "SAGA-3"])!.dataUpdatedAt;
 
-    replies[TASK_PATH] = GONE;
-    await poll();
+    stub.replies[TASK_PATH] = GONE;
+    await sendAndWaitPastRetry(feed, [taskEvent("SAGA-3", "deleted")]);
     expect(useNoticeStore.getState().notices).toMatchObject([
       {
         key: "task-refusal:SAGA-3",
@@ -1109,25 +1127,27 @@ describe("the notice for a refused read", () => {
     ]);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Build the parser");
 
-    replies[TASK_PATH] = task();
-    await poll();
+    stub.replies[TASK_PATH] = task();
+    await sendAndWaitPastRetry(feed, [taskEvent("SAGA-3", "created")]);
     expect(useNoticeStore.getState().notices).toEqual([]);
     expect(useNoticeStore.getState().announced.map(({ words }) => words)).toContain("SAGA-3 is up to date.");
   });
 
-  it("opens on one refused poll of the listing, keeps the notice while the task reads succeed, and closes when the reader leaves the page", async () => {
+  it("opens on one refused read of the listing, keeps the notice while the task reads succeed, and closes when the reader leaves the page", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
-    const { transport, replies } = daemon();
-    const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    const stub = daemon();
+    const { router, feed } = await openWithFeed("/tasks/SAGA/SAGA-3", stub);
     const readAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA", "tasks"])!.dataUpdatedAt;
 
-    replies[LISTING_PATH] = refusalReply(422, { kind: "store", code: "config-invalid", message: "priorities is empty" });
-    await poll();
+    stub.replies[LISTING_PATH] = refusalReply(422, { kind: "store", code: "config-invalid", message: "priorities is empty" });
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
     const [notice] = useNoticeStore.getState().notices;
     expect(useNoticeStore.getState().notices.map(({ words }) => words)).toEqual([["store/config-invalid · priorities is empty"]]);
     expect(notice?.line).toBe(`The daemon refused a read of SAGA-3. The page shows the task as it was at ${formatClock(readAt)}.`);
 
-    await poll();
+    const reads = countReads(stub, TASK_PATH);
+    await sendAndWaitPastRetry(feed, [taskEvent("SAGA-3")]);
+    expect(reads()).toBeGreaterThan(0);
     expect(useNoticeStore.getState().notices).toHaveLength(1);
     expect(useNoticeStore.getState().notices[0]).toBe(notice);
 
@@ -1139,9 +1159,9 @@ describe("the notice for a refused read", () => {
   it("opens no notice when the delete of the page makes the task read refuse before the board replaces the page", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     const board = heldBack();
-    const { transport, replies } = daemon({ [`DELETE ${TASK_PATH}`]: successReply({ id: "SAGA-3" }) });
-    const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
-    replies["/projects"] = board.reply;
+    const stub = daemon({ [`DELETE ${TASK_PATH}`]: successReply({ id: "SAGA-3" }) });
+    const { router, feed } = await openWithFeed("/tasks/SAGA/SAGA-3", stub);
+    stub.replies["/projects"] = board.reply;
 
     await user.click(within(topBar()).getByRole("button", { name: "Task menu" }));
     await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Delete task" }));
@@ -1149,9 +1169,11 @@ describe("the notice for a refused read", () => {
     await vi.waitFor(() => {
       expect(useNoticeStore.getState().announced.map(({ words }) => words)).toContain("SAGA-3 was deleted.");
     });
-    replies[TASK_PATH] = GONE;
-    await poll();
+    stub.replies[TASK_PATH] = GONE;
+    const reads = countReads(stub, TASK_PATH);
+    await sendAndWaitPastRetry(feed, [taskEvent("SAGA-3", "deleted")]);
 
+    expect(reads()).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Build the parser");
     expect(useNoticeStore.getState().notices.filter(({ key }) => key === "task-refusal:SAGA-3")).toEqual([]);
     expect(useNoticeStore.getState().announced.map(({ words }) => words)).not.toContainEqual(
@@ -1164,16 +1186,26 @@ describe("the notice for a refused read", () => {
     });
   });
 
-  it("opens no notice when the polls of the task reach no daemon", async () => {
-    const { transport: answering } = daemon();
+  it("opens no notice when the reads of the task reach no daemon", async () => {
+    const stub = daemon();
+    const feed = stubFeed(stub);
     let reached = true;
-    const transport: Transport = (request) =>
-      request.path === TASK_PATH && !reached ? Promise.reject(new Error("connection refused")) : answering(request);
-    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    let unreachedReads = 0;
+    const transport: Transport = (request) => {
+      if (request.path === TASK_PATH && !reached) {
+        unreachedReads += 1;
+        return Promise.reject(new Error("connection refused"));
+      }
+      return stub.transport(request);
+    };
+    await feed.mount(await renderWithRouter("/tasks/SAGA/SAGA-3", transport));
 
     reached = false;
-    await poll();
-    await poll();
+    await sendAndWaitPastRetry(feed, [taskEvent("SAGA-3")]);
+    const first = unreachedReads;
+    expect(first).toBeGreaterThan(0);
+    await sendAndWaitPastRetry(feed, [taskEvent("SAGA-3")]);
+    expect(unreachedReads).toBeGreaterThan(first);
 
     expect(useNoticeStore.getState().notices).toEqual([]);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Build the parser");

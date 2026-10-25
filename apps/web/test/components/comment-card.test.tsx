@@ -570,7 +570,7 @@ describe("the find of the page", () => {
     expect(caret().getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("starts the open state again from the file when a poll takes the text and gives it back", () => {
+  it("starts the open state again from the file when a read takes the text and gives it back", () => {
     const view = render(cardElement({ collapsed: true }, true, 1));
     expect(caret().getAttribute("aria-expanded")).toBe("false");
     view.rerender(cardElement({ collapsed: true }, true, 2));

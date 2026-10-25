@@ -25,7 +25,7 @@ export type SeenComment = { comment: Comment; read: readonly number[] };
 /** The comments a card stands between, read before the write that removes it. */
 type CommentPlace = { next?: number; previous?: number };
 
-/** What a card in editing shows of its comment, so a poll that changes none of it keeps the held copy. */
+/** What a card in editing shows of its comment, so a read that changes none of it keeps the held copy. */
 function commentSignature({ id, title, body, author, created, updated, collapsed }: Comment): string {
   return JSON.stringify([id, title, body, author ?? null, created, updated ?? null, collapsed ?? null]);
 }
@@ -34,7 +34,7 @@ function commentSignature({ id, title, body, author, created, updated, collapsed
  * The last read that held each comment being edited. A comment that leaves the
  * file keeps its card and its place from here: left to unmount, the reader's
  * typing would go with no word. The same map is returned where nothing moved, so
- * a poll that changes nothing settles in one render.
+ * a read that changes nothing settles in one render.
  */
 export function seenComments(
   comments: readonly Comment[],

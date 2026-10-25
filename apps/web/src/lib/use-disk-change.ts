@@ -30,7 +30,7 @@ export type DiskChange = {
 };
 
 /**
- * The state of the "Changed on disk" line. Each read the page polls is compared
+ * The state of the "Changed on disk" line. Each read of the task is compared
  * with the text the editor opened with.
  *
  * The change and the line are two things: a write hides the line without

@@ -193,7 +193,7 @@ it("renders a code it has never seen the same way as every other", async () => {
   expect(listed[0]!.textContent).toBe("index-rebuilt-from-scratchthe index was rebuilt");
 });
 
-it("keeps the list open when a poll renders new warnings", async () => {
+it("keeps the list open when a read renders new warnings", async () => {
   const { rerender } = render(<Diagnostics items={WARNINGS.slice(0, 2)} subject="this project" />);
   await unfold();
 

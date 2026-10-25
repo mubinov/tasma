@@ -1,10 +1,20 @@
-import type { Comment, Frontmatter, SerializeErrorCode, TaskEntry, TransportReply } from "@tasma/protocol";
+import type { Comment, FeedEvent, Frontmatter, SerializeErrorCode, TaskEntry, TransportReply } from "@tasma/protocol";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { heldBack, refusalReply, renderWithRouter, stubTransport, successReply } from "../helpers";
+import {
+  countReads,
+  heldBack,
+  openWithFeed,
+  refusalReply,
+  renderWithRouter,
+  stubTransport,
+  successReply,
+  taskEvent,
+  type FeedStub,
+} from "../helpers";
 import { frame } from "../setup/notice-store";
 
 const CONFIG = {
@@ -184,10 +194,11 @@ function stubResizeObservers() {
   };
 }
 
-/** A poll of the task read, which the page runs every five seconds. */
-async function poll(): Promise<void> {
+/** The events, then the zero-delay timer the query cache notifies its observers through. */
+async function sendAndSettle(feed: FeedStub, events: FeedEvent[]): Promise<void> {
+  await feed.send(events);
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(10);
   });
 }
 
@@ -1016,13 +1027,13 @@ describe("the disk line of a card", () => {
 
   it("appears in that card alone, at the comment's own stamp", async () => {
     const user = userEvent.setup();
-    const { transport, replies } = daemon([comment(3), comment(5)]);
-    await renderWithRouter(PAGE, transport);
+    const stub = daemon([comment(3), comment(5)]);
+    const { feed } = await openWithFeed(PAGE, stub);
     await openEditor(user, 3);
     await openEditor(user, 5);
 
-    replies[TASK_PATH] = task([comment(3, { body: "Rewritten.", updated: STAMP }), comment(5)]);
-    await poll();
+    stub.replies[TASK_PATH] = task([comment(3, { body: "Rewritten.", updated: STAMP }), comment(5)]);
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
     await frame();
 
     const at = new Date(STAMP).toTimeString().slice(0, 5);
@@ -1033,16 +1044,16 @@ describe("the disk line of a card", () => {
 
   it("speaks a different sentence for each of two cards", async () => {
     const user = userEvent.setup();
-    const { transport, replies } = daemon([comment(3), comment(5)]);
-    await renderWithRouter(PAGE, transport);
+    const stub = daemon([comment(3), comment(5)]);
+    const { feed } = await openWithFeed(PAGE, stub);
     await openEditor(user, 3);
     await openEditor(user, 5);
 
-    replies[TASK_PATH] = task([
+    stub.replies[TASK_PATH] = task([
       comment(3, { body: "Rewritten.", updated: STAMP }),
       comment(5, { body: "Also rewritten.", updated: STAMP }),
     ]);
-    await poll();
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
     await frame();
 
     const at = new Date(STAMP).toTimeString().slice(0, 5);
@@ -1052,12 +1063,12 @@ describe("the disk line of a card", () => {
 
   it("falls back to the task's stamp for a comment that carries none", async () => {
     const user = userEvent.setup();
-    const { transport, replies } = daemon([comment(3)]);
-    await renderWithRouter(PAGE, transport);
+    const stub = daemon([comment(3)]);
+    const { feed } = await openWithFeed(PAGE, stub);
     await openEditor(user, 3);
 
-    replies[TASK_PATH] = task([comment(3, { body: "Rewritten." })]);
-    await poll();
+    stub.replies[TASK_PATH] = task([comment(3, { body: "Rewritten." })]);
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
     await frame();
 
     const at = new Date(UPDATED).toTimeString().slice(0, 5);
@@ -1066,16 +1077,16 @@ describe("the disk line of a card", () => {
 
   it("follows the line to the title input when a read ends the difference under the caret", async () => {
     const user = userEvent.setup();
-    const { transport, replies } = daemon([comment(3)]);
-    await renderWithRouter(PAGE, transport);
+    const stub = daemon([comment(3)]);
+    const { feed } = await openWithFeed(PAGE, stub);
     await openEditor(user, 3);
 
-    replies[TASK_PATH] = task([comment(3, { body: "Rewritten.", updated: STAMP })]);
-    await poll();
+    stub.replies[TASK_PATH] = task([comment(3, { body: "Rewritten.", updated: STAMP })]);
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
     control("Discard and reload comment #3").focus();
 
-    replies[TASK_PATH] = task([comment(3)]);
-    await poll();
+    stub.replies[TASK_PATH] = task([comment(3)]);
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     expect(screen.queryByRole("button", { name: "Discard and reload comment #3" })).toBeNull();
     expect(document.activeElement).toBe(titleField(3));
@@ -1083,14 +1094,14 @@ describe("the disk line of a card", () => {
 
   it("replaces that card's text alone when Discard and reload is pressed", async () => {
     const user = userEvent.setup();
-    const { transport, replies } = daemon([comment(3), comment(5)]);
-    await renderWithRouter(PAGE, transport);
+    const stub = daemon([comment(3), comment(5)]);
+    const { feed } = await openWithFeed(PAGE, stub);
     await openEditor(user, 3);
     await openEditor(user, 5);
     await user.type(bodyField(5), "kept");
 
-    replies[TASK_PATH] = task([comment(3, { body: "Rewritten.", updated: STAMP }), comment(5)]);
-    await poll();
+    stub.replies[TASK_PATH] = task([comment(3, { body: "Rewritten.", updated: STAMP }), comment(5)]);
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
     await act(async () => {
       await user.click(control("Discard and reload comment #3"));
     });
@@ -1101,15 +1112,15 @@ describe("the disk line of a card", () => {
 
   it("sends one write for ⌘↩ on the reload control, and asks once for Esc there", async () => {
     const user = userEvent.setup();
-    const { transport, replies, requests } = daemon([comment(3)], {
+    const stub = daemon([comment(3)], {
       [`PATCH ${commentPath(3)}`]: successReply({ id: "SAGA-3", commentId: 3 }),
     });
-    await renderWithRouter(PAGE, transport);
+    const { feed } = await openWithFeed(PAGE, stub);
     await openEditor(user, 3);
     await user.type(bodyField(3), "x");
 
-    replies[TASK_PATH] = task([comment(3, { body: "Rewritten.", updated: STAMP })]);
-    await poll();
+    stub.replies[TASK_PATH] = task([comment(3, { body: "Rewritten.", updated: STAMP })]);
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
     control("Discard and reload comment #3").focus();
     await act(async () => {
       await user.keyboard("{Escape}");
@@ -1125,7 +1136,7 @@ describe("the disk line of a card", () => {
     });
     await frame();
 
-    expect(writes(requests)).toHaveLength(1);
+    expect(writes(stub.requests)).toHaveLength(1);
     expect(announced().filter((words) => words === "Comment #3 saved.")).toHaveLength(1);
   });
 });
@@ -1136,20 +1147,20 @@ describe("a comment removed on disk while its editor is open", () => {
   });
 
   async function removeComment(user: ReturnType<typeof userEvent.setup>) {
-    const { transport, replies } = daemon([comment(3), comment(5)]);
-    await renderWithRouter(PAGE, transport);
+    const stub = daemon([comment(3), comment(5)]);
+    const { feed } = await openWithFeed(PAGE, stub);
     await openEditor(user, 3);
     await user.type(bodyField(3), "typed");
-    replies[TASK_PATH] = task([comment(5)]);
+    stub.replies[TASK_PATH] = task([comment(5)]);
 
-    return { replies };
+    return { stub, feed };
   }
 
   it("keeps the card and its text, swaps Save for Discard and speaks the swap", async () => {
     const user = userEvent.setup();
-    await removeComment(user);
+    const { feed } = await removeComment(user);
 
-    await poll();
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
     await frame();
 
     expect(bodyField(3).value).toBe("Body of note 3.typed");
@@ -1161,18 +1172,20 @@ describe("a comment removed on disk while its editor is open", () => {
 
   it("keeps the card's place in the list", async () => {
     const user = userEvent.setup();
-    await removeComment(user);
+    const { stub, feed } = await removeComment(user);
+    const reads = countReads(stub, TASK_PATH);
 
-    await poll();
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
+    expect(reads()).toBeGreaterThan(0);
     const cards = screen.getAllByRole("article").map((card) => card.getAttribute("data-comment-id"));
     expect(cards).toEqual(["3", "5"]);
   });
 
   it("asks before Discard drops the text, and resolves the caret from its last place", async () => {
     const user = userEvent.setup();
-    await removeComment(user);
-    await poll();
+    const { feed } = await removeComment(user);
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     await act(async () => {
       await user.click(control("Discard comment #3"));
@@ -1189,10 +1202,10 @@ describe("a comment removed on disk while its editor is open", () => {
 
   it("moves a caret that was on Save to the line, and says nothing as well", async () => {
     const user = userEvent.setup();
-    await removeComment(user);
+    const { feed } = await removeComment(user);
     control("Save comment #3").focus();
 
-    await poll();
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
     await frame();
 
     expect(document.activeElement).toBe(screen.getByText("This comment was removed on disk.").parentElement!.parentElement);
@@ -1201,8 +1214,8 @@ describe("a comment removed on disk while its editor is open", () => {
 
   it("lands Keep editing on the main region when the card it opened from was removed on disk", async () => {
     const user = userEvent.setup();
-    const { transport, replies } = daemon([comment(3), comment(5)]);
-    const router = await renderWithRouter(PAGE, transport);
+    const stub = daemon([comment(3), comment(5)]);
+    const { router, feed } = await openWithFeed(PAGE, stub);
     await openEditor(user, 5);
     await user.type(bodyField(5), "y");
     control("Comment #3 actions").focus();
@@ -1211,8 +1224,8 @@ describe("a comment removed on disk while its editor is open", () => {
       await Promise.resolve();
     });
 
-    replies[TASK_PATH] = task([comment(5)]);
-    await poll();
+    stub.replies[TASK_PATH] = task([comment(5)]);
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
     await act(async () => {
       await user.click(within(dialog()).getByRole("button", { name: "Keep editing" }));
     });
@@ -1224,10 +1237,10 @@ describe("a comment removed on disk while its editor is open", () => {
 
   it("leaves a caret in the body where it is, and speaks the swap there", async () => {
     const user = userEvent.setup();
-    await removeComment(user);
+    const { feed } = await removeComment(user);
     const body = bodyField(3);
 
-    await poll();
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
     await frame();
 
     expect(document.activeElement).toBe(body);

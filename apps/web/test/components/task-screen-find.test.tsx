@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Comment } from "@tasma/protocol";
+import type { Comment, FeedEvent } from "@tasma/protocol";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentType } from "react";
@@ -15,12 +15,15 @@ import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
 import {
   renderWithRouter,
+  stubFeed,
   stubHighlights,
   stubRangeBoxes,
   stubReducedMotion,
   stubSystemTheme,
   stubResizeObservers,
   successReply,
+  taskEvent,
+  type FeedStub,
 } from "../helpers";
 import { chatRecord } from "../chat-daemon";
 import { TASK_PATH, backLink, caret, comment, commentCard, daemon, task, topBar } from "../task-screen-fixtures";
@@ -41,8 +44,9 @@ type PageParts = { title?: string; body?: string; comments?: Comment[] };
 
 async function openPage({ title, body = "", comments = [] }: PageParts = {}) {
   const daemonStub = daemon({ [TASK_PATH]: task({ fields: title === undefined ? {} : { title }, body, comments }) });
+  const feed = stubFeed(daemonStub);
   const router = await renderWithRouter(PAGE, daemonStub.transport);
-  return { ...daemonStub, router };
+  return { ...daemonStub, router, feed };
 }
 
 function findButton(): HTMLElement {
@@ -1186,22 +1190,23 @@ describe("the highlights in WebKit", () => {
 });
 
 describe("live updates", () => {
-  /** One poll interval, the notification of the cache, and the frame the find runs again in. */
-  async function poll() {
-    await wait(5_000);
+  /** The events, the notification of the cache, and the frame the find runs again in. */
+  async function sendAndSettle(feed: FeedStub, events: FeedEvent[]) {
+    await feed.send(events);
     await wait(50);
   }
 
-  it("keeps the current match through a poll that adds a block above it, and does not scroll", async () => {
+  it("keeps the current match through a read that adds a block above it, and does not scroll", async () => {
     const user = userWithFakeTimers();
-    const { replies } = await openPage({ body: "alpha one\n\nalpha two" });
+    const { replies, router, feed } = await openPage({ body: "alpha one\n\nalpha two" });
+    await feed.mount(router);
     await openFind(user, "alpha");
     await user.keyboard("{Enter}");
     scrollTo.mockClear();
     announce.mockClear();
 
     replies[TASK_PATH] = task({ body: "alpha zero\n\nalpha one\n\nalpha two" });
-    await poll();
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     expect(counter()).toBe("3 of 3");
     expect(highlights.ranges("task-find-current")[0]?.startContainer.textContent).toBe("alpha two");
@@ -1209,40 +1214,43 @@ describe("live updates", () => {
     expect(announce).not.toHaveBeenCalled();
   });
 
-  it("keeps a current match in a comment through a poll that adds a paragraph to the body", async () => {
+  it("keeps a current match in a comment through a read that adds a paragraph to the body", async () => {
     const user = userWithFakeTimers();
-    const { replies } = await openPage({ body: "alpha", comments: [comment(1, { body: "alpha note" })] });
+    const { replies, router, feed } = await openPage({ body: "alpha", comments: [comment(1, { body: "alpha note" })] });
+    await feed.mount(router);
     await openFind(user, "alpha");
     await user.keyboard("{Enter}");
     expect(counter()).toBe("2 of 2");
 
     replies[TASK_PATH] = task({ body: "alpha\n\nalpha more", comments: [comment(1, { body: "alpha note" })] });
-    await poll();
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     expect(counter()).toBe("3 of 3");
     expect(highlights.ranges("task-find-current")[0]?.startContainer.textContent).toBe("alpha note");
   });
 
-  it("moves to the first match after the old place when a poll removes the block of the current match", async () => {
+  it("moves to the first match after the old place when a read removes the block of the current match", async () => {
     const user = userWithFakeTimers();
-    const { replies } = await openPage({ body: "alpha one\n\nalpha two\n\nalpha three" });
+    const { replies, router, feed } = await openPage({ body: "alpha one\n\nalpha two\n\nalpha three" });
+    await feed.mount(router);
     await openFind(user, "alpha");
     await user.keyboard("{Enter}");
 
     replies[TASK_PATH] = task({ body: "alpha one\n\nalpha three" });
-    await poll();
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     expect(counter()).toBe("2 of 2");
   });
 
-  it("moves to the first match when a poll removes every match after the old place", async () => {
+  it("moves to the first match when a read removes every match after the old place", async () => {
     const user = userWithFakeTimers();
-    const { replies } = await openPage({ body: "alpha one\n\nalpha two" });
+    const { replies, router, feed } = await openPage({ body: "alpha one\n\nalpha two" });
+    await feed.mount(router);
     await openFind(user, "alpha");
     await user.keyboard("{Enter}");
 
     replies[TASK_PATH] = task({ body: "alpha one" });
-    await poll();
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     expect(counter()).toBe("1 of 1");
   });
@@ -1265,14 +1273,15 @@ describe("live updates", () => {
     expect(counter()).toBe("1 of 3");
   });
 
-  it("finds the first match on the page when a poll brings a match to a text that had none", async () => {
+  it("finds the first match on the page when a read brings a match to a text that had none", async () => {
     const user = userWithFakeTimers();
-    const { replies } = await openPage({ body: "beta" });
+    const { replies, router, feed } = await openPage({ body: "beta" });
+    await feed.mount(router);
     await openFind(user, "alpha");
     expect(counter()).toBe("No matches");
 
     replies[TASK_PATH] = task({ body: "beta\n\nalpha" });
-    await poll();
+    await sendAndSettle(feed, [taskEvent("SAGA-3")]);
 
     expect(counter()).toBe("1 of 1");
   });

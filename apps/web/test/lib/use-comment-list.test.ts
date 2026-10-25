@@ -11,7 +11,7 @@ function seen(...entries: [Comment, number[]][]): ReadonlyMap<number, SeenCommen
   return new Map(entries.map(([held, read]) => [held.id, { comment: held, read }]));
 }
 
-/** Runs the reads in turn, as the page's polls do, and draws the list after the last. */
+/** Runs the reads in turn, as the page does, and draws the list after the last. */
 function afterReads(editingIds: ReadonlySet<number>, ...reads: number[][]): number[] {
   let held: ReadonlyMap<number, SeenComment> = new Map();
   for (const read of reads) {
