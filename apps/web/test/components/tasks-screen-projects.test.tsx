@@ -2,6 +2,7 @@ import type { Diagnostic, ExcludedFile, FeedEvent, Frontmatter, TaskEntry } from
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { daemonKeys } from "../../src/api/queries";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
 import {
@@ -28,6 +29,7 @@ import {
   projectEvent,
   refusalReply,
   renderWithRouter,
+  startWithFeed,
   successReply,
   taskEvent,
   type FeedStub,
@@ -101,16 +103,6 @@ function recordAnnounced(): string[] {
 
   onTestFinished(stop);
   return words;
-}
-
-/** One poll interval, the retry of an unreadable answer, and the notification of the cache. */
-async function poll() {
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(5_000);
-  });
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(1_010);
-  });
 }
 
 /** The events, the retry of an unreadable answer, and the notification of the cache. */
@@ -188,7 +180,7 @@ describe("the address", () => {
     expect(titlesIn("To Do")).toEqual(["Task 11"]);
     expect(screen.getByRole("note").textContent).toBe(
       "SAGA did not load"
-      + "The board shows the other projects. It tries SAGA again every 5 seconds."
+      + "The board shows the other projects, and shows SAGA again when SAGA changes on disk."
       + "store/config-invalid · statuses is empty",
     );
     expect(screen.getByRole("heading", { level: 2, name: "SAGA did not load" })).toBeTruthy();
@@ -388,29 +380,27 @@ describe("the board of all projects", () => {
     expect(router.state.location.search).toEqual({ projects: "all" });
   });
 
-  it("shows a project that joins after the next poll when a label click drops the load that reads it", async () => {
+  it("shows a project that joins when a label click comes while the load that reads it runs", async () => {
     const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
     const listingRead = heldBack();
-    const { transport, replies } = twoProjects({
+    const stub = twoProjects({
       "/projects": successReply([SAGA]),
       "/projects/SAGA/tasks": listing([entry(1, { labels: ["web"] })]),
       "/projects/DELTA/tasks": listingRead.reply,
     });
-    const router = await renderWithRouter("/tasks?projects=all", transport);
+    const { router, feed } = await openWithFeed("/tasks?projects=all", stub);
 
-    replies["/projects"] = successReply(SORTED);
-    await poll();
+    stub.replies["/projects"] = successReply(SORTED);
+    await sendAndWaitPastRetry(feed, [projectEvent("DELTA", "created")]);
     await user.click(screen.getByRole("combobox", { name: /^Labels/ }));
     await user.click(await screen.findByRole("option", { name: /web/ }));
     await waitFor(() => {
       expect(router.state.location.search).toEqual({ projects: "all", labels: "web" });
     });
 
-    replies["/projects/DELTA/tasks"] = listing([delta(11, { status: "Review", labels: ["web"] })]);
     await act(async () => {
       listingRead.answer(listing([delta(11, { status: "Review", labels: ["web"] })]));
     });
-    await poll();
 
     await vi.waitFor(() => {
       expect(titlesIn("Review")).toEqual(["Task 11"]);
@@ -830,6 +820,60 @@ describe("a project that fails while the board is open", () => {
     });
   });
 
+  it("brings back a project refused at the load that changes while its read is on its way", async () => {
+    const words = recordAnnounced();
+    const projectRead = heldBack();
+    const stub = twoProjects({
+      "/projects/SAGA": projectRead.reply,
+      "/projects/DELTA/tasks": listing([delta(11, { status: "Review" })]),
+    });
+    const { feed } = await startWithFeed("/tasks?projects=DELTA,SAGA", stub);
+    await vi.waitFor(() => {
+      expect(stub.paths).toContain("/projects/SAGA");
+    });
+
+    stub.replies["/projects/SAGA"] = project("SAGA");
+    stub.replies["/projects/SAGA/tasks"] = listing([entry(1)]);
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
+    await act(async () => {
+      projectRead.answer(INVALID);
+    });
+
+    await vi.waitFor(() => {
+      expect(titlesIn("Backlog")).toEqual(["Task 1"]);
+    });
+    expect(screen.queryByRole("note")).toBeNull();
+    await vi.waitFor(() => {
+      expect(words).toEqual(["SAGA loaded."]);
+    });
+  });
+
+  it("brings back a project refused at the load that changes before the board shows it", async () => {
+    const words = recordAnnounced();
+    const listingRead = heldBack();
+    const stub = twoProjects({ "/projects/SAGA": INVALID, "/projects/DELTA/tasks": listingRead.reply });
+    const { router, feed } = await startWithFeed("/tasks?projects=DELTA,SAGA", stub);
+    const { queryClient } = router.options.context;
+    await vi.waitFor(() => {
+      expect(queryClient.getQueryState(daemonKeys.project("SAGA"))?.status).toBe("error");
+    });
+
+    stub.replies["/projects/SAGA"] = project("SAGA");
+    stub.replies["/projects/SAGA/tasks"] = listing([entry(1)]);
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
+    await act(async () => {
+      listingRead.answer(listing([delta(11, { status: "Review" })]));
+    });
+
+    await vi.waitFor(() => {
+      expect(titlesIn("Backlog")).toEqual(["Task 1"]);
+    });
+    expect(screen.queryByRole("note")).toBeNull();
+    await vi.waitFor(() => {
+      expect(words).toEqual(["SAGA loaded."]);
+    });
+  });
+
   it("shows no words in the note of a refused project whose reads succeed while its load runs", async () => {
     const workflowRead = heldBack();
     const stub = twoProjects({ "/projects/SAGA": INVALID, "/workflows/dev": workflowRead.reply });
@@ -841,7 +885,7 @@ describe("a project that fails while the board is open", () => {
 
     await vi.waitFor(() => {
       expect(screen.getByRole("note").textContent).toBe(
-        "SAGA did not loadThe board shows the other projects. It tries SAGA again every 5 seconds.",
+        "SAGA did not loadThe board shows the other projects, and shows SAGA again when SAGA changes on disk.",
       );
     });
 

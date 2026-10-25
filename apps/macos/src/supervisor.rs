@@ -67,8 +67,9 @@ const END_GRACE: Duration = Duration::from_secs(10);
 const PROVEN_AFTER: Duration = Duration::from_secs(10);
 
 /// The longest wait between two spawns. There is no state that gives up: the
-/// shell cannot tell the board's Retry from its interval poll, so a terminal
-/// state would make Retry inert. The ceiling is what stops the thrash instead.
+/// shell cannot tell the board's Retry from the retries of the change feed, so
+/// a terminal state would make Retry inert. The ceiling is what stops the
+/// thrash instead.
 const BACKOFF_CEILING: Duration = Duration::from_secs(30);
 
 /// What a version a daemon does not state is written as.

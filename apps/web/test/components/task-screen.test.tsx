@@ -825,31 +825,21 @@ describe("opening a task from the board", () => {
   });
 });
 
-describe("polling", () => {
+describe("without an event", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
-  /** One poll interval, then the zero-delay timer the query cache notifies its observers through. */
-  async function poll() {
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(10);
-    });
-  }
-
-  it("reads the task, the project and the listing again every 5 seconds", async () => {
-    const { transport, paths, replies } = daemon({ [TASK_PATH]: task({ comments: [comment(1)] }) });
+  it("reads nothing again", async () => {
+    const { transport, paths } = daemon();
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
     paths.length = 0;
 
-    replies[TASK_PATH] = task({ comments: [comment(1), comment(2)] });
-    await poll();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
 
-    expect(paths.toSorted()).toEqual(["/projects/SAGA", LISTING_PATH, TASK_PATH]);
-    expect(screen.getByRole("region", { name: "Comments 2" })).toBeTruthy();
+    expect(paths).toEqual([]);
   });
 });
 
@@ -1096,6 +1086,7 @@ describe("a failed load", () => {
 
 describe("the notice for a refused read", () => {
   const GONE = refusalReply(404, { kind: "store", code: "task-not-found", message: "no task SAGA-3" });
+  const HOUR = 3_600_000;
 
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -1109,19 +1100,23 @@ describe("the notice for a refused read", () => {
     });
   }
 
-  it("opens on one refused read, naming a task deleted while its page is open, and closes with a spoken line after a successful read", async () => {
+  it("opens on one refused read, naming a task deleted while its page is open, with the time of the refusal, and closes with a spoken line after a successful read", async () => {
     const stub = daemon();
     const { router, feed } = await openWithFeed("/tasks/SAGA/SAGA-3", stub);
-    const readAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA", "tasks", "SAGA-3"])!.dataUpdatedAt;
+    const { queryClient } = router.options.context;
+    const loadedAt = queryClient.getQueryState(["daemon", "projects", "SAGA", "tasks", "SAGA-3"])!.dataUpdatedAt;
+    vi.setSystemTime(loadedAt + HOUR);
 
     stub.replies[TASK_PATH] = GONE;
     await sendAndWaitPastRetry(feed, [taskEvent("SAGA-3", "deleted")]);
+    const refusedAt = queryClient.getQueryState(["daemon", "projects", "SAGA", "tasks", "SAGA-3"])!.errorUpdatedAt;
+    expect(formatClock(refusedAt)).not.toBe(formatClock(loadedAt));
     expect(useNoticeStore.getState().notices).toMatchObject([
       {
         key: "task-refusal:SAGA-3",
         form: "failure",
         title: "SAGA-3 is not up to date",
-        line: `The daemon refused a read of SAGA-3. The page shows the task as it was at ${formatClock(readAt)}.`,
+        line: `The daemon refused a read of SAGA-3. The page shows the task as it was before ${formatClock(refusedAt)}.`,
         words: ["store/task-not-found · no task SAGA-3"],
       },
     ]);
@@ -1137,13 +1132,13 @@ describe("the notice for a refused read", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     const stub = daemon();
     const { router, feed } = await openWithFeed("/tasks/SAGA/SAGA-3", stub);
-    const readAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA", "tasks"])!.dataUpdatedAt;
 
     stub.replies[LISTING_PATH] = refusalReply(422, { kind: "store", code: "config-invalid", message: "priorities is empty" });
     await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
+    const refusedAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA", "tasks"])!.errorUpdatedAt;
     const [notice] = useNoticeStore.getState().notices;
     expect(useNoticeStore.getState().notices.map(({ words }) => words)).toEqual([["store/config-invalid · priorities is empty"]]);
-    expect(notice?.line).toBe(`The daemon refused a read of SAGA-3. The page shows the task as it was at ${formatClock(readAt)}.`);
+    expect(notice?.line).toBe(`The daemon refused a read of SAGA-3. The page shows the task as it was before ${formatClock(refusedAt)}.`);
 
     const reads = countReads(stub, TASK_PATH);
     await sendAndWaitPastRetry(feed, [taskEvent("SAGA-3")]);

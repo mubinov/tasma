@@ -24,7 +24,7 @@ export function ProjectFailureNote({ tag, missing, className }: ProjectFailureNo
         <p className="mt-0.5 text-sm text-subtle">
           {missing
             ? `The daemon's project list has no project with this tag. The board shows ${tag} when a project with this tag appears.`
-            : `The board shows the other projects. It tries ${tag} again every 5 seconds.`}
+            : `The board shows the other projects, and shows ${tag} again when ${tag} changes on disk.`}
         </p>
         {!missing && <RefusalWords tag={tag} />}
       </div>
@@ -34,7 +34,7 @@ export function ProjectFailureNote({ tag, missing, className }: ProjectFailureNo
 
 /**
  * The words of the error of the project read, else of the listing read: a
- * fixed order, so the words stay the same from poll to poll when both fail.
+ * fixed order, so the words stay the same from read to read when both fail.
  * Read from the cache, so only this renders again when the words change.
  */
 function RefusalWords({ tag }: { tag: string }): ReactNode {

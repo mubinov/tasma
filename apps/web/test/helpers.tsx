@@ -286,7 +286,10 @@ export function stubFeed(stub: Pick<ReturnType<typeof stubTransport>, "replies" 
     return answer;
   }
 
-  /** Mounts the feed subscriber beside the router, as main.tsx does, and waits for its held read. */
+  /**
+   * Mounts the feed subscriber beside the router, as main.tsx does, and waits for its held read.
+   * The first read counts as a reset, so the reads of the load are sent again by then.
+   */
   async function mount(router: TestRouter): Promise<void> {
     const { queryClient, client } = router.options.context;
     render(<FeedSubscriber queryClient={queryClient} client={client} />);
@@ -326,6 +329,32 @@ export async function openWithFeed(path: string, stub: ReturnType<typeof stubTra
   return { router, feed };
 }
 
+/**
+ * The app at `path` with the feed subscriber mounted in the same render as the
+ * router, the order main.tsx runs at a start. Resolves once the feed holds its
+ * second read, which can be while the load is on its way.
+ */
+export async function startWithFeed(path: string, stub: ReturnType<typeof stubTransport>) {
+  vi.stubGlobal("scrollTo", () => {});
+  const feed = stubFeed(stub);
+  const context = testContext(stub.transport);
+  const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }), context);
+
+  render(
+    <>
+      <FeedSubscriber queryClient={context.queryClient} client={context.client} />
+      <QueryClientProvider client={context.queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </>,
+  );
+  await waitFor(() => {
+    expect(stub.paths).toContain("/events?after=c0");
+  });
+
+  return { router, feed };
+}
+
 export function taskEvent(id: string, change: "created" | "changed" | "deleted" = "changed"): FeedEvent {
   return { kind: "task", tag: tagOf(id), id, change };
 }
@@ -343,6 +372,11 @@ export function countReads(stub: Pick<ReturnType<typeof stubTransport>, "request
     counted = stub.requests.length;
     return reads.length;
   };
+}
+
+/** The paths of the load: those sent before the first read of the feed, which reads them all again. */
+export function pathsBeforeFeed(paths: readonly string[]): string[] {
+  return paths.slice(0, paths.indexOf("/events"));
 }
 
 /** Replaces ResizeObserver with one that reports a target only when a test asks. */

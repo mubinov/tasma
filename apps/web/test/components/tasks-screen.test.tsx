@@ -17,6 +17,7 @@ import {
   listing,
   project,
   PROJECTS,
+  taggedEntry,
   titlesIn,
   WORKFLOW,
 } from "../board-fixtures";
@@ -325,8 +326,8 @@ describe("what the daemon reports beside the tasks", () => {
 
     expect(screen.getByRole("note").textContent).toBe(
       "The index of SAGA is not following the disk"
-      + "The daemon could not repair the index of SAGA on this request. What it reports about SAGA "
-      + "can be older than the files on disk. Reload to try again.",
+      + "The daemon could not repair the index of SAGA. What it reports about SAGA "
+      + "can be older than the files on disk. The daemon tries the repair again.",
     );
     const line = screen.getByRole("heading", { level: 2, name: /warnings/ });
     expect(line.textContent).toBe("4 warnings about SAGA");
@@ -354,47 +355,52 @@ describe("what the daemon reports beside the tasks", () => {
   });
 });
 
-describe("polling", () => {
+describe("reads nothing again without an event", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
-  afterEach(() => {
-    Reflect.deleteProperty(document, "visibilityState");
-  });
+  /** The paths the board asks for in the next minute. */
+  async function askedInAMinute(paths: readonly string[]): Promise<string[]> {
+    const before = paths.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
 
-  /** One poll interval, then the zero-delay timer the query cache notifies its observers through. */
-  async function poll() {
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(10);
-    });
+    return paths.slice(before);
   }
 
-  it("follows the disk every 5 seconds", async () => {
-    const { transport, replies } = daemon({ "/projects/SAGA/tasks": listing([entry(1), entry(2)]) });
-    await renderWithRouter("/tasks?projects=SAGA", transport);
-    expect(titlesIn("Backlog")).toEqual(["Task 1", "Task 2"]);
+  it("on a board of one project with a search", async () => {
+    const { transport, paths } = daemon({
+      "/projects/SAGA/tasks": listing([entry(1), entry(2)]),
+      "/projects/SAGA/tasks?q=parser": listing([entry(1)]),
+    });
+    await renderWithRouter("/tasks?projects=SAGA&q=parser", transport);
+    await waitFor(() => {
+      expect(titlesIn("Backlog")).toEqual(["Task 1"]);
+    });
 
-    replies["/projects/SAGA/tasks"] = listing([entry(1, { status: "Done" }), entry(2)]);
-    await poll();
-
-    expect(titlesIn("Backlog")).toEqual(["Task 2"]);
-    expect(titlesIn("Done")).toEqual(["Task 1"]);
+    expect(await askedInAMinute(paths)).toEqual([]);
   });
 
-  it("asks nothing while the page is hidden", async () => {
-    const { transport, paths } = daemon({ "/projects/SAGA/tasks": listing([entry(1)]) });
-    await renderWithRouter("/tasks?projects=SAGA", transport);
+  it("on the board of all projects with a project the daemon refuses", async () => {
+    const { transport, paths } = daemon({
+      "/projects/SAGA": refusalReply(422, { kind: "store", code: "config-invalid", message: "statuses is empty" }),
+      "/projects/DELTA/tasks": listing([taggedEntry("DELTA", 11)]),
+    });
+    await renderWithRouter("/tasks?projects=all", transport);
+    expect(screen.getByRole("heading", { level: 2, name: "SAGA did not load" })).toBeTruthy();
+    expect(titlesIn("Backlog")).toEqual(["Task 11"]);
 
-    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
-    document.dispatchEvent(new Event("visibilitychange"));
-    const asked = paths.length;
-    await poll();
+    expect(await askedInAMinute(paths)).toEqual([]);
+  });
 
-    expect(paths).toHaveLength(asked);
+  it("in an empty tree", async () => {
+    const { transport, paths } = daemon({ "/projects": successReply([]) });
+    await renderWithRouter("/tasks", transport);
+    expect(screen.getByText(/^No projects yet/)).toBeTruthy();
+
+    expect(await askedInAMinute(paths)).toEqual([]);
   });
 });
 
@@ -917,6 +923,7 @@ describe("the notice for a refused read", () => {
   const LISTING = "/projects/SAGA/tasks";
   const UNREADABLE: TransportReply = { status: 502 };
   const INVALID = refusalReply(422, { kind: "store", code: "config-invalid", message: "priorities is empty" });
+  const HOUR = 3_600_000;
 
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -934,19 +941,23 @@ describe("the notice for a refused read", () => {
     return useNoticeStore.getState().announced.map(({ words }) => words);
   }
 
-  it("opens on one refused read of the listing, and closes with a spoken line after a successful read", async () => {
+  it("opens on one refused read of the listing, with the time of the refusal, and closes with a spoken line after a successful read", async () => {
     const stub = daemon({ [LISTING]: listing([entry(1)]) });
     const { router, feed } = await openWithFeed("/tasks?projects=SAGA", stub);
-    const readAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA", "tasks"])!.dataUpdatedAt;
+    const { queryClient } = router.options.context;
+    const loadedAt = queryClient.getQueryState(["daemon", "projects", "SAGA", "tasks"])!.dataUpdatedAt;
+    vi.setSystemTime(loadedAt + HOUR);
 
     stub.replies[LISTING] = INVALID;
     await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
+    const refusedAt = queryClient.getQueryState(["daemon", "projects", "SAGA", "tasks"])!.errorUpdatedAt;
+    expect(formatClock(refusedAt)).not.toBe(formatClock(loadedAt));
     expect(useNoticeStore.getState().notices).toMatchObject([
       {
         key: "board-refusal:SAGA",
         form: "failure",
         title: "The board is not up to date",
-        line: `The daemon refused a read of SAGA. The board shows the tasks as they were at ${formatClock(readAt)}.`,
+        line: `The daemon refused a read of SAGA. The board shows the tasks as they were before ${formatClock(refusedAt)}.`,
         words: ["store/config-invalid · priorities is empty"],
       },
     ]);
@@ -977,13 +988,13 @@ describe("the notice for a refused read", () => {
   it("opens on one refused read of the project, and keeps the notice as it is while the listing reads succeed", async () => {
     const stub = daemon({ [LISTING]: listing([entry(1)]) });
     const { router, feed } = await openWithFeed("/tasks?projects=SAGA", stub);
-    const readAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA"])!.dataUpdatedAt;
 
     stub.replies["/projects/SAGA"] = INVALID;
     await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
+    const refusedAt = router.options.context.queryClient.getQueryState(["daemon", "projects", "SAGA"])!.errorUpdatedAt;
     const [notice] = useNoticeStore.getState().notices;
     expect(notice?.words).toEqual(["store/config-invalid · priorities is empty"]);
-    expect(notice?.line).toBe(`The daemon refused a read of SAGA. The board shows the tasks as they were at ${formatClock(readAt)}.`);
+    expect(notice?.line).toBe(`The daemon refused a read of SAGA. The board shows the tasks as they were before ${formatClock(refusedAt)}.`);
 
     const reads = countReads(stub, LISTING);
     await sendAndWaitPastRetry(feed, [taskEvent("SAGA-1")]);

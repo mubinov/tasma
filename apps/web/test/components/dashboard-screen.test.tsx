@@ -23,8 +23,9 @@ import {
   renderDashboard,
   stubDashboard,
   stubLayout,
+  type DashboardStub,
 } from "../dashboard-fixtures";
-import { heldBack, refusalReply, stubThreadDom, successReply } from "../helpers";
+import { countReads, heldBack, pathsBeforeFeed, refusalReply, stubThreadDom, successReply } from "../helpers";
 import { stubWindowWidth } from "../setup/match-media";
 import { frame } from "../setup/notice-store";
 import { spoken } from "../update-fixtures";
@@ -304,7 +305,7 @@ describe("the header", () => {
     });
     expect(chatHeading().nextElementSibling?.textContent).toBe("Claude · dev:plan · Chat 4Failed");
     expect(itemLinks().some((link) => link.hasAttribute("aria-current"))).toBe(false);
-    expect(stub.paths.filter((path) => path === "/chats/SAGA-9/4")).toHaveLength(1);
+    expect(pathsBeforeFeed(stub.paths).filter((path) => path === "/chats/SAGA-9/4")).toHaveLength(1);
   });
 
   it("shows the id alone while the item is read the first time", async () => {
@@ -383,6 +384,13 @@ function olderStatus(): HTMLElement {
   return within(chatList().parentElement!).getAllByRole("status").at(-1)!;
 }
 
+/** The first read of the feed reads the list again, and the list asks for the older page again. */
+async function olderPageAskedAgain(stub: DashboardStub): Promise<void> {
+  await waitFor(() => {
+    expect(stub.paths.filter((path) => path === "/chats?after=c1")).toHaveLength(2);
+  });
+}
+
 describe("older chats", () => {
   it("loads the next page when the end of the list is in view, and says that it loads", async () => {
     const older = heldBack();
@@ -400,7 +408,7 @@ describe("older chats", () => {
       expect(itemLinks()).toHaveLength(4);
     });
     expect(olderStatus().textContent).toBe("");
-    expect(stub.paths.filter((path) => path.startsWith("/chats?after="))).toEqual(["/chats?after=c1"]);
+    expect(pathsBeforeFeed(stub.paths).filter((path) => path.startsWith("/chats?after="))).toEqual(["/chats?after=c1"]);
   });
 
   it("loads the next page when the list scrolls near its end", async () => {
@@ -440,11 +448,12 @@ describe("older chats", () => {
       "/chats?after=c1": refusalReply(500, { kind: "store", code: "chat-unreadable", message: "broken" }),
     });
     await renderDashboard(stub);
+    await olderPageAskedAgain(stub);
     const retry = await screen.findByRole("button", { name: "Try again" });
     expect(olderStatus().textContent).toBe("Older chats cannot be loaded.");
     expect(retry.parentElement).toBe(olderStatus().parentElement);
     expect(retry.classList).toContain("shrink-0");
-    expect(stub.paths.filter((path) => path === "/chats?after=c1")).toHaveLength(1);
+    expect(pathsBeforeFeed(stub.paths).filter((path) => path === "/chats?after=c1")).toHaveLength(1);
 
     const older = heldBack();
     stub.replies["/chats?after=c1"] = older.reply;
@@ -466,7 +475,9 @@ describe("older chats", () => {
       "/chats?after=c1": refusalReply(500, { kind: "store", code: "chat-unreadable", message: "broken" }),
     });
     await renderDashboard(stub);
+    await olderPageAskedAgain(stub);
     await screen.findByRole("button", { name: "Try again" });
+    const olderReads = countReads(stub, "/chats?after=c1");
     const refresh = heldBack();
     stub.replies["/chats"] = refresh.reply;
 
@@ -475,7 +486,7 @@ describe("older chats", () => {
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     });
-    expect(stub.paths.filter((path) => path === "/chats?after=c1")).toHaveLength(1);
+    expect(olderReads()).toBe(0);
 
     const [acme, ...rest] = ITEMS as [ChatListItem, ...ChatListItem[]];
     await act(async () => {
@@ -904,7 +915,7 @@ describe("the search and the project in the address", () => {
     expect(searchField().value).toBe("parser");
     expect(projectFilter().textContent).toContain("Saga");
     expect(screen.getByRole("button", { name: "Project: Saga SAGA" })).toBe(projectFilter());
-    expect(stub.paths.filter((path) => path.startsWith("/chats"))).toEqual(["/chats?project=SAGA&q=parser"]);
+    expect(pathsBeforeFeed(stub.paths).filter((path) => path.startsWith("/chats"))).toEqual(["/chats?project=SAGA&q=parser"]);
     expect(itemLinks().map((link) => link.getAttribute("data-chat-key"))).toEqual(["SAGA-3/2", "SAGA-3/1"]);
   });
 
@@ -916,7 +927,7 @@ describe("the search and the project in the address", () => {
     const router = await renderDashboard(stub, path);
 
     expect(screen.getByRole("button", { name: "Project: All projects" })).toBe(projectFilter());
-    expect(stub.paths.filter((sent) => sent.startsWith("/chats"))).toEqual(["/chats"]);
+    expect(pathsBeforeFeed(stub.paths).filter((sent) => sent.startsWith("/chats"))).toEqual(["/chats"]);
     expect(itemLinks()).toHaveLength(3);
     expect(router.state.location.search).toEqual({ project });
   });
@@ -926,7 +937,7 @@ describe("the search and the project in the address", () => {
     await renderDashboard(stub, "/?q=%20%20");
 
     expect(searchField().value).toBe("  ");
-    expect(stub.paths.filter((path) => path.startsWith("/chats"))).toEqual(["/chats"]);
+    expect(pathsBeforeFeed(stub.paths).filter((path) => path.startsWith("/chats"))).toEqual(["/chats"]);
   });
 
   it("keeps the search and the project when an item opens its chat", async () => {

@@ -1,7 +1,7 @@
 import { useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, useRouter } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
-import { POLL_INTERVAL, projectQuery, projectsQuery, taskSearchQuery, tasksQuery } from "../api/queries";
+import { projectQuery, projectsQuery, taskSearchQuery, tasksQuery } from "../api/queries";
 import { useRefusalNotice, type RefusalRead } from "../api/refusal-notice";
 import { formatClock } from "../lib/clock";
 
@@ -20,25 +20,31 @@ const route = getRouteApi("/tasks");
  */
 export function BoardRefusalNotice({ tag, searchText }: { tag: string; searchText: string }): ReactNode {
   const { client } = route.useRouteContext();
-  const listingRead = useQuery({ ...tasksQuery(client, tag), enabled: false });
-  const projectRead = useQuery({ ...projectQuery(client, tag), enabled: false });
-  const searchRead = useQuery({ ...taskSearchQuery(client, tag, searchText), enabled: false });
-  const reads: RefusalRead[] = [listingRead, projectRead];
+  const listing = tasksQuery(client, tag);
+  const project = projectQuery(client, tag);
+  const search = taskSearchQuery(client, tag, searchText);
+  const listingRead = useQuery({ ...listing, enabled: false });
+  const projectRead = useQuery({ ...project, enabled: false });
+  const searchRead = useQuery({ ...search, enabled: false });
+  const reads: RefusalRead[] = [
+    { queryKey: listing.queryKey, result: listingRead },
+    { queryKey: project.queryKey, result: projectRead },
+  ];
 
   if (searchText !== "" && searchRead.dataUpdatedAt > 0) {
-    reads.push(searchRead);
+    reads.push({ queryKey: search.queryKey, result: searchRead });
   }
 
   useRefusalNotice(`board-refusal:${tag}`, reads, {
     title: "The board is not up to date",
-    line: (readAt) => `The daemon refused a read of ${tag}. The board shows the tasks as they were at ${formatClock(readAt)}.`,
+    line: (refusedAt) => `The daemon refused a read of ${tag}. The board shows the tasks as they were before ${formatClock(refusedAt)}.`,
     upToDate: "The board is up to date.",
   });
 
   return null;
 }
 
-type ProjectListPollProps = {
+type ProjectListReloadProps = {
   all: boolean;
   /** On the board of all projects: the projects the loader read or was refused, in board order. */
   tags: readonly string[];
@@ -47,21 +53,19 @@ type ProjectListPollProps = {
 };
 
 /**
- * Polls the project list for the board of all projects, and for a board that
- * names tags the list did not hold. Apart from the board, so a poll re-renders
- * this alone: the read time changes on every poll.
+ * Loads the board again when the project list no longer matches the board of
+ * all projects, or now holds a tag of `missing`. Apart from the
+ * board, so a read of the list re-renders this alone: the read time changes on
+ * every read.
  *
- * `tags` come from the loader, not from the polled list: a tag whose reads are
- * not in the cache yet would suspend the whole board. The read time is a
+ * `tags` come from the loader, not from the list this reads: a tag whose reads
+ * are not in the cache yet would suspend the whole board. The read time is a
  * dependency, so each read of a list that still differs starts a load again.
  */
-export function ProjectListPoll({ all, tags, missing }: ProjectListPollProps): ReactNode {
+export function ProjectListReload({ all, tags, missing }: ProjectListReloadProps): ReactNode {
   const { client } = route.useRouteContext();
   const router = useRouter();
-  const { data: { data: projects }, dataUpdatedAt } = useSuspenseQuery({
-    ...projectsQuery(client),
-    refetchInterval: POLL_INTERVAL,
-  });
+  const { data: { data: projects }, dataUpdatedAt } = useSuspenseQuery(projectsQuery(client));
   const listed = projects.map((project) => project.tag);
   const tagsChanged = all ? listed.join(",") !== tags.join(",") : missing.some((tag) => listed.includes(tag));
 
@@ -75,19 +79,19 @@ export function ProjectListPoll({ all, tags, missing }: ProjectListPollProps): R
 }
 
 /**
- * Polls the reads of the projects the daemon refused at the load, and loads
- * the board again once both reads of one of them succeed. Apart from the
- * board, so a poll re-renders this alone. The read time is a dependency, for
- * the reason it is one in `ProjectListPoll`.
+ * Loads the board again once both reads of a project the daemon refused at the
+ * load succeed. Apart from the board, so a read re-renders this alone. The read
+ * time is a dependency, for the reason it is one in `ProjectListReload`.
  *
- * No read on mount: the load that refused them has just asked.
+ * Reads them again on mount: a change can come after the load read them and
+ * before this mounts, and a refusal marks a query old by itself, so the mark
+ * of that change cannot be told apart.
  */
-export function RefusedProjectsPoll({ tags }: { tags: readonly string[] }): ReactNode {
+export function RefusedProjectsReload({ tags }: { tags: readonly string[] }): ReactNode {
   const { client } = route.useRouteContext();
   const router = useRouter();
-  const poll = { refetchInterval: POLL_INTERVAL, retryOnMount: false };
-  const projectReads = useQueries({ queries: tags.map((tag) => ({ ...projectQuery(client, tag), ...poll })) });
-  const listingReads = useQueries({ queries: tags.map((tag) => ({ ...tasksQuery(client, tag), ...poll })) });
+  const projectReads = useQueries({ queries: tags.map((tag) => projectQuery(client, tag)) });
+  const listingReads = useQueries({ queries: tags.map((tag) => tasksQuery(client, tag)) });
   const recovered = tags.some((_, index) => [projectReads[index]!, listingReads[index]!].every(({ status }) => status === "success"));
   const readAt = Math.max(...[...projectReads, ...listingReads].map(({ dataUpdatedAt }) => dataUpdatedAt));
 

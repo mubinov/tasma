@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { createClient, TransportError, type Client } from "@tasma/protocol";
 import { DAEMON_PATH_PREFIX } from "./paths";
+import { trackRefusals } from "./refusal-notice";
 import { createFetchTransport } from "./transport";
 
 /** Reaches the daemon through the proxy, so every call stays same-origin. */
@@ -20,17 +21,17 @@ export function shouldRetry(failureCount: number, error: unknown): boolean {
 }
 
 /**
- * `refetchOnWindowFocus` is left at the library's default of on: with no event
- * stream and no polling, returning to the browser after a task file is edited by
- * hand is the only moment this app has to notice. The stale time is what stops
- * that becoming a refetch on every alt-tab.
+ * The change feed keeps the reads current. `refetchOnWindowFocus` is left at
+ * the library's default of on, as a fallback for a change the feed missed: a
+ * page that becomes visible again reads what is older than the stale time. The
+ * stale time is what stops that becoming a refetch on every alt-tab.
  *
  * The daemon runs on this machine, so the browser's offline state says nothing
  * about it: in the default network mode an offline event pauses every read and
  * write until the browser reports online again.
  */
 export function createAppQueryClient(): QueryClient {
-  return new QueryClient({
+  const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
         networkMode: "always",
@@ -42,4 +43,6 @@ export function createAppQueryClient(): QueryClient {
       },
     },
   });
+  trackRefusals(queryClient.getQueryCache());
+  return queryClient;
 }

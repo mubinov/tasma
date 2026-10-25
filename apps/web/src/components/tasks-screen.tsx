@@ -11,7 +11,7 @@ import {
   usePendingTaskWrites,
   type Created,
 } from "../api/mutations";
-import { POLL_INTERVAL, projectQuery, projectsQuery, taskSearchQuery, tasksQuery, workflowQuery } from "../api/queries";
+import { projectQuery, projectsQuery, taskSearchQuery, tasksQuery, workflowQuery } from "../api/queries";
 import {
   applyPending,
   boardOrder,
@@ -54,7 +54,7 @@ import { NAVIGATION_BY_PATH } from "../navigation";
 import { useNoticeStore } from "../store/notices";
 import { useUiStore } from "../store/ui";
 import { BoardColumn } from "./board-column";
-import { BoardRefusalNotice, ProjectListPoll, RefusedProjectsPoll } from "./board-polls";
+import { BoardRefusalNotice, ProjectListReload, RefusedProjectsReload } from "./board-reads";
 import { ConfirmDialog } from "./confirm-dialog";
 import { BUTTON_CLASS } from "./control-classes";
 import { CreateTaskDialog } from "./create-task-dialog";
@@ -123,7 +123,7 @@ function filterSentences({ labelled, searchText, searching, failed, matching, to
 /** The warnings line of one project the board shows. */
 type ProjectReport = { tag: string; items: readonly WarningItem[]; excluded: readonly ExcludedFile[] };
 
-/** What the board state region says: what a poll can change about the projects while the page stays put. */
+/** What the board state region says: what a read can change about the projects while the page stays put. */
 function boardStateWords(
   failed: readonly FailedProject[],
   unlive: readonly string[],
@@ -138,7 +138,7 @@ function boardStateWords(
 
 /**
  * The board state region. Its words land one animation frame after they
- * change: a poll that takes out the focused card also moves the focus, and a
+ * change: a read that takes out the focused card also moves the focus, and a
  * live message in the same commit as a focus move loses to it.
  */
 function BoardStateRegion({ words }: { words: string }): ReactNode {
@@ -188,7 +188,7 @@ function spotColumn(keys: readonly string[], spot: ColumnSpot): number | null {
 /**
  * The task the delete dialog asks about, kept after the close so the closing
  * dialog keeps its words. `column` is where the card stood when the dialog
- * opened, for a card a poll removes while it is open.
+ * opened, for a card a read removes while it is open.
  */
 type DeleteAsk = { id: string; title: string; column: ColumnSpot; open: boolean };
 
@@ -243,7 +243,7 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
     .flatMap(({ listing: { data: listing } }) => listing.entries)
     .filter(({ id }) => !deletingIds.has(id));
   const names = workflowNames(listed);
-  // Not under Suspense: a poll can bring a name the loader did not read, and a
+  // Not under Suspense: a read can bring a name the loader did not read, and a
   // new key would suspend the whole board until its read lands.
   const workflowReads = useQueries({ queries: names.map((name) => workflowQuery(client, name)) });
   const selected = distinctLabels(splitList(labels));
@@ -450,7 +450,7 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
   }
 
   /**
-   * A drop reads the board the drag started on, never the live one: a poll can
+   * A drop reads the board the drag started on, never the live one: a read can
    * have moved the card since. It moves no focus.
    */
   function dropCard(id: string, place: DropPlace, snapshot: BoardSnapshot): void {
@@ -619,8 +619,10 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
         />
       )}
       {!several && <BoardRefusalNotice tag={tag} searchText={searchText} />}
-      {(all || missing.length > 0) && <ProjectListPoll all={all} tags={boardOrder(tags, refused)} missing={missing} />}
-      {refused.length > 0 && <RefusedProjectsPoll tags={refused} />}
+      {(all || missing.length > 0) && (
+        <ProjectListReload all={all} tags={boardOrder(tags, refused)} missing={missing} />
+      )}
+      {refused.length > 0 && <RefusedProjectsReload tags={refused} />}
       {creating !== null && !several && (
         <CreateTaskDialog
           queryClient={queryClient}
@@ -660,7 +662,7 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
 function EmptyTree(): ReactNode {
   const { client } = route.useRouteContext();
   const router = useRouter();
-  const { data: { data: projects } } = useSuspenseQuery({ ...projectsQuery(client), refetchInterval: POLL_INTERVAL });
+  const { data: { data: projects } } = useSuspenseQuery(projectsQuery(client));
   const found = projects.length > 0;
 
   // The route redirects to a project only before it loads, so a project that

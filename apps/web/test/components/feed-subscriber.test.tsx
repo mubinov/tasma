@@ -77,6 +77,12 @@ function invalidated(queryClient: QueryClient, key: QueryKey): boolean | undefin
   return queryClient.getQueryState(key)?.isInvalidated;
 }
 
+async function landed(queryClient: QueryClient): Promise<void> {
+  await waitFor(() => {
+    expect(queryClient.isFetching()).toBe(0);
+  });
+}
+
 async function mount(feed: Feed, queryClient: QueryClient, mappings?: FeedMappings) {
   const view = render(<FeedSubscriber queryClient={queryClient} client={feed.client} mappings={mappings} />);
   await waitFor(() => {
@@ -113,10 +119,11 @@ afterEach(() => {
 it("refetches the task of a task event and its listing, and not another task of the project", async () => {
   const feed = stubFeed();
   const queryClient = createAppQueryClient();
+  await mount(feed, queryClient);
   observe(new QueryObserver(queryClient, taskQuery(feed.client, "SAGA", "SAGA-1")));
   observe(new QueryObserver(queryClient, taskQuery(feed.client, "SAGA", "SAGA-2")));
   observe(new QueryObserver(queryClient, tasksQuery(feed.client, "SAGA")));
-  await mount(feed, queryClient);
+  await landed(queryClient);
 
   const event: FeedEvent = { kind: "task", tag: "SAGA", id: "SAGA-1", change: "changed" };
   feed.send([event, event]);
@@ -132,11 +139,11 @@ it("refetches the task of a task event and its listing, and not another task of 
 it("invalidates every daemon query on a reset, and not the update of the app", async () => {
   const feed = stubFeed();
   const queryClient = createAppQueryClient();
+  await mount(feed, queryClient);
   queryClient.setQueryData(daemonKeys.health(), {});
   queryClient.setQueryData(daemonKeys.project("SAGA"), {});
   queryClient.setQueryData(daemonKeys.workflowRead("review"), {});
   queryClient.setQueryData(appKeys.update(), null);
-  await mount(feed, queryClient);
 
   feed.reset();
 
@@ -147,6 +154,143 @@ it("invalidates every daemon query on a reset, and not the update of the app", a
   expect(invalidated(queryClient, daemonKeys.project("SAGA"))).toBe(true);
   expect(invalidated(queryClient, daemonKeys.workflowRead("review"))).toBe(true);
   expect(invalidated(queryClient, appKeys.update())).toBe(false);
+});
+
+it("reads again what was read while the feed failed, once its first read succeeds", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const feed = stubFeed();
+  feed.replies["/events"] = { status: 502 };
+  const queryClient = createAppQueryClient();
+  render(<FeedSubscriber queryClient={queryClient} client={feed.client} />);
+  await waitFor(() => {
+    expect(feed.requestsOf("/events")).toBe(1);
+  });
+  observe(new QueryObserver(queryClient, taskQuery(feed.client, "SAGA", "SAGA-1")));
+  await landed(queryClient);
+
+  feed.replies["/events"] = successReply({ cursor: "c0", events: [] });
+  await wait(1_000);
+
+  await waitFor(() => {
+    expect(feed.paths).toContain("/events?after=c0");
+    expect(feed.requestsOf(TASK)).toBe(2);
+  });
+});
+
+it("reads a first load again when a change comes while it is on its way", async () => {
+  const feed = stubFeed();
+  const queryClient = createAppQueryClient();
+  await mount(feed, queryClient);
+  const first = heldBack();
+  feed.replies[TASK] = first.reply;
+  observe(new QueryObserver(queryClient, taskQuery(feed.client, "SAGA", "SAGA-1")));
+
+  feed.send([{ kind: "task", tag: "SAGA", id: "SAGA-1", change: "changed" }]);
+  await waitFor(() => {
+    expect(feed.paths).toContain("/events?after=c1");
+  });
+  expect(feed.requestsOf(TASK)).toBe(1);
+  feed.replies[TASK] = successReply({});
+  first.answer(successReply({}));
+
+  await waitFor(() => {
+    expect(feed.requestsOf(TASK)).toBe(2);
+  });
+});
+
+it("marks a first load that no screen shows old again when it lands after a change", async () => {
+  const feed = stubFeed();
+  const queryClient = createAppQueryClient();
+  await mount(feed, queryClient);
+  const first = heldBack();
+  feed.replies[TASK] = first.reply;
+  const options = taskQuery(feed.client, "SAGA", "SAGA-1");
+  const load = queryClient.query({ ...options, staleTime: "static" });
+
+  feed.send([{ kind: "task", tag: "SAGA", id: "SAGA-1", change: "changed" }]);
+  await waitFor(() => {
+    expect(feed.paths).toContain("/events?after=c1");
+  });
+  first.answer(successReply({}));
+  await load;
+
+  expect(invalidated(queryClient, options.queryKey)).toBe(true);
+  expect(feed.requestsOf(TASK)).toBe(1);
+});
+
+it("marks a query with data that no screen shows old again when its read lands after a change", async () => {
+  const feed = stubFeed();
+  const queryClient = createAppQueryClient();
+  await mount(feed, queryClient);
+  const options = taskQuery(feed.client, "SAGA", "SAGA-1");
+  await queryClient.query(options);
+  const again = heldBack();
+  feed.replies[TASK] = again.reply;
+  const read = queryClient.query({ ...options, staleTime: 0 });
+
+  feed.send([{ kind: "task", tag: "SAGA", id: "SAGA-1", change: "changed" }]);
+  await waitFor(() => {
+    expect(feed.paths).toContain("/events?after=c1");
+  });
+  again.answer(successReply({}));
+  await read;
+
+  expect(invalidated(queryClient, options.queryKey)).toBe(true);
+  expect(feed.requestsOf(TASK)).toBe(2);
+});
+
+it("reads a query that a screen shows once again when a second change comes while the read of the first runs", async () => {
+  const feed = stubFeed();
+  const queryClient = createAppQueryClient();
+  await mount(feed, queryClient);
+  observe(new QueryObserver(queryClient, taskQuery(feed.client, "SAGA", "SAGA-1")));
+  await landed(queryClient);
+  const first = heldBack();
+  feed.replies[TASK] = first.reply;
+  const event: FeedEvent = { kind: "task", tag: "SAGA", id: "SAGA-1", change: "changed" };
+
+  feed.send([event]);
+  await waitFor(() => {
+    expect(feed.requestsOf(TASK)).toBe(2);
+  });
+  feed.replies[TASK] = successReply({});
+  feed.send([event]);
+  await waitFor(() => {
+    expect(feed.paths).toContain("/events?after=c2");
+  });
+  first.answer(successReply({}));
+  await landed(queryClient);
+
+  expect(feed.requestsOf(TASK)).toBe(3);
+  expect(invalidated(queryClient, daemonKeys.task("SAGA", "SAGA-1"))).toBe(false);
+});
+
+it("reads a query once again when a screen mounts it during a read that a change made old, and a second change comes", async () => {
+  const feed = stubFeed();
+  const queryClient = createAppQueryClient();
+  await mount(feed, queryClient);
+  const options = taskQuery(feed.client, "SAGA", "SAGA-1");
+  await queryClient.query(options);
+  const first = heldBack();
+  feed.replies[TASK] = first.reply;
+  void queryClient.query({ ...options, staleTime: 0 });
+  const event: FeedEvent = { kind: "task", tag: "SAGA", id: "SAGA-1", change: "changed" };
+  feed.send([event]);
+  await waitFor(() => {
+    expect(feed.paths).toContain("/events?after=c1");
+  });
+
+  observe(new QueryObserver(queryClient, options));
+  feed.replies[TASK] = successReply({});
+  feed.send([event]);
+  await waitFor(() => {
+    expect(feed.paths).toContain("/events?after=c2");
+  });
+  first.answer(successReply({}));
+  await landed(queryClient);
+
+  expect(feed.requestsOf(TASK)).toBe(3);
+  expect(invalidated(queryClient, options.queryKey)).toBe(false);
 });
 
 it("invalidates a key that only the mapping table it is given names", async () => {
@@ -180,8 +324,8 @@ it("aborts its held read when it unmounts", async () => {
 it("skips an event of a kind it does not know and reads on at once", async () => {
   const feed = stubFeed();
   const queryClient = createAppQueryClient();
-  queryClient.setQueryData(daemonKeys.project("SAGA"), {});
   await mount(feed, queryClient);
+  queryClient.setQueryData(daemonKeys.project("SAGA"), {});
 
   feed.send([{ kind: "future", tag: "SAGA" }]);
 

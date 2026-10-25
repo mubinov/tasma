@@ -1,7 +1,7 @@
 import { useQueries, useSuspenseQueries, type QueryClient } from "@tanstack/react-query";
 import type { Client, Project, Success, TaskList } from "@tasma/protocol";
 import { useEffect, useRef } from "react";
-import { POLL_INTERVAL, projectQuery, tasksQuery } from "../api/queries";
+import { projectQuery, tasksQuery } from "../api/queries";
 import { isRefused } from "../api/refusal-notice";
 import { useNoticeStore } from "../store/notices";
 import { boardOrder } from "./board";
@@ -32,22 +32,18 @@ export type BoardProjects = {
 };
 
 /**
- * Polls the reads of the projects the loader read, and splits the projects of
- * the board into those it shows and those it does not. On a board of several
- * projects, a loaded project whose last poll the daemon refused is not shown.
+ * Reads the projects the loader read, and splits the projects of the board
+ * into those it shows and those it does not. On a board of several projects, a
+ * loaded project whose last read the daemon refused is not shown.
  */
 export function useBoardProjects(
   client: Client,
   queryClient: QueryClient,
   { tags, refused, missing, several }: BoardProjectsInput,
 ): BoardProjects {
-  const projectReads = useSuspenseQueries({
-    queries: tags.map((tag) => ({ ...projectQuery(client, tag), refetchInterval: POLL_INTERVAL })),
-  });
-  const listingReads = useSuspenseQueries({
-    queries: tags.map((tag) => ({ ...tasksQuery(client, tag), refetchInterval: POLL_INTERVAL })),
-  });
-  // Combined, so a poll that leaves the list as it was does not render the board again.
+  const projectReads = useSuspenseQueries({ queries: tags.map((tag) => projectQuery(client, tag)) });
+  const listingReads = useSuspenseQueries({ queries: tags.map((tag) => tasksQuery(client, tag)) });
+  // Combined, so a read that leaves the list as it was does not render the board again.
   const failing = useQueries({
     queries: tags.flatMap((tag) => [
       { ...projectQuery(client, tag), enabled: false },

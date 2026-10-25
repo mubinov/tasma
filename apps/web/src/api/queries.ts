@@ -14,8 +14,6 @@ import {
 
 import { APP_PATH_PREFIX } from "./paths";
 
-export const POLL_INTERVAL = 5_000;
-
 /** The chats the dashboard lists. A field that is absent is left out, so the filter of all chats is `{}`. */
 export type ChatFilter = Omit<ChatListQuery, "after">;
 

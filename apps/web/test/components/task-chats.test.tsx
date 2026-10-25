@@ -7,7 +7,7 @@ import { fullChatTime, shortChatTime } from "../../src/lib/chat-time";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
 import { chatRecord } from "../chat-daemon";
-import { heldBack, refusalReply, renderWithRouter, stubThreadDom, successReply } from "../helpers";
+import { countReads, heldBack, refusalReply, renderWithRouter, stubThreadDom, successReply } from "../helpers";
 import { CHATS_PATH, stubTaskChats, type TaskChatsStub } from "../task-chats-daemon";
 import { TASK_PATH, metaLine, task } from "../task-screen-fixtures";
 import { frame } from "../setup/notice-store";
@@ -187,6 +187,7 @@ describe("live", () => {
   it("shows a new chat as the first row and a change of state on the newest row, with no reload", async () => {
     const stub = stubTaskChats([chat(1, "working", "research")]);
     await openPage(stub);
+    const taskReads = countReads(stub, TASK_PATH);
 
     await stub.change([chat(1, "working", "research"), chat(2, "working", "build")]);
 
@@ -201,7 +202,7 @@ describe("live", () => {
     await waitFor(() => {
       expect(rows().map(stateOf)).toEqual(["Needs you", null]);
     });
-    expect(stub.readsOf(TASK_PATH)).toBe(1);
+    expect(taskReads()).toBe(0);
   });
 
   it("keeps focus on the same chat when a new chat comes in at the top", async () => {

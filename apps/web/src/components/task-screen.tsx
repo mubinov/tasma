@@ -15,7 +15,7 @@ import {
   type RefObject,
 } from "react";
 import { taskDeleteOptions, useFailedChatStart, usePendingChatStart } from "../api/mutations";
-import { POLL_INTERVAL, projectQuery, taskChatsQuery, taskQuery, tasksQuery, workflowQuery } from "../api/queries";
+import { projectQuery, taskChatsQuery, taskQuery, tasksQuery, workflowQuery } from "../api/queries";
 import { useRefusalNotice } from "../api/refusal-notice";
 import { boardHolds, isFinalStatus, isTopPriority, stepView } from "../lib/board";
 import { formatClock } from "../lib/clock";
@@ -453,13 +453,20 @@ function EditControls(
  */
 function TaskRefusalNotice({ tag, id }: { tag: string; id: string }): ReactNode {
   const { client } = route.useRouteContext();
-  const taskRead = useQuery({ ...taskQuery(client, tag, id), enabled: false });
-  const projectRead = useQuery({ ...projectQuery(client, tag), enabled: false });
-  const listingRead = useQuery({ ...tasksQuery(client, tag), enabled: false });
+  const task = taskQuery(client, tag, id);
+  const project = projectQuery(client, tag);
+  const listing = tasksQuery(client, tag);
+  const taskRead = useQuery({ ...task, enabled: false });
+  const projectRead = useQuery({ ...project, enabled: false });
+  const listingRead = useQuery({ ...listing, enabled: false });
 
-  useRefusalNotice(`task-refusal:${id}`, [taskRead, projectRead, listingRead], {
+  useRefusalNotice(`task-refusal:${id}`, [
+    { queryKey: task.queryKey, result: taskRead },
+    { queryKey: project.queryKey, result: projectRead },
+    { queryKey: listing.queryKey, result: listingRead },
+  ], {
     title: `${id} is not up to date`,
-    line: (readAt) => `The daemon refused a read of ${id}. The page shows the task as it was at ${formatClock(readAt)}.`,
+    line: (refusedAt) => `The daemon refused a read of ${id}. The page shows the task as it was before ${formatClock(refusedAt)}.`,
     upToDate: `${id} is up to date.`,
   });
 
@@ -469,24 +476,15 @@ function TaskRefusalNotice({ tag, id }: { tag: string; id: string }): ReactNode 
 export function TaskScreen(): ReactNode {
   const { client, queryClient } = route.useRouteContext();
   const { project: tag, task: taskId } = route.useParams();
-  const { data: { data: project } } = useSuspenseQuery({
-    ...projectQuery(client, tag),
-    refetchInterval: POLL_INTERVAL,
-  });
-  const { data: { data: task, diagnostics } } = useSuspenseQuery({
-    ...taskQuery(client, tag, taskId),
-    refetchInterval: POLL_INTERVAL,
-  });
-  const { data: { data: listing } } = useSuspenseQuery({
-    ...tasksQuery(client, tag),
-    refetchInterval: POLL_INTERVAL,
-  });
+  const { data: { data: project } } = useSuspenseQuery(projectQuery(client, tag));
+  const { data: { data: task, diagnostics } } = useSuspenseQuery(taskQuery(client, tag, taskId));
+  const { data: { data: listing } } = useSuspenseQuery(tasksQuery(client, tag));
   const { data: { data: chats }, isFetching: chatsFetching } = useSuspenseQuery(taskChatsQuery(client, tag, taskId));
   const { frontmatter, body, comments = [] } = task;
   // The heading, the document title and the editor's start text read the disk
   // values; every value a property control writes comes from the overlay below.
   const { id, title, workflow: workflowName } = frontmatter;
-  // Not under Suspense: a poll can bring a workflow name the loader did not
+  // Not under Suspense: a read can bring a workflow name the loader did not
   // read, and a new key would suspend the page until its read lands.
   const { data: workflowRead } = useQuery({
     ...workflowQuery(client, workflowName ?? ""),

@@ -9,7 +9,7 @@ import { STEP_ACTION_SELECTOR } from "../../src/lib/step-action";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
 import { chatRecord } from "../chat-daemon";
-import { heldBack, refusalReply, renderWithRouter, stubThreadDom, successReply } from "../helpers";
+import { countReads, heldBack, refusalReply, renderWithRouter, stubThreadDom, successReply } from "../helpers";
 import { CHATS_PATH, stubTaskChats, type TaskChatsStub } from "../task-chats-daemon";
 import { backLink, field, TASK_PATH, task } from "../task-screen-fixtures";
 import { frame } from "../setup/notice-store";
@@ -472,6 +472,7 @@ describe("a change while the button holds focus", () => {
   it("changes Open to Start with no reload when the chat fails, keeps focus, and says Start", async () => {
     const daemon = stub([chat(1)]);
     await openPage(daemon);
+    const taskReads = countReads(daemon, TASK_PATH);
     const button = shownAction();
     button.focus();
 
@@ -484,7 +485,7 @@ describe("a change while the button holds focus", () => {
     await frame();
     // The list and the button speak in one frame, in no fixed order.
     expect(spoken().toSorted()).toEqual(["Start research", "The research chat failed."]);
-    expect(daemon.readsOf(TASK_PATH)).toBe(1);
+    expect(taskReads()).toBe(0);
   });
 
   it("moves focus to the h1 when the task loses its workflow", async () => {

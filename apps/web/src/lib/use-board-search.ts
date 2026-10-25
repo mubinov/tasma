@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Client, Success, TaskList } from "@tasma/protocol";
 import { useDeferredValue, useEffect, useState } from "react";
-import { POLL_INTERVAL, taskSearchQuery } from "../api/queries";
+import { taskSearchQuery } from "../api/queries";
 
 /** How long a search request runs before the live region says that it runs, in ms. */
 export const BUSY_ANNOUNCE_DELAY = 1000;
@@ -42,7 +42,6 @@ export function useBoardSearch(client: Client, tag: string, q: string | undefine
   const searchRead = useQuery({
     ...taskSearchQuery(client, tag, searchText),
     enabled: searchRequested,
-    refetchInterval: POLL_INTERVAL,
   });
   // A refetch of a key with no data sets its status back to pending and drops
   // its error, so a failure is read from the error count, which a refetch
