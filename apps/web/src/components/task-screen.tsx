@@ -14,7 +14,7 @@ import {
   type Ref,
   type RefObject,
 } from "react";
-import { taskDeleteOptions } from "../api/mutations";
+import { taskDeleteOptions, useFailedChatStart, usePendingChatStart } from "../api/mutations";
 import { POLL_INTERVAL, projectQuery, taskChatsQuery, taskQuery, tasksQuery, workflowQuery } from "../api/queries";
 import { useRefusalNotice } from "../api/refusal-notice";
 import { isFinalStatus, isTopPriority, stepView } from "../lib/board";
@@ -22,7 +22,7 @@ import { formatClock } from "../lib/clock";
 import { deleteTaskWords } from "../lib/delete-words";
 import { useDocumentTitle } from "../lib/document-title";
 import type { FinalFocus } from "../lib/final-focus";
-import { focusInView } from "../lib/focus-in-view";
+import { focusChatHeading, focusInView } from "../lib/focus-in-view";
 import {
   ArrowLeftIcon,
   DotsThreeVerticalIcon,
@@ -34,6 +34,7 @@ import {
   XIcon,
 } from "../lib/icons";
 import { HIDDEN_TEXT } from "../lib/page-find";
+import { actionStep, stepAction, type StepAction } from "../lib/step-action";
 import { blockingRows, relationRows, type RelationRow } from "../lib/task-page";
 import { useChatAnnouncements } from "../lib/use-chat-announcements";
 import { useCommentList } from "../lib/use-comment-list";
@@ -64,6 +65,7 @@ import {
 import { Markdown } from "./markdown";
 import { ScreenHeading } from "./screen-heading";
 import { ScrollToTop, type PageColumn } from "./scroll-to-top";
+import { StepActionButton } from "./step-action-button";
 import { StepMark } from "./step-view";
 import { ChangedOnDisk } from "./changed-on-disk";
 import { ChatPanel } from "./chat-panel";
@@ -93,6 +95,15 @@ const COLUMN_LAYOUT: Record<PageColumn, { frame: string; content: string; conten
     contentEnd: "xl:pb-[calc(--spacing(12)+var(--notice-stack-height,0px))]",
   },
 };
+
+/**
+ * Below the `--container-step-floor` width of the bar, while the step action shows, the line padding and the gaps of
+ * the controls shrink, so Edit and the task menu stay on a 256 px line beside the icon of the action.
+ */
+const STEP_ACTION_FLOOR = {
+  line: "@max-step-floor:data-step-action-shown:px-2",
+  controls: "@max-step-floor:group-data-step-action-shown/top-bar:gap-1",
+} as const;
 
 /** The text of the element that is on the screen. */
 function visibleText(element: Element): string {
@@ -173,6 +184,44 @@ function useTaskChat(headingRef: RefObject<HTMLElement | null>): TaskChat {
       // Replaced, so Back does not open the closed chat again.
       void navigate({ to: "/tasks/$project/$task", params: { project: tag, task: taskId }, search: {}, replace: true });
     },
+  };
+}
+
+/**
+ * Moves focus after the step action button left the page with it, and returns
+ * the callback the button calls then. The panel takes focus only when `?chat`
+ * changes, and the find field and the editor take it themselves.
+ *
+ * `shows` is a dependency only so that the effect clears the flag in the
+ * render where the button leaves, also when nothing else changes.
+ */
+function useStepActionFocus(
+  action: StepAction | null,
+  shows: boolean,
+  chat: number | undefined,
+  headingRef: RefObject<HTMLElement | null>,
+): () => void {
+  const focusLostRef = useRef(false);
+  const lastChatRef = useRef(chat);
+  const kind = action?.kind ?? null;
+  const actionChat = action?.kind === "open" ? action.chat : null;
+
+  useLayoutEffect(() => {
+    const chatChanged = lastChatRef.current !== chat;
+    lastChatRef.current = chat;
+    if (!focusLostRef.current) {
+      return;
+    }
+    focusLostRef.current = false;
+    if (kind === null) {
+      focusInView(headingRef.current);
+    } else if (!chatChanged && actionChat === chat) {
+      focusChatHeading();
+    }
+  }, [shows, kind, actionChat, chat, headingRef]);
+
+  return () => {
+    focusLostRef.current = true;
   };
 }
 
@@ -266,6 +315,8 @@ function BlockedSummary({ tag, blocking }: { tag: string; blocking: readonly Rel
 }
 
 type ReadingControlsProps = {
+  /** The first control. */
+  stepActionButton: ReactNode;
   editButtonRef: Ref<HTMLButtonElement>;
   findButtonRef: RefObject<HTMLButtonElement | null>;
   findOpen: boolean;
@@ -275,7 +326,7 @@ type ReadingControlsProps = {
 };
 
 function ReadingControls(
-  { editButtonRef, findButtonRef, findOpen, onFind, onEdit, onDelete }: ReadingControlsProps,
+  { stepActionButton, editButtonRef, findButtonRef, findOpen, onFind, onEdit, onDelete }: ReadingControlsProps,
 ): ReactNode {
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -303,6 +354,7 @@ function ReadingControls(
 
   return (
     <>
+      {stepActionButton}
       {/* The name says what a press does, so the button has no expanded state. */}
       <Tooltip content={findOpen ? "Close find" : "Find in task ⌘F"}>
         <Button
@@ -506,7 +558,24 @@ export function TaskScreen(): ReactNode {
   const navigate = route.useNavigate();
   // In edit mode the h1 is clipped and takes no focus, so the title field takes it.
   const { chat, opened: chatOpened, close: closeChat } = useTaskChat(scrolledRef);
-  useChatAnnouncements({ chats, fetching: chatsFetching, stateful: !final, openChat: chat, quiet: false });
+  // The start write speaks for its own start, so the list holds back the chat it starts.
+  const pendingStart = usePendingChatStart(id);
+  const failedStart = useFailedChatStart(id);
+  useChatAnnouncements({
+    chats,
+    fetching: chatsFetching,
+    stateful: !final,
+    openChat: chat,
+    quiet: pendingStart !== undefined,
+    seen: failedStart,
+  });
+  const step = actionStep(live, workflow);
+  // A pending start keeps the text of its press: the list can hold the new chat before the answer.
+  const action: StepAction | null = pendingStart !== undefined
+    ? { kind: "start", step: pendingStart.step }
+    : step === null ? null : stepAction(step, chats);
+  const actionShows = action !== null && draft === null && !find.open && !(action.kind === "open" && action.chat === chat);
+  const actionFocusLost = useStepActionFocus(action, actionShows, chat, headingRef);
   const column: PageColumn = chat === undefined ? "sidebar" : "chat";
   const layout = COLUMN_LAYOUT[column];
   const { mutate: sendDelete, isIdle: deleteUnsent } = useMutation(taskDeleteOptions(queryClient, client));
@@ -575,7 +644,8 @@ export function TaskScreen(): ReactNode {
           <div
             ref={barLineRef}
             data-find-open={find.open ? "" : undefined}
-            className={`group/top-bar flex h-top-bar items-center gap-4 px-6 sm:px-10 ${FIND_OPEN_FLOOR.line}`}
+            data-step-action-shown={actionShows ? "" : undefined}
+            className={`group/top-bar flex h-top-bar items-center gap-4 px-6 sm:px-10 ${FIND_OPEN_FLOOR.line} ${STEP_ACTION_FLOOR.line}`}
           >
             <Link
               to="/tasks"
@@ -594,11 +664,14 @@ export function TaskScreen(): ReactNode {
               <span className="shrink-0 font-mono text-sm text-dim">{id}</span>
               <span className="truncate font-chrome text-base font-medium">{title}</span>
             </span>
-            <div className={`ml-auto flex shrink-0 items-center gap-2 ${FIND_OPEN_WIDTHS.controls} ${FIND_OPEN_FLOOR.controls}`}>
+            <div className={`ml-auto flex shrink-0 items-center gap-2 ${FIND_OPEN_WIDTHS.controls} ${FIND_OPEN_FLOOR.controls} ${STEP_ACTION_FLOOR.controls}`}>
               {find.open && <FindGroup find={find} />}
               {draft === null
                 ? (
                     <ReadingControls
+                      stepActionButton={actionShows && (
+                        <StepActionButton tag={tag} id={id} action={action} onFocusLost={actionFocusLost} />
+                      )}
                       editButtonRef={editing.editRef}
                       findButtonRef={findButtonRef}
                       findOpen={find.open}

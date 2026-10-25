@@ -17,7 +17,7 @@ import {
   isChatMissing,
 } from "../lib/chat-messages";
 import { WarningIcon, XIcon } from "../lib/icons";
-import { focusInView } from "../lib/focus-in-view";
+import { CHAT_HEADING_MARK, focusInView } from "../lib/focus-in-view";
 import { useChatWrites } from "../lib/use-chat-writes";
 import { useFocusLost } from "../lib/use-focus-lost";
 import { chatDraft, subscribeChatDraft, useChatDraftStore } from "../store/chat-drafts";
@@ -129,7 +129,7 @@ function ChatPanelBody({ tag, task, chat, onClose, focusOnMount = false }: ChatP
             ref={headingRef}
             id={headingId}
             tabIndex={-1}
-            data-chat-heading=""
+            {...CHAT_HEADING_MARK}
             className="font-chrome text-base font-semibold wrap-anywhere"
           >
             {record === undefined ? `Chat ${String(chat)}` : `${chatAgentName(record.agent)} · ${record.step}`}

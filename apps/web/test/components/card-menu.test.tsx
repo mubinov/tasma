@@ -73,6 +73,14 @@ describe("the items", () => {
     expect(statusItems(menu).map((item) => item.textContent)).toEqual(STATUSES);
   });
 
+  it("hold no step item and no third separator for a task with no workflow", async () => {
+    await renderMenu();
+    const { menu } = await openFromButton();
+
+    expect(menu.firstElementChild?.textContent).toBe("Open task");
+    expect(within(menu).getAllByRole("separator")).toHaveLength(2);
+  });
+
   it("end with a second separator and Delete, after the Move to group", async () => {
     await renderMenu();
     const { menu } = await openFromButton();

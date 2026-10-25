@@ -5,6 +5,7 @@ import { ArrowUpIcon } from "@phosphor-icons/react/ArrowUp";
 import { CaretDownIcon } from "@phosphor-icons/react/CaretDown";
 import { CaretRightIcon } from "@phosphor-icons/react/CaretRight";
 import { CaretUpIcon } from "@phosphor-icons/react/CaretUp";
+import { ChatCircleIcon } from "@phosphor-icons/react/ChatCircle";
 import { CheckIcon } from "@phosphor-icons/react/Check";
 import { CircleNotchIcon } from "@phosphor-icons/react/CircleNotch";
 import { DotsThreeVerticalIcon } from "@phosphor-icons/react/DotsThreeVertical";
@@ -18,6 +19,7 @@ import { MagnifyingGlassIcon } from "@phosphor-icons/react/MagnifyingGlass";
 import { MonitorIcon } from "@phosphor-icons/react/Monitor";
 import { MoonIcon } from "@phosphor-icons/react/Moon";
 import { PencilSimpleIcon } from "@phosphor-icons/react/PencilSimple";
+import { PlayIcon } from "@phosphor-icons/react/Play";
 import { PlusIcon } from "@phosphor-icons/react/Plus";
 import { ProhibitIcon } from "@phosphor-icons/react/Prohibit";
 import { SidebarSimpleIcon } from "@phosphor-icons/react/SidebarSimple";
@@ -34,6 +36,7 @@ export {
   CaretDownIcon,
   CaretRightIcon,
   CaretUpIcon,
+  ChatCircleIcon,
   CheckIcon,
   CircleNotchIcon,
   DotsThreeVerticalIcon,
@@ -47,6 +50,7 @@ export {
   MonitorIcon,
   MoonIcon,
   PencilSimpleIcon,
+  PlayIcon,
   PlusIcon,
   ProhibitIcon,
   SidebarSimpleIcon,

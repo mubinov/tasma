@@ -1,6 +1,7 @@
 import {
   bodyCorrection,
   chatRefusalCode,
+  chatStartFailureTitle,
   failureKind,
   titleCorrection,
   type ChatWrite,
@@ -48,6 +49,13 @@ const CHAT_FAILURE_LINES: Record<FailureKind, string> = {
   unsent: "The write did not start, so nothing was sent.",
 };
 
+const CHAT_START_FAILURE_LINES: Record<FailureKind, string> = {
+  refused: "The daemon refused to start the chat. Its own words are below.",
+  unanswered: "No daemon answered. If the chat started, it shows in the chats of the task.",
+  address: "The daemon did not answer through the address below. Start the daemon there if it is not running.",
+  unsent: "The request did not start, so no chat started.",
+};
+
 const TURN_RUNNING_LINE = "The agent is working on a turn. Send the message when the turn ends.";
 
 function chatName({ task, chat }: ChatPlace): string {
@@ -81,6 +89,13 @@ export function chatClosedNotice(place: ChatPlace): ClosedNotice {
     title: `Your answer to ${chatName(place)} was not used.`,
     line: "The request was already closed: another window answered it, or it was cancelled or ended. "
       + "The chat shows the outcome.",
+  };
+}
+
+export function chatStartFailure(step: string, id: string): WriteFailure {
+  return {
+    title: chatStartFailureTitle(step, id),
+    line: (error) => CHAT_START_FAILURE_LINES[failureKind(error.cause)],
   };
 }
 

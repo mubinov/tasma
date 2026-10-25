@@ -5,6 +5,7 @@ import { Tooltip } from "../../src/components/tooltip";
 
 // Above the 600 ms open delay of a hover.
 const PAST_HOVER_DELAY = { timeout: 1500 };
+const PAST_HOVER_MS = 1000;
 
 const AT_ONCE = { timeout: 100 };
 
@@ -131,4 +132,36 @@ it("renders the popup in a portal under the body, outside the render container",
 
   expect(container.contains(popup)).toBe(false);
   expect(document.body.contains(popup)).toBe(true);
+});
+
+it.each([
+  [false, "stays closed"],
+  [true, "opens"],
+])("asks canOpen at each open, and with %s %s on keyboard focus and on hover", async (allowed) => {
+  const user = userEvent.setup();
+  let asked = 0;
+  render(
+    <Tooltip
+      content="Full destination"
+      canOpen={() => {
+        asked += 1;
+        return allowed;
+      }}
+    >
+      <a href="https://example.com/a">Example</a>
+    </Tooltip>,
+  );
+
+  await user.tab();
+  await settle();
+  expect(screen.queryByText("Full destination") !== null).toBe(allowed);
+
+  await user.tab();
+  await waitFor(() => {
+    expect(screen.queryByText("Full destination")).toBeNull();
+  });
+  await user.hover(screen.getByRole("link", { name: "Example" }));
+  await new Promise((resolve) => setTimeout(resolve, PAST_HOVER_MS));
+  expect(screen.queryByText("Full destination") !== null).toBe(allowed);
+  expect(asked).toBe(2);
 });

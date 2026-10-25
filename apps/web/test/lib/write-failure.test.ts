@@ -1,7 +1,13 @@
 import { ProtocolError, TransportError, type SerializeErrorCode } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
 import { failureKind, TaskWriteError, WriteError, type FailureKind } from "../../src/api/mutations";
-import { boardFailureLine, chatClosedNotice, chatFailure, pageFailureLine } from "../../src/lib/write-failure";
+import {
+  boardFailureLine,
+  chatClosedNotice,
+  chatFailure,
+  chatStartFailure,
+  pageFailureLine,
+} from "../../src/lib/write-failure";
 
 const CAUSES: Record<FailureKind, { label: string; cause: unknown }> = {
   refused: {
@@ -137,5 +143,23 @@ describe("chatFailure", () => {
       line: "The request was already closed: another window answered it, or it was cancelled or ended. "
         + "The chat shows the outcome.",
     });
+  });
+});
+
+describe("chatStartFailure", () => {
+  const LINES: Record<FailureKind, string> = {
+    refused: "The daemon refused to start the chat. Its own words are below.",
+    unanswered: "No daemon answered. If the chat started, it shows in the chats of the task.",
+    address: "The daemon did not answer through the address below. Start the daemon there if it is not running.",
+    unsent: "The request did not start, so no chat started.",
+  };
+  const CASES = KINDS.map((kind) => ({ ...CAUSES[kind], line: LINES[kind] }));
+
+  it("titles the failure with the step and the task", () => {
+    expect(chatStartFailure("research", "SAGA-3").title).toBe("The research chat of SAGA-3 did not start");
+  });
+
+  it.each(CASES)("says whether a chat started for $label", ({ cause, line }) => {
+    expect(chatStartFailure("research", "SAGA-3").line(new WriteError(cause))).toBe(line);
   });
 });

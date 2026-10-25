@@ -10,6 +10,15 @@ export function focusInView(element: HTMLElement | null): void {
   }
 }
 
+const CHAT_HEADING = "data-chat-heading";
+
+/** The attribute of the heading of the chat panel, which `focusChatHeading` finds. */
+export const CHAT_HEADING_MARK = { [CHAT_HEADING]: "" };
+
+export function focusChatHeading(): void {
+  focusInView(document.querySelector<HTMLElement>(`[${CHAT_HEADING}]`));
+}
+
 /** Inside the window, with no other element, such as a sticky bar, over its corners. */
 function showsWhole(element: HTMLElement): boolean {
   const { left, top, right, bottom } = element.getBoundingClientRect();

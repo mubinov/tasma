@@ -1,5 +1,16 @@
-export { CHAT_CLIENT, chatFailureKey, chatRefusalCode, chatWriteKey, chatWriteOptions } from "./chats";
-export type { ChatQuestionReply, ChatWrite, ClosedNotice } from "./chats";
+export {
+  CHAT_CLIENT,
+  chatFailureKey,
+  chatRefusalCode,
+  chatStartFailureTitle,
+  chatStartKey,
+  chatStartOptions,
+  chatWriteKey,
+  chatWriteOptions,
+  useFailedChatStart,
+  usePendingChatStart,
+} from "./chats";
+export type { ChatQuestionReply, ChatWrite, ClosedNotice, StartChat } from "./chats";
 export {
   commentFailureKey,
   commentFailureTitle,

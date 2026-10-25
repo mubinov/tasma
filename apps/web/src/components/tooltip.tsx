@@ -5,6 +5,8 @@ import { POSITIONER_CLASS } from "./control-classes";
 type TooltipProps = {
   children: ReactElement;
   content: ReactNode;
+  /** Asked at each open. False keeps the tooltip closed. */
+  canOpen?: () => boolean;
 };
 
 /**
@@ -12,9 +14,15 @@ type TooltipProps = {
  * content is visual only and no screen reader reads it, so each trigger must
  * have its own accessible name.
  */
-export function Tooltip({ children, content }: TooltipProps): ReactNode {
+export function Tooltip({ children, content, canOpen }: TooltipProps): ReactNode {
   return (
-    <BaseTooltip.Root>
+    <BaseTooltip.Root
+      onOpenChange={(open, details) => {
+        if (open && canOpen?.() === false) {
+          details.cancel();
+        }
+      }}
+    >
       <BaseTooltip.Trigger render={children} />
       <BaseTooltip.Portal>
         <BaseTooltip.Positioner side="bottom" align="start" sideOffset={8} className={POSITIONER_CLASS}>

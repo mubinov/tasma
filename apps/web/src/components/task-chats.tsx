@@ -3,7 +3,7 @@ import type { Chat } from "@tasma/protocol";
 import { useId, type ReactNode } from "react";
 import { chatStateText } from "../lib/chat-messages";
 import { fullChatTime, shortChatTime } from "../lib/chat-time";
-import { focusInView } from "../lib/focus-in-view";
+import { focusChatHeading } from "../lib/focus-in-view";
 import { useMinute } from "../lib/use-minute";
 import { StateMark } from "./chat-panel";
 import { SELECTED_ROW_CLASS } from "./control-classes";
@@ -43,7 +43,7 @@ function ChatRow({ tag, task, chat, showState, open, now }: ChatRowProps): React
         // The address would not change, so the panel would not take focus by itself.
         if (open) {
           event.preventDefault();
-          focusInView(document.querySelector<HTMLElement>("[data-chat-heading]"));
+          focusChatHeading();
         }
       }}
       className={`relative flex min-w-0 items-center gap-3 px-3 py-2 text-text hover:bg-surface-2 focus-visible:-outline-offset-2 ${open ? SELECTED_ROW_CLASS : ""}`}

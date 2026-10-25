@@ -1,8 +1,14 @@
 import { ContextMenu } from "@base-ui/react/context-menu";
 import { Menu } from "@base-ui/react/menu";
-import { useNavigate } from "@tanstack/react-router";
-import type { ComponentProps, ReactNode, Ref } from "react";
-import { DotsThreeVerticalIcon } from "../lib/icons";
+import { useQuery } from "@tanstack/react-query";
+import { useNavigate, useRouter } from "@tanstack/react-router";
+import { useEffect, useEffectEvent, useRef, useState, type ComponentProps, type ReactNode, type Ref } from "react";
+import { usePendingChatStart } from "../api/mutations";
+import { taskChatsQuery, workflowQuery } from "../api/queries";
+import { ChatCircleIcon, CircleNotchIcon, DotsThreeVerticalIcon, PlayIcon } from "../lib/icons";
+import { actionStep, latestOnTask, stepAction, stepActionVerb, type StepAction } from "../lib/step-action";
+import { useChatStart } from "../lib/use-chat-start";
+import { useNoticeStore } from "../store/notices";
 import { useUiStore } from "../store/ui";
 import { MENU_ITEM_CLASS, MENU_RADIO_ITEM_CLASS, POPUP_CLASS, POSITIONER_CLASS } from "./control-classes";
 import { RadioIndicator } from "./radio-indicator";
@@ -25,11 +31,124 @@ export type CardMenuItemsProps = {
   onOpen: () => void;
   /** Asks to delete the task. */
   onDelete: (id: string) => void;
+  /** As the task file holds them. */
+  workflow?: string;
+  step?: string;
 };
+
+type StepMenuItemProps = Pick<CardMenuItemsProps, "tag" | "id" | "step" | "onOpen"> & { workflow: string };
+
+/**
+ * "Start <step>" or "Open <step>", with a separator under it. It mounts with
+ * its menu, reads the chats at each open, and keeps the kind of its first read
+ * until the menu closes, so the name of a highlighted item does not change.
+ * Disabled until that read lands, so a menu opened by the keyboard highlights
+ * the next item.
+ */
+function StepMenuItem({ tag, id, workflow, step: taskStep, onOpen }: StepMenuItemProps): ReactNode {
+  const router = useRouter();
+  const { client, queryClient } = router.options.context;
+  const navigate = useNavigate();
+  const workflowRead = useQuery(workflowQuery(client, workflow), queryClient);
+  const chatsRead = useQuery({ ...taskChatsQuery(client, tag, id), refetchOnMount: "always" }, queryClient);
+  const start = useChatStart(tag, id);
+  const pendingStart = usePendingChatStart(id);
+  const itemRef = useRef<HTMLDivElement>(null);
+  const [kept, setKept] = useState<StepAction | null>(null);
+  const step = actionStep({ workflow, step: taskStep }, workflowRead.data?.data);
+  const readsLanded = !workflowRead.isPending && chatsRead.isFetchedAfterMount;
+
+  if (kept === null && readsLanded && step !== null) {
+    // A failed read gives Start: the start route answers the chat that exists.
+    setKept(chatsRead.isSuccess ? stepAction(step, chatsRead.data.data) : { kind: "start", step });
+  }
+
+  let ready: StepAction | null = null;
+  let phase: "starting" | "ready" | "reading";
+  let text: string;
+  let name: string;
+
+  if (pendingStart !== undefined) {
+    // A pending start of the task allows no second one.
+    phase = "starting";
+    text = `Start ${pendingStart.step}`;
+    name = `${text}, ${id}, starting`;
+  } else if (kept !== null) {
+    ready = kept;
+    phase = "ready";
+    text = `${stepActionVerb(kept)} ${kept.step}`;
+    name = `${text}, ${id}`;
+  } else {
+    phase = "reading";
+    text = "Reading the chats";
+    name = `Reading the chats of ${id}`;
+  }
+
+  const lastPhaseRef = useRef(phase);
+
+  // A screen reader does not speak a change of the name of the highlighted item by itself.
+  const announceReady = useEffectEvent(() => {
+    const last = lastPhaseRef.current;
+    lastPhaseRef.current = phase;
+    if (phase === "ready" && last !== "ready" && itemRef.current?.hasAttribute("data-highlighted") === true) {
+      useNoticeStore.getState().announce(name);
+    }
+  });
+
+  useEffect(() => {
+    announceReady();
+  }, [phase]);
+
+  if (!workflowRead.isPending && step === null) {
+    return null;
+  }
+
+  /**
+   * The task view opens first, so the panel takes focus as there: a change of
+   * the path moves focus to <main>, and the panel takes it only when `?chat`
+   * changes on the task view. A navigation away during its load stays.
+   */
+  async function press(action: StepAction): Promise<void> {
+    const params = { project: tag, task: id };
+    onOpen();
+    await navigate({ to: "/tasks/$project/$task", params });
+    if (action.kind === "open") {
+      if (latestOnTask(router, tag, id)) {
+        await navigate({ to: "/tasks/$project/$task", params, search: { chat: String(action.chat) }, replace: true });
+      }
+      return;
+    }
+    start(action.step, "card");
+  }
+
+  return (
+    <>
+      <Menu.Item
+        ref={itemRef}
+        aria-label={name}
+        disabled={ready === null}
+        onClick={ready === null
+          ? undefined
+          : () => {
+              void press(ready);
+            }}
+        className={MENU_ITEM_CLASS}
+      >
+        {ready === null
+          ? <CircleNotchIcon size={14} aria-hidden="true" className="shrink-0 animate-spin motion-reduce:animate-none" />
+          : ready.kind === "open"
+            ? <ChatCircleIcon size={14} aria-hidden="true" className="shrink-0" />
+            : <PlayIcon size={14} aria-hidden="true" className="shrink-0" />}
+        {text}
+      </Menu.Item>
+      <Menu.Separator className="my-1.5 h-px bg-line" />
+    </>
+  );
+}
 
 /** The items of both card menus. */
 function CardMenuItems(
-  { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen, onDelete }: CardMenuItemsProps,
+  { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen, onDelete, workflow, step }: CardMenuItemsProps,
 ): ReactNode {
   const navigate = useNavigate();
   const requestEdit = useUiStore((state) => state.requestEdit);
@@ -43,6 +162,7 @@ function CardMenuItems(
 
   return (
     <>
+      {workflow !== undefined && <StepMenuItem tag={tag} id={id} workflow={workflow} step={step} onOpen={onOpen} />}
       <Menu.Item onClick={openTask} className={MENU_ITEM_CLASS}>
         <span className="w-3.5 shrink-0" />
         Open task

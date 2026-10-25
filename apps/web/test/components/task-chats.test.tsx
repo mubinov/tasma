@@ -1,4 +1,4 @@
-import type { Chat, ChatState, FeedEvent, TransportReply } from "@tasma/protocol";
+import type { Chat, ChatState } from "@tasma/protocol";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,14 +7,13 @@ import { FeedSubscriber } from "../../src/components/feed-subscriber";
 import { fullChatTime, shortChatTime } from "../../src/lib/chat-time";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { chatPath, chatRecord, stubChatLog } from "../chat-daemon";
+import { chatRecord } from "../chat-daemon";
 import { heldBack, refusalReply, renderWithRouter, stubThreadDom, successReply } from "../helpers";
-import { TASK_PATH, daemon, metaLine, task } from "../task-screen-fixtures";
+import { CHATS_PATH, stubTaskChats, type TaskChatsStub } from "../task-chats-daemon";
+import { TASK_PATH, metaLine, task } from "../task-screen-fixtures";
 import { frame } from "../setup/notice-store";
 
 const PAGE = "/tasks/SAGA/SAGA-3";
-
-const CHATS_PATH = `${TASK_PATH}/chats`;
 
 type Router = Awaited<ReturnType<typeof renderWithRouter>>;
 
@@ -35,64 +34,6 @@ function chat(number: number, state: ChatState = "working", step = "build"): Cha
   const created = new Date(Date.UTC(2026, 8, number, 10, 0)).toISOString();
   return chatRecord({ chat: number, step, created, ...status } as Partial<Chat>);
 }
-
-function chatEvent({ chat: number, step, state }: Chat): FeedEvent {
-  return { kind: "chat", tag: "SAGA", task: "SAGA-3", chat: number, step, state } as FeedEvent;
-}
-
-/**
- * The task page's daemon with these chats, the record of each chat and a held
- * read of its log, and a feed that holds each read after the first until the
- * test sends events.
- */
-function stubTaskChats(chats: Chat[], replies: Record<string, TransportReply> = {}) {
-  const log = stubChatLog({
-    ...daemon().replies,
-    [CHATS_PATH]: successReply(chats),
-    "/events": successReply({ cursor: "c0", events: [] }),
-    ...replies,
-  });
-  let count = 0;
-  let held = hold(0);
-
-  function hold(index: number): (reply: TransportReply) => void {
-    const { reply, answer } = heldBack();
-    log.replies[`/events?after=c${String(index)}`] = reply;
-    return answer;
-  }
-
-  function records(next: readonly Chat[]): void {
-    for (const one of next) {
-      log.replies[chatPath(one.chat)] = successReply(one);
-      // `stubChatLog` holds the log of the default chat already.
-      if (one.chat !== chatRecord().chat) {
-        log.hold(0, one.chat);
-      }
-    }
-  }
-
-  records(chats);
-
-  return {
-    ...log,
-    /** The daemon now has these chats, and the feed sends the event of the last one. */
-    async change(next: Chat[]): Promise<void> {
-      records(next);
-      log.replies[CHATS_PATH] = successReply(next);
-      const current = held;
-      count += 1;
-      held = hold(count);
-      await act(async () => {
-        current(successReply({ cursor: `c${String(count)}`, events: [chatEvent(next.at(-1)!)] }));
-        await vi.waitFor(() => {
-          expect(log.paths).toContain(`/events?after=c${String(count)}`);
-        });
-      });
-    },
-  };
-}
-
-type TaskChatsStub = ReturnType<typeof stubTaskChats>;
 
 /** The task page at `path`, with the feed subscriber that main.tsx mounts beside it. */
 async function openPage(stub: TaskChatsStub, path = PAGE): Promise<Router> {

@@ -71,7 +71,7 @@ export function TaskCard({
   onPress,
   onFocusLost,
 }: TaskCardProps): ReactNode {
-  const { id, frontmatter: { title, status } } = entry;
+  const { id, frontmatter: { title, status, workflow, step } } = entry;
   const navigate = useNavigate();
   const cardRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
@@ -94,7 +94,7 @@ export function TaskCard({
     }
   }, [focusPart]);
 
-  const menu = { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen, onDelete };
+  const menu = { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen, onDelete, workflow, step };
 
   return (
     // The title link is the keyboard path, so the card itself is no control.
