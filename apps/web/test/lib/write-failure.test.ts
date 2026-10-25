@@ -1,7 +1,7 @@
 import { ProtocolError, TransportError, type SerializeErrorCode } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
 import { failureKind, TaskWriteError, WriteError, type FailureKind } from "../../src/api/mutations";
-import { boardFailureLine, pageFailureLine } from "../../src/lib/write-failure";
+import { boardFailureLine, chatClosedNotice, chatFailure, pageFailureLine } from "../../src/lib/write-failure";
 
 const CAUSES: Record<FailureKind, { label: string; cause: unknown }> = {
   refused: {
@@ -95,5 +95,47 @@ describe("pageFailureLine", () => {
 
   it("names the property in front of the line, so the reader is told which control refused", () => {
     expect(pageFailureLine(new TaskWriteError(CAUSES.refused.cause, 0), "Status")).toBe(`Status. ${REFUSED}`);
+  });
+});
+
+describe("chatFailure", () => {
+  const PLACE = { tag: "SAGA", task: "SAGA-3", chat: 2 };
+  const LINES: Record<FailureKind, string> = {
+    refused: "The daemon refused it, so nothing changed in the chat. Its own words are below.",
+    unanswered: "No daemon answered, so nothing was sent.",
+    address: "The daemon did not answer through the address below. Start the daemon there if it is not running.",
+    unsent: "The write did not start, so nothing was sent.",
+  };
+  const CASES = KINDS.map((kind) => ({ ...CAUSES[kind], line: LINES[kind] }));
+  const turnRunning = new ProtocolError({ kind: "daemon", code: "turn-running", message: "a turn runs" }, 409);
+
+  it.each([
+    ["message", "The message to chat 2 of SAGA-3 was not sent."],
+    ["cancel", "The turn of chat 2 of SAGA-3 did not stop."],
+    ["permission", "The answer to chat 2 of SAGA-3 was not sent."],
+    ["question", "The answer to chat 2 of SAGA-3 was not sent."],
+  ] as const)("titles the failure of a %s write", (kind, title) => {
+    expect(chatFailure(PLACE, kind).title).toBe(title);
+  });
+
+  it.each(CASES)("says what was not sent for $label", ({ cause, line }) => {
+    expect(chatFailure(PLACE, "message").line(new WriteError(cause))).toBe(line);
+  });
+
+  it("tells to send a message refused with turn-running when the turn ends", () => {
+    expect(chatFailure(PLACE, "message").line(new WriteError(turnRunning)))
+      .toBe("The agent is working on a turn. Send the message when the turn ends.");
+  });
+
+  it("gives an answer refused with turn-running the line of a refusal", () => {
+    expect(chatFailure(PLACE, "permission").line(new WriteError(turnRunning))).toBe(LINES.refused);
+  });
+
+  it("gives the texts of an answer that came after its request closed", () => {
+    expect(chatClosedNotice(PLACE)).toEqual({
+      title: "Your answer to chat 2 of SAGA-3 was not used.",
+      line: "The request was already closed: another window answered it, or it was cancelled or ended. "
+        + "The chat shows the outcome.",
+    });
   });
 });

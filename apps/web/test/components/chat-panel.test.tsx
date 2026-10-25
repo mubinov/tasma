@@ -7,20 +7,24 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import type { Chat, ChatEntry, ChatEvent } from "@tasma/protocol";
+import type { Chat, ChatEntry, ChatEvent, TransportRequest } from "@tasma/protocol";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { CHAT_CLIENT } from "../../src/api/mutations";
 import { daemonKeys } from "../../src/api/queries";
 import { ChatPanel } from "../../src/components/chat-panel";
 import type { RouterContext } from "../../src/routes";
+import { useChatDraftStore } from "../../src/store/chat-drafts";
 import { useNoticeStore } from "../../src/store/notices";
 import { chatPath, chatRecord, eventsPath, stubChatLog, type ChatLogStub } from "../chat-daemon";
 import {
   BASH_OPTIONS,
   chatEntries,
+  CONFIRM_LOG,
   EDIT_LOG,
+  FORM_LOG,
   PERMISSION_LOG,
   permissionRequest,
   permissionResolved,
@@ -45,6 +49,7 @@ import { frame } from "../setup/notice-store";
 
 beforeEach(() => {
   stubThreadDom();
+  useChatDraftStore.setState({ drafts: new Map() });
 });
 
 afterEach(() => {
@@ -128,6 +133,64 @@ async function readStarted(log: ChatLogStub, path: string, count = 1): Promise<v
   await waitFor(() => {
     expect(log.readsOf(path)).toBe(count);
   });
+}
+
+const COMPOSER = { name: "Message input" };
+
+function composer(): HTMLTextAreaElement {
+  return screen.getByRole<HTMLTextAreaElement>("textbox", COMPOSER);
+}
+
+async function findComposer(): Promise<HTMLTextAreaElement> {
+  return screen.findByRole<HTMLTextAreaElement>("textbox", COMPOSER);
+}
+
+function button(name: string): HTMLButtonElement {
+  return screen.getByRole<HTMLButtonElement>("button", { name });
+}
+
+const PERMISSION_GROUP = "Waiting on tool: pnpm build Waiting for your permission.";
+
+function permissionGroup(): HTMLElement {
+  return screen.getByRole("group", { name: PERMISSION_GROUP });
+}
+
+async function findPermissionOption(name: string): Promise<HTMLElement> {
+  return within(await screen.findByRole("group", { name: PERMISSION_GROUP })).findByRole("button", { name });
+}
+
+/** Whether each option of the open permission request is disabled. */
+function optionsDisabled(): boolean[] {
+  return within(permissionGroup()).getAllByRole<HTMLButtonElement>("button").map((option) => option.disabled);
+}
+
+const FORM_RULE = "Answer each question, then press Send. Dismiss declines the question.";
+
+/** The name of the group of a kit form: its label, then the rule of the form. */
+function formGroupName(label: string): string {
+  return `${label} ${FORM_RULE}`;
+}
+
+const RELEASE_LABEL = "Waiting on tool: Asking for your input Please answer the following questions.";
+
+const RELEASE_GROUP = formGroupName(RELEASE_LABEL);
+
+const FORM_LABEL = "The deploy server needs two answers.";
+
+const FORM_GROUP = formGroupName(FORM_LABEL);
+
+const REFUSAL_GROUP = formGroupName("Model A declined this request. Retry with Model B?");
+
+function optionNames(group: HTMLElement): (string | null)[] {
+  return within(group).getAllByRole("button").map((option) => option.textContent);
+}
+
+function posts(log: ChatLogStub): TransportRequest[] {
+  return log.requests.filter(({ method }) => method === "POST");
+}
+
+function notices() {
+  return useNoticeStore.getState().notices;
 }
 
 it("shows the agent and the step in the heading, and the number of the chat", async () => {
@@ -260,7 +323,7 @@ it("does not show a failed or a stopped tool as done", async () => {
   expect(screen.getByText("The turn was cancelled.")).toBeTruthy();
 });
 
-it("opens the tool group of a new permission request, and announces it, with no button that answers it", async () => {
+it("opens the tool group of a new permission request, announces it, and shows one button for each option", async () => {
   const log = stubChatLog({ [chatPath()]: successReply(chatRecord({ seq: 5 })) });
   const start = chatEntries([
     ...PERMISSION_LOG.slice(0, 4).map(({ event }) => event),
@@ -277,12 +340,9 @@ it("opens the tool group of a new permission request, and announces it, with no 
   expect(await screen.findByText("Waiting for your permission.")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Waiting on tool: pnpm build" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Running tool: Read the docs" })).toBeTruthy();
-  const names = BASH_OPTIONS.map(({ name }) => name as string);
-  expect(screen.getByText(`Options: ${names.join(", ")}.`)).toBeTruthy();
+  expect(optionNames(permissionGroup())).toEqual(BASH_OPTIONS.map(({ name }) => name as string));
+  expect(screen.queryByText(/^Options: /)).toBeNull();
   expect(screen.getByText("Needs you")).toBeTruthy();
-  for (const name of [...names, "Allow", "Deny", "Approve", "Reject"]) {
-    expect(screen.queryByRole("button", { name })).toBeNull();
-  }
   await frame();
   expect(spoken()).toEqual(["Claude asks for permission: pnpm build"]);
 });
@@ -340,20 +400,23 @@ it("shows each request that ended as text", async () => {
   expect(screen.getByText("The question ended with no answer.")).toBeTruthy();
 });
 
-it("shows an open question with its fields and their choices", async () => {
+it("shows an open question in the kit form, with its fields, their choices and the free text", async () => {
   await renderPanel(logOf(QUESTIONS_LOG.slice(0, 4)));
 
   expect(await screen.findByText("Please answer the following questions.")).toBeTruthy();
-  expect(screen.getByText("Version")).toBeTruthy();
-  expect(screen.getByText("Which version should the release take?")).toBeTruthy();
-  expect(screen.getByText("2.0.0")).toBeTruthy();
-  expect(screen.getByText("— A major release")).toBeTruthy();
-  expect(screen.getByText("Checks")).toBeTruthy();
-  expect(screen.getByText("lint")).toBeTruthy();
+  const version = screen.getByRole("group", { name: "Which version should the release take?" });
+  expect(within(version).getByText("Version")).toBeTruthy();
+  expect(within(version).getByRole("button", { name: /^2\.0\.0/ }).getAttribute("aria-pressed")).toBe("false");
+  expect(within(version).getByRole("textbox", { name: "Which version should the release take?" })).toBeTruthy();
+  const checks = screen.getByRole("group", { name: "Which checks should run first?" });
+  expect(within(checks).getByText("Checks")).toBeTruthy();
+  expect(within(checks).getByRole("button", { name: /^lint/ })).toBeTruthy();
   expect(screen.getByText("Waiting for your answer.")).toBeTruthy();
+  expect(button("Send").disabled).toBe(true);
+  expect(button("Dismiss").disabled).toBe(false);
 });
 
-it("shows a question with no tool in the transcript, by the name and the description of a field with no title", async () => {
+it("shows a question with no tool in the transcript, by the description of a field with no title", async () => {
   const log = logOf(chatEntries([
     userMessage("Pick a colour."),
     questionRequest("q1", {
@@ -366,10 +429,9 @@ it("shows a question with no tool in the transcript, by the name and the descrip
   ]));
   await renderPanel(log);
 
-  expect(await screen.findByText("Which colour?")).toBeTruthy();
-  expect(screen.getByText("colour")).toBeTruthy();
-  expect(screen.getByText("The colour of the badge.")).toBeTruthy();
-  expect(screen.getByText("red")).toBeTruthy();
+  const group = await screen.findByRole("group", { name: formGroupName("Which colour?") });
+  const field = within(group).getByRole("group", { name: "The colour of the badge." });
+  expect(optionNames(field)).toEqual(["red", "blue"]);
   expect(screen.getByText("Waiting for your answer.")).toBeTruthy();
 });
 
@@ -712,11 +774,12 @@ it("makes the message list a silent log with no busy state", async () => {
   expect(list.hasAttribute("aria-busy")).toBe(false);
 });
 
-it("shows no composer and no attachment button", async () => {
+it("shows a composer with no attachment button", async () => {
   await renderPanel(logOf(TEXT_LOG));
 
   expect(await screen.findByRole("log")).toBeTruthy();
-  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(composer()).toBeTruthy();
+  expect(button("Send message")).toBeTruthy();
   expect(screen.queryByRole("button", { name: /attachment/i })).toBeNull();
 });
 
@@ -1060,4 +1123,483 @@ it("keeps a tool open when the answer to its request comes, and closes it on a c
   await user.click(tool);
 
   expect(tool.getAttribute("aria-expanded")).toBe("false");
+});
+
+const WRITTEN = successReply(chatRecord({ seq: 5 }));
+
+const MESSAGES_PATH = `${chatPath()}/messages`;
+
+const CANCEL_PATH = `${chatPath()}/cancel`;
+
+const PERMISSION_PATH = `${chatPath()}/permissions/r1`;
+
+function refused(status: number, code: "turn-running" | "already-answered" | "malformed-request") {
+  return refusalReply(status, { kind: "daemon", code, message: `refused: ${code}` });
+}
+
+/** A log of the entries, served at once, and the write of each route answered with `WRITTEN`. */
+function writableLogOf(entries: readonly ChatEntry[], ...paths: string[]): ChatLogStub {
+  const log = logOf(entries);
+  for (const path of paths) {
+    log.replies[`POST ${path}`] = WRITTEN;
+  }
+  return log;
+}
+
+it("posts the message of the composer with the client of the window, and clears the composer", async () => {
+  const user = userEvent.setup();
+  const log = writableLogOf(TEXT_LOG, MESSAGES_PATH);
+  await renderPanel(log);
+
+  await user.type(await findComposer(), "Split the lexer.");
+  await user.click(button("Send message"));
+
+  await waitFor(() => {
+    expect(posts(log)).toEqual([
+      { method: "POST", path: MESSAGES_PATH, body: { text: "Split the lexer.", client: CHAT_CLIENT } },
+    ]);
+  });
+  expect(composer().value).toBe("");
+});
+
+it("puts a refused message back in the composer, and opens its notice", async () => {
+  const user = userEvent.setup();
+  const log = logOf(TEXT_LOG);
+  log.replies[`POST ${MESSAGES_PATH}`] = refused(409, "turn-running");
+  await renderPanel(log);
+
+  await user.type(await findComposer(), "Split the lexer.{Enter}");
+
+  await waitFor(() => {
+    expect(composer().value).toBe("Split the lexer.");
+  });
+  expect(posts(log)).toHaveLength(1);
+  expect(notices()).toEqual([
+    expect.objectContaining({
+      form: "failure",
+      title: "The message to chat 2 of SAGA-3 was not sent.",
+      line: "The agent is working on a turn. Send the message when the turn ends.",
+      words: ["daemon/turn-running · refused: turn-running"],
+    }),
+  ]);
+});
+
+it.each<[string, readonly ChatEntry[]]>([
+  ["runs", chatEntries([userMessage("Build.")])],
+  ["waits at a request", PERMISSION_LOG.slice(0, 5)],
+])("shows Stop and no Send while a turn %s, and Stop posts the cancel", async (_name, entries) => {
+  const user = userEvent.setup();
+  const log = writableLogOf(entries, CANCEL_PATH);
+  await renderPanel(log);
+
+  await user.click(await screen.findByRole("button", { name: "Stop generating" }));
+
+  expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
+  await waitFor(() => {
+    expect(posts(log)).toEqual([{ method: "POST", path: CANCEL_PATH, body: { client: CHAT_CLIENT } }]);
+  });
+});
+
+it("opens a notice when the daemon refuses Stop", async () => {
+  const user = userEvent.setup();
+  const log = logOf(chatEntries([userMessage("Build.")]));
+  log.replies[`POST ${CANCEL_PATH}`] = refused(400, "malformed-request");
+  await renderPanel(log);
+
+  await user.click(await screen.findByRole("button", { name: "Stop generating" }));
+
+  await waitFor(() => {
+    expect(notices()).toEqual([
+      expect.objectContaining({
+        title: "The turn of chat 2 of SAGA-3 did not stop.",
+        line: "The daemon refused it, so nothing changed in the chat. Its own words are below.",
+      }),
+    ]);
+  });
+});
+
+it("keeps the text and sends nothing on Enter during a turn, and shows Send when the turn ends", async () => {
+  const user = userEvent.setup();
+  const log = logOf(chatEntries([userMessage("Build.")]));
+  await renderPanel(log);
+
+  await user.type(await findComposer(), "Then test it.{Enter}");
+
+  expect(composer().value).toBe("Then test it.\n");
+  expect(posts(log)).toEqual([]);
+
+  log.answer(1, { cursor: 2, entries: chatEntries([turnEnd()], 2) });
+
+  expect(await screen.findByRole("button", { name: "Send message" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Stop generating" })).toBeNull();
+  expect(composer().value).toBe("Then test it.\n");
+});
+
+/** A host that shows chat 2 of SAGA-3, and chat 3 after a click on Other chat. */
+function TwoChats(): ReactNode {
+  const [chat, setChat] = useState(2);
+  return (
+    <>
+      <button type="button" onClick={() => { setChat(chat === 2 ? 3 : 2); }}>Other chat</button>
+      <ChatPanel tag="SAGA" task="SAGA-3" chat={chat} onClose={() => {}} />
+    </>
+  );
+}
+
+/** Chat 2 with the log of the stub, and chat 3 with a short log, in a host that shows one of them. */
+async function renderTwoChats(log: ChatLogStub): Promise<void> {
+  log.replies[chatPath(3)] = successReply(chatRecord({ chat: 3, step: "review", seq: 1 }));
+  log.serve(0, { cursor: 1, entries: chatEntries([userMessage("Review the parser."), turnEnd()]) }, 3);
+  await renderPanel(log, { host: <TwoChats /> });
+}
+
+/** Shows the other chat, and waits for a text of its log. */
+async function showOtherChat(user: ReturnType<typeof userEvent.setup>, text: string): Promise<void> {
+  await user.click(screen.getByRole("button", { name: "Other chat" }));
+  expect(await screen.findByText(text)).toBeTruthy();
+}
+
+it("keeps the draft of a chat when its host shows another chat and comes back", async () => {
+  const user = userEvent.setup();
+  await renderTwoChats(logOf(TEXT_LOG));
+  await user.type(await findComposer(), "Rename the tests too.");
+
+  await showOtherChat(user, "Review the parser.");
+  expect(composer().value).toBe("");
+
+  await showOtherChat(user, "Rename the parser module.");
+  await waitFor(() => {
+    expect(composer().value).toBe("Rename the tests too.");
+  });
+});
+
+it("keeps a message that the daemon refuses after its chat closed, and shows it when the chat opens again", async () => {
+  const user = userEvent.setup();
+  const log = logOf(TEXT_LOG);
+  const write = heldBack();
+  log.replies[`POST ${MESSAGES_PATH}`] = write.reply;
+  await renderTwoChats(log);
+  await user.type(await findComposer(), "Split the lexer.{Enter}");
+  await waitFor(() => {
+    expect(posts(log)).toHaveLength(1);
+  });
+  await showOtherChat(user, "Review the parser.");
+
+  write.answer(refused(400, "malformed-request"));
+
+  await waitFor(() => {
+    expect(notices()).toEqual([expect.objectContaining({ title: "The message to chat 2 of SAGA-3 was not sent." })]);
+  });
+  expect(composer().value).toBe("");
+  await showOtherChat(user, "Rename the parser module.");
+  await waitFor(() => {
+    expect(composer().value).toBe("Split the lexer.");
+  });
+});
+
+it("puts a message that the daemon refuses in front of the text of a composer of its chat that opened after the send", async () => {
+  const user = userEvent.setup();
+  const log = logOf(TEXT_LOG);
+  const write = heldBack();
+  log.replies[`POST ${MESSAGES_PATH}`] = write.reply;
+  await renderTwoChats(log);
+  await user.type(await findComposer(), "Split the lexer.{Enter}");
+  await waitFor(() => {
+    expect(posts(log)).toHaveLength(1);
+  });
+  await showOtherChat(user, "Review the parser.");
+  await showOtherChat(user, "Rename the parser module.");
+  await user.type(composer(), "Then test it.");
+
+  write.answer(refused(400, "malformed-request"));
+
+  await waitFor(() => {
+    expect(composer().value).toBe("Split the lexer.\nThen test it.");
+  });
+});
+
+it("posts the option of a clicked button, locks the buttons, and shows the answer with focus on its line when the log closes the request", async () => {
+  const user = userEvent.setup();
+  const log = writableLogOf(PERMISSION_LOG.slice(0, 5), PERMISSION_PATH);
+  await renderPanel(log);
+
+  await user.click(await findPermissionOption("Yes"));
+
+  await waitFor(() => {
+    expect(posts(log)).toEqual([
+      { method: "POST", path: PERMISSION_PATH, body: { optionId: "allow-once", client: CHAT_CLIENT } },
+    ]);
+  });
+  expect(optionsDisabled()).toEqual([true, true, true]);
+
+  log.answer(5, { cursor: 6, entries: chatEntries([permissionResolved("r1", { outcome: "selected", optionId: "allow-once" })], 6) });
+
+  const answered = await screen.findByText("Answered: Yes.");
+  expect(screen.queryByRole("group", { name: PERMISSION_GROUP })).toBeNull();
+  expect(document.activeElement).toBe(answered.parentElement);
+});
+
+it("closes a request that another window answers, with no write, and moves focus from its buttons to its line", async () => {
+  const log = logOf(PERMISSION_LOG.slice(0, 5));
+  await renderPanel(log);
+  const yes = await findPermissionOption("Yes");
+  act(() => {
+    yes.focus();
+  });
+
+  log.answer(5, {
+    cursor: 6,
+    entries: chatEntries([
+      { kind: "permission-resolved", request: "r1", outcome: { outcome: "selected", optionId: "reject" }, client: "app-0a1b2c3d" },
+    ], 6),
+  });
+
+  const answered = await screen.findByText("Answered: No.");
+  expect(screen.queryByRole("group", { name: PERMISSION_GROUP })).toBeNull();
+  expect(posts(log)).toEqual([]);
+  expect(document.activeElement).toBe(answered.parentElement);
+});
+
+it("opens the warning notice for an answer that came too late, and keeps the buttons locked until the log closes the request", async () => {
+  const user = userEvent.setup();
+  const log = logOf(PERMISSION_LOG.slice(0, 5));
+  log.replies[`POST ${PERMISSION_PATH}`] = refused(409, "already-answered");
+  await renderPanel(log);
+
+  await user.click(await findPermissionOption("Yes"));
+
+  await waitFor(() => {
+    expect(notices()).toEqual([
+      expect.objectContaining({
+        form: "warning",
+        title: "Your answer to chat 2 of SAGA-3 was not used.",
+        line: "The request was already closed: another window answered it, or it was cancelled or ended. "
+          + "The chat shows the outcome.",
+      }),
+    ]);
+  });
+  expect(optionsDisabled()).toEqual([true, true, true]);
+  expect(within(permissionGroup()).queryByRole("alert")).toBeNull();
+
+  log.answer(5, { cursor: 6, entries: chatEntries([permissionResolved("r1", { outcome: "selected", optionId: "reject" })], 6) });
+
+  expect(await screen.findByText("Answered: No.")).toBeTruthy();
+  expect(screen.queryByRole("group", { name: PERMISSION_GROUP })).toBeNull();
+});
+
+it("shows Not sent and makes the buttons active again when the daemon refuses an answer, and opens its notice", async () => {
+  const user = userEvent.setup();
+  const log = logOf(PERMISSION_LOG.slice(0, 5));
+  log.replies[`POST ${PERMISSION_PATH}`] = refused(400, "malformed-request");
+  await renderPanel(log);
+
+  await user.click(await findPermissionOption("Yes"));
+
+  expect((await within(permissionGroup()).findByRole("alert")).textContent).toBe("Not sent. The notice gives the reason.");
+  expect(optionsDisabled()).toEqual([false, false, false]);
+  expect(notices()).toEqual([
+    expect.objectContaining({
+      form: "failure",
+      title: "The answer to chat 2 of SAGA-3 was not sent.",
+      line: "The daemon refused it, so nothing changed in the chat. Its own words are below.",
+    }),
+  ]);
+});
+
+it("shows the kit Deny of a request with no reject option, and writes nothing for it", async () => {
+  const user = userEvent.setup();
+  const log = logOf(chatEntries([
+    userMessage("Fetch the page."),
+    permissionRequest("p1", { toolCallId: "t1", title: "Fetch the page", kind: "fetch" }, [
+      { optionId: "allow", name: "Allow", kind: "allow_once" },
+    ]),
+  ]));
+  await renderPanel(log);
+  const group = await screen.findByRole("group", { name: "Waiting on tool: Fetch the page Waiting for your permission." });
+
+  await user.click(within(group).getByRole("button", { name: "Deny" }));
+
+  expect((await within(group).findByRole("alert")).textContent).toBe(
+    "This request has no options to choose. To end it, stop the turn with the Stop generating button.",
+  );
+  expect(posts(log)).toEqual([]);
+});
+
+const QUESTIONS_PATH = `${chatPath()}/questions/r3`;
+
+it.each<[string, readonly ChatEntry[], string]>([
+  ["on a tool by the tool and the message", QUESTIONS_LOG.slice(0, 4), RELEASE_LABEL],
+  ["with no tool by the message", FORM_LOG.slice(0, 2), FORM_LABEL],
+])("names an open question %s, then by the rule of its kit form", async (_name, entries, label) => {
+  await renderPanel(logOf(entries));
+
+  expect(await screen.findByRole("group", { name: formGroupName(label) })).toBeTruthy();
+  expect(screen.getByText(FORM_RULE)).toBeTruthy();
+});
+
+it("answers a question with no fields and no tool with Accept, with no rule, and shows Answered when the log closes it", async () => {
+  const user = userEvent.setup();
+  const path = `${chatPath()}/questions/r6`;
+  const log = writableLogOf(CONFIRM_LOG.slice(0, 2), path);
+  await renderPanel(log);
+  const group = await screen.findByRole("group", { name: "Publish the preview to the team?" });
+
+  expect(optionNames(group)).toEqual(["Accept", "Decline"]);
+  expect(screen.queryByText(FORM_RULE)).toBeNull();
+  await user.click(within(group).getByRole("button", { name: "Accept" }));
+
+  await waitFor(() => {
+    expect(posts(log)).toEqual([{ method: "POST", path, body: { action: "accept", content: {}, client: CHAT_CLIENT } }]);
+  });
+
+  log.answer(2, { cursor: 3, entries: chatEntries([CONFIRM_LOG[2]!.event], 3) });
+
+  expect(await screen.findByText("Answered.")).toBeTruthy();
+});
+
+it("declines a question with no fields on a tool with Decline, with no rule", async () => {
+  const user = userEvent.setup();
+  const path = `${chatPath()}/questions/q2`;
+  const log = writableLogOf(chatEntries([
+    userMessage("Publish the preview."),
+    toolCall({ toolCallId: "t2", title: "Publish", kind: "execute", status: "pending" }),
+    questionRequest("q2", { toolCallId: "t2", message: "Publish to the team?", requestedSchema: { type: "object", properties: {} } }),
+  ]), path);
+  await renderPanel(log);
+  const group = await screen.findByRole("group", { name: "Waiting on tool: Publish Publish to the team?" });
+
+  expect(optionNames(group)).toEqual(["Accept", "Decline"]);
+  expect(screen.queryByText(FORM_RULE)).toBeNull();
+  await user.click(within(group).getByRole("button", { name: "Decline" }));
+
+  await waitFor(() => {
+    expect(posts(log)).toEqual([{ method: "POST", path, body: { action: "decline", client: CHAT_CLIENT } }]);
+  });
+});
+
+it("posts the answers of the kit form of a question on a tool", async () => {
+  const user = userEvent.setup();
+  const log = writableLogOf(QUESTIONS_LOG.slice(0, 4), QUESTIONS_PATH);
+  await renderPanel(log);
+  const group = await screen.findByRole("group", { name: RELEASE_GROUP });
+
+  await user.click(within(group).getByRole("button", { name: /^2\.0\.0/ }));
+  await user.click(within(group).getByRole("button", { name: /^lint/ }));
+  await user.click(within(group).getByRole("button", { name: /^test/ }));
+  await user.click(within(group).getByRole("button", { name: "Send" }));
+
+  await waitFor(() => {
+    expect(posts(log)).toEqual([
+      {
+        method: "POST",
+        path: QUESTIONS_PATH,
+        body: { action: "accept", content: { question_0: "2.0.0", question_1: ["lint", "test"] }, client: CHAT_CLIENT },
+      },
+    ]);
+  });
+});
+
+it("posts a decline for Dismiss", async () => {
+  const user = userEvent.setup();
+  const log = writableLogOf(QUESTIONS_LOG.slice(0, 4), QUESTIONS_PATH);
+  await renderPanel(log);
+
+  await user.click(within(await screen.findByRole("group", { name: RELEASE_GROUP })).getByRole("button", { name: "Dismiss" }));
+
+  await waitFor(() => {
+    expect(posts(log)).toEqual([{ method: "POST", path: QUESTIONS_PATH, body: { action: "decline", client: CHAT_CLIENT } }]);
+  });
+});
+
+it("posts the answer of a question with no tool, and moves focus from its form to its line when the log closes it", async () => {
+  const user = userEvent.setup();
+  const path = `${chatPath()}/questions/r4`;
+  const log = writableLogOf(REFUSAL_LOG.slice(0, 2), path);
+  await renderPanel(log);
+  const group = await screen.findByRole("group", { name: REFUSAL_GROUP });
+
+  await user.click(within(group).getByRole("button", { name: /^Retry with Model B/ }));
+  await user.click(within(group).getByRole("button", { name: "Send" }));
+
+  await waitFor(() => {
+    expect(posts(log)).toEqual([
+      { method: "POST", path, body: { action: "accept", content: { choice: "retry_fallback" }, client: CHAT_CLIENT } },
+    ]);
+  });
+  expect(group.contains(document.activeElement)).toBe(true);
+
+  log.answer(2, { cursor: 3, entries: chatEntries([REFUSAL_LOG[2]!.event], 3) });
+
+  const answered = await screen.findByText("Answered: retry_fallback.");
+  expect(screen.queryByRole("group", { name: REFUSAL_GROUP })).toBeNull();
+  expect(document.activeElement).toBe(answered.parentElement);
+});
+
+it("shows the kit text for a bad number and posts nothing, then posts the fixed answer", async () => {
+  const user = userEvent.setup();
+  const path = `${chatPath()}/questions/r5`;
+  const log = writableLogOf(FORM_LOG.slice(0, 2), path);
+  await renderPanel(log);
+  const group = await screen.findByRole("group", { name: FORM_GROUP });
+  await user.click(within(group).getByRole("button", { name: "Yes" }));
+  const retries = within(group).getByRole("textbox", { name: "Retries" });
+
+  await user.type(retries, "9");
+  await user.click(within(group).getByRole("button", { name: "Send" }));
+
+  expect((await within(group).findByRole("alert")).textContent).toBe("Retries: type a whole number from 1 to 5.");
+  expect(posts(log)).toEqual([]);
+
+  await user.clear(retries);
+  await user.type(retries, "3");
+  await user.click(within(group).getByRole("button", { name: "Send" }));
+
+  await waitFor(() => {
+    expect(posts(log)).toEqual([
+      { method: "POST", path, body: { action: "accept", content: { confirm: true, retries: 3 }, client: CHAT_CLIENT } },
+    ]);
+  });
+});
+
+it("keeps the text of an open question form when the log changes", async () => {
+  const user = userEvent.setup();
+  const log = logOf(FORM_LOG.slice(0, 2));
+  await renderPanel(log);
+  const group = await screen.findByRole("group", { name: FORM_GROUP });
+  await user.type(within(group).getByRole("textbox", { name: "Retries" }), "4");
+
+  log.answer(2, { cursor: 3, entries: chatEntries([textChunk("Waiting for the form.")], 3) });
+
+  expect(await screen.findByText("Waiting for the form.")).toBeTruthy();
+  expect(within(group).getByRole<HTMLTextAreaElement>("textbox", { name: "Retries" }).value).toBe("4");
+});
+
+it("answers the open question of a tool whose permission closed, under the question and not under the permission", async () => {
+  const user = userEvent.setup();
+  const path = `${chatPath()}/questions/q1`;
+  const log = writableLogOf(chatEntries([
+    userMessage("Deploy the preview."),
+    permissionRequest("p1", { toolCallId: "t1", title: "Deploy", kind: "execute" }, [
+      { optionId: "allow", name: "Allow", kind: "allow_once" },
+    ]),
+    permissionResolved("p1", { outcome: "selected", optionId: "allow" }),
+    questionRequest("q1", {
+      toolCallId: "t1",
+      message: "Which host?",
+      requestedSchema: { type: "object", properties: { host: { type: "string", enum: ["preview", "staging"] } } },
+    }),
+  ]), path);
+  await renderPanel(log);
+
+  const group = await screen.findByRole("group", { name: formGroupName("Waiting on tool: Deploy Which host?") });
+  expect(screen.getByText("Answered: Allow.")).toBeTruthy();
+  expect(screen.queryByRole("group", { name: /Waiting for your permission/ })).toBeNull();
+  await user.click(within(group).getByRole("button", { name: "staging" }));
+  await user.click(within(group).getByRole("button", { name: "Send" }));
+
+  await waitFor(() => {
+    expect(posts(log)).toEqual([
+      { method: "POST", path, body: { action: "accept", content: { host: "staging" }, client: CHAT_CLIENT } },
+    ]);
+  });
 });

@@ -1,6 +1,7 @@
 import type { ThreadMessageLike, ToolCallMessagePartStatus } from "@assistant-ui/react";
 import { ProtocolError, type ChatAgent, type ChatOutside, type ChatStatus } from "@tasma/protocol";
 import { diffLines } from "diff";
+import { permissionApproval, questionApproval, type ChatApproval } from "./chat-approval";
 import type {
   ChatAgentMessage,
   ChatMessage,
@@ -56,7 +57,8 @@ const AGENT_NAMES: Record<ChatAgent, string> = { claude: "Claude", codex: "Codex
 
 const OUTSIDE_NAMES: Record<ChatOutside, string> = { vscode: "VS Code", terminal: "terminal" };
 
-const REQUIRES_ACTION = { type: "requires-action", reason: "tool-calls" } as const;
+/** The status of a part or a message that waits for an answer. */
+export const REQUIRES_ACTION = { type: "requires-action", reason: "tool-calls" } as const;
 
 const ENDING_NOTICES: readonly ChatNotice["kind"][] = ["stopped", "failed", "interrupted", "continued-outside"];
 
@@ -150,6 +152,7 @@ function toolPart(tool: ChatTool, folder: string): ThreadPart {
   const { input } = tool;
   const ended = tool.status === "completed" || tool.status === "failed";
   const artifact: ChatToolArtifact = { tool, folder };
+  const approval = toolApproval(tool);
 
   return {
     type: "tool-call",
@@ -160,7 +163,16 @@ function toolPart(tool: ChatTool, folder: string): ThreadPart {
     ...(ended ? { result: toolResult(tool) } : {}),
     isError: tool.status === "failed",
     artifact,
+    ...(approval === undefined ? {} : { approval }),
   };
+}
+
+/** The approval of the open request of the tool. A tool can have a closed permission and then an open question. */
+function toolApproval(tool: ChatTool): ChatApproval | undefined {
+  if (tool.permission?.state === "open") {
+    return permissionApproval(tool.permission);
+  }
+  return tool.question?.state === "open" ? questionApproval(tool.question) : undefined;
 }
 
 function toolResult(tool: ChatTool): string {

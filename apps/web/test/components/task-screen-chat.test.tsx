@@ -1,6 +1,7 @@
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
+import { CHAT_CLIENT } from "../../src/api/mutations";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
 import { chatPath, chatRecord, stubChatLog, type ChatLogStub } from "../chat-daemon";
@@ -380,4 +381,19 @@ it("keeps Scroll to top to the left of the chat panel while a chat shows, and to
     expect(sidebar()).toBeTruthy();
   });
   expect(control().classList.contains("lg:right-[calc(var(--spacing-task-sidebar)+--spacing(6))]")).toBe(true);
+});
+
+it("sends a message from the composer of the chat on the task page", async () => {
+  const user = userEvent.setup();
+  const log = chatDaemon();
+  log.replies[`POST ${chatPath()}/messages`] = successReply(chatRecord({ seq: TEXT_LOG.length }));
+  await renderWithRouter(`${PAGE}?chat=2`, log.transport);
+
+  await user.type(await screen.findByRole("textbox", { name: "Message input" }), "Split the lexer.{Enter}");
+
+  await waitFor(() => {
+    expect(log.requests.filter(({ method }) => method === "POST")).toEqual([
+      { method: "POST", path: `${chatPath()}/messages`, body: { text: "Split the lexer.", client: CHAT_CLIENT } },
+    ]);
+  });
 });

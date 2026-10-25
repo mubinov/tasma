@@ -68,6 +68,13 @@ function views(start: readonly ChatEvent[], events: readonly ChatEvent[]): [Chat
 }
 
 describe("chatThreadMessage", () => {
+  /** The thread part of a message with one tool. */
+  const partOf = (fields: Partial<ChatTool>) => {
+    const [part] = chatThreadMessage(agentMessage([{ type: "tool", tool: tool(fields) }]), FOLDER)
+      .content as readonly Record<string, unknown>[];
+    return part;
+  };
+
   it("gives a user message its id, its time and its text", () => {
     expect(chatThreadMessage({ role: "user", id: "u1", at: AT, text: "Run the tests." }, FOLDER)).toEqual({
       role: "user",
@@ -140,11 +147,7 @@ describe("chatThreadMessage", () => {
   });
 
   it("gives a result only to a completed or a failed tool", () => {
-    const resultOf = (fields: Partial<ChatTool>) => {
-      const [part] = chatThreadMessage(agentMessage([{ type: "tool", tool: tool(fields) }]), FOLDER)
-        .content as readonly Record<string, unknown>[];
-      return part?.result;
-    };
+    const resultOf = (fields: Partial<ChatTool>) => partOf(fields)?.result;
     const texts = [
       { type: "text" as const, text: "12 passed" },
       { type: "diff" as const, path: "/work/saga/a.ts", oldText: null, newText: "a" },
@@ -157,6 +160,32 @@ describe("chatThreadMessage", () => {
     expect(resultOf({ status: "failed", output: "exit 1" })).toBe("exit 1");
     expect(resultOf({ status: "completed", output: { code: 1 } })).toBe('{\n  "code": 1\n}');
     expect(resultOf({ status: "completed" })).toBe("");
+  });
+
+  it("gives a tool part the approval of its open permission, and none after the permission closes", () => {
+    const options = [{ id: "allow", name: "Yes", kind: "allow_once" }];
+
+    expect(partOf({ permission: { request: "r1", options, state: "open" } })?.approval).toEqual({
+      id: "r1",
+      options: [{ id: "allow", kind: "allow-once", label: "Yes" }],
+    });
+    for (const state of ["selected", "cancelled", "ended"] as const) {
+      expect(partOf({ permission: { request: "r1", options, state } })).not.toHaveProperty("approval");
+    }
+  });
+
+  it("gives a tool part the approval of its open question after its permission closed, and none after the question closes", () => {
+    const permission = { request: "r1", options: [], state: "selected" } as const;
+    const fields = [{ name: "name", type: "string", required: false, multiple: false, choices: [] }];
+    const question = { request: "r2", message: "Which name?", fields, state: "open" } as const;
+
+    expect(partOf({ permission, question })?.approval).toEqual({
+      id: "r2",
+      display: "questions",
+      dismissible: true,
+      questions: [{ id: "name", prompt: "name" }],
+    });
+    expect(partOf({ permission, question: { ...question, state: "accepted" } })).not.toHaveProperty("approval");
   });
 
   it("marks a failed tool as an error", () => {

@@ -1,12 +1,13 @@
 import { Button } from "@base-ui/react/button";
-import { AssistantRuntimeProvider, useExternalStoreRuntime } from "@assistant-ui/react";
+import { AssistantRuntimeProvider, useAui, useExternalStoreRuntime, type AppendMessage } from "@assistant-ui/react";
 import { Thread, type ThreadComponents } from "@kit/components/assistant-ui/elements/thread.aui";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import type { Chat, ChatStatus, Client } from "@tasma/protocol";
 import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useChatLog } from "../api/chat-log";
-import { chatQuery } from "../api/queries";
+import { chatQuery, type ChatPlace } from "../api/queries";
+import { chatRequestOf } from "../lib/chat-approval";
 import type { ChatMessage, ChatView } from "../lib/chat-fold";
 import {
   chatAgentName,
@@ -17,7 +18,9 @@ import {
 } from "../lib/chat-messages";
 import { WarningIcon, XIcon } from "../lib/icons";
 import { focusInView } from "../lib/focus-in-view";
+import { useChatWrites } from "../lib/use-chat-writes";
 import { useFocusLost } from "../lib/use-focus-lost";
+import { chatDraft, subscribeChatDraft, useChatDraftStore } from "../store/chat-drafts";
 import { useNoticeStore } from "../store/notices";
 import { ChatDataViews, ChatEmpty, ChatToolGroup, ChatToolView } from "./chat-tool";
 import { BUTTON_CLASS, ICON_BUTTON_CLASS } from "./control-classes";
@@ -35,8 +38,6 @@ type ChatPanelProps = {
 /** What the panel shows of the log that its transcript reads. */
 type LogState = { status: ChatStatus; ready: boolean; failures: number };
 
-type ChatPlace = { tag: string; task: string; chat: number };
-
 type RoundProps = ChatPlace & {
   headingRef: RefObject<HTMLHeadingElement | null>;
   onLog: (log: LogState) => void;
@@ -49,8 +50,8 @@ const THREAD_COMPONENTS: ThreadComponents = {
   Welcome: ChatEmpty,
 };
 
-function refuseMessage(): Promise<void> {
-  return Promise.reject(new Error("The chat panel sends no messages."));
+function messageText(message: AppendMessage): string {
+  return message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
 }
 
 export function StateMark({ status }: { status: ChatStatus }): ReactNode {
@@ -256,16 +257,21 @@ function ChatTranscript(
 ): ReactNode {
   const { view, ready: caughtUp, failures, resets } = useChatLog(client, tag, task, chat, record.seq);
   const ready = caughtUp && resets === 0;
-  const { status } = view.fold;
+  const { status, turn } = view.fold;
   const statusKey = JSON.stringify(status);
   const { agent, folder } = record;
   const beforeRef = useRef<ChatView | null>(null);
+  const writes = useChatWrites({ tag, task, chat });
   const runtime = useExternalStoreRuntime({
     messages: view.messages,
     convertMessage: (message: ChatMessage) => chatThreadMessage(message, folder),
-    isRunning: status.state === "working",
-    isDisabled: true,
-    onNew: refuseMessage,
+    // The whole turn, also while it waits at a request: the kit shows Stop and no Send.
+    isRunning: turn,
+    // The kit `canSend` does not read `isRunning`, and the daemon refuses a message during a turn.
+    isSendDisabled: turn,
+    onNew: (message) => writes.send(messageText(message)),
+    onCancel: () => writes.cancel(),
+    onRespondToToolApproval: (options) => writes.answer(chatRequestOf(view, options.approvalId), options),
   });
   const report = useEffectEvent(() => {
     onLog({ status, ready, failures });
@@ -301,10 +307,37 @@ function ChatTranscript(
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <ChatDataViews />
+      <ChatDataViews tag={tag} task={task} chat={chat} />
+      <ChatDraft tag={tag} task={task} chat={chat} />
       {ready && <ChatThread headingRef={headingRef} />}
     </AssistantRuntimeProvider>
   );
+}
+
+/** Keeps the composer text of the chat and its draft the same, both ways, from the mount on. */
+function ChatDraft({ tag, task, chat }: ChatPlace): null {
+  const aui = useAui();
+
+  useEffect(() => {
+    const place = { tag, task, chat };
+    const fill = (draft: string): void => {
+      if (draft !== aui.composer.getState().text) {
+        aui.composer.setText(draft);
+      }
+    };
+
+    fill(chatDraft(place));
+    const stopDraft = subscribeChatDraft(place, fill);
+    const stopComposer = aui.subscribe(() => {
+      useChatDraftStore.getState().setDraft(place, aui.composer.getState().text);
+    });
+    return () => {
+      stopDraft();
+      stopComposer();
+    };
+  }, [aui, tag, task, chat]);
+
+  return null;
 }
 
 /** The kit thread. When a reset removes it with focus inside, focus moves to the panel heading. */

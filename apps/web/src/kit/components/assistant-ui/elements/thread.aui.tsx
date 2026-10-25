@@ -1,7 +1,8 @@
 "use client";
 
 import {
-  ComposerAddAttachment,
+  // tasma-edit: no attachments adapter, so no attachment button
+  // tasma-edit end
   ComposerAttachments,
   UserMessageAttachments,
 } from "@kit/components/assistant-ui/elements/attachment.aui";
@@ -497,7 +498,9 @@ const ComposerAction: FC = () => {
 
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
-      <ComposerAddAttachment />
+      {/* tasma-edit: no attachments adapter, so no attachment button; an empty slot keeps Send and Stop at the right end */}
+      <div />
+      {/* tasma-edit end */}
       <div className="flex items-center gap-1.5">
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
           <AuiIf condition={(s) => s.composer.dictation == null}>

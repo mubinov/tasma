@@ -3,12 +3,15 @@ import {
   useAuiState,
   type AssistantDataUIProps,
   type ToolCallMessagePartComponent,
+  type ToolCallMessagePartProps,
+  type ToolCallMessagePartStatus,
 } from "@assistant-ui/react";
 import { CodeDiff } from "@kit/components/assistant-ui/elements/code-diff";
 import { TerminalBlock } from "@kit/components/assistant-ui/elements/terminal-block";
 import type { ThreadGroupPart } from "@kit/components/assistant-ui/elements/thread.aui";
 import { TodoList, type TodoStatus } from "@kit/components/assistant-ui/elements/todo-list";
 import {
+  ToolFallbackApproval,
   ToolFallbackArgs,
   ToolFallbackContent,
   ToolFallbackResult,
@@ -16,16 +19,10 @@ import {
   ToolFallbackTrigger,
 } from "@kit/components/assistant-ui/elements/tool-fallback.aui";
 import { ToolGroupContent, ToolGroupRoot, ToolGroupTrigger } from "@kit/components/assistant-ui/elements/tool-group.aui";
-import { useRef, useState, type PropsWithChildren, type ReactNode, type RefObject } from "react";
-import type {
-  ChatNotice,
-  ChatPermission,
-  ChatPlanEntry,
-  ChatQuestion,
-  ChatQuestionField,
-  ChatTool,
-  ChatToolContent,
-} from "../lib/chat-fold";
+import { useId, useRef, useState, type PropsWithChildren, type ReactNode, type RefObject } from "react";
+import type { ChatPlace } from "../api/queries";
+import { questionApproval, questionResponse, type ChatApproval, type ChatRequest } from "../lib/chat-approval";
+import type { ChatNotice, ChatPermission, ChatPlanEntry, ChatQuestion, ChatTool, ChatToolContent } from "../lib/chat-fold";
 import {
   chatAnswerText,
   chatDiff,
@@ -34,11 +31,13 @@ import {
   chatToolName,
   chatToolStatus,
   chatToolWaits,
+  REQUIRES_ACTION,
   type ChatTerminalView,
   type ChatToolArtifact,
 } from "../lib/chat-messages";
 import { WarningIcon } from "../lib/icons";
 import { focusInView } from "../lib/focus-in-view";
+import { useChatWrites } from "../lib/use-chat-writes";
 import { useFocusLost } from "../lib/use-focus-lost";
 
 const PLAN_STATUSES: Record<ChatPlanEntry["status"], TodoStatus> = {
@@ -52,6 +51,8 @@ const WAITING_CLASS = "text-signal";
 const LINE_CLASS = "flex flex-col gap-1 text-sm wrap-anywhere";
 
 type DiffContent = Extract<ChatToolContent, { type: "diff" }>;
+
+type RespondToApproval = ToolCallMessagePartProps["respondToApproval"];
 
 /** What the body of a tool view shows: its diffs, else its terminal, else its arguments and its result. */
 type ToolBody = { kind: "diff"; diffs: DiffContent[] } | ChatTerminalView | { kind: "fallback" };
@@ -75,7 +76,13 @@ function toolBody(tool: ChatTool): ToolBody {
  * The tool view, and under it the line of its request. Every body has the
  * same trigger, so a change of the body keeps focus on the trigger.
  */
-export const ChatToolView: ToolCallMessagePartComponent = ({ argsText, result, artifact }) => {
+export const ChatToolView: ToolCallMessagePartComponent = ({
+  argsText,
+  result,
+  artifact,
+  approval,
+  respondToApproval,
+}) => {
   const { tool, folder } = artifact as ChatToolArtifact;
   const status = chatToolStatus(tool);
   const body = toolBody(tool);
@@ -84,6 +91,9 @@ export const ChatToolView: ToolCallMessagePartComponent = ({ argsText, result, a
   const [open, setOpen] = useState(opensItself);
   const [openedItself, setOpenedItself] = useState(opensItself);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const triggerId = useId();
+  // The kit tool group clips at its right and bottom edges, so the end padding keeps the focus ring of the line whole.
+  const requestProps = { approval, respondToApproval, status, triggerId, className: "flex flex-col gap-1 ps-6 pe-1 pb-1" };
 
   if (opensItself !== openedItself) {
     setOpenedItself(opensItself);
@@ -95,18 +105,89 @@ export const ChatToolView: ToolCallMessagePartComponent = ({ argsText, result, a
   return (
     <div className="flex flex-col gap-1">
       <ToolFallbackRoot open={open} onOpenChange={setOpen}>
-        <ToolFallbackTrigger ref={triggerRef} toolName={chatToolName(tool)} status={status} />
+        <ToolFallbackTrigger ref={triggerRef} id={triggerId} toolName={chatToolName(tool)} status={status} />
         <ToolFallbackContent>
           <ToolBodyView key={body.kind} triggerRef={triggerRef}>
             <ToolBodyContent body={body} folder={folder} argsText={argsText} result={result as unknown} />
           </ToolBodyView>
         </ToolFallbackContent>
       </ToolFallbackRoot>
-      {tool.permission !== undefined && <div className="ps-6"><PermissionLine permission={tool.permission} /></div>}
-      {tool.question !== undefined && <div className="ps-6"><QuestionLine question={tool.question} /></div>}
+      {tool.permission !== undefined && <RequestView request={{ kind: "permission", permission: tool.permission }} {...requestProps} />}
+      {tool.question !== undefined && <RequestView request={{ kind: "question", question: tool.question }} {...requestProps} />}
     </div>
   );
 };
+
+type RequestViewProps = {
+  request: ChatRequest;
+  /** The approval of the open request of the part. The view shows it only when it is the approval of this request. */
+  approval: ChatApproval | undefined;
+  respondToApproval: RespondToApproval;
+  status: ToolCallMessagePartStatus;
+  /** The trigger of the tool of the request. A question with no tool has none. */
+  triggerId?: string;
+  className: string;
+};
+
+/** The line of a request, and under it the kit view that answers the request while it is open. */
+function RequestView(
+  { request, approval, respondToApproval, status, triggerId, className }: RequestViewProps,
+): ReactNode {
+  const lineRef = useRef<HTMLDivElement>(null);
+  const labelId = useId();
+  const ruleId = useId();
+  const id = request.kind === "permission" ? request.permission.request : request.question.request;
+  const openApproval = approval?.id === id ? approval : undefined;
+  // Only the kit form of a question with fields has a rule line. It is in the name of the group, because a
+  // screen reader does not read the description of a group.
+  const formRuleId = openApproval?.display === "questions" ? ruleId : undefined;
+  const labelledBy = [triggerId, labelId, formRuleId].filter((part) => part !== undefined).join(" ");
+
+  return (
+    <div className={className}>
+      {request.kind === "permission"
+        ? <PermissionLine ref={lineRef} labelId={labelId} permission={request.permission} />
+        : <QuestionLine ref={lineRef} labelId={labelId} ruleId={formRuleId} question={request.question} />}
+      {openApproval !== undefined && (
+        <RequestAnswer
+          approval={openApproval}
+          respondToApproval={respondToApproval}
+          status={status}
+          labelledBy={labelledBy}
+          lineRef={lineRef}
+        />
+      )}
+    </div>
+  );
+}
+
+type RequestAnswerProps = {
+  approval: ChatApproval;
+  respondToApproval: RespondToApproval;
+  status: ToolCallMessagePartStatus;
+  /** The ids of the visible label of the group. */
+  labelledBy: string;
+  /** The line of the request, which shows its outcome after it closes. */
+  lineRef: RefObject<HTMLDivElement | null>;
+};
+
+/**
+ * The kit view that answers an open request. It leaves the page when the
+ * request closes, and focus inside it moves to the line.
+ */
+function RequestAnswer({ approval, respondToApproval, status, labelledBy, lineRef }: RequestAnswerProps): ReactNode {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useFocusLost(ref, () => {
+    focusInView(lineRef.current);
+  });
+
+  return (
+    <div ref={ref} role="group" aria-labelledby={labelledBy}>
+      <ToolFallbackApproval approval={approval} respondToApproval={respondToApproval} status={status} />
+    </div>
+  );
+}
 
 /** When a body of another kind replaces it with focus inside, focus moves to the trigger of the tool. */
 function ToolBodyView(
@@ -154,32 +235,41 @@ function ToolBodyContent({ body, folder, argsText, result }: ToolBodyContentProp
   }
 }
 
-function PermissionLine({ permission }: { permission: ChatPermission }): ReactNode {
+/** The line of a request takes focus when the kit view under it leaves the page. */
+type LineProps = { ref: RefObject<HTMLDivElement | null>; labelId: string };
+
+function permissionEnd(permission: ChatPermission): string | undefined {
   switch (permission.state) {
     case "open":
-      return (
-        <div className={LINE_CLASS}>
-          <p className={WAITING_CLASS}>Waiting for your permission.</p>
-          {permission.options.length > 0 && (
-            <p>{`Options: ${permission.options.map((option) => option.name).join(", ")}.`}</p>
-          )}
-        </div>
-      );
+      return undefined;
     case "selected": {
       const chosen = permission.options.find((option) => option.id === permission.option)?.name ?? permission.option;
-      return <p className={LINE_CLASS}>{chosen === undefined ? "Answered." : `Answered: ${chosen}.`}</p>;
+      return chosen === undefined ? "Answered." : `Answered: ${chosen}.`;
     }
     case "cancelled":
-      return <p className={LINE_CLASS}>The request was cancelled.</p>;
+      return "The request was cancelled.";
     case "ended":
-      return <p className={LINE_CLASS}>The request ended with no answer.</p>;
+      return "The request ended with no answer.";
   }
+}
+
+/** While the request is open, the kit buttons under the line show its options. */
+function PermissionLine({ permission, ref, labelId }: LineProps & { permission: ChatPermission }): ReactNode {
+  const end = permissionEnd(permission);
+
+  return (
+    <div ref={ref} id={labelId} tabIndex={-1} className={LINE_CLASS}>
+      {end === undefined ? <p className={WAITING_CLASS}>Waiting for your permission.</p> : <p>{end}</p>}
+    </div>
+  );
 }
 
 function questionEnd(question: ChatQuestion): string | undefined {
   switch (question.state) {
-    case "accepted":
-      return `Answered: ${chatAnswerText(question.answer)}.`;
+    case "accepted": {
+      const answer = chatAnswerText(question.answer);
+      return answer === "" ? "Answered." : `Answered: ${answer}.`;
+    }
     case "declined":
       return "Declined.";
     case "cancelled":
@@ -191,39 +281,30 @@ function questionEnd(question: ChatQuestion): string | undefined {
   }
 }
 
-function QuestionLine({ question }: { question: ChatQuestion }): ReactNode {
+type QuestionLineProps = LineProps & {
+  question: ChatQuestion;
+  /** The id of the rule line, which shows only while the kit form shows. */
+  ruleId: string | undefined;
+};
+
+/** While the question is open, the kit view under the line answers it. `labelId` names the message. */
+function QuestionLine({ question, ref, labelId, ruleId }: QuestionLineProps): ReactNode {
   const end = questionEnd(question);
 
   return (
-    <div className={LINE_CLASS}>
-      <p>{question.message}</p>
+    <div ref={ref} tabIndex={-1} className={LINE_CLASS}>
+      <p id={labelId}>{question.message}</p>
       {end === undefined
         ? (
             <>
-              {question.fields.map((field) => <QuestionField key={field.name} field={field} />)}
               <p className={WAITING_CLASS}>Waiting for your answer.</p>
+              {/* The kit form enables Send only when each question has an answer, also an optional one. */}
+              {ruleId !== undefined && (
+                <p id={ruleId}>Answer each question, then press Send. Dismiss declines the question.</p>
+              )}
             </>
           )
         : <p>{end}</p>}
-    </div>
-  );
-}
-
-function QuestionField({ field }: { field: ChatQuestionField }): ReactNode {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <p className="font-medium">{field.title ?? field.name}</p>
-      {field.description !== undefined && <p className="text-subtle">{field.description}</p>}
-      {field.choices.length > 0 && (
-        <ul className="list-disc ps-5">
-          {field.choices.map((choice) => (
-            <li key={choice.value}>
-              {choice.label}
-              {choice.description !== undefined && <span className="text-subtle">{` — ${choice.description}`}</span>}
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }
@@ -285,20 +366,41 @@ function NoticeView({ data }: DataProps): ReactNode {
   return <p className="my-2 text-sm text-subtle wrap-anywhere">{chatNoticeText(notice)}</p>;
 }
 
-function QuestionView({ data }: DataProps): ReactNode {
-  return <div className="my-2"><QuestionLine question={data as ChatQuestion} /></div>;
+/**
+ * A question with no tool. The thread has no method that answers a data part,
+ * so the view sends its answer itself.
+ */
+function QuestionView({ data, place }: DataProps & { place: ChatPlace }): ReactNode {
+  const question = data as ChatQuestion;
+  const request: ChatRequest = { kind: "question", question };
+  const writes = useChatWrites(place);
+
+  return (
+    <RequestView
+      request={request}
+      approval={question.state === "open" ? questionApproval(question) : undefined}
+      respondToApproval={(response) => writes.answer(request, questionResponse(question.request, response))}
+      status={REQUIRES_ACTION}
+      className="my-2 flex flex-col gap-1"
+    />
+  );
 }
 
 const PLAN_UI: AssistantDataUIProps = { name: "plan", render: PlanView };
 
 const NOTICE_UI: AssistantDataUIProps = { name: "notice", render: NoticeView };
 
-const QUESTION_UI: AssistantDataUIProps = { name: "question", render: QuestionView };
+function questionUI(place: ChatPlace): AssistantDataUIProps {
+  return { name: "question", render: ({ data }: DataProps) => <QuestionView data={data} place={place} /> };
+}
 
-/** Registers the views of the data parts of a chat while it is mounted. */
-export function ChatDataViews(): null {
+/** Registers the views of the data parts of a chat while it is mounted. The host keys it by its chat. */
+export function ChatDataViews(place: ChatPlace): null {
+  // Made once: a new `render` registers the view again, and the thread remounts each question form with it.
+  const [questionView] = useState(() => questionUI(place));
+
   useAssistantDataUI(PLAN_UI);
   useAssistantDataUI(NOTICE_UI);
-  useAssistantDataUI(QUESTION_UI);
+  useAssistantDataUI(questionView);
   return null;
 }

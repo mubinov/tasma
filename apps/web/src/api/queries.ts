@@ -19,6 +19,9 @@ export const POLL_INTERVAL = 5_000;
 /** The chats the dashboard lists. A field that is absent is left out, so the filter of all chats is `{}`. */
 export type ChatFilter = Omit<ChatListQuery, "after">;
 
+/** One chat: the tag of its project, the id of its task and its number. */
+export type ChatPlace = { tag: string; task: string; chat: number };
+
 /**
  * Two properties a new key has to keep: every key descends from `all`, so one
  * prefix invalidation drops everything the daemon said, and keys nest the way

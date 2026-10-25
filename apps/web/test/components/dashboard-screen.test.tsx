@@ -2,9 +2,11 @@ import type { ChatListItem, FeedEvent } from "@tasma/protocol";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { CHAT_CLIENT } from "../../src/api/mutations";
 import { daemonKeys } from "../../src/api/queries";
 import { FindShortcut } from "../../src/components/find-shortcut";
-import { chatPath } from "../chat-daemon";
+import { chatPath, chatRecord } from "../chat-daemon";
+import { TEXT_LOG } from "../chat-fixtures";
 import {
   chatHeading,
   chatList,
@@ -1470,6 +1472,23 @@ describe("a new search or filter result", () => {
 
     await waitFor(() => {
       expect(spoken()).toEqual(["ACME-7 needs you"]);
+    });
+  });
+});
+
+describe("the chat", () => {
+  it("sends a message from the composer of the open chat", async () => {
+    const user = userEvent.setup();
+    const stub = stubDashboard({ [`POST ${chatPath()}/messages`]: successReply(chatRecord({ step: "dev:review" })) });
+    await renderDashboard(stub, OPEN_PATH);
+    stub.answer(0, { cursor: TEXT_LOG.length, entries: [...TEXT_LOG] });
+
+    await user.type(await screen.findByRole("textbox", { name: "Message input" }), "Split the lexer.{Enter}");
+
+    await waitFor(() => {
+      expect(stub.requests.filter(({ method }) => method === "POST")).toEqual([
+        { method: "POST", path: `${chatPath()}/messages`, body: { text: "Split the lexer.", client: CHAT_CLIENT } },
+      ]);
     });
   });
 });

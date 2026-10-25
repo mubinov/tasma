@@ -1,11 +1,16 @@
 import {
   bodyCorrection,
+  chatRefusalCode,
   failureKind,
   titleCorrection,
+  type ChatWrite,
+  type ClosedNotice,
   type FailureKind,
   type TaskWriteError,
   type WriteError,
+  type WriteFailure,
 } from "../api/mutations";
+import type { ChatPlace } from "../api/queries";
 
 /** Nothing was written. */
 const WHOLE_FAILURE_LINES: Record<FailureKind, string> = {
@@ -35,6 +40,49 @@ const PAGE_FAILURE_LINES: Record<FailureKind, string> = {
     + "The page shows the task as the daemon holds it after the next read.",
   unsent: "The write did not start, so nothing changed on disk.",
 };
+
+const CHAT_FAILURE_LINES: Record<FailureKind, string> = {
+  refused: "The daemon refused it, so nothing changed in the chat. Its own words are below.",
+  unanswered: "No daemon answered, so nothing was sent.",
+  address: "The daemon did not answer through the address below. Start the daemon there if it is not running.",
+  unsent: "The write did not start, so nothing was sent.",
+};
+
+const TURN_RUNNING_LINE = "The agent is working on a turn. Send the message when the turn ends.";
+
+function chatName({ task, chat }: ChatPlace): string {
+  return `chat ${String(chat)} of ${task}`;
+}
+
+function chatFailureTitle(place: ChatPlace, kind: ChatWrite["kind"]): string {
+  switch (kind) {
+    case "message":
+      return `The message to ${chatName(place)} was not sent.`;
+    case "cancel":
+      return `The turn of ${chatName(place)} did not stop.`;
+    case "permission":
+    case "question":
+      return `The answer to ${chatName(place)} was not sent.`;
+  }
+}
+
+export function chatFailure(place: ChatPlace, kind: ChatWrite["kind"]): WriteFailure {
+  return {
+    title: chatFailureTitle(place, kind),
+    line: (error) => kind === "message" && chatRefusalCode(error) === "turn-running"
+      ? TURN_RUNNING_LINE
+      : CHAT_FAILURE_LINES[failureKind(error.cause)],
+  };
+}
+
+/** The warning of an answer that the daemon refused with `already-answered`. */
+export function chatClosedNotice(place: ChatPlace): ClosedNotice {
+  return {
+    title: `Your answer to ${chatName(place)} was not used.`,
+    line: "The request was already closed: another window answered it, or it was cancelled or ended. "
+      + "The chat shows the outcome.",
+  };
+}
 
 export function boardFailureLine(error: TaskWriteError): string {
   return (error.completed > 0 ? PARTIAL_FAILURE_LINES : WHOLE_FAILURE_LINES)[failureKind(error.cause)];

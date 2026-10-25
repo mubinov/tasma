@@ -519,6 +519,37 @@ export const REFUSAL_LOG: readonly ChatEntry[] = chatEntries([
   turnEnd(),
 ]);
 
+/** The form of an MCP server, a question with no tool: a yes or no field, and a whole number in a range. */
+export const FORM_LOG: readonly ChatEntry[] = chatEntries([
+  userMessage("Deploy the preview."),
+  questionRequest("r5", {
+    message: "The deploy server needs two answers.",
+    requestedSchema: {
+      type: "object",
+      properties: {
+        confirm: { type: "boolean", title: "Confirm", description: "Deploy to the preview host?" },
+        retries: { type: "integer", title: "Retries", minimum: 1, maximum: 5 },
+      },
+      required: ["confirm"],
+    },
+  }),
+  questionResolved("r5", { action: "accept", content: { confirm: true, retries: 3 } }),
+  textChunk("The preview is deployed.", "msg_08"),
+  turnEnd(),
+]);
+
+/** The form of an MCP server that asks only to accept or decline: a question with no fields and no tool. */
+export const CONFIRM_LOG: readonly ChatEntry[] = chatEntries([
+  userMessage("Publish the preview."),
+  questionRequest("r6", {
+    message: "Publish the preview to the team?",
+    requestedSchema: { type: "object", properties: {} },
+  }),
+  questionResolved("r6", { action: "accept", content: {} }),
+  textChunk("The preview is published.", "msg_09"),
+  turnEnd(),
+]);
+
 export const CHAT_FIXTURES: Readonly<Record<string, readonly ChatEntry[]>> = {
   text: TEXT_LOG,
   edit: EDIT_LOG,
@@ -527,4 +558,6 @@ export const CHAT_FIXTURES: Readonly<Record<string, readonly ChatEntry[]>> = {
   question: QUESTION_LOG,
   questions: QUESTIONS_LOG,
   refusal: REFUSAL_LOG,
+  form: FORM_LOG,
+  confirm: CONFIRM_LOG,
 };
