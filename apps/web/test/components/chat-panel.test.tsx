@@ -7,11 +7,11 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import type { Chat, ChatEntry, ChatEvent, TransportRequest } from "@tasma/protocol";
+import type { Chat, ChatEntry, ChatEvent, Diagnostic, TransportRequest } from "@tasma/protocol";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactNode } from "react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { CHAT_CLIENT } from "../../src/api/mutations";
 import { daemonKeys } from "../../src/api/queries";
 import { ChatPanel } from "../../src/components/chat-panel";
@@ -20,11 +20,15 @@ import { useChatDraftStore } from "../../src/store/chat-drafts";
 import { useNoticeStore } from "../../src/store/notices";
 import { chatPath, chatRecord, eventsPath, stubChatLog, type ChatLogStub } from "../chat-daemon";
 import {
+  agentUpdate,
   BASH_OPTIONS,
   chatEntries,
   CONFIRM_LOG,
   EDIT_LOG,
   FORM_LOG,
+  modeOption,
+  modeUpdate,
+  optionsUpdate,
   PERMISSION_LOG,
   permissionRequest,
   permissionResolved,
@@ -1602,4 +1606,507 @@ it("answers the open question of a tool whose permission closed, under the quest
       { method: "POST", path, body: { action: "accept", content: { host: "staging" }, client: CHAT_CLIENT } },
     ]);
   });
+});
+
+const OPTIONS_PATH = `${chatPath()}/options`;
+
+/** A turn that ended, after the first list of the options, in Accept edits. */
+const MODE_LOG = chatEntries([
+  optionsUpdate(modeOption("acceptEdits")),
+  userMessage("Build."),
+  textChunk("Built."),
+  turnEnd(),
+]);
+
+const AUTO_LIST = optionsUpdate(modeOption("auto"));
+
+const MODE_TRIGGER = { name: /^Mode / };
+
+function modeTrigger(): HTMLElement {
+  return screen.getByRole("button", MODE_TRIGGER);
+}
+
+/** Picks the value by its name in the mode menu. */
+async function pickMode(user: ReturnType<typeof userEvent.setup>, name: string): Promise<void> {
+  await user.click(await screen.findByRole("button", MODE_TRIGGER));
+  await user.click(await screen.findByRole("menuitemradio", { name }));
+}
+
+/** The answer of the option route: the record with the `seq` of the log when the daemon answered. */
+function optionAnswer(seq: number, diagnostics: Diagnostic[] = []) {
+  return successReply(chatRecord({ seq }), diagnostics);
+}
+
+/** A held answer of the option route for the next pick. */
+function holdPick(log: ChatLogStub) {
+  const held = heldBack();
+  log.replies[`POST ${OPTIONS_PATH}`] = held.reply;
+  return held;
+}
+
+/** Gives the pending writes and the log reads time to land. */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+}
+
+/** Each text that the mode trigger shows from now on, one for each change. */
+function watchTrigger(): string[] {
+  const seen: string[] = [modeTrigger().textContent];
+  const observer = new MutationObserver(() => {
+    const text = screen.queryByRole("button", MODE_TRIGGER)?.textContent;
+    if (text !== undefined && text !== seen.at(-1)) {
+      seen.push(text);
+    }
+  });
+  observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+  onTestFinished(() => {
+    observer.disconnect();
+  });
+  return seen;
+}
+
+function modeWords(): string[] {
+  return spoken().filter((words) => words.startsWith("Mode:"));
+}
+
+it("shows the mode of the chat in the composer, and no picker for a log with no options", async () => {
+  await renderPanel(logOf(MODE_LOG));
+
+  const trigger = await screen.findByRole("button", { name: "Mode Accept edits" });
+  expect(composer().closest("form")?.contains(trigger)).toBe(true);
+  cleanup();
+
+  await renderPanel(logOf(TEXT_LOG));
+
+  await findComposer();
+  expect(screen.queryByRole("button", MODE_TRIGGER)).toBeNull();
+});
+
+it("offers the values of the agent without the hidden ones", async () => {
+  const user = userEvent.setup();
+  await renderPanel(logOf(MODE_LOG));
+
+  await user.click(await screen.findByRole("button", MODE_TRIGGER));
+
+  const menu = await screen.findByRole("menu", { name: "Mode" });
+  const names = ["Manual", "Accept edits", "Auto", "Bypass permissions"];
+  expect(within(menu).getAllByRole("menuitemradio")).toEqual(
+    names.map((name) => within(menu).getByRole("menuitemradio", { name })),
+  );
+});
+
+it("posts a pick with the client of the window, disables Send while it runs, and enables Send after it", async () => {
+  const user = userEvent.setup();
+  const log = logOf(MODE_LOG);
+  const held = holdPick(log);
+  await renderPanel(log);
+  await user.type(await findComposer(), "Then test it.");
+
+  await pickMode(user, "Auto");
+
+  await waitFor(() => {
+    expect(posts(log)).toEqual([
+      { method: "POST", path: OPTIONS_PATH, body: { configId: "mode", value: "auto", client: CHAT_CLIENT } },
+    ]);
+  });
+  expect(modeTrigger().textContent).toBe("Auto…");
+  expect(button("Send message").disabled).toBe(true);
+  await user.type(composer(), "{Enter}");
+  expect(posts(log)).toHaveLength(1);
+
+  held.answer(optionAnswer(5));
+  log.answer(4, { cursor: 5, entries: chatEntries([AUTO_LIST], 5) });
+
+  await waitFor(() => {
+    expect(button("Send message").disabled).toBe(false);
+  });
+  expect(modeTrigger().textContent).toBe("Auto");
+});
+
+it("keeps Auto… until the log reaches the seq of an answer that comes first, and announces Mode: Auto one time", async () => {
+  const user = userEvent.setup();
+  const log = logOf(MODE_LOG);
+  const held = holdPick(log);
+  await renderPanel(log);
+  await screen.findByRole("button", MODE_TRIGGER);
+  const seen = watchTrigger();
+
+  await pickMode(user, "Auto");
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Auto…");
+  });
+  held.answer(optionAnswer(6));
+  await settle();
+  log.answer(4, { cursor: 5, entries: chatEntries([agentUpdate({ sessionUpdate: "usage_update", used: 9 })], 5) });
+  await settle();
+  expect(modeTrigger().textContent).toBe("Auto…");
+
+  log.answer(5, { cursor: 6, entries: chatEntries([AUTO_LIST], 6) });
+
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Auto");
+  });
+  expect(seen).toEqual(["Accept edits", "Auto…", "Auto"]);
+  await frame();
+  expect(modeWords()).toEqual(["Mode: Auto"]);
+});
+
+it("ends the period at the answer when the log reaches its seq first, with one announcement", async () => {
+  const user = userEvent.setup();
+  const log = logOf(MODE_LOG);
+  const held = holdPick(log);
+  await renderPanel(log);
+
+  await pickMode(user, "Auto");
+  log.answer(4, { cursor: 5, entries: chatEntries([AUTO_LIST], 5) });
+  await settle();
+  expect(modeTrigger().textContent).toBe("Auto…");
+  await frame();
+  expect(modeWords()).toEqual([]);
+
+  held.answer(optionAnswer(5));
+
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Auto");
+  });
+  await frame();
+  expect(modeWords()).toEqual(["Mode: Auto"]);
+});
+
+it.each(["answer", "log"] as const)(
+  "announces Mode: Accept edits one time for a pick of Auto that the adapter keeps in Accept edits, with the %s first",
+  async (first) => {
+    const user = userEvent.setup();
+    const log = logOf(MODE_LOG);
+    const held = holdPick(log);
+    await renderPanel(log);
+    const kept = optionsUpdate(modeOption("acceptEdits"));
+
+    await pickMode(user, "Auto");
+    await settle();
+    if (first === "answer") {
+      held.answer(optionAnswer(5));
+      await settle();
+      log.answer(4, { cursor: 5, entries: chatEntries([kept], 5) });
+    } else {
+      log.answer(4, { cursor: 5, entries: chatEntries([kept], 5) });
+      await settle();
+      held.answer(optionAnswer(5));
+    }
+
+    await waitFor(() => {
+      expect(modeTrigger().textContent).toBe("Accept edits");
+    });
+    await frame();
+    expect(modeWords()).toEqual(["Mode: Accept edits"]);
+  },
+);
+
+/** Resets the log while a pick is pending: the record is read again, and the new transcript reads the log from 0. */
+async function resetDuringPick(log: ChatLogStub, user: ReturnType<typeof userEvent.setup>) {
+  const held = holdPick(log);
+  await pickMode(user, "Auto");
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Auto…");
+  });
+  log.replies[chatPath()] = successReply(chatRecord({ seq: 4 }));
+  log.answer(4, { reset: true, cursor: 0 });
+  await readStarted(log, chatPath(), 2);
+  await readStarted(log, eventsPath(0), 2);
+  return held;
+}
+
+it("announces at the end of the period a mode that the log changes before the answer, in a transcript that mounts during the pick", async () => {
+  const user = userEvent.setup();
+  const log = logOf(MODE_LOG);
+  await renderPanel(log);
+  const held = await resetDuringPick(log, user);
+
+  log.answer(0, { cursor: 4, entries: [...MODE_LOG] });
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Auto…");
+  });
+  log.answer(4, { cursor: 5, entries: chatEntries([AUTO_LIST], 5) });
+  await settle();
+  await frame();
+  expect(modeWords()).toEqual([]);
+
+  held.answer(optionAnswer(5));
+
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Auto");
+  });
+  await frame();
+  expect(modeWords()).toEqual(["Mode: Auto"]);
+});
+
+it("announces later, one time, a mode that the log changes after the answer, in a transcript that mounts during the pick", async () => {
+  const user = userEvent.setup();
+  const log = logOf(MODE_LOG);
+  await renderPanel(log);
+  const held = await resetDuringPick(log, user);
+
+  log.answer(0, { cursor: 4, entries: [...MODE_LOG] });
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Auto…");
+  });
+  held.answer(optionAnswer(5));
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Accept edits");
+  });
+  await frame();
+  expect(modeWords()).toEqual([]);
+
+  log.answer(4, { cursor: 5, entries: chatEntries([AUTO_LIST], 5) });
+
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Auto");
+  });
+  await frame();
+  expect(modeWords()).toEqual(["Mode: Auto"]);
+});
+
+it("starts no period in a transcript whose first view comes after the answer, and announces a later change one time", async () => {
+  const user = userEvent.setup();
+  const log = logOf(MODE_LOG);
+  await renderPanel(log);
+  const held = await resetDuringPick(log, user);
+  held.answer(optionAnswer(5));
+  await settle();
+
+  log.answer(0, { cursor: 4, entries: [...MODE_LOG] });
+  expect(await screen.findByRole("button", { name: "Mode Accept edits" })).toBeTruthy();
+  log.answer(4, { cursor: 5, entries: chatEntries([AUTO_LIST], 5) });
+
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Auto");
+  });
+  await frame();
+  expect(modeWords()).toEqual(["Mode: Auto"]);
+});
+
+it("announces nothing at the end of a period whose view has no mode option", async () => {
+  const user = userEvent.setup();
+  const log = logOf(MODE_LOG);
+  const held = holdPick(log);
+  await renderPanel(log);
+
+  await pickMode(user, "Auto");
+  await settle();
+  log.answer(4, { cursor: 5, entries: chatEntries([optionsUpdate()], 5) });
+  await waitFor(() => {
+    expect(screen.queryByRole("button", MODE_TRIGGER)).toBeNull();
+  });
+  held.answer(optionAnswer(5));
+  await settle();
+
+  await frame();
+  expect(modeWords()).toEqual([]);
+});
+
+it("announces the mode of a pick that succeeds and opens the notice of a later pick that fails", async () => {
+  const user = userEvent.setup();
+  const log = logOf(MODE_LOG);
+  const held = holdPick(log);
+  await renderPanel(log);
+  await pickMode(user, "Auto");
+  await waitFor(() => {
+    expect(posts(log)).toHaveLength(1);
+  });
+  log.replies[`POST ${OPTIONS_PATH}`] = refusalReply(422, {
+    kind: "daemon",
+    code: "option-refused",
+    message: "the agent refused \"default\" for \"mode\"",
+  });
+
+  await pickMode(user, "Manual");
+  await waitFor(() => {
+    expect(notices()).toEqual([expect.objectContaining({ title: "Mode of chat 2 of SAGA-3 did not change." })]);
+  });
+  expect(modeTrigger().textContent).toBe("Auto…");
+  held.answer(optionAnswer(5));
+  log.answer(4, { cursor: 5, entries: chatEntries([AUTO_LIST], 5) });
+
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Auto");
+  });
+  await frame();
+  expect(modeWords()).toEqual(["Mode: Auto"]);
+});
+
+it("announces the mode that the log changes during a pick that fails", async () => {
+  const user = userEvent.setup();
+  const log = logOf(MODE_LOG);
+  const held = holdPick(log);
+  await renderPanel(log);
+
+  await pickMode(user, "Auto");
+  log.answer(4, { cursor: 5, entries: chatEntries([modeUpdate("default")], 5) });
+  await settle();
+  await frame();
+  expect(modeWords()).toEqual([]);
+  held.answer(refused(400, "malformed-request"));
+
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Manual");
+  });
+  await frame();
+  expect(modeWords()).toEqual(["Mode: Manual"]);
+});
+
+it("announces nothing for a pick that fails with no change of the mode", async () => {
+  const user = userEvent.setup();
+  const log = logOf(MODE_LOG);
+  log.replies[`POST ${OPTIONS_PATH}`] = refused(400, "malformed-request");
+  await renderPanel(log);
+
+  await pickMode(user, "Auto");
+
+  await waitFor(() => {
+    expect(notices()).toHaveLength(1);
+  });
+  expect(modeTrigger().textContent).toBe("Accept edits");
+  await frame();
+  expect(modeWords()).toEqual([]);
+});
+
+it("announces a change of the mode in the log outside a pick", async () => {
+  const log = logOf(MODE_LOG);
+  await renderPanel(log);
+  await screen.findByRole("button", MODE_TRIGGER);
+
+  log.answer(4, { cursor: 5, entries: chatEntries([modeUpdate("default")], 5) });
+
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Manual");
+  });
+  await frame();
+  expect(modeWords()).toEqual(["Mode: Manual"]);
+});
+
+it("opens the failure notice of a refused pick with the words of the daemon", async () => {
+  const user = userEvent.setup();
+  const log = logOf(MODE_LOG);
+  log.replies[`POST ${OPTIONS_PATH}`] = refusalReply(422, {
+    kind: "daemon",
+    code: "option-refused",
+    message: "the agent of chat 2 of SAGA-3 refused \"auto\" for \"mode\": no auto mode",
+  });
+  await renderPanel(log);
+
+  await pickMode(user, "Auto");
+
+  await waitFor(() => {
+    expect(notices()).toEqual([
+      expect.objectContaining({
+        form: "failure",
+        title: "Mode of chat 2 of SAGA-3 did not change.",
+        line: "The daemon refused it, so Mode did not change. Its own words are below.",
+        words: ["daemon/option-refused · the agent of chat 2 of SAGA-3 refused \"auto\" for \"mode\": no auto mode"],
+      }),
+    ]);
+  });
+});
+
+it("opens the warning notice, with the path of the file, of a pick that the daemon did not save", async () => {
+  const user = userEvent.setup();
+  const log = logOf(MODE_LOG);
+  log.replies[`POST ${OPTIONS_PATH}`] = optionAnswer(4, [
+    {
+      code: "option-not-saved",
+      message: "the value \"auto\" of \"mode\" is not saved as the default of claude: disk full",
+      path: "/work/home/.tasma/agent-defaults.json",
+    },
+  ]);
+  await renderPanel(log);
+
+  await pickMode(user, "Auto");
+
+  await waitFor(() => {
+    expect(notices()).toEqual([
+      expect.objectContaining({
+        form: "warning",
+        title: "Mode of chat 2 of SAGA-3 changed, but it is not saved.",
+        words: [
+          "/work/home/.tasma/agent-defaults.json: the value \"auto\" of \"mode\" is not saved as the default of claude: disk full",
+        ],
+      }),
+    ]);
+  });
+});
+
+it("posts a pick during a turn", async () => {
+  const user = userEvent.setup();
+  const log = writableLogOf(chatEntries([optionsUpdate(modeOption("acceptEdits")), userMessage("Build.")]), OPTIONS_PATH);
+  await renderPanel(log);
+  expect(await screen.findByRole("button", { name: "Stop generating" })).toBeTruthy();
+
+  await pickMode(user, "Auto");
+
+  await waitFor(() => {
+    expect(posts(log)).toEqual([
+      { method: "POST", path: OPTIONS_PATH, body: { configId: "mode", value: "auto", client: CHAT_CLIENT } },
+    ]);
+  });
+});
+
+it("moves focus to the heading when the option leaves the log with its menu open", async () => {
+  const user = userEvent.setup();
+  const log = logOf(MODE_LOG);
+  await renderPanel(log);
+  const trigger = await screen.findByRole("button", MODE_TRIGGER);
+  act(() => {
+    trigger.focus();
+  });
+  await user.keyboard("{Enter}");
+  const menu = await screen.findByRole("menu", { name: "Mode" });
+  await waitFor(() => {
+    expect(menu.contains(document.activeElement)).toBe(true);
+  });
+
+  log.answer(4, { cursor: 5, entries: chatEntries([optionsUpdate()], 5) });
+
+  await waitFor(() => {
+    expect(document.activeElement).toBe(heading());
+  });
+});
+
+it("shows a mode option with the id constructor", async () => {
+  await renderPanel(logOf(chatEntries([optionsUpdate({ ...modeOption("auto"), id: "constructor" })])));
+
+  expect(await screen.findByRole("button", { name: "Mode Auto" })).toBeTruthy();
+});
+
+it("keeps the newer of two picks whose answers come in the wrong order", async () => {
+  const user = userEvent.setup();
+  const log = logOf(MODE_LOG);
+  const first = holdPick(log);
+  await renderPanel(log);
+  await pickMode(user, "Auto");
+  await waitFor(() => {
+    expect(posts(log)).toHaveLength(1);
+  });
+  const second = holdPick(log);
+  await pickMode(user, "Manual");
+  await waitFor(() => {
+    expect(posts(log)).toHaveLength(2);
+  });
+
+  second.answer(optionAnswer(6));
+  await settle();
+  first.answer(optionAnswer(5));
+  await settle();
+  log.answer(4, { cursor: 5, entries: chatEntries([AUTO_LIST], 5) });
+  await settle();
+  expect(modeTrigger().textContent).toBe("Manual…");
+
+  log.answer(5, { cursor: 6, entries: chatEntries([modeUpdate("default")], 6) });
+
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Manual");
+  });
+  await frame();
+  expect(modeWords()).toEqual(["Mode: Manual"]);
 });

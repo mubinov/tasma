@@ -6,7 +6,7 @@ import { CHAT_CLIENT } from "../../src/api/mutations";
 import { daemonKeys } from "../../src/api/queries";
 import { FindShortcut } from "../../src/components/find-shortcut";
 import { chatPath, chatRecord } from "../chat-daemon";
-import { TEXT_LOG } from "../chat-fixtures";
+import { chatEntries, modeOption, optionsUpdate, TEXT_LOG } from "../chat-fixtures";
 import {
   chatHeading,
   chatList,
@@ -1499,6 +1499,22 @@ describe("the chat", () => {
     await waitFor(() => {
       expect(stub.requests.filter(({ method }) => method === "POST")).toEqual([
         { method: "POST", path: `${chatPath()}/messages`, body: { text: "Split the lexer.", client: CHAT_CLIENT } },
+      ]);
+    });
+  });
+
+  it("shows the mode of the open chat in its composer, and posts a pick", async () => {
+    const user = userEvent.setup();
+    const stub = stubDashboard({ [`POST ${chatPath()}/options`]: successReply(chatRecord({ seq: 2 })) });
+    await renderDashboard(stub, OPEN_PATH);
+    stub.answer(0, { cursor: 1, entries: chatEntries([optionsUpdate(modeOption("acceptEdits"))]) });
+
+    await user.click(await screen.findByRole("button", { name: "Mode Accept edits" }));
+    await user.click(await screen.findByRole("menuitemradio", { name: "Auto" }));
+
+    await waitFor(() => {
+      expect(stub.requests.filter(({ method }) => method === "POST")).toEqual([
+        { method: "POST", path: `${chatPath()}/options`, body: { configId: "mode", value: "auto", client: CHAT_CLIENT } },
       ]);
     });
   });

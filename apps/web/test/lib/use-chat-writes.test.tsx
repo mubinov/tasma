@@ -9,9 +9,11 @@ import type { TransportReply } from "@tasma/protocol";
 import { cleanup, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { CHAT_CLIENT } from "../../src/api/mutations";
 import type { RouterContext } from "../../src/routes";
 import { useChatWrites } from "../../src/lib/use-chat-writes";
 import { chatDraft, useChatDraftStore } from "../../src/store/chat-drafts";
+import { useNoticeStore } from "../../src/store/notices";
 import { refusalReply, stubTransport, successReply, testContext } from "../helpers";
 
 const PLACE = { tag: "SAGA", task: "SAGA-3", chat: 2 };
@@ -95,4 +97,37 @@ it("resolves an answer that the daemon takes", async () => {
   await writes.answer({ kind: "permission", permission }, { approvalId: "r1", approved: true, optionId: "allow" });
 
   expect(requests.filter(({ method }) => method === "POST").map(({ path }) => path)).toEqual([`${CHAT_PATH}/permissions/r1`]);
+});
+
+it("sends a pick as an option write, and resolves with the seq of the answer", async () => {
+  const { writes, requests } = renderWrites({ [`POST ${CHAT_PATH}/options`]: successReply({ task: "SAGA-3", chat: 2, seq: 7 }) });
+
+  await expect(writes.pick("mode", "auto", "Mode")).resolves.toBe(7);
+
+  expect(requests.filter(({ method }) => method === "POST")).toEqual([
+    { method: "POST", path: `${CHAT_PATH}/options`, body: { configId: "mode", value: "auto", client: CHAT_CLIENT } },
+  ]);
+});
+
+it("names the option in the warning of a pick that is not saved", async () => {
+  const diagnostic = { code: "option-not-saved", message: "not saved: disk full" } as const;
+  const { writes } = renderWrites({
+    [`POST ${CHAT_PATH}/options`]: successReply({ task: "SAGA-3", chat: 2, seq: 7 }, [diagnostic]),
+  });
+
+  await writes.pick("mode", "auto", "Mode");
+
+  expect(useNoticeStore.getState().notices).toEqual([
+    expect.objectContaining({ form: "warning", title: "Mode of chat 2 of SAGA-3 changed, but it is not saved." }),
+  ]);
+});
+
+it("resolves a refused pick with nothing, and names the option in the failure notice", async () => {
+  const { writes } = renderWrites({ [`POST ${CHAT_PATH}/options`]: REFUSED });
+
+  await expect(writes.pick("mode", "auto", "Mode")).resolves.toBeUndefined();
+
+  expect(useNoticeStore.getState().notices).toEqual([
+    expect.objectContaining({ form: "failure", title: "Mode of chat 2 of SAGA-3 did not change." }),
+  ]);
 });

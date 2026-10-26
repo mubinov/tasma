@@ -1,6 +1,14 @@
 import { mutationOptions, useMutationState, type QueryClient } from "@tanstack/react-query";
 import type { RegisteredRouter } from "@tanstack/react-router";
-import { ProtocolError, type Chat, type ChatStart, type Client, type QuestionValue } from "@tasma/protocol";
+import {
+  ProtocolError,
+  type Chat,
+  type ChatStart,
+  type Client,
+  type Diagnostic,
+  type QuestionValue,
+  type Success,
+} from "@tasma/protocol";
 import { focusChatHeading } from "../../lib/focus-in-view";
 import { latestOnTask, STEP_ACTION_SELECTOR } from "../../lib/step-action";
 import { useNoticeStore } from "../../store/notices";
@@ -9,6 +17,9 @@ import { openWriteNotice, refusalWords, usePendingVariables, WriteError, type Wr
 
 /** The texts of the warning notice after `already-answered`. */
 export type ClosedNotice = { title: string; line: string };
+
+/** The texts of the warning notice of an option write that the daemon did not save. */
+export type SavedNotice = { title: string; line: string };
 
 export type ChatQuestionReply
   = | { action: "accept"; content: Readonly<Record<string, QuestionValue>> }
@@ -20,7 +31,10 @@ export type ChatWrite = { failure: WriteFailure } & (
   | { kind: "cancel" }
   | { kind: "permission"; request: string; optionId: string; closed: ClosedNotice }
   | { kind: "question"; request: string; answer: ChatQuestionReply; closed: ClosedNotice }
+  | { kind: "option"; configId: string; value: string; saved: SavedNotice }
 );
+
+export type ChatOptionWrite = Extract<ChatWrite, { kind: "option" }>;
 
 const CHAT_FAILURE_KEY_PREFIX = "chat-write-failure:";
 
@@ -47,22 +61,34 @@ export function chatRefusalCode(error: unknown): string | undefined {
   return cause instanceof ProtocolError ? cause.failure.code : undefined;
 }
 
-async function send(client: Client, { tag, task, chat }: ChatPlace, write: ChatWrite): Promise<void> {
+async function send(
+  client: Client,
+  { tag, task, chat }: ChatPlace,
+  write: ChatWrite,
+): Promise<Success<Chat> | undefined> {
   const body = { client: CHAT_CLIENT };
 
   switch (write.kind) {
     case "message":
       await client.sendChatMessage(tag, task, chat, { ...body, text: write.text });
-      return;
+      return undefined;
     case "cancel":
       await client.cancelChatTurn(tag, task, chat, body);
-      return;
+      return undefined;
     case "permission":
       await client.answerChatPermission(tag, task, chat, write.request, { ...body, optionId: write.optionId });
-      return;
+      return undefined;
     case "question":
       await client.answerChatQuestion(tag, task, chat, write.request, { ...write.answer, ...body });
+      return undefined;
+    case "option":
+      return client.setChatOption(tag, task, chat, { ...body, configId: write.configId, value: write.value });
   }
+}
+
+/** `option-not-saved` keeps the file in `path`, which `noticeWords` leaves out. */
+function savedWords(diagnostics: readonly Diagnostic[]): string[] {
+  return diagnostics.map(({ path, message }) => (path === undefined ? message : `${path}: ${message}`));
 }
 
 /**
@@ -71,25 +97,33 @@ async function send(client: Client, { tag, task, chat }: ChatPlace, write: ChatW
  * puts the commands of one chat in order.
  */
 export function chatWriteOptions(client: Client, place: ChatPlace) {
-  return mutationOptions<void, WriteError, ChatWrite>({
+  return mutationOptions<Success<Chat> | undefined, WriteError, ChatWrite>({
     mutationKey: chatWriteKey(place),
     mutationFn: async (write) => {
       try {
-        await send(client, place, write);
+        return await send(client, place, write);
       } catch (cause) {
         throw new WriteError(cause);
       }
     },
     // A write whose answer is lost can be done already.
     retry: 0,
-    onSuccess: (_data, write) => {
-      useNoticeStore.getState().closeNotice(chatFailureKey(place, write.kind));
+    onSuccess: (answer, write) => {
+      const key = chatFailureKey(place, write.kind);
+      const diagnostics = answer?.diagnostics ?? [];
+
+      if (write.kind === "option" && diagnostics.length > 0) {
+        const { title, line } = write.saved;
+        openWriteNotice({ key, form: "warning", title, line, words: savedWords(diagnostics) });
+        return;
+      }
+      useNoticeStore.getState().closeNotice(key);
     },
     onError: (error, write) => {
       const key = chatFailureKey(place, write.kind);
       const words = [refusalWords(error)];
 
-      if (write.kind !== "message" && write.kind !== "cancel" && chatRefusalCode(error) === "already-answered") {
+      if ((write.kind === "permission" || write.kind === "question") && chatRefusalCode(error) === "already-answered") {
         openWriteNotice({ key, form: "warning", title: write.closed.title, line: write.closed.line, words });
         return;
       }
@@ -202,6 +236,13 @@ export function chatStartOptions(queryClient: QueryClient, client: Client, route
       });
     },
   });
+}
+
+/** The pending option writes of the chat, in the order they were sent. */
+export function usePendingChatOptions(place: ChatPlace): ChatOptionWrite[] {
+  return usePendingVariables<ChatWrite>(chatWriteKey(place))
+    .map(({ variables }) => variables)
+    .filter((write) => write.kind === "option");
 }
 
 export function usePendingChatStart(id: string): StartChat | undefined {

@@ -550,6 +550,58 @@ export const CONFIRM_LOG: readonly ChatEntry[] = chatEntries([
   turnEnd(),
 ]);
 
+/** The modes of the adapter, with Bypass permissions. */
+export const MODE_VALUES: readonly AcpObject[] = [
+  { value: "default", name: "Manual", description: "Always ask before making changes" },
+  { value: "acceptEdits", name: "Accept edits", description: "Automatically accept all file edits" },
+  { value: "plan", name: "Plan", description: "Create a plan before making changes" },
+  { value: "auto", name: "Auto", description: "Claude handles permission decisions" },
+  { value: "bypassPermissions", name: "Bypass permissions", description: "Accepts all permissions" },
+];
+
+/** The mode option as the adapter sends it: a select with a flat list of values. */
+export function modeOption(currentValue: string, options: readonly unknown[] = MODE_VALUES): AcpObject {
+  return {
+    id: "mode",
+    name: "Mode",
+    description: "Session permission mode",
+    category: "mode",
+    type: "select",
+    currentValue,
+    options,
+  };
+}
+
+/** A model option with its values in groups. */
+export const MODEL_OPTION: AcpObject = {
+  id: "model",
+  name: "Model",
+  category: "model",
+  type: "select",
+  currentValue: "model-a",
+  options: [
+    { group: "fast", name: "Fast", options: [{ value: "model-a", name: "Model A" }] },
+    {
+      group: "large",
+      name: "Large",
+      options: [
+        { value: "model-b", name: "Model B", description: "The larger model" },
+        { value: "model-c", name: "Model C" },
+      ],
+    },
+  ],
+};
+
+export const BOOLEAN_OPTION: AcpObject = { id: "fast", name: "Fast mode", type: "boolean", currentValue: false };
+
+export function optionsUpdate(...configOptions: readonly unknown[]): ChatEvent {
+  return agentUpdate({ sessionUpdate: "config_option_update", configOptions });
+}
+
+export function modeUpdate(currentModeId: string): ChatEvent {
+  return agentUpdate({ sessionUpdate: "current_mode_update", currentModeId });
+}
+
 export const CHAT_FIXTURES: Readonly<Record<string, readonly ChatEntry[]>> = {
   text: TEXT_LOG,
   edit: EDIT_LOG,

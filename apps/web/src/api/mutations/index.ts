@@ -8,9 +8,10 @@ export {
   chatWriteKey,
   chatWriteOptions,
   useFailedChatStart,
+  usePendingChatOptions,
   usePendingChatStart,
 } from "./chats";
-export type { ChatQuestionReply, ChatWrite, ClosedNotice, StartChat } from "./chats";
+export type { ChatOptionWrite, ChatQuestionReply, ChatWrite, ClosedNotice, SavedNotice, StartChat } from "./chats";
 export {
   commentFailureKey,
   commentFailureTitle,

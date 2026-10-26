@@ -1,5 +1,11 @@
 import { Button } from "@base-ui/react/button";
-import { AssistantRuntimeProvider, useAui, useExternalStoreRuntime, type AppendMessage } from "@assistant-ui/react";
+import {
+  AssistantRuntimeProvider,
+  useAui,
+  useAuiState,
+  useExternalStoreRuntime,
+  type AppendMessage,
+} from "@assistant-ui/react";
 import { Thread, type ThreadComponents } from "@kit/components/assistant-ui/elements/thread.aui";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
@@ -8,20 +14,15 @@ import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode, typ
 import { useChatLog } from "../api/chat-log";
 import { chatQuery, type ChatPlace } from "../api/queries";
 import { chatRequestOf } from "../lib/chat-approval";
-import type { ChatMessage, ChatView } from "../lib/chat-fold";
-import {
-  chatAgentName,
-  chatAnnouncements,
-  chatStateText,
-  chatThreadMessage,
-  isChatMissing,
-} from "../lib/chat-messages";
+import type { ChatMessage } from "../lib/chat-fold";
+import { chatAgentName, chatStateText, chatThreadMessage, isChatMissing } from "../lib/chat-messages";
 import { WarningIcon, XIcon } from "../lib/icons";
 import { CHAT_HEADING_MARK, focusInView } from "../lib/focus-in-view";
+import { useChatModePick, type ChatModePick } from "../lib/use-chat-mode-pick";
 import { useChatWrites } from "../lib/use-chat-writes";
 import { useFocusLost } from "../lib/use-focus-lost";
 import { chatDraft, subscribeChatDraft, useChatDraftStore } from "../store/chat-drafts";
-import { useNoticeStore } from "../store/notices";
+import { ChatOptionMenu } from "./chat-option-menu";
 import { ChatDataViews, ChatEmpty, ChatToolGroup, ChatToolView } from "./chat-tool";
 import { BUTTON_CLASS, ICON_BUTTON_CLASS } from "./control-classes";
 import { Tooltip } from "./tooltip";
@@ -44,10 +45,44 @@ type RoundProps = ChatPlace & {
   onReset: () => void;
 };
 
+/** What `ChatTranscript` gives the composer slot through `extras` of the runtime. */
+type ComposerExtras = Pick<ChatModePick, "mode" | "hidden" | "pending" | "pick"> & { onFocusLost: () => void };
+
+function isComposerExtras(extras: unknown): extras is ComposerExtras {
+  return typeof extras === "object" && extras !== null && "pick" in extras;
+}
+
+/**
+ * The mode picker in the composer. Its data comes through the runtime extras, so
+ * `THREAD_COMPONENTS` stays one object: a new one would change the context that
+ * every message of the thread reads.
+ */
+function ChatComposerStart(): ReactNode {
+  const extras = useAuiState((s) => s.thread.extras);
+
+  if (!isComposerExtras(extras) || extras.mode === undefined) {
+    return null;
+  }
+
+  const { mode, hidden, pending, pick, onFocusLost } = extras;
+  return (
+    <ChatOptionMenu
+      option={mode}
+      hidden={hidden}
+      pending={pending}
+      onPick={(value) => {
+        pick(mode, value);
+      }}
+      onFocusLost={onFocusLost}
+    />
+  );
+}
+
 const THREAD_COMPONENTS: ThreadComponents = {
   ToolFallback: ChatToolView,
   ToolGroup: ChatToolGroup,
   Welcome: ChatEmpty,
+  ComposerStart: ChatComposerStart,
 };
 
 function messageText(message: AppendMessage): string {
@@ -266,18 +301,26 @@ function ChatTranscript(
   const { status, turn } = view.fold;
   const statusKey = JSON.stringify(status);
   const { agent, folder } = record;
-  const beforeRef = useRef<ChatView | null>(null);
   const writes = useChatWrites({ tag, task, chat });
+  const { picking, ...modePick } = useChatModePick({ tag, task, chat, view, agent, ready, write: writes.pick });
+  const extras: ComposerExtras = {
+    ...modePick,
+    onFocusLost: () => {
+      focusInView(headingRef.current);
+    },
+  };
   const runtime = useExternalStoreRuntime({
     messages: view.messages,
     convertMessage: (message: ChatMessage) => chatThreadMessage(message, folder),
     // The whole turn, also while it waits at a request: the kit shows Stop and no Send.
     isRunning: turn,
-    // The kit `canSend` does not read `isRunning`, and the daemon refuses a message during a turn.
-    isSendDisabled: turn,
+    // The kit `canSend` does not read `isRunning`, and the daemon refuses a message during a turn
+    // and while a pick starts the agent again.
+    isSendDisabled: turn || picking,
     onNew: (message) => writes.send(messageText(message)),
     onCancel: () => writes.cancel(),
     onRespondToToolApproval: (options) => writes.answer(chatRequestOf(view, options.approvalId), options),
+    extras,
   });
   const report = useEffectEvent(() => {
     onLog({ status, ready, failures });
@@ -293,23 +336,6 @@ function ChatTranscript(
       endRound();
     }
   }, [resets]);
-
-  // The state of the chat when the log becomes ready is not news: only what
-  // changes after that is announced.
-  useEffect(() => {
-    if (!ready) {
-      beforeRef.current = null;
-      return;
-    }
-
-    const before = beforeRef.current;
-    beforeRef.current = view;
-    if (before !== null) {
-      for (const words of chatAnnouncements(before, view, agent)) {
-        useNoticeStore.getState().announce(words);
-      }
-    }
-  }, [ready, view, agent]);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>

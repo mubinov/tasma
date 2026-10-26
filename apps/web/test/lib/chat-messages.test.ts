@@ -14,7 +14,10 @@ import {
   chatAnnouncements,
   chatAnswerText,
   chatDiff,
+  chatModeOption,
   chatNoticeText,
+  chatOptionValueName,
+  chatOptionWords,
   chatOutsideName,
   chatStateText,
   chatTerminalView,
@@ -26,6 +29,9 @@ import {
 import {
   atSeq,
   chatEntries,
+  modeOption,
+  modeUpdate,
+  optionsUpdate,
   PERMISSION_LOG,
   permissionRequest,
   QUESTION_LOG,
@@ -390,6 +396,80 @@ describe("chatAnnouncements", () => {
     const [before, after] = views([], [userMessage("Build.")]);
 
     expect(chatAnnouncements(before, after, "claude")).toEqual([]);
+  });
+
+  it("announces a change of the mode", () => {
+    const [before, after] = views([optionsUpdate(modeOption("default"))], [modeUpdate("acceptEdits")]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual(["Mode: Accept edits"]);
+  });
+
+  it("announces a mode that a new list changes, after a turn that ended", () => {
+    const [before, after] = views(
+      [optionsUpdate(modeOption("default")), userMessage("Build.")],
+      [turnEnd(), optionsUpdate(modeOption("auto"))],
+    );
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude finished the turn", "Mode: Auto"]);
+  });
+
+  it("does not announce the first list of a chat", () => {
+    const [before, after] = views([], [optionsUpdate(modeOption("auto"))]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual([]);
+  });
+
+  it("does not announce a list with no mode option", () => {
+    const [before, after] = views([optionsUpdate(modeOption("auto"))], [optionsUpdate()]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual([]);
+  });
+
+  it("does not announce a list with the same mode", () => {
+    const [before, after] = views([optionsUpdate(modeOption("auto"))], [optionsUpdate(modeOption("auto"))]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual([]);
+  });
+
+  it("does not announce a change of the mode when its flag turns the case off", () => {
+    const [before, after] = views([optionsUpdate(modeOption("default"))], [modeUpdate("acceptEdits")]);
+
+    expect(chatAnnouncements(before, after, "claude", false)).toEqual([]);
+  });
+});
+
+describe("chatModeOption", () => {
+  it("gives the option with the category mode", () => {
+    const view = fold(chatEntries([optionsUpdate({ ...modeOption("auto"), category: "other" }, modeOption("plan"))]));
+
+    expect(chatModeOption(view)).toEqual(expect.objectContaining({ current: "plan" }));
+  });
+
+  it("gives nothing with no mode option", () => {
+    expect(chatModeOption(CHAT_VIEW_START)).toBeUndefined();
+  });
+});
+
+describe("chatOptionWords", () => {
+  const view = fold(chatEntries([optionsUpdate(modeOption("auto"))]));
+  const mode = chatModeOption(view)!;
+
+  it("names the option and the value", () => {
+    expect(chatOptionWords(mode, "bypassPermissions")).toBe("Mode: Bypass permissions");
+  });
+
+  it("names a value that the option does not offer by its id", () => {
+    expect(chatOptionWords(mode, "dontAsk")).toBe("Mode: dontAsk");
+  });
+});
+
+describe("chatOptionValueName", () => {
+  const view = fold(chatEntries([optionsUpdate(modeOption("auto"))]));
+  const mode = chatModeOption(view)!;
+
+  it("gives the name of a value, and the id of a value that the option does not offer", () => {
+    expect(chatOptionValueName(mode, "acceptEdits")).toBe("Accept edits");
+    expect(chatOptionValueName(mode, "dontAsk")).toBe("dontAsk");
   });
 });
 

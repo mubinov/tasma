@@ -5,6 +5,8 @@ import {
   boardFailureLine,
   chatClosedNotice,
   chatFailure,
+  chatOptionFailure,
+  chatOptionSavedNotice,
   chatStartFailure,
   pageFailureLine,
 } from "../../src/lib/write-failure";
@@ -142,6 +144,33 @@ describe("chatFailure", () => {
       title: "Your answer to chat 2 of SAGA-3 was not used.",
       line: "The request was already closed: another window answered it, or it was cancelled or ended. "
         + "The chat shows the outcome.",
+    });
+  });
+});
+
+describe("chatOptionFailure", () => {
+  const PLACE = { tag: "SAGA", task: "SAGA-3", chat: 2 };
+  const LINES: Record<FailureKind, string> = {
+    refused: "The daemon refused it, so Mode did not change. Its own words are below.",
+    unanswered: "No daemon answered, so nothing was sent.",
+    address: "The daemon did not answer through the address below. Start the daemon there if it is not running.",
+    unsent: "The write did not start, so nothing was sent.",
+  };
+  const CASES = KINDS.map((kind) => ({ ...CAUSES[kind], line: LINES[kind] }));
+
+  it("titles the failure with the name of the option and the chat", () => {
+    expect(chatOptionFailure(PLACE, "Mode").title).toBe("Mode of chat 2 of SAGA-3 did not change.");
+  });
+
+  it.each(CASES)("says what did not change for $label", ({ cause, line }) => {
+    expect(chatOptionFailure(PLACE, "Mode").line(new WriteError(cause))).toBe(line);
+  });
+
+  it("gives the texts of a value that the daemon did not save", () => {
+    expect(chatOptionSavedNotice(PLACE, "Mode")).toEqual({
+      title: "Mode of chat 2 of SAGA-3 changed, but it is not saved.",
+      line: "The chat uses the new value now. The daemon could not write the files below, "
+        + "so a new chat or a resumed one can start with the old value.",
     });
   });
 });

@@ -4,6 +4,8 @@ import {
   CHAT_VIEW_START,
   foldChatEntries,
   type ChatAgentMessage,
+  type ChatOption,
+  type ChatOptionValue,
   type ChatPart,
   type ChatQuestion,
   type ChatQuestionField,
@@ -14,9 +16,14 @@ import {
   agentUpdate,
   atSeq,
   BASH_OPTIONS,
+  BOOLEAN_OPTION,
   CHAT_FIXTURES,
   chatEntries,
   EDIT_LOG,
+  MODEL_OPTION,
+  modeOption,
+  modeUpdate,
+  optionsUpdate,
   PERMISSION_LOG,
   permissionRequest,
   permissionResolved,
@@ -1098,5 +1105,156 @@ describe("foldChatEntries: the view", () => {
     expect(view.messages).toEqual(before.messages);
     expect(view.fold).toBe(before.fold);
     expect(view.seq).toBe(2);
+  });
+});
+
+describe("foldChatEntries: options", () => {
+  const MODES: ChatOptionValue[] = [
+    { value: "default", name: "Manual", description: "Always ask before making changes" },
+    { value: "acceptEdits", name: "Accept edits", description: "Automatically accept all file edits" },
+    { value: "plan", name: "Plan", description: "Create a plan before making changes" },
+    { value: "auto", name: "Auto", description: "Claude handles permission decisions" },
+    { value: "bypassPermissions", name: "Bypass permissions", description: "Accepts all permissions" },
+  ];
+
+  function mode(current: string): ChatOption {
+    return { id: "mode", name: "Mode", description: "Session permission mode", category: "mode", current, values: MODES };
+  }
+
+  it("starts with no options", () => {
+    expect(CHAT_VIEW_START.options).toEqual([]);
+  });
+
+  it("gives no options for a log with no option events", () => {
+    const view = foldChatEntries(CHAT_VIEW_START, TEXT_LOG);
+
+    expect(view.options).toEqual([]);
+    expect(view.options).toBe(CHAT_VIEW_START.options);
+  });
+
+  it("takes the options of a config_option_update", () => {
+    const view = foldEvents([optionsUpdate(modeOption("default"))]);
+
+    expect(view.options).toEqual([mode("default")]);
+  });
+
+  it("replaces the whole list with the last config_option_update", () => {
+    const view = foldEvents([optionsUpdate(modeOption("default"), MODEL_OPTION), optionsUpdate(modeOption("auto"))]);
+
+    expect(view.options).toEqual([mode("auto")]);
+  });
+
+  it("takes the values of groups in their order, with no group names", () => {
+    const view = foldEvents([optionsUpdate(MODEL_OPTION)]);
+
+    expect(view.options).toEqual([
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        current: "model-a",
+        values: [
+          { value: "model-a", name: "Model A" },
+          { value: "model-b", name: "Model B", description: "The larger model" },
+          { value: "model-c", name: "Model C" },
+        ],
+      },
+    ]);
+  });
+
+  it("sets the current value of the mode option with a current_mode_update", () => {
+    const view = foldEvents([optionsUpdate(MODEL_OPTION, modeOption("default")), modeUpdate("acceptEdits")]);
+
+    expect(view.options).toEqual([expect.objectContaining({ id: "model", current: "model-a" }), mode("acceptEdits")]);
+  });
+
+  it("keeps the options of a current_mode_update with no mode option", () => {
+    const before = foldEvents([optionsUpdate(MODEL_OPTION)]);
+    const view = foldEvents([modeUpdate("auto")], before);
+
+    expect(view.options).toBe(before.options);
+  });
+
+  it("keeps the options of a current_mode_update to the current value", () => {
+    const before = foldEvents([optionsUpdate(modeOption("auto"))]);
+    const view = foldEvents([modeUpdate("auto")], before);
+
+    expect(view.options).toBe(before.options);
+  });
+
+  it("keeps the options of a current_mode_update with no list", () => {
+    expect(foldEvents([modeUpdate("auto")]).options).toEqual([]);
+  });
+
+  it("keeps the options of a current_mode_update whose id is not a string", () => {
+    const before = foldEvents([optionsUpdate(modeOption("default"))]);
+    const view = foldEvents([agentUpdate({ sessionUpdate: "current_mode_update", currentModeId: 3 })], before);
+
+    expect(view.options).toBe(before.options);
+  });
+
+  it("keeps the options of a config_option_update with no list", () => {
+    const before = foldEvents([optionsUpdate(modeOption("default"))]);
+    const view = foldEvents([agentUpdate({ sessionUpdate: "config_option_update", configOptions: "mode" })], before);
+
+    expect(view.options).toBe(before.options);
+  });
+
+  it("drops an item that is not a select", () => {
+    const view = foldEvents([optionsUpdate(BOOLEAN_OPTION, modeOption("default"))]);
+
+    expect(view.options).toEqual([mode("default")]);
+  });
+
+  it("drops an item with a field of a wrong type or an empty name", () => {
+    const view = foldEvents([
+      optionsUpdate(
+        { ...modeOption("default"), id: 1 },
+        { ...modeOption("default"), name: "" },
+        { ...modeOption("default"), name: 2 },
+        { ...modeOption("default"), currentValue: null },
+        "mode",
+        { ...modeOption("default"), options: "all" },
+      ),
+    ]);
+
+    expect(view.options).toEqual([{ ...mode("default"), values: [] }]);
+  });
+
+  it("drops a value with a field of a wrong type or an empty name, and a description that is not a string", () => {
+    const view = foldEvents([
+      optionsUpdate(
+        modeOption("default", [
+          { value: 1, name: "One" },
+          { value: "two", name: "" },
+          { value: "three" },
+          "four",
+          { value: "five", name: "Five", description: 5 },
+          { group: "more", name: "More", options: "six" },
+        ]),
+      ),
+    ]);
+
+    expect(view.options).toEqual([{ ...mode("default"), values: [{ value: "five", name: "Five" }] }]);
+  });
+
+  it("drops a description and a category of an option that are not strings", () => {
+    const view = foldEvents([optionsUpdate({ ...modeOption("default"), description: 1, category: null })]);
+
+    expect(view.options).toEqual([{ id: "mode", name: "Mode", current: "default", values: MODES }]);
+  });
+
+  it("keeps the same options array for an entry that does not change the options", () => {
+    const before = foldEvents([optionsUpdate(modeOption("default"))]);
+    const view = foldEvents([userMessage("Go on."), textChunk("Working.")], before);
+
+    expect(view.options).toBe(before.options);
+  });
+
+  it("adds and changes no message", () => {
+    const before = foldEvents([userMessage("Go on."), textChunk("Working.")]);
+    const view = foldEvents([optionsUpdate(modeOption("default")), modeUpdate("auto")], before);
+
+    expect(view.messages).toEqual(before.messages);
   });
 });

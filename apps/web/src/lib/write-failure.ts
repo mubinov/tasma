@@ -7,6 +7,7 @@ import {
   type ChatWrite,
   type ClosedNotice,
   type FailureKind,
+  type SavedNotice,
   type TaskWriteError,
   type WriteError,
   type WriteFailure,
@@ -62,7 +63,10 @@ function chatName({ task, chat }: ChatPlace): string {
   return `chat ${String(chat)} of ${task}`;
 }
 
-function chatFailureTitle(place: ChatPlace, kind: ChatWrite["kind"]): string {
+/** An option write names its option, so its texts come from `chatOptionFailure`. */
+type ChatFailureKind = Exclude<ChatWrite["kind"], "option">;
+
+function chatFailureTitle(place: ChatPlace, kind: ChatFailureKind): string {
   switch (kind) {
     case "message":
       return `The message to ${chatName(place)} was not sent.`;
@@ -74,12 +78,35 @@ function chatFailureTitle(place: ChatPlace, kind: ChatWrite["kind"]): string {
   }
 }
 
-export function chatFailure(place: ChatPlace, kind: ChatWrite["kind"]): WriteFailure {
+export function chatFailure(place: ChatPlace, kind: ChatFailureKind): WriteFailure {
   return {
     title: chatFailureTitle(place, kind),
     line: (error) => kind === "message" && chatRefusalCode(error) === "turn-running"
       ? TURN_RUNNING_LINE
       : CHAT_FAILURE_LINES[failureKind(error.cause)],
+  };
+}
+
+/** `name` is the name of the option. */
+export function chatOptionFailure(place: ChatPlace, name: string): WriteFailure {
+  return {
+    title: `${name} of ${chatName(place)} did not change.`,
+    // A refused relaunch writes a `failed` event, so the chat can change.
+    line: (error) => {
+      const kind = failureKind(error.cause);
+      return kind === "refused"
+        ? `The daemon refused it, so ${name} did not change. Its own words are below.`
+        : CHAT_FAILURE_LINES[kind];
+    },
+  };
+}
+
+/** The warning of a value that applies to the chat, with a file that the daemon could not write. */
+export function chatOptionSavedNotice(place: ChatPlace, name: string): SavedNotice {
+  return {
+    title: `${name} of ${chatName(place)} changed, but it is not saved.`,
+    line: "The chat uses the new value now. The daemon could not write the files below, "
+      + "so a new chat or a resumed one can start with the old value.",
   };
 }
 

@@ -6,7 +6,21 @@ export type ChatView = {
   /** `foldChat` of `@tasma/protocol` over the same events. `fold.status` is the chat state. */
   fold: ChatFold;
   messages: readonly ChatMessage[];
+  /** The `select` config options of the agent, from the last `config_option_update`. */
+  options: readonly ChatOption[];
 };
+
+export type ChatOption = {
+  id: string;
+  name: string;
+  description?: string;
+  category?: string;
+  /** The current value, by its id. */
+  current: string;
+  values: readonly ChatOptionValue[];
+};
+
+export type ChatOptionValue = { value: string; name: string; description?: string };
 
 export type ChatMessage = ChatUserMessage | ChatAgentMessage;
 
@@ -120,7 +134,7 @@ export type ChatNotice
     | { kind: "resumed" }
     | { kind: "continued-outside"; where: ChatOutside };
 
-export const CHAT_VIEW_START: ChatView = { seq: 0, fold: CHAT_START, messages: [] };
+export const CHAT_VIEW_START: ChatView = { seq: 0, fold: CHAT_START, messages: [], options: [] };
 
 /** One entry as the fold applies it: the list it changes, and whether a turn ran before it. */
 type Step = { messages: ChatMessage[]; entry: ChatEntry; turn: boolean };
@@ -146,7 +160,7 @@ const FIELD_NUMBERS = ["minLength", "maxLength", "minimum", "maximum", "minItems
  * skipped.
  */
 export function foldChatEntries(view: ChatView, entries: readonly ChatEntry[]): ChatView {
-  let { seq, fold } = view;
+  let { seq, fold, options } = view;
   let messages: ChatMessage[] | undefined;
 
   for (const entry of entries) {
@@ -155,11 +169,64 @@ export function foldChatEntries(view: ChatView, entries: readonly ChatEntry[]): 
     }
     messages ??= [...view.messages];
     applyEvent({ messages, entry, turn: fold.turn });
+    options = foldOptions(options, entry.event);
     fold = foldChat(fold, entry.event);
     seq = entry.seq;
   }
 
-  return messages === undefined ? view : { seq, fold, messages };
+  return messages === undefined ? view : { seq, fold, messages, options };
+}
+
+function foldOptions(options: readonly ChatOption[], event: ChatEntry["event"]): readonly ChatOption[] {
+  if (event.kind !== "update" || !isRecord(event.update)) {
+    return options;
+  }
+
+  const { sessionUpdate, configOptions, currentModeId } = event.update;
+  if (sessionUpdate === "config_option_update" && Array.isArray(configOptions)) {
+    return configOptions.flatMap(chatOption);
+  }
+  if (sessionUpdate !== "current_mode_update" || typeof currentModeId !== "string") {
+    return options;
+  }
+
+  const index = options.findIndex((option) => option.category === "mode");
+  const mode = options[index];
+  return mode === undefined || mode.current === currentModeId
+    ? options
+    : options.with(index, { ...mode, current: currentModeId });
+}
+
+function chatOption(item: unknown): ChatOption[] {
+  const { type, id, name, currentValue, description, category, options } = recordOf(item);
+  if (type !== "select" || typeof id !== "string" || !isFilledString(name) || typeof currentValue !== "string") {
+    return [];
+  }
+
+  const entries: readonly unknown[] = Array.isArray(options) ? options : [];
+  const values = entries.flatMap((entry): readonly unknown[] => {
+    const group = recordOf(entry);
+    if (!("group" in group)) {
+      return [entry];
+    }
+    return Array.isArray(group.options) ? group.options : [];
+  });
+  return [{
+    id,
+    name,
+    ...(typeof description === "string" ? { description } : {}),
+    ...(typeof category === "string" ? { category } : {}),
+    current: currentValue,
+    values: values.flatMap(optionValue),
+  }];
+}
+
+function optionValue(item: unknown): ChatOptionValue[] {
+  const { value, name, description } = recordOf(item);
+  if (typeof value !== "string" || !isFilledString(name)) {
+    return [];
+  }
+  return [{ value, name, ...(typeof description === "string" ? { description } : {}) }];
 }
 
 function applyEvent(step: Step): void {
@@ -639,6 +706,10 @@ function recordOf(value: unknown): AcpObject {
 
 function stringOf(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function isFilledString(value: unknown): value is string {
+  return typeof value === "string" && value !== "";
 }
 
 function isOneOf<T extends string>(values: readonly T[], value: unknown): value is T {

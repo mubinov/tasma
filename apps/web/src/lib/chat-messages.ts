@@ -6,6 +6,7 @@ import type {
   ChatAgentMessage,
   ChatMessage,
   ChatNotice,
+  ChatOption,
   ChatPart,
   ChatTool,
   ChatToolContent,
@@ -273,8 +274,25 @@ function spoken(text: string): string {
   return characters.length > SPOKEN_LIMIT ? `${characters.slice(0, SPOKEN_LIMIT - 1).join("")}…` : text;
 }
 
-/** What a screen reader hears about the change from `before` to `after`, in the order it hears it. */
-export function chatAnnouncements(before: ChatView, after: ChatView, agent: ChatAgent): string[] {
+export function chatModeOption(view: ChatView): ChatOption | undefined {
+  return view.options.find((option) => option.category === "mode");
+}
+
+/** The name of a value of the option, or its id when the option does not offer it. */
+export function chatOptionValueName(option: ChatOption, value: string): string {
+  return option.values.find((one) => one.value === value)?.name ?? value;
+}
+
+export function chatOptionWords(option: ChatOption, value: string): string {
+  return `${option.name}: ${chatOptionValueName(option, value)}`;
+}
+
+/**
+ * What a screen reader hears about the change from `before` to `after`, in the
+ * order it hears it. `announceMode` false leaves out a change of the mode,
+ * which a pick period of this window announces at its end.
+ */
+export function chatAnnouncements(before: ChatView, after: ChatView, agent: ChatAgent, announceMode = true): string[] {
   if (before === after) {
     return [];
   }
@@ -298,6 +316,11 @@ export function chatAnnouncements(before: ChatView, after: ChatView, agent: Chat
   if (before.fold.turn && !after.fold.turn && status.state === "needs-you") {
     const ended = turnNotice(after.messages);
     words.push(ended === undefined ? `${name} finished the turn` : noticeText(ended, spoken));
+  }
+  const modeBefore = chatModeOption(before);
+  const modeAfter = chatModeOption(after);
+  if (announceMode && modeBefore !== undefined && modeAfter !== undefined && modeBefore.current !== modeAfter.current) {
+    words.push(chatOptionWords(modeAfter, modeAfter.current));
   }
 
   return words;

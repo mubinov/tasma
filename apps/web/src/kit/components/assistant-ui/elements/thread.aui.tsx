@@ -100,6 +100,9 @@ export type ThreadComponents = {
     | ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>>
     | undefined;
   TaskGroup?: ComponentType<{ group: ThreadGroupPart }> | undefined;
+  // tasma-edit: a slot at the start of the composer action row
+  ComposerStart?: ComponentType | undefined;
+  // tasma-edit end
 };
 
 const messageGroupBy = groupPartByType({
@@ -489,6 +492,9 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
 };
 
 const ComposerAction: FC = () => {
+  // tasma-edit: a slot at the start of the composer action row
+  const { ComposerStart } = useContext(ThreadComponentsContext);
+  // tasma-edit end
   // The stop control only cancels the send while no run it could stop is going.
   const isSending = useAuiState(
     (s) =>
@@ -498,8 +504,8 @@ const ComposerAction: FC = () => {
 
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
-      {/* tasma-edit: no attachments adapter, so no attachment button; an empty slot keeps Send and Stop at the right end */}
-      <div />
+      {/* tasma-edit: no attachments adapter, so no attachment button; the start slot takes its place, and the div stays when the slot is empty, so Send and Stop stay at the right end */}
+      <div>{ComposerStart && <ComposerStart />}</div>
       {/* tasma-edit end */}
       <div className="flex items-center gap-1.5">
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>

@@ -5,7 +5,7 @@ import { chatRefusalCode, chatWriteOptions, type ChatWrite } from "../api/mutati
 import type { ChatPlace } from "../api/queries";
 import { useChatDraftStore } from "../store/chat-drafts";
 import { permissionAnswer, questionAnswer, type ChatRequest } from "./chat-approval";
-import { chatClosedNotice, chatFailure } from "./write-failure";
+import { chatClosedNotice, chatFailure, chatOptionFailure, chatOptionSavedNotice } from "./write-failure";
 
 export type ChatWrites = {
   /**
@@ -20,6 +20,12 @@ export type ChatWrites = {
    * buttons stay locked. Another failure rejects with the text the kit shows.
    */
   answer: (request: ChatRequest | undefined, options: RespondToToolApprovalOptions) => Promise<void>;
+  /**
+   * Sets one config option. `name` is the name of the option, for its notices.
+   * Resolves with the `seq` of the answer, or with nothing on a failure, which
+   * the notice tells.
+   */
+  pick: (configId: string, value: string, name: string) => Promise<number | undefined>;
 };
 
 const NOT_SENT = "Not sent. The notice gives the reason.";
@@ -77,5 +83,20 @@ export function useChatWrites(place: ChatPlace): ChatWrites {
     }
   }
 
-  return { send, cancel, answer };
+  async function pick(configId: string, value: string, name: string): Promise<number | undefined> {
+    try {
+      const answer = await write({
+        kind: "option",
+        configId,
+        value,
+        failure: chatOptionFailure(place, name),
+        saved: chatOptionSavedNotice(place, name),
+      });
+      return answer?.data.seq;
+    } catch {
+      return undefined;
+    }
+  }
+
+  return { send, cancel, answer, pick };
 }
