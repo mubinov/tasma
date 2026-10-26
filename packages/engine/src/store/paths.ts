@@ -125,6 +125,11 @@ export function userConfigPath(root: string): string {
   return join(root, "config.yml");
 }
 
+/** The file of the config option defaults of each agent, from a root already expanded. */
+export function agentDefaultsPath(root: string): string {
+  return join(root, "agent-defaults.json");
+}
+
 /**
  * One path a file the user places states, against the directory holding that
  * file. An absolute path and a `~/` path each stand for themselves, which is

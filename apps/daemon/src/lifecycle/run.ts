@@ -11,7 +11,7 @@ import { once } from "node:events";
 import type { Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { parseArgs } from "node:util";
-import { type TreeWatch, watchTree } from "@tasma/engine";
+import { openAgentDefaults, type TreeWatch, watchTree } from "@tasma/engine";
 import { DAEMON_NAME, DEFAULT_DAEMON_HOST, printable } from "@tasma/protocol";
 import type { DaemonRecord } from "@tasma/protocol";
 import manifest from "../../../../package.json" with { type: "json" };
@@ -208,6 +208,7 @@ export async function startDaemon(options: {
     env,
     idleLimit: idleLimit({ root, host }),
     stderr,
+    defaults: openAgentDefaults(root),
   });
   const starts = createStepChats({ root, host, chats, runner });
   const server = createDaemonServer(

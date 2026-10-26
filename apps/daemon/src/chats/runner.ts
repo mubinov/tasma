@@ -2,21 +2,24 @@
 // daemon owns: the runner starts it with the first message of the chat, writes
 // every event of the agent into the chat log, ends the process when the chat
 // is idle, and starts it again on the same session with the next message. The
-// commands of the clients on a chat run here too: a message, a cancel and an
-// answer.
+// commands of the clients on a chat run here too: a message, a cancel, an
+// answer and a pick of a config option. A session that opens gets the values
+// of the chat before its first prompt.
 
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { RequestError } from "@agentclientprotocol/sdk";
-import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
+import type { RequestPermissionRequest, SessionConfigOption } from "@agentclientprotocol/sdk";
 import { readProjectDeclaration, TaskStoreError } from "@tasma/engine";
-import type { TaskStoreErrorCode } from "@tasma/engine";
+import type { AgentDefaultsStore, TaskStoreErrorCode } from "@tasma/engine";
 import type {
   AcpObject,
   ChatAgent,
   ChatCancelInput,
   ChatEvent,
   ChatMessageInput,
+  ChatOptionChange,
+  Diagnostic,
   PermissionAnswer,
   QuestionAnswer,
 } from "@tasma/protocol";
@@ -28,6 +31,7 @@ import type { ShellEnv } from "../agents/shell-env.js";
 import { causeOf, DaemonError } from "../http/failure.js";
 import { AGENT_STEP_IDLE_MS, idleTimer } from "./idle.js";
 import type { IdleLimit, IdleTimer } from "./idle.js";
+import { applyPlan, foldOptions, isHidden, offering, optionFiles, optionsEvent, wanted } from "./options.js";
 import { CANCELLED, faultLine, resolution } from "./registry.js";
 import type { ChatRegistry, LiveChat, RequestKind } from "./registry.js";
 
@@ -64,6 +68,8 @@ export type RunningChat = {
   session: AgentSession | undefined;
   /** The requests of the agent that wait for an answer, keyed by the `request` of their log event, in open order. */
   open: Map<string, OpenRequest>;
+  /** The config options of the session as its answers and the notifications of the agent leave them. */
+  options: SessionConfigOption[];
 };
 
 /**
@@ -104,6 +110,16 @@ export type ChatRunner = {
   answerPermission(live: LiveChat, request: string, answer: PermissionAnswer): Promise<void>;
   answerQuestion(live: LiveChat, request: string, answer: QuestionAnswer): Promise<void>;
   /**
+   * Sets one config option on the agent of the chat. An accepted value is
+   * saved in the chat and, unless `AGENT_OPTION_RULES` lists it as unsaved, as
+   * the default of the agent. The picks of one chat run one after the other. A
+   * chat whose session is not open yet gets the value as the session opens. A
+   * chat with no agent process gets its agent started again with no prompt.
+   * Resolves with a diagnostic for each file that a write missed. Refused with
+   * `option-refused` when the agent does not offer or does not take the value.
+   */
+  setOption(live: LiveChat, change: ChatOptionChange): Promise<Diagnostic[]>;
+  /**
    * Ends the agent of the chat with no event, and resolves when every process
    * of the chat has ended. Refused with `turn-running` while a turn runs or a
    * request of the agent is open.
@@ -124,7 +140,22 @@ export type ChatRunner = {
   close(): Promise<void>;
 };
 
+/** A pick that waits for the session of its run to open. */
+type WaitingPick = {
+  configId: string;
+  value: string;
+  resolve(diagnostics: Diagnostic[]): void;
+  reject(error: unknown): void;
+};
+
+/** Sends the result of one waiting pick to its caller. */
+type PickAnswer = () => void;
+
 type Run = RunningChat & {
+  /** The picks that the session takes as it opens, in arrival order. */
+  waiting: WaitingPick[];
+  /** Clear for a relaunch that a pick starts: the session gets no prompt. */
+  promptOnOpen: boolean;
   /** Set with the process. */
   adapter: AgentAdapter | undefined;
   /** Set with the process. */
@@ -196,12 +227,31 @@ function turnRunning(live: LiveChat): DaemonError {
   return new DaemonError("turn-running", `a turn of ${nameOf(live)} is running`);
 }
 
+function couldNotRun(live: LiveChat, reason: string): DaemonError {
+  return new DaemonError("chat-not-running", `${nameOf(live)} has no agent process: ${reason}`);
+}
+
+function notOffered(live: LiveChat, configId: string, value: string): DaemonError {
+  return new DaemonError("option-refused", `the agent of ${nameOf(live)} offers no value "${value}" for "${configId}"`);
+}
+
+function refusedBy(live: LiveChat, configId: string, value: string, reason: string): DaemonError {
+  return new DaemonError("option-refused", `the agent of ${nameOf(live)} refused "${value}" for "${configId}": ${reason}`);
+}
+
+function answerAll(answers: PickAnswer[]): void {
+  for (const answer of answers) answer();
+}
+
 function newRun(live: LiveChat): Run {
   return {
     live,
     process: undefined,
     session: undefined,
     open: new Map(),
+    options: [],
+    waiting: [],
+    promptOnOpen: true,
     adapter: undefined,
     idle: undefined,
     unsent: [],
@@ -226,12 +276,15 @@ export function createChatRunner(options: {
   idleLimit?: IdleLimit;
   /** Where a fault of a chat log is reported. */
   stderr?: { write(text: string): unknown };
+  /** The config option defaults of each agent. */
+  defaults: AgentDefaultsStore;
 }): ChatRunner {
-  const { root, chats, adapters, env } = options;
+  const { root, chats, adapters, env, defaults } = options;
   const spawn = options.spawn ?? spawnAgent;
   const shellEnv = options.shellEnv ?? ((signal) => readShellEnv(env, { signal }));
   const idleLimit = options.idleLimit ?? (() => Promise.resolve(AGENT_STEP_IDLE_MS));
   const stderr = options.stderr ?? process.stderr;
+  const files = optionFiles({ root, defaults, stderr });
   const runs = new Map<LiveChat, Run>();
   /** Every agent process that has not exited, also of a chat that no longer runs. */
   const alive = new Set<AgentProcess>();
@@ -239,6 +292,8 @@ export function createChatRunner(options: {
   const ends = new WeakMap<LiveChat, Promise<unknown>>();
   /** The last run of each chat in this daemon. */
   const lastRuns = new WeakMap<LiveChat, Run>();
+  /** The end of the last pick of each chat that has not ended, which the next pick of the chat waits for. */
+  const picks = new WeakMap<LiveChat, Promise<void>>();
   const stopping = new AbortController();
   /** The last shell environment in which an agent binary was found. */
   let kept: AgentEnv | undefined;
@@ -285,15 +340,17 @@ export function createChatRunner(options: {
     return run;
   }
 
-  function forget(run: Run): void {
+  /** `error` refuses each pick that still waits for the session. */
+  function forget(run: Run, error: DaemonError = notRunning(run.live)): void {
     if (runs.get(run.live) === run) runs.delete(run.live);
     run.open.clear();
     run.idle?.clear();
+    for (const pick of run.waiting.splice(0)) pick.reject(error);
   }
 
-  function silence(run: Run): void {
+  function silence(run: Run, error?: DaemonError): void {
     run.quiet = true;
-    forget(run);
+    forget(run, error);
   }
 
   /** Ends the process with no event. The chat keeps its state. */
@@ -329,7 +386,7 @@ export function createChatRunner(options: {
 
   async function fail(run: Run, reason: string): Promise<void> {
     if (run.quiet) return;
-    silence(run);
+    silence(run, couldNotRun(run.live, reason));
     await append(run, { kind: "failed", reason });
     await run.process?.end();
   }
@@ -405,6 +462,7 @@ export function createChatRunner(options: {
       update(update) {
         if (run.quiet) return;
         run.idle?.touch();
+        run.options = foldOptions(run.options, update);
         void append(run, { kind: "update", update: adapter.filterUpdate(update) });
       },
       permission: ask("permission"),
@@ -417,7 +475,10 @@ export function createChatRunner(options: {
    * every text of the chat. An agent that never answered in a session may have
    * saved nothing of it, so its loss then fails nothing.
    */
-  async function openSession(run: Run, connection: AgentConnection): Promise<AgentSession | undefined> {
+  async function openSession(
+    run: Run,
+    connection: AgentConnection,
+  ): Promise<{ session: AgentSession; created: boolean } | undefined> {
     const { live } = run;
     const { folder, session: stored } = live.chat;
     if (stored !== undefined) {
@@ -425,7 +486,8 @@ export function createChatRunner(options: {
         if (error instanceof SessionNotFound) return "lost" as const;
         throw error;
       }));
-      if (resumed !== "lost") return resumed;
+      if (resumed === undefined) return undefined;
+      if (resumed !== "lost") return { session: resumed, created: false };
       if (live.answered) {
         await fail(run, run.adapter!.sessionGone);
         return undefined;
@@ -440,16 +502,119 @@ export function createChatRunner(options: {
       await halt(run, error);
       return undefined;
     }
-    return session;
+    return { session, created: true };
+  }
+
+  /** Gives the reason of a refusal of the agent. `AgentClosed` passes on. */
+  async function setOn(run: Run, session: AgentSession, configId: string, value: string): Promise<string | undefined> {
+    try {
+      run.options = await session.setConfigOption(configId, value);
+    } catch (error) {
+      if (error instanceof AgentClosed) throw error;
+      return errorReason(run.adapter!, error);
+    }
+    if (!run.quiet) await append(run, optionsEvent(run.options));
+    return undefined;
+  }
+
+  /** Sets one pick on the session and saves it. Refused as `setOption` is, and with `chat-not-running` at a close. */
+  async function pickOn(run: Run, session: AgentSession, configId: string, value: string): Promise<Diagnostic[]> {
+    const { live } = run;
+    if (offering(run.options, configId, value) === undefined) throw notOffered(live, configId, value);
+    let reason;
+    try {
+      reason = await setOn(run, session, configId, value);
+    } catch {
+      throw notRunning(live);
+    }
+    if (reason !== undefined) throw refusedBy(live, configId, value, reason);
+    return files.save(live, configId, value);
+  }
+
+  /**
+   * Takes the pick out of `run.waiting` and gives its answer to `answers`.
+   * Gives false when the connection closed; the pick then has its answer
+   * already. `pickOn` refuses only with a `DaemonError`.
+   */
+  async function applyPick(
+    run: Run,
+    session: AgentSession,
+    pick: WaitingPick,
+    answers: PickAnswer[],
+  ): Promise<boolean> {
+    run.waiting = run.waiting.filter((one) => one !== pick);
+    try {
+      const diagnostics = await pickOn(run, session, pick.configId, pick.value);
+      answers.push(() => pick.resolve(diagnostics));
+    } catch (error) {
+      if ((error as DaemonError).code === "chat-not-running") {
+        pick.reject(error);
+        return false;
+      }
+      answers.push(() => pick.reject(error));
+    }
+    return true;
+  }
+
+  /**
+   * Gives a session that just opened the values of `applyPlan`: the defaults
+   * of the agent for a new session, the picks of the chat, and the waiting
+   * picks. A default or a pick of the chat that `wanted` refuses is not sent,
+   * and a refusal of it fails nothing. Sets `run.session` in the step that
+   * finds no waiting pick left, unless the run ended. Gives the answers of the
+   * waiting picks that it applied; a waiting pick that it did not reach stays
+   * in `run.waiting`, for the end of the run.
+   */
+  async function applyOptions(run: Run, session: AgentSession, created: boolean): Promise<PickAnswer[]> {
+    if (run.quiet) return [];
+    const { live } = run;
+    const { agent } = live.chat;
+    run.options = session.configOptions;
+    if (run.options.length > 0) await append(run, optionsEvent(run.options));
+    const defaults = created && run.options.length > 0 ? await files.defaultsOf(agent) : {};
+    const plan = applyPlan(run.options, { defaults, chosen: live.chat.options ?? {}, waiting: run.waiting });
+
+    const answers: PickAnswer[] = [];
+    for (const { configId, value, pick } of plan) {
+      // The end of the run answered the waiting picks.
+      if (run.quiet) return answers;
+      if (pick !== undefined) {
+        if (!(await applyPick(run, session, pick, answers))) return answers;
+        continue;
+      }
+      if (!wanted(agent, run.options, configId, value)) continue;
+      let reason;
+      try {
+        reason = await setOn(run, session, configId, value);
+      } catch {
+        return answers;
+      }
+      if (reason !== undefined) stderr.write(faultLine(live.chat, `the agent refused "${value}" for "${configId}": ${reason}`));
+    }
+    for (let pick = run.waiting[0]; pick !== undefined; pick = run.waiting[0]) {
+      if (!(await applyPick(run, session, pick, answers))) return answers;
+    }
+    if (!run.quiet) run.session = session;
+    return answers;
   }
 
   async function begin(run: Run, connection: AgentConnection): Promise<void> {
     await send(run, () => connection.initialize());
     if (run.quiet) return;
-    const session = await openSession(run, connection);
-    if (session === undefined) return;
-    run.session = session;
+    const opened = await openSession(run, connection);
+    if (opened === undefined) return;
+    const answers = await applyOptions(run, opened.session, opened.created);
+    const { session } = run;
+    if (session === undefined) return answerAll(answers);
     run.cancelReachesAgent = true;
+    if (!run.promptOnOpen) {
+      // A pick takes a failed chat out of its stop, as a message does.
+      if (run.live.fold.stopped !== undefined) await append(run, { kind: "resumed" });
+      run.turning = false;
+      run.idle?.touch();
+      return answerAll(answers);
+    }
+    answerAll(answers);
     if (!run.cancelledEarly) return runTurn(run, session);
     // As `LiveChat.unanswered` does at a cancelled turn end.
     if (run.live.answered) run.unsent = [];
@@ -462,8 +627,8 @@ export function createChatRunner(options: {
    * process has ended.
    */
   function onExit(run: Run, end: AgentEnd): void {
-    forget(run);
     if (run.turning || !cleanExit(end)) void fail(run, endReason(end));
+    forget(run);
   }
 
   /** Registered in the same step as the spawn, so `close()` sees every process. */
@@ -501,7 +666,10 @@ export function createChatRunner(options: {
     const launch = await launchOf(adapter);
     const limitMs = await idleLimit(live.tag, task, step);
     // The run stays in a turn, so `close()` interrupts it.
-    if (stopping.signal.aborted) return;
+    if (stopping.signal.aborted) {
+      for (const pick of run.waiting.splice(0)) pick.reject(daemonStopping(live));
+      return;
+    }
     if ("failed" in launch) return fail(run, launch.failed);
     await begin(run, spawnRun(run, adapter, launch, folder, limitMs));
   }
@@ -509,8 +677,23 @@ export function createChatRunner(options: {
   /** A restart that the daemon stop overtakes before its `user` event writes nothing more. */
   function refuseIfStopping(run: Run): void {
     if (!run.quiet && !stopping.signal.aborted) return;
-    silence(run);
-    throw daemonStopping(run.live);
+    const error = daemonStopping(run.live);
+    silence(run, error);
+    throw error;
+  }
+
+  /**
+   * The start of each restart, after the run of the restart is registered:
+   * the wait for the last process of the chat and the interrupt of its turn.
+   */
+  async function reopen(run: Run, last: Run | undefined): Promise<void> {
+    const { live } = run;
+    await ends.get(live);
+    // The log cannot show which texts of a cancelled turn with no answer reached the agent; the last run knows.
+    run.unsent = [...(last?.unsent ?? live.unanswered)];
+    refuseIfStopping(run);
+    await haltOnFault(run, () => live.interrupt());
+    refuseIfStopping(run);
   }
 
   /**
@@ -520,15 +703,44 @@ export function createChatRunner(options: {
   async function restart(live: LiveChat, text: string, client: string): Promise<void> {
     const last = lastRuns.get(live);
     const run = register(live);
-    await ends.get(live);
-    // The log cannot show which texts of a cancelled turn with no answer reached the agent; the last run knows.
-    run.unsent = [...(last?.unsent ?? live.unanswered)];
-    refuseIfStopping(run);
-    await haltOnFault(run, () => live.interrupt());
-    refuseIfStopping(run);
+    await reopen(run, last);
     await record(run, { kind: "user", text, client });
     run.unsent.push(text);
     void relaunch(run);
+  }
+
+  /**
+   * As `restart`, with a pick in the place of the message: the run writes no
+   * `user` event and sends no prompt. It stays in a turn until the session has
+   * the pick, so a message meanwhile is refused.
+   */
+  async function relaunchForPick(live: LiveChat, pick: WaitingPick): Promise<void> {
+    const last = lastRuns.get(live);
+    const run = register(live);
+    run.promptOnOpen = false;
+    run.waiting.push(pick);
+    try {
+      await reopen(run, last);
+    } catch {
+      // The end of the run refused the pick.
+      return;
+    }
+    void relaunch(run);
+  }
+
+  async function pickNow(live: LiveChat, { configId, value }: ChatOptionChange): Promise<Diagnostic[]> {
+    if (stopping.signal.aborted) throw daemonStopping(live);
+    const run = runs.get(live);
+    const session = run?.session;
+    if (run === undefined || session === undefined) {
+      return new Promise((resolve, reject) => {
+        const pick = { configId, value, resolve, reject };
+        if (run === undefined) void relaunchForPick(live, pick);
+        else run.waiting.push(pick);
+      });
+    }
+    run.idle?.touch();
+    return pickOn(run, session, configId, value);
   }
 
   /** The open request an answer takes. The caller takes it out of `open` in the same synchronous step. */
@@ -616,6 +828,22 @@ export function createChatRunner(options: {
       await settle(run, request, open, result, answer.client);
     },
 
+    setOption(live, change) {
+      const { configId, value } = change;
+      if (isHidden(live.chat.agent, configId, value)) return Promise.reject(notOffered(live, configId, value));
+      // With no pick before it, the pick takes the chat in this step, as a message does.
+      const before = picks.get(live);
+      const picked = before === undefined ? pickNow(live, change) : before.then(() => pickNow(live, change));
+      const settled: Promise<void> = picked.then(
+        () => undefined,
+        () => undefined,
+      ).then(() => {
+        if (picks.get(live) === settled) picks.delete(live);
+      });
+      picks.set(live, settled);
+      return picked;
+    },
+
     async stop(live) {
       const run = runs.get(live);
       if (run?.turning) throw turnRunning(live);
@@ -634,7 +862,7 @@ export function createChatRunner(options: {
     async close() {
       stopping.abort();
       const writes = [...runs.values()].map((run) => {
-        silence(run);
+        silence(run, daemonStopping(run.live));
         return run.live.interrupt().catch((error: unknown) => report(run.live, error));
       });
       await Promise.all([...writes, ...[...alive].map((agentProcess) => agentProcess.end())]);

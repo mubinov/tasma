@@ -397,6 +397,27 @@ describe("the session of a chat", () => {
   });
 });
 
+describe("the options of a chat", () => {
+  it("are written to the record with the session, one write after the other, and each keeps the other", async () => {
+    const root = await tree();
+    const { chats } = await world(root);
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+
+    await Promise.all([
+      live.setSession("session-7"),
+      live.setOptions({ mode: "auto" }),
+      live.setSession("session-8"),
+      live.setOptions({ mode: "auto", model: "large" }),
+    ]);
+
+    expect(live.chat).toMatchObject({ session: "session-8", options: { mode: "auto", model: "large" } });
+    const restarted = await world(root);
+    await expect(restarted.chats.get("ALPHA", "ALPHA-1", 1)).resolves.toMatchObject({
+      chat: { session: "session-8", options: { mode: "auto", model: "large" } },
+    });
+  });
+});
+
 describe("loading a chat", () => {
   it("gives the same chat, seq and status after a restart, through get and through list", async () => {
     const root = await tree();

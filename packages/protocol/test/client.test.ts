@@ -243,6 +243,13 @@ const invocations: Invocation[] = [
     body: { action: "decline", client: "app" },
   },
   {
+    name: "setChatOption",
+    send: (client) => client.setChatOption("SAGA", "SAGA-3", 2, { configId: "mode", value: "acceptEdits", client: "app" }),
+    method: "POST",
+    path: "/projects/SAGA/tasks/SAGA-3/chats/2/options",
+    body: { configId: "mode", value: "acceptEdits", client: "app" },
+  },
+  {
     name: "listAllChats",
     send: (client) => client.listAllChats({ project: "SAGA", q: "parse tree", after: "c0ffee" }),
     method: "GET",
@@ -416,6 +423,18 @@ describe("the client", () => {
       expect(error).toMatchObject({ failure, status: 409 });
     },
   );
+
+  it("throws a refusal of a pick with its code", async () => {
+    const failure: Failure = { kind: "daemon", code: "option-refused", message: "no such mode" };
+    const transport: Transport = async () => ({ status: 422, body: { ok: false, error: failure } });
+
+    const error = await createClient(transport)
+      .setChatOption("SAGA", "SAGA-3", 2, { configId: "mode", value: "fast", client: "app" })
+      .catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(ProtocolError);
+    expect(error).toMatchObject({ failure, status: 422 });
+  });
 
   it("throws a transport fault when the transport rejects", async () => {
     const cause = new Error("connection refused");

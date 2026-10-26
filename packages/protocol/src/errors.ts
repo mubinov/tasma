@@ -86,7 +86,8 @@ export type DaemonErrorCode
     | "task-has-no-workflow"
     | "step-stale"
     | "project-has-no-folder"
-    | "agent-not-supported";
+    | "agent-not-supported"
+    | "option-refused";
 
 /**
  * Why a call was refused. Each arm carries only the fields its engine class has:

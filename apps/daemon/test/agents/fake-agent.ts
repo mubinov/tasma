@@ -16,6 +16,9 @@ import type {
   RequestPermissionRequest,
   ResumeSessionRequest,
   ResumeSessionResponse,
+  SessionConfigOption,
+  SetSessionConfigOptionRequest,
+  SetSessionConfigOptionResponse,
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
 import type { AgentEnd, AgentProcess } from "../../src/agents/acp.js";
@@ -65,6 +68,10 @@ export type FakeProcess = AgentProcess & {
   promptIds: JsonRpcId[];
   /** The params of each `session/cancel` notification. */
   cancels: CancelNotification[];
+  /** The params of each `session/set_config_option`. */
+  configSets: SetSessionConfigOptionRequest[];
+  /** The config options of the session, which `configOptions` of the script starts and each accepted set changes. */
+  configOptions: SessionConfigOption[];
   /** The calls of `end()`, which ends the process one time and exits with code 0. */
   endCalls: number;
   /** The end of the other processes of the group, which `ended` waits for after the exit. */
@@ -89,7 +96,61 @@ export type Script = {
   prompt?(params: PromptRequest, fake: FakeProcess): Promise<PromptResponse>;
   /** Runs at each `session/cancel`, for example to end the running prompt with `cancelled`. */
   cancel?(params: CancelNotification, fake: FakeProcess): void;
+  /** The options that a new and a resumed session answer with, when the script has no hook for them. */
+  configOptions?: SessionConfigOption[];
+  /** Without it, the set acts as `actAsAdapter` does. */
+  setConfigOption?(params: SetSessionConfigOptionRequest, fake: FakeProcess): Promise<SetSessionConfigOptionResponse>;
 };
+
+/** The modes of Claude in a select option of category `mode`. */
+export function modeOption(current = "default"): SessionConfigOption {
+  return {
+    id: "mode",
+    name: "Mode",
+    category: "mode",
+    type: "select",
+    currentValue: current,
+    options: ["default", "acceptEdits", "plan", "auto", "bypassPermissions"].map((value) => ({ value, name: value })),
+  };
+}
+
+/** A select option of category `model` whose values are in groups. */
+export function modelOption(current = "small"): SessionConfigOption {
+  return {
+    id: "model",
+    name: "Model",
+    category: "model",
+    type: "select",
+    currentValue: current,
+    options: [
+      { group: "fast", name: "Fast", options: [{ value: "small", name: "Small" }] },
+      { group: "deep", name: "Deep", options: [{ value: "large", name: "Large" }] },
+    ],
+  };
+}
+
+function valuesOf(option: SessionConfigOption | undefined): string[] {
+  if (option?.type !== "select") return [];
+  return option.options.flatMap((entry) => ("group" in entry ? entry.options : [entry]).map((one) => one.value));
+}
+
+/**
+ * Sets the value as the adapter of Claude does: a refusal is a plain error,
+ * and a mode change sends `current_mode_update` before the answer.
+ */
+export async function actAsAdapter(
+  params: SetSessionConfigOptionRequest,
+  fake: FakeProcess,
+): Promise<SetSessionConfigOptionResponse> {
+  const { configId } = params;
+  const value = String(params.value);
+  const option = fake.configOptions.find((one) => one.id === configId);
+  if (!valuesOf(option).includes(value)) throw new Error(`Invalid value for config option ${configId}: ${value}`);
+  fake.configOptions = fake.configOptions.map((one) =>
+    one.id === configId && one.type === "select" ? { ...one, currentValue: value } : one);
+  if (option?.category === "mode") await fake.update({ sessionUpdate: "current_mode_update", currentModeId: value });
+  return { configOptions: fake.configOptions };
+}
 
 export const PERMISSION: RequestPermissionRequest = {
   sessionId: SESSION,
@@ -154,6 +215,8 @@ export function fakeAgent(script: Script = {}): {
       prompts: [],
       promptIds: [],
       cancels: [],
+      configSets: [],
+      configOptions: script.configOptions ?? [],
       endCalls: 0,
       group: Promise.resolve(),
       stream: ndJsonStream(toAgent.writable, toClient.readable),
@@ -201,11 +264,15 @@ export function fakeAgent(script: Script = {}): {
       })
       .onRequest("session/new", ({ params }) => {
         fake.newSession = params;
-        return script.newSession?.(params, fake) ?? { sessionId: SESSION };
+        return script.newSession?.(params, fake) ?? { sessionId: SESSION, configOptions: fake.configOptions };
       })
       .onRequest("session/resume", ({ params }) => {
         fake.resumes.push(params);
-        return script.resume?.(params, fake) ?? {};
+        return script.resume?.(params, fake) ?? { configOptions: fake.configOptions };
+      })
+      .onRequest("session/set_config_option", ({ params }) => {
+        fake.configSets.push(params);
+        return (script.setConfigOption ?? actAsAdapter)(params, fake);
       })
       .onRequest("session/prompt", ({ params, requestId }) => {
         fake.prompts.push(params);

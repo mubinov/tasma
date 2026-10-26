@@ -38,6 +38,8 @@ export type StoreDiagnosticCode
     | "chat-file-unreadable"
     // What the daemon raises for a project it leaves out of a list, and no store call does.
     | "project-unreadable"
+    // What the daemon raises for a picked option value that the agent took and a file did not, and no store call does.
+    | "option-not-saved"
     // What the index raises and no store call does.
     | "blocked-by-unresolved"
     | "task-file-misnamed"

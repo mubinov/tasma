@@ -18,7 +18,7 @@ import {
   TaskStoreError,
   updateChat,
 } from "@tasma/engine";
-import type { ChatInput, ChatLog, ChatRecord, TaskStoreErrorCode } from "@tasma/engine";
+import type { ChatChange, ChatInput, ChatLog, ChatRecord, TaskStoreErrorCode } from "@tasma/engine";
 import { CHAT_START, DAEMON_NAME, foldChat, printable } from "@tasma/protocol";
 import type { AcpObject, Chat, ChatEntry, ChatEvent, ChatFold, ChatStatus, Diagnostic } from "@tasma/protocol";
 import type { Publish } from "../events/feed.js";
@@ -78,6 +78,8 @@ export type LiveChat = {
    */
   interrupt(): Promise<void>;
   setSession(session: string): Promise<void>;
+  /** Replaces the picks of the chat. Writes in call order with `setSession`, and each keeps the field of the other. */
+  setOptions(options: Record<string, string>): Promise<void>;
   /** Takes no turn, so a read never waits for a write. */
   read(after: number, maxBytes?: number): Promise<ChatEntry[]>;
   /**
@@ -276,11 +278,11 @@ class Live implements LiveChat {
   }
 
   setSession(session: string): Promise<void> {
-    return this.#queued(async () => {
-      this.#assertPresent();
-      const { task, chat } = this.#record;
-      this.#record = await updateChat({ project: this.#tag, root: this.#context.root }, task, chat, { session });
-    });
+    return this.#update({ session });
+  }
+
+  setOptions(options: Record<string, string>): Promise<void> {
+    return this.#update({ options });
   }
 
   async read(after: number, maxBytes?: number): Promise<ChatEntry[]> {
@@ -346,6 +348,14 @@ class Live implements LiveChat {
     this.#log.relocate(tag);
     this.#tag = tag;
     this.#record = { ...this.#record, task: this.#log.task };
+  }
+
+  #update(change: ChatChange): Promise<void> {
+    return this.#queued(async () => {
+      this.#assertPresent();
+      const { task, chat } = this.#record;
+      this.#record = await updateChat({ project: this.#tag, root: this.#context.root }, task, chat, change);
+    });
   }
 
   /**

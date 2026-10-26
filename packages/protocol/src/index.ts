@@ -10,7 +10,7 @@ export {
   TREE_DIRNAME,
 } from "./address.js";
 export type { DaemonRecord } from "./address.js";
-export { CHAT_START, foldChat } from "./chat.js";
+export { AGENT_OPTION_RULES, CHAT_START, foldChat } from "./chat.js";
 export type {
   AcpObject,
   Chat,
@@ -23,6 +23,7 @@ export type {
   ChatListItem,
   ChatListPage,
   ChatMessageInput,
+  ChatOptionChange,
   ChatOutside,
   ChatStart,
   ChatStartInput,

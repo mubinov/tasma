@@ -7,7 +7,18 @@ import { AgentClosed, connectAgent, SessionNotFound, spawnAgent } from "../../sr
 import type { AgentHandlers } from "../../src/agents/acp.js";
 import type { AgentLaunch } from "../../src/agents/adapter.js";
 import { target, until } from "../helpers.js";
-import { fakeAgent, forever, line, PERMISSION, QUESTION, SESSION, text, updateLine } from "./fake-agent.js";
+import {
+  fakeAgent,
+  forever,
+  line,
+  modelOption,
+  modeOption,
+  PERMISSION,
+  QUESTION,
+  SESSION,
+  text,
+  updateLine,
+} from "./fake-agent.js";
 import type { Script } from "./fake-agent.js";
 
 const LAUNCH: AgentLaunch = { command: "fake-agent", args: [], env: {} };
@@ -120,6 +131,63 @@ describe("connectAgent", () => {
 
     expect(error).toBeInstanceOf(RequestError);
     expect(error).toMatchObject({ code: -32000 });
+  });
+
+  it("gives the config options of a new and of a resumed session", async () => {
+    const fake = fakeAgent({ configOptions: [modeOption(), modelOption()] }).spawn(LAUNCH, FOLDER);
+    const connection = connectAgent(fake.stream, recorder().handlers);
+    await connection.initialize();
+
+    const created = await connection.create(FOLDER);
+    const resumed = await connection.resume(FOLDER, "session-7");
+
+    expect(created.configOptions).toEqual([modeOption(), modelOption()]);
+    expect(resumed.configOptions).toEqual([modeOption(), modelOption()]);
+  });
+
+  it.each([
+    ["absent", {}],
+    ["null", { configOptions: null }],
+  ])("gives no config options when the field is %s", async (_name, field) => {
+    const fake = fakeAgent({
+      newSession: async () => ({ sessionId: SESSION, ...field }),
+      resume: async () => field,
+    }).spawn(LAUNCH, FOLDER);
+    const connection = connectAgent(fake.stream, recorder().handlers);
+    await connection.initialize();
+
+    expect((await connection.create(FOLDER)).configOptions).toEqual([]);
+    expect((await connection.resume(FOLDER, "session-7")).configOptions).toEqual([]);
+  });
+
+  it("sets a config option with the session id, and gives the list of the answer after the updates before it", async () => {
+    const { seen, handlers } = recorder();
+    const { fake, session } = await started({ configOptions: [modeOption(), modelOption()] }, handlers);
+
+    const options = await session.setConfigOption("mode", "acceptEdits");
+
+    expect(fake.configSets).toEqual([{ sessionId: SESSION, configId: "mode", value: "acceptEdits" }]);
+    expect(options).toEqual([modeOption("acceptEdits"), modelOption()]);
+    expect(seen).toEqual([{ update: { sessionUpdate: "current_mode_update", currentModeId: "acceptEdits" } }]);
+  });
+
+  it("rejects a set that the agent refuses with the error of the agent", async () => {
+    const { session } = await started({ configOptions: [modeOption()] });
+
+    const error = await rejection(session.setConfigOption("mode", "fast"));
+
+    expect(error).toBeInstanceOf(RequestError);
+    expect(error).toMatchObject({ code: -32603, data: { details: "Invalid value for config option mode: fast" } });
+  });
+
+  it("rejects a set with AgentClosed when the connection closes", async () => {
+    const { fake, session } = await started({ setConfigOption: () => forever() });
+
+    const set = rejection(session.setConfigOption("mode", "auto"));
+    await until(() => fake.configSets.length === 1, "the agent got the set");
+    fake.exit({ code: 0, signal: null });
+
+    expect(await set).toBeInstanceOf(AgentClosed);
   });
 
   it("sends a prompt as one text block, and gives the stop reason after the updates of the turn", async () => {

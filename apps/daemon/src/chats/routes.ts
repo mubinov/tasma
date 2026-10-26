@@ -1,7 +1,7 @@
 // The routes over the chats of one task: the list, the start of the chat of
 // the current step, one chat, a long-poll read of the log of one chat after a
-// cursor, and the commands of a client on a chat: a message, a cancel and an
-// answer.
+// cursor, and the commands of a client on a chat: a message, a cancel, an
+// answer and a pick of a config option.
 
 import { routes } from "@tasma/protocol";
 import type {
@@ -9,8 +9,10 @@ import type {
   ChatCancelInput,
   ChatEventsReply,
   ChatMessageInput,
+  ChatOptionChange,
   ChatStart,
   ChatStartInput,
+  Diagnostic,
   PermissionAnswer,
   QuestionAnswer,
   QuestionValue,
@@ -45,6 +47,10 @@ const PERMISSION_KEYS = Object.keys({ optionId: true, client: true } satisfies R
 const ACCEPT_KEYS = Object.keys({ action: true, content: true, client: true } satisfies Record<keyof Accept, true>);
 
 const DECLINE_KEYS = Object.keys({ action: true, client: true } satisfies Record<keyof Decline, true>);
+
+const OPTION_KEYS = Object.keys(
+  { configId: true, value: true, client: true } satisfies Record<keyof ChatOptionChange, true>,
+);
 
 /** The chat a path names. Any other text is 0, which `assertChatNumber` refuses as no chat. */
 export function chatOf(segment: string): number {
@@ -132,6 +138,15 @@ function readQuestionAnswer(raw: unknown): QuestionAnswer {
   return { action, content: content as Accept["content"], client: clientOf(body) };
 }
 
+function readOptionChange(raw: unknown): ChatOptionChange {
+  const body = objectBody(raw);
+  assertKeys(body, OPTION_KEYS);
+  const { configId, value } = body;
+  if (typeof configId !== "string" || configId === "") throw malformed('"configId" takes a non-empty string');
+  if (typeof value !== "string" || value === "") throw malformed('"value" takes a non-empty string');
+  return { configId, value, client: clientOf(body) };
+}
+
 /**
  * The entries after `after`, or a hold until the next one. The check of the
  * `seq` and the start of the wait run in one synchronous step, so an append
@@ -156,17 +171,20 @@ async function readAfter(
 }
 
 export function chatRoutes(chats: ChatRegistry, runner: ChatRunner, starts: StepChats): RouteEntry[] {
-  /** Checks the query and the body before it gets the chat, and answers the chat after the command. */
+  /**
+   * Checks the query and the body before it gets the chat, and answers the
+   * chat after the command, with the diagnostics that the command gives.
+   */
   function command<T>(
     read: (body: unknown) => T,
-    run: (live: LiveChat, input: T, request: HandlerRequest) => Promise<void>,
+    run: (live: LiveChat, input: T, request: HandlerRequest) => Promise<Diagnostic[] | void>,
   ) {
     return async (request: HandlerRequest): Promise<Success<Chat>> => {
       assertNoQuery(request.query);
       const input = read(request.body);
       const live = await chats.get(request.params.project!, request.params.id!, chatOf(request.params.chat!));
-      await run(live, input, request);
-      return { data: live.chat, diagnostics: [] };
+      const diagnostics = (await run(live, input, request)) ?? [];
+      return { data: live.chat, diagnostics };
     };
   }
 
@@ -222,6 +240,10 @@ export function chatRoutes(chats: ChatRegistry, runner: ChatRunner, starts: Step
       route: routes.answerChatQuestion,
       handler: command(readQuestionAnswer, (live, answer, request) =>
         runner.answerQuestion(live, request.params.request!, answer)),
+    },
+    {
+      route: routes.setChatOption,
+      handler: command(readOptionChange, (live, change) => runner.setOption(live, change)),
     },
   ];
 }

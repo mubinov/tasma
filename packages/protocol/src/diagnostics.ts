@@ -30,6 +30,7 @@ export type DiagnosticCode
     | "temp-file-left"
     | "chat-file-unreadable"
     | "project-unreadable"
+    | "option-not-saved"
     | "blocked-by-unresolved"
     | "task-file-misnamed"
     | "reference-not-removed"

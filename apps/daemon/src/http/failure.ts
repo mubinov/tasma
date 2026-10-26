@@ -174,6 +174,8 @@ const DAEMON_STATUS = {
   "project-has-no-folder": 409,
   // No adapter runs the agent of a new chat; no change to the task or the project clears it.
   "agent-not-supported": 409,
+  // The agent does not offer or does not take the value, whatever state the chat is in.
+  "option-refused": 422,
 } satisfies Record<DaemonErrorCode, number>;
 
 /** The status a refusal is sent with. Every success answers 200. */

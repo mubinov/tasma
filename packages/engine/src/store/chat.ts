@@ -1,7 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { isTimestamp } from "../format/schema.js";
-import { isRecord } from "../format/values.js";
+import { isRecord, stringRecord } from "../format/values.js";
 import {
   createExclusive,
   createExclusiveDirectory,
@@ -36,11 +36,14 @@ export type ChatRecord = {
   created: string;
   /** The session id of the agent, once the agent gives one. */
   session?: string;
+  /** The last value picked in this chat for each config option of the agent, by option id. */
+  options?: Record<string, string>;
 };
 
 export type ChatInput = { step: string; agent: ChatAgent; folder: string };
 
-export type ChatChange = { session: string };
+/** A change of one field keeps the other. */
+export type ChatChange = { session?: string; options?: Record<string, string> };
 
 export type ChatList = { chats: ChatRecord[]; diagnostics: StoreDiagnostic[] };
 
@@ -90,6 +93,8 @@ function recordOf(task: string, chat: number, stored: Record<string, unknown>): 
     created: stored.created as string,
   };
   if (stored.session !== undefined) record.session = stored.session as string;
+  const options = stringRecord(stored.options);
+  if (options !== undefined) record.options = options;
   return record;
 }
 
@@ -118,6 +123,11 @@ export function chatDirectory(taskChats: string, chat: number): string {
 /** The directory of one chat of a task, which a finding about that chat names. */
 export function chatPath(options: ProjectOptions, task: string, chat: number): string {
   return chatDirectory(taskChatsPath(projectPaths(options), task), chat);
+}
+
+/** The record file of one chat, which a finding about its record names. */
+export function chatRecordPath(options: ProjectOptions, task: string, chat: number): string {
+  return join(chatPath(options, task, chat), RECORD_FILE);
 }
 
 /**
@@ -280,9 +290,15 @@ export async function updateChat(
   change: ChatChange,
 ): Promise<ChatRecord> {
   const { taskChats } = await openTaskChats(options, task);
-  if (!isText(change.session)) fail("field-required", '"session" must be a non-empty string');
+  if (change.session !== undefined && !isText(change.session)) {
+    fail("field-required", '"session" must be a non-empty string');
+  }
+  const changedOptions = change.options === undefined ? undefined : stringRecord(change.options);
+  if (change.options !== undefined && changedOptions === undefined) fail("field-required", '"options" must be an object');
   const directory = chatDirectory(taskChats, chat);
-  const stored = { ...(await readRecord(directory)), session: change.session };
+  const stored = await readRecord(directory);
+  if (change.session !== undefined) stored.session = change.session;
+  if (changedOptions !== undefined) stored.options = changedOptions;
   await replaceFile(join(directory, RECORD_FILE), recordText(stored));
   return recordOf(task, chat, stored);
 }

@@ -9,6 +9,7 @@ import type {
   AnyMessage,
   CreateElicitationResponse,
   RequestPermissionResponse,
+  SessionConfigOption,
   Stream,
 } from "@agentclientprotocol/sdk";
 import type { AcpObject } from "@tasma/protocol";
@@ -36,6 +37,10 @@ export type AgentProcess = {
 
 export type AgentSession = {
   sessionId: string;
+  /** The config options of the session as it opened; `[]` when the agent gives none. */
+  configOptions: SessionConfigOption[];
+  /** Gives the full list after the change. A refusal of the agent rejects with its `RequestError`. */
+  setConfigOption(configId: string, value: string): Promise<SessionConfigOption[]>;
   prompt(text: string): Promise<{ stopReason: string }>;
   /** Sends `session/cancel`. Never throws: a send that fails means that the connection closes. */
   cancel(): void;
@@ -200,9 +205,14 @@ export function connectAgent(stream: Stream, handlers: AgentHandlers): AgentConn
     }
   }
 
-  function sessionOf(sessionId: string): AgentSession {
+  function sessionOf(sessionId: string, configOptions: SessionConfigOption[] | null | undefined): AgentSession {
     return {
       sessionId,
+      configOptions: configOptions ?? [],
+      async setConfigOption(configId, value) {
+        const answer = await call(connection.agent.request("session/set_config_option", { sessionId, configId, value }));
+        return answer.configOptions;
+      },
       async prompt(text) {
         const { stopReason } = await call(connection.agent.request("session/prompt", {
           sessionId,
@@ -230,17 +240,17 @@ export function connectAgent(stream: Stream, handlers: AgentHandlers): AgentConn
       }));
     },
     async create(folder) {
-      const { sessionId } = await call(connection.agent.request("session/new", { cwd: folder, mcpServers: [] }));
-      return sessionOf(sessionId);
+      const { sessionId, configOptions } = await call(connection.agent.request("session/new", { cwd: folder, mcpServers: [] }));
+      return sessionOf(sessionId, configOptions);
     },
     async resume(folder, sessionId) {
       try {
-        await call(connection.agent.request("session/resume", { sessionId, cwd: folder, mcpServers: [] }));
+        const { configOptions } = await call(connection.agent.request("session/resume", { sessionId, cwd: folder, mcpServers: [] }));
+        return sessionOf(sessionId, configOptions);
       } catch (error) {
         if (error instanceof RequestError && error.code === RESOURCE_NOT_FOUND) throw new SessionNotFound(sessionId);
         throw error;
       }
-      return sessionOf(sessionId);
     },
   };
 }

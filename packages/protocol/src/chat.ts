@@ -49,6 +49,11 @@ export type Chat = {
   created: string;
   /** The session id of the agent, once the agent gives one. */
   session?: string;
+  /**
+   * The last value picked in this chat for each config option of the agent,
+   * by option id. The current values are in the log.
+   */
+  options?: Record<string, string>;
   /** The `seq` of the last entry of the log, 0 for an empty log. */
   seq: number;
 } & ChatStatus;
@@ -96,6 +101,22 @@ export type ChatMessageInput = { text: string; client: string };
 export type ChatCancelInput = { client: string };
 
 export type ChatStartInput = { client: string };
+
+/** A value for one config option of the agent of a chat, as ACP's `session/set_config_option` takes it. */
+export type ChatOptionChange = { configId: string; value: string; client: string };
+
+type OptionValues = Readonly<Record<string, readonly string[]>>;
+
+/**
+ * The config option values of each agent that a pick treats apart, by option
+ * id. A `hidden` value is not offered, and a pick of it is refused. An
+ * `unsaved` value applies to its chat but never becomes the default of the
+ * agent for new chats.
+ */
+export const AGENT_OPTION_RULES: Readonly<Record<ChatAgent, { hidden: OptionValues; unsaved: OptionValues }>> = {
+  claude: { hidden: { mode: ["plan"] }, unsaved: { mode: ["plan", "bypassPermissions"] } },
+  codex: { hidden: {}, unsaved: {} },
+};
 
 /** `started` is false when the answer is a chat that the task already had. */
 export type ChatStart = { chat: Chat; started: boolean };

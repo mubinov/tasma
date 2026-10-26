@@ -9,6 +9,7 @@ import { writeFile } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it, onTestFinished } from "vitest";
+import { openAgentDefaults } from "@tasma/engine";
 import type { ChatEvent } from "@tasma/protocol";
 import type { AgentAdapter, AgentEnv, AgentLaunch, LaunchResult } from "../../src/agents/adapter.js";
 import { claudeAdapter } from "../../src/agents/claude.js";
@@ -36,7 +37,10 @@ function launched(launch: LaunchResult): AgentLaunch {
 }
 
 /** A runner over project ALPHA with the task ALPHA-1, and the folder of the project. */
-async function world(adapter: AgentAdapter, env: AgentEnv): Promise<{ runner: ChatRunner; folder: string }> {
+async function world(
+  adapter: AgentAdapter,
+  env: AgentEnv,
+): Promise<{ runner: ChatRunner; folder: string; root: string }> {
   const root = await projectsRoot("ALPHA");
   const folder = await target();
   await plant(projectConfig(root, "ALPHA"), `path: ${folder}\n`);
@@ -44,9 +48,9 @@ async function world(adapter: AgentAdapter, env: AgentEnv): Promise<{ runner: Ch
   const host = createProjectHost({ root });
   onTestFinished(() => host.close());
   const chats = createChatRegistry({ root, host, writes: new WriteQueue() });
-  const runner = createChatRunner({ root, chats, adapters: [adapter], env });
+  const runner = createChatRunner({ root, chats, adapters: [adapter], env, defaults: openAgentDefaults(root) });
   onTestFinished(() => runner.close());
-  return { runner, folder };
+  return { runner, folder, root };
 }
 
 function start(runner: ChatRunner): Promise<LiveChat> {
@@ -173,6 +177,19 @@ describe.skipIf(process.env.TASMA_REAL_CLAUDE !== "1")("a chat with the real Cla
     expect(lastNonUpdate(second)).toMatchObject({ kind: "turn-end" });
     expect(answerText(second).toLowerCase()).toContain("lantern");
   }, 3 * TURN_MS);
+
+  it("starts a new chat in the mode that the defaults of the agent hold", async () => {
+    const { runner, root } = await world(claudeAdapter, { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token() });
+    await writeFile(join(root, "agent-defaults.json"), JSON.stringify({ claude: { mode: "acceptEdits" } }));
+
+    const log = await answered(await start(runner));
+
+    const lists = log.flatMap((event) =>
+      event.kind === "update" && event.update.sessionUpdate === "config_option_update"
+        ? [event.update.configOptions as { id: string; currentValue: unknown }[]]
+        : []);
+    expect(lists.at(-1)?.find((option) => option.id === "mode")?.currentValue).toBe("acceptEdits");
+  }, 2 * TURN_MS);
 
   it.skipIf(!process.env.TASMA_COMPILED_DAEMON)("answers through the agent mode of the compiled daemon", async () => {
     const compiled = process.env.TASMA_COMPILED_DAEMON ?? "";

@@ -37,6 +37,7 @@ export const routes = {
   cancelChatTurn: { method: "POST", template: "/projects/{project}/tasks/{id}/chats/{chat}/cancel" },
   answerChatPermission: { method: "POST", template: "/projects/{project}/tasks/{id}/chats/{chat}/permissions/{request}" },
   answerChatQuestion: { method: "POST", template: "/projects/{project}/tasks/{id}/chats/{chat}/questions/{request}" },
+  setChatOption: { method: "POST", template: "/projects/{project}/tasks/{id}/chats/{chat}/options" },
   listAllChats: { method: "GET", template: "/chats" },
   readChatItem: { method: "GET", template: "/chats/{id}/{chat}" },
   listWorkflows: { method: "GET", template: "/workflows" },

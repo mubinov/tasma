@@ -5,6 +5,7 @@ import type {
   ChatListItem,
   ChatListPage,
   ChatMessageInput,
+  ChatOptionChange,
   ChatStart,
   ChatStartInput,
   PermissionAnswer,
@@ -138,6 +139,14 @@ export type Client = {
     request: string,
     answer: QuestionAnswer,
   ): Promise<Success<Chat>>;
+  /**
+   * Sets one config option of the agent of the chat, and makes the value the
+   * default of the agent for new chats unless `AGENT_OPTION_RULES` lists it as
+   * unsaved. A chat with no agent process gets its agent started again with no
+   * prompt. The answer comes after the agent answers. Refused with
+   * `option-refused` when the agent does not offer or does not take the value.
+   */
+  setChatOption(tag: string, id: string, chat: number, change: ChatOptionChange): Promise<Success<Chat>>;
   /** One page of the chats of all projects, newest first. */
   listAllChats(query?: ChatListQuery): Promise<Success<ChatListPage>>;
   /** One chat as `listAllChats` gives it, by the id of its task. */
@@ -271,6 +280,8 @@ export function createClient(transport: Transport): Client {
       call<Chat>(routes.answerChatPermission, { project: tag, id, chat, request }, { body: answer }),
     answerChatQuestion: (tag, id, chat, request, answer) =>
       call<Chat>(routes.answerChatQuestion, { project: tag, id, chat, request }, { body: answer }),
+    setChatOption: (tag, id, chat, change) =>
+      call<Chat>(routes.setChatOption, { project: tag, id, chat }, { body: change }),
     listAllChats: (query) => call<ChatListPage>(routes.listAllChats, {}, { query }),
     readChatItem: (id, chat) => call<ChatListItem>(routes.readChatItem, { id, chat }),
     listWorkflows: () => call<string[]>(routes.listWorkflows, {}),

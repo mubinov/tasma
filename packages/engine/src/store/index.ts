@@ -1,6 +1,9 @@
+export { openAgentDefaults } from "./agent-defaults.js";
+export type { AgentDefaults, AgentDefaultsRead, AgentDefaultsStore } from "./agent-defaults.js";
 export {
   chatFinding,
   chatPath,
+  chatRecordPath,
   createChat,
   listChats,
   listProjectChats,

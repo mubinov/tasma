@@ -1,0 +1,834 @@
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import { RequestError } from "@agentclientprotocol/sdk";
+import type { PromptRequest, SessionConfigOption } from "@agentclientprotocol/sdk";
+import { TaskStoreError } from "@tasma/engine";
+import type { ChatEvent } from "@tasma/protocol";
+import type { LiveChat } from "../../src/chats/registry.js";
+import { logOf, logUntil, until } from "../helpers.js";
+import { actAsAdapter, forever, modelOption, modeOption, SESSION } from "../agents/fake-agent.js";
+import type { Script } from "../agents/fake-agent.js";
+import {
+  defaultsFile,
+  gate,
+  modeUpdate,
+  NEXT,
+  optionsUpdate,
+  PICK,
+  slowEnd,
+  START,
+  USER,
+  world,
+} from "./runner-world.js";
+import type { WorldOptions } from "./runner-world.js";
+
+const OPTIONS = [modeOption(), modelOption()];
+
+const TURN_END: ChatEvent = { kind: "turn-end", stopReason: "end_turn" };
+
+const USER_MESSAGE = { text: START.text, client: START.client };
+
+const EFFORT: SessionConfigOption = {
+  id: "effort",
+  name: "Effort",
+  category: "thought_level",
+  type: "select",
+  currentValue: "low",
+  options: [{ value: "low", name: "Low" }, { value: "high", name: "High" }],
+};
+
+async function plantDefaults(root: string, value: unknown): Promise<void> {
+  await writeFile(defaultsFile(root), JSON.stringify(value));
+}
+
+async function storedDefaults(root: string): Promise<unknown> {
+  return JSON.parse(await readFile(defaultsFile(root), "utf8"));
+}
+
+function promptText(params: PromptRequest): string {
+  return params.prompt.map((block) => (block.type === "text" ? block.text : "")).join("");
+}
+
+/**
+ * A script with `OPTIONS` that records what the agent gets, in order: each set
+ * as `<configId>=<value>` and each prompt as `prompt <text>`.
+ */
+function recording(extra: Script = {}): { script: Script; seen: string[] } {
+  const seen: string[] = [];
+  const script: Script = {
+    configOptions: OPTIONS,
+    ...extra,
+    setConfigOption(params, fake) {
+      seen.push(`${params.configId}=${String(params.value)}`);
+      return (extra.setConfigOption ?? actAsAdapter)(params, fake);
+    },
+    async prompt(params, fake) {
+      seen.push(`prompt ${promptText(params)}`);
+      return extra.prompt?.(params, fake) ?? { stopReason: "end_turn" };
+    },
+  };
+  return { script, seen };
+}
+
+/** A set that the agent refuses for `configId`, as the adapter does. */
+function refusing(configId: string): Script["setConfigOption"] {
+  return async (params, fake) => {
+    if (params.configId === configId) throw new Error(`${String(params.value)} needs another model`);
+    return actAsAdapter(params, fake);
+  };
+}
+
+/** A chat whose first turn has ended and whose agent process the runner then ended. */
+async function stopped(options: WorldOptions = { script: { configOptions: OPTIONS } }) {
+  const setup = await world(options);
+  const live = await setup.runner.start(START);
+  const log = await logUntil(live, "turn-end");
+  await setup.runner.stop(live);
+  return { ...setup, live, log };
+}
+
+describe("the options of a session that opens", () => {
+  it("applies the defaults of the agent before the first prompt, the model first, logs each list, and writes no file", async () => {
+    const { script, seen } = recording();
+    const { runner, root } = await world({ script });
+    await plantDefaults(root, { claude: { mode: "acceptEdits", model: "large" }, codex: { mode: "full" } });
+    const before = await readFile(defaultsFile(root), "utf8");
+
+    const live = await runner.start(START);
+
+    expect(await logUntil(live, "turn-end")).toEqual([
+      USER,
+      optionsUpdate(OPTIONS),
+      optionsUpdate([modeOption(), modelOption("large")]),
+      modeUpdate("acceptEdits"),
+      optionsUpdate([modeOption("acceptEdits"), modelOption("large")]),
+      TURN_END,
+    ]);
+    expect(seen).toEqual(["model=large", "mode=acceptEdits", `prompt ${START.text}`]);
+    expect(live.chat.options).toBeUndefined();
+    await expect(readFile(defaultsFile(root), "utf8")).resolves.toBe(before);
+  });
+
+  it.each([
+    ["an option the session does not offer", { effort: "high", mode: "default" }],
+    ["a value the session does not offer", { model: "huge" }],
+    ["the current value", { mode: "default" }],
+  ])("sends no default that is %s", async (_case, values) => {
+    const { script, seen } = recording();
+    const { runner, root, errors } = await world({ script });
+    await plantDefaults(root, { claude: values });
+
+    const live = await runner.start(START);
+
+    expect(await logUntil(live, "turn-end")).toEqual([USER, optionsUpdate(OPTIONS), TURN_END]);
+    expect(seen).toEqual([`prompt ${START.text}`]);
+    expect(errors).toEqual([]);
+  });
+
+  it.each(["bypassPermissions", "plan"])("sends no default %s, with a fault line that names the file", async (value) => {
+    const { script, seen } = recording();
+    const { runner, root, errors } = await world({ script });
+    await plantDefaults(root, { claude: { mode: value, model: "large" } });
+
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+
+    expect(seen).toEqual(["model=large", `prompt ${START.text}`]);
+    expect(errors).toEqual([
+      `tasma-daemon: ${defaultsFile(root)}: "${value}" of "mode" of claude is not applied: this value is never a default\n`,
+    ]);
+  });
+
+  it("writes a fault line for a default that the agent refuses, and goes on", async () => {
+    const { script, seen } = recording({ setConfigOption: refusing("mode") });
+    const { runner, root, errors } = await world({ script });
+    await plantDefaults(root, { claude: { mode: "auto", model: "large" } });
+
+    const live = await runner.start(START);
+
+    expect((await logUntil(live, "turn-end")).at(-2)).toEqual(optionsUpdate([modeOption(), modelOption("large")]));
+    expect(seen).toEqual(["model=large", "mode=auto", `prompt ${START.text}`]);
+    expect(errors).toEqual(['tasma-daemon: chat 1 of ALPHA-1: the agent refused "auto" for "mode": auto needs another model\n']);
+  });
+
+  it("uses a defaults file it cannot parse as empty, with a fault line that names the file", async () => {
+    const { script, seen } = recording();
+    const { runner, root, errors } = await world({ script });
+    await writeFile(defaultsFile(root), "{ mode");
+
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+
+    expect(seen).toEqual([`prompt ${START.text}`]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(new RegExp(`^tasma-daemon: ${defaultsFile(root)}: this file is not JSON: `));
+  });
+
+  it("logs no list and sends no default when the daemon closes while the session opens", async () => {
+    const held = gate();
+    const { script, seen } = recording({
+      async newSession(_params, fake) {
+        await held.opened;
+        return { sessionId: SESSION, configOptions: fake.configOptions };
+      },
+    });
+    const { runner, root, processes } = await world({ script, started: slowEnd(200) });
+    await plantDefaults(root, { claude: { mode: "acceptEdits" } });
+    const live = await runner.start(START);
+    await until(() => processes[0]?.newSession !== undefined, "the session is opening");
+
+    const closed = runner.close();
+    held.open();
+    await until(() => live.chat.session === SESSION, "the agent opened the session");
+    await closed;
+
+    expect(await logOf(live)).toEqual([USER, { kind: "interrupted" }]);
+    expect(seen).toEqual([]);
+  });
+
+  it("reads no defaults and logs no list for a session with no options", async () => {
+    const { runner, root, errors, processes } = await world();
+    await writeFile(defaultsFile(root), "{ mode");
+
+    const live = await runner.start(START);
+
+    expect(await logUntil(live, "turn-end")).toEqual([USER, TURN_END]);
+    expect(errors).toEqual([]);
+    expect(processes[0]?.configSets).toEqual([]);
+  });
+
+  it("keeps the list of the run to the notifications of the agent", async () => {
+    const { runner, processes } = await world({
+      script: {
+        configOptions: OPTIONS,
+        async prompt(params, agent) {
+          if (promptText(params) === START.text) {
+            await agent.update({ sessionUpdate: "current_mode_update", currentModeId: "plan" });
+          } else {
+            agent.configOptions = [modeOption("plan"), EFFORT];
+            await agent.update({ sessionUpdate: "config_option_update", configOptions: agent.configOptions });
+          }
+          return { stopReason: "end_turn" };
+        },
+      },
+    });
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+
+    expect(runner.running(live)?.options).toEqual([modeOption("plan"), modelOption()]);
+
+    await runner.message(live, NEXT);
+    await logUntil(live, "turn-end");
+
+    expect(runner.running(live)?.options).toEqual([modeOption("plan"), EFFORT]);
+    await expect(runner.setOption(live, { configId: "effort", value: "high", client: "web" })).resolves.toEqual([]);
+    expect(processes[0]?.configSets.map((set) => set.configId)).toEqual(["effort"]);
+  });
+});
+
+describe("a pick on a chat whose session is open", () => {
+  async function opened(script: Script = { configOptions: OPTIONS }) {
+    const setup = await world({ script });
+    const live = await setup.runner.start(START);
+    const log = await logUntil(live, "turn-end");
+    return { ...setup, live, log };
+  }
+
+  it("sets the value, logs the list, and saves it in the chat and as the default of the agent", async () => {
+    const { runner, live, log, root, processes } = await opened();
+    await plantDefaults(root, { claude: { model: "large" }, codex: { mode: "full" } });
+
+    await expect(runner.setOption(live, PICK)).resolves.toEqual([]);
+
+    expect(processes[0]?.configSets).toEqual([{ sessionId: SESSION, configId: "mode", value: "acceptEdits" }]);
+    expect(await logOf(live)).toEqual([
+      ...log,
+      modeUpdate("acceptEdits"),
+      optionsUpdate([modeOption("acceptEdits"), modelOption()]),
+    ]);
+    expect(live.chat).toMatchObject({ state: "needs-you", options: { mode: "acceptEdits" } });
+    expect(await storedDefaults(root)).toEqual({ claude: { model: "large", mode: "acceptEdits" }, codex: { mode: "full" } });
+  });
+
+  it("keeps the picks of the other options of the chat", async () => {
+    const { runner, live } = await opened();
+
+    await runner.setOption(live, PICK);
+    await runner.setOption(live, { configId: "model", value: "large", client: "web" });
+
+    expect(live.chat.options).toEqual({ mode: "acceptEdits", model: "large" });
+  });
+
+  it("saves bypassPermissions in the chat alone", async () => {
+    const { runner, live, root } = await opened();
+
+    await expect(runner.setOption(live, { ...PICK, value: "bypassPermissions" })).resolves.toEqual([]);
+
+    expect(live.chat.options).toEqual({ mode: "bypassPermissions" });
+    await expect(readFile(defaultsFile(root))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("sends and saves a pick of the current value", async () => {
+    const { runner, live, root, processes } = await opened();
+
+    await runner.setOption(live, { ...PICK, value: "default" });
+
+    expect(processes[0]?.configSets).toHaveLength(1);
+    expect(live.chat.options).toEqual({ mode: "default" });
+    expect(await storedDefaults(root)).toEqual({ claude: { mode: "default" } });
+  });
+
+  it("sends a pick of the mode the chat had before the agent entered plan mode", async () => {
+    const { runner, live, processes } = await opened({
+      configOptions: OPTIONS,
+      async prompt(_params, agent) {
+        agent.configOptions = [modeOption("plan"), modelOption()];
+        await agent.update({ sessionUpdate: "current_mode_update", currentModeId: "plan" });
+        return { stopReason: "end_turn" };
+      },
+    });
+
+    await runner.setOption(live, { ...PICK, value: "default" });
+
+    expect(processes[0]?.configSets.map((set) => set.value)).toEqual(["default"]);
+    expect(runner.running(live)?.options[0]).toEqual(modeOption("default"));
+  });
+
+  it.each([
+    ["a hidden value", { configId: "mode", value: "plan" }, 'offers no value "plan" for "mode"'],
+    ["a value it does not offer", { configId: "mode", value: "fast" }, 'offers no value "fast" for "mode"'],
+    ["an option it does not offer", { configId: "effort", value: "high" }, 'offers no value "high" for "effort"'],
+  ])("refuses %s before it asks the agent, and writes nothing", async (_case, pick, message) => {
+    const { runner, live, root, processes } = await opened();
+
+    await expect(runner.setOption(live, { ...pick, client: "web" })).rejects.toMatchObject({
+      code: "option-refused",
+      message: `the agent of chat 1 of ALPHA-1 ${message}`,
+    });
+
+    expect(processes[0]?.configSets).toEqual([]);
+    expect(live.chat.options).toBeUndefined();
+    await expect(readFile(defaultsFile(root))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses a value the agent refuses with its message, and writes nothing", async () => {
+    const { runner, live, log, root } = await opened({ configOptions: OPTIONS, setConfigOption: refusing("mode") });
+
+    await expect(runner.setOption(live, { ...PICK, value: "auto" })).rejects.toMatchObject({
+      code: "option-refused",
+      message: 'the agent of chat 1 of ALPHA-1 refused "auto" for "mode": auto needs another model',
+    });
+
+    expect(await logOf(live)).toEqual(log);
+    expect(live.chat.options).toBeUndefined();
+    await expect(readFile(defaultsFile(root))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("sets a value during a turn, while a permission request is open", async () => {
+    const { runner, processes } = await world({
+      script: {
+        configOptions: OPTIONS,
+        prompt(_params, agent) {
+          void agent.permission().catch(() => undefined);
+          return forever();
+        },
+      },
+    });
+    const live = await runner.start(START);
+    await logUntil(live, "permission");
+
+    await expect(runner.setOption(live, PICK)).resolves.toEqual([]);
+
+    expect(processes[0]?.configSets).toHaveLength(1);
+    expect(live.chat).toMatchObject({ state: "needs-you", options: { mode: "acceptEdits" } });
+    expect(live.fold.turn).toBe(true);
+  });
+
+  it("runs the picks of one chat one after the other, and the last one wins", async () => {
+    const held = gate();
+    const { runner, live, root, processes } = await opened({
+      configOptions: OPTIONS,
+      async setConfigOption(params, fake) {
+        if (fake.configSets.length === 1) await held.opened;
+        return actAsAdapter(params, fake);
+      },
+    });
+
+    const first = runner.setOption(live, PICK);
+    const second = runner.setOption(live, { ...PICK, value: "auto" });
+    await until(() => processes[0]?.configSets.length === 1, "the agent got the first set");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(processes[0]?.configSets).toHaveLength(1);
+    held.open();
+    await Promise.all([first, second]);
+
+    expect(processes[0]?.configSets.map((set) => set.value)).toEqual(["acceptEdits", "auto"]);
+    expect(live.chat.options).toEqual({ mode: "auto" });
+    expect(await storedDefaults(root)).toEqual({ claude: { mode: "auto" } });
+  });
+
+  it("refuses with chat-not-running when the connection closes during the set, and fails nothing", async () => {
+    const { runner, live, log, processes } = await opened({ configOptions: OPTIONS, setConfigOption: () => forever() });
+
+    const picked = runner.setOption(live, PICK);
+    await until(() => processes[0]?.configSets.length === 1, "the agent got the set");
+    processes[0]?.exit({ code: 0, signal: null });
+
+    await expect(picked).rejects.toMatchObject({ code: "chat-not-running" });
+    await until(() => runner.running(live) === undefined, "the chat stopped running");
+    expect(await logOf(live)).toEqual(log);
+  });
+
+  it("answers with a diagnostic for the record of the chat that it could not write", async () => {
+    const { runner, live, root } = await opened();
+    vi.spyOn(live, "setOptions").mockRejectedValue(new Error("the disk is full"));
+
+    await expect(runner.setOption(live, PICK)).resolves.toEqual([{
+      code: "option-not-saved",
+      message: 'the value "acceptEdits" of "mode" is not saved in this chat: the disk is full',
+      path: join(root, "projects", "ALPHA", "chats", "1", "1", "chat.json"),
+    }]);
+    expect(await storedDefaults(root)).toEqual({ claude: { mode: "acceptEdits" } });
+  });
+
+  it("refuses a pick once the daemon stops", async () => {
+    const { runner, live, processes } = await opened();
+    runner.stopStarts();
+
+    await expect(runner.setOption(live, PICK)).rejects.toMatchObject({ code: "chat-not-running" });
+    expect(processes[0]?.configSets).toEqual([]);
+  });
+});
+
+describe("a pick while the session opens", () => {
+  it("is applied after the defaults and before the first prompt, and its answer comes then", async () => {
+    const held = gate();
+    const { script, seen } = recording({
+      async newSession(_params, fake) {
+        await held.opened;
+        return { sessionId: SESSION, configOptions: fake.configOptions };
+      },
+    });
+    const { runner, root, processes } = await world({ script });
+    await plantDefaults(root, { claude: { mode: "acceptEdits", model: "large" } });
+    const live = await runner.start(START);
+    await until(() => processes[0]?.newSession !== undefined, "the session is opening");
+
+    const picked = runner.setOption(live, { ...PICK, value: "auto" });
+    held.open();
+
+    await expect(picked).resolves.toEqual([]);
+    await logUntil(live, "turn-end");
+    expect(seen).toEqual(["model=large", "mode=auto", `prompt ${START.text}`]);
+    expect(live.chat.options).toEqual({ mode: "auto" });
+    expect(await storedDefaults(root)).toEqual({ claude: { mode: "auto", model: "large" } });
+  });
+
+  it("is applied when it comes during the apply step, before the first prompt", async () => {
+    const held = gate();
+    const { script, seen } = recording({
+      async setConfigOption(params, fake) {
+        if (params.configId === "model") await held.opened;
+        return actAsAdapter(params, fake);
+      },
+    });
+    const { runner, root } = await world({ script });
+    await plantDefaults(root, { claude: { model: "large" } });
+    const live = await runner.start(START);
+    await until(() => seen.includes("model=large"), "the default is on its way");
+
+    const picked = runner.setOption(live, { ...PICK, value: "auto" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    held.open();
+
+    await expect(picked).resolves.toEqual([]);
+    await logUntil(live, "turn-end");
+    expect(seen).toEqual(["model=large", "mode=auto", `prompt ${START.text}`]);
+  });
+
+  it.each([
+    ["a value the session does not offer", { configId: "effort", value: "high" }, 'offers no value "high" for "effort"'],
+    ["a value the agent refuses", { configId: "mode", value: "auto" }, 'refused "auto" for "mode": auto needs another model'],
+  ])("is refused for %s, and the chat goes on", async (_case, pick, message) => {
+    const held = gate();
+    const { script, seen } = recording({
+      async newSession(_params, fake) {
+        await held.opened;
+        return { sessionId: SESSION, configOptions: fake.configOptions };
+      },
+      setConfigOption: refusing("mode"),
+    });
+    const { runner, processes } = await world({ script });
+    const live = await runner.start(START);
+    await until(() => processes[0]?.newSession !== undefined, "the session is opening");
+
+    const picked = runner.setOption(live, { ...pick, client: "web" });
+    held.open();
+
+    await expect(picked).rejects.toMatchObject({ code: "option-refused", message: `the agent of chat 1 of ALPHA-1 ${message}` });
+    await logUntil(live, "turn-end");
+    expect(seen.at(-1)).toBe(`prompt ${START.text}`);
+    expect(live.chat.options).toBeUndefined();
+  });
+
+  it("is refused with the reason when the session cannot open", async () => {
+    const held = gate();
+    const { runner, processes } = await world({
+      script: {
+        async newSession() {
+          await held.opened;
+          throw RequestError.internalError({ details: "no room for a session" });
+        },
+      },
+    });
+    const live = await runner.start(START);
+    await until(() => processes[0]?.newSession !== undefined, "the session is opening");
+
+    const picked = runner.setOption(live, PICK);
+    held.open();
+
+    await expect(picked).rejects.toMatchObject({
+      code: "chat-not-running",
+      message: "chat 1 of ALPHA-1 has no agent process: no room for a session",
+    });
+    expect(await logUntil(live, "failed")).toEqual([USER, { kind: "failed", reason: "no room for a session" }]);
+  });
+
+  for (const what of ["a waiting pick", "a default"] as const) {
+    it(`ends the apply step when the connection closes during ${what}, and fails the chat`, async () => {
+      const held = gate();
+      const { script, seen } = recording({
+        async newSession(_params, fake) {
+          await held.opened;
+          return { sessionId: SESSION, configOptions: fake.configOptions };
+        },
+        setConfigOption: () => forever(),
+      });
+      const { runner, root, processes } = await world({ script });
+      if (what === "a default") await plantDefaults(root, { claude: { model: "large" } });
+      const live = await runner.start(START);
+      await until(() => processes[0]?.newSession !== undefined, "the session is opening");
+
+      const picked = runner.setOption(live, { ...PICK, value: "auto" });
+      held.open();
+      await until(() => seen.length === 1, "the agent got a set");
+      processes[0]?.exit({ code: 0, signal: null });
+
+      await expect(picked).rejects.toMatchObject({ code: "chat-not-running" });
+      expect((await logUntil(live, "failed")).at(-1)).toEqual({ kind: "failed", reason: "The agent process ended with exit code 0" });
+      expect(seen).toEqual([what === "a default" ? "model=large" : "mode=auto"]);
+    });
+  }
+
+  it("answers a waiting pick with chat-not-running when the log of the chat is gone", async () => {
+    const held = gate();
+    const { runner, root, processes, errors } = await world({
+      script: {
+        configOptions: OPTIONS,
+        async newSession(_params, fake) {
+          await held.opened;
+          return { sessionId: SESSION, configOptions: fake.configOptions };
+        },
+      },
+    });
+    await plantDefaults(root, { claude: { model: "large" } });
+    const live = await runner.start(START);
+    await until(() => processes[0]?.newSession !== undefined, "the session is opening");
+    vi.spyOn(live, "append").mockRejectedValue(new TaskStoreError("chat-not-found", "this chat is no longer here"));
+
+    const picked = runner.setOption(live, PICK);
+    held.open();
+
+    await expect(picked).rejects.toMatchObject({ code: "chat-not-running" });
+    await until(() => runner.running(live) === undefined, "the chat stopped running");
+    expect(processes[0]?.configSets).toEqual([]);
+    expect(processes[0]?.prompts).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  for (const when of ["after", "during"] as const) {
+    it(`sets no session when the log of the chat goes ${when} the last set`, async () => {
+      const started: { live?: LiveChat } = {};
+      const { runner, root, processes } = await world({
+        script: {
+          configOptions: OPTIONS,
+          async setConfigOption(params, fake) {
+            const live = started.live!;
+            vi.spyOn(live, "append").mockRejectedValue(new TaskStoreError("chat-not-found", "this chat is no longer here"));
+            if (when === "during") {
+              // The halt ends the process, which then still answers until its slow end.
+              await fake.update({ sessionUpdate: "current_mode_update", currentModeId: "auto" });
+              await until(() => runner.running(live) === undefined, "the run halted");
+            }
+            return actAsAdapter(params, fake);
+          },
+        },
+        started: slowEnd(300),
+      });
+      await plantDefaults(root, { claude: { model: "large" } });
+      const live = await runner.start(START);
+      started.live = live;
+
+      await until(() => runner.running(live) === undefined, "the chat stopped running");
+      expect(processes[0]?.configSets).toHaveLength(1);
+      expect(processes[0]?.prompts).toEqual([]);
+    });
+  }
+
+  it("refuses a pick that comes during the apply step with chat-not-running when the connection closes", async () => {
+    const held = gate();
+    const { script, seen } = recording({
+      async setConfigOption(params, fake) {
+        if (params.configId === "mode") return forever();
+        await held.opened;
+        return actAsAdapter(params, fake);
+      },
+    });
+    const { runner, root, processes } = await world({ script });
+    await plantDefaults(root, { claude: { model: "large" } });
+    const live = await runner.start(START);
+    await until(() => seen.includes("model=large"), "the default is on its way");
+
+    const picked = runner.setOption(live, { ...PICK, value: "auto" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    held.open();
+    await until(() => seen.includes("mode=auto"), "the agent got the pick");
+    processes[0]?.exit({ code: 0, signal: null });
+
+    await expect(picked).rejects.toMatchObject({ code: "chat-not-running" });
+    await logUntil(live, "failed");
+  });
+});
+
+describe("the options of a resumed session", () => {
+  it("are the picks of the chat, not the defaults of the agent", async () => {
+    const { runner, live, root, processes } = await stopped();
+    await runner.setOption(live, { ...PICK, value: "auto" });
+    await runner.stop(live);
+    await plantDefaults(root, { claude: { mode: "acceptEdits", model: "large" } });
+
+    await runner.message(live, NEXT);
+    await logUntil(live, "turn-end");
+
+    expect(processes[2]?.resumes).toHaveLength(1);
+    expect(processes[2]?.configSets.map((set) => `${set.configId}=${String(set.value)}`)).toEqual(["mode=auto"]);
+    expect(processes[2]?.prompts.map(promptText)).toEqual([NEXT.text]);
+  });
+
+  it("skips a pick of the chat that the agent refuses, with a fault line", async () => {
+    const { runner, live, errors, processes } = await stopped({ script: { configOptions: OPTIONS, setConfigOption: refusing("mode") } });
+    await live.setOptions({ mode: "auto" });
+
+    await runner.message(live, NEXT);
+    await logUntil(live, "turn-end");
+
+    expect(errors).toEqual(['tasma-daemon: chat 1 of ALPHA-1: the agent refused "auto" for "mode": auto needs another model\n']);
+    expect(processes[1]?.prompts.map(promptText)).toEqual([NEXT.text]);
+  });
+
+  it("of a lost session that never answered are the defaults of the agent, then the picks of the chat", async () => {
+    let resumes = 0;
+    const { script, seen } = recording({
+      async resume() {
+        resumes += 1;
+        throw RequestError.resourceNotFound(SESSION);
+      },
+    });
+    const { runner, root, chats, folder } = await world({ script });
+    const live = await chats.create("ALPHA", "ALPHA-1", { step: START.step, agent: "claude", folder }, USER_MESSAGE);
+    await live.setSession(SESSION);
+    await live.setOptions({ mode: "auto" });
+    await plantDefaults(root, { claude: { mode: "acceptEdits", model: "large" } });
+
+    await runner.message(live, NEXT);
+    await logUntil(live, "turn-end");
+
+    expect(resumes).toBe(1);
+    expect(seen).toEqual(["model=large", "mode=auto", `prompt ${START.text}\n\n${NEXT.text}`]);
+  });
+});
+
+describe("a pick on a chat with no agent process", () => {
+  it("starts the agent on the session with no prompt and no message, applies and saves the pick, and waits", async () => {
+    const { runner, live, log, root, processes } = await stopped();
+
+    await expect(runner.setOption(live, PICK)).resolves.toEqual([]);
+
+    expect(processes[1]?.resumes).toEqual([{ sessionId: SESSION, cwd: processes[0]?.folder, mcpServers: [] }]);
+    expect(processes[1]?.prompts).toEqual([]);
+    expect(await logOf(live)).toEqual([
+      ...log,
+      optionsUpdate(OPTIONS),
+      modeUpdate("acceptEdits"),
+      optionsUpdate([modeOption("acceptEdits"), modelOption()]),
+    ]);
+    expect(live.chat).toMatchObject({ state: "needs-you", options: { mode: "acceptEdits" } });
+    expect(await storedDefaults(root)).toEqual({ claude: { mode: "acceptEdits" } });
+    expect(runner.running(live)?.session).toBeDefined();
+
+    await runner.message(live, NEXT);
+    await logUntil(live, "turn-end");
+    expect(processes[1]?.prompts.map(promptText)).toEqual([NEXT.text]);
+    expect(processes).toHaveLength(2);
+  });
+
+  it("refuses a message while it starts the agent", async () => {
+    const held = gate();
+    const { runner, live } = await stopped({
+      script: {
+        configOptions: OPTIONS,
+        async resume(_params, fake) {
+          await held.opened;
+          return { configOptions: fake.configOptions };
+        },
+      },
+    });
+
+    const picked = runner.setOption(live, PICK);
+    await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "turn-running" });
+    held.open();
+
+    await expect(picked).resolves.toEqual([]);
+    await runner.message(live, NEXT);
+    await logUntil(live, "turn-end");
+  });
+
+  it("sends the texts that the last process did not get with the next message", async () => {
+    let resumes = 0;
+    const { runner, live, processes } = await stopped({
+      script: {
+        configOptions: OPTIONS,
+        async resume(_params, fake) {
+          resumes += 1;
+          if (resumes === 1) throw RequestError.authRequired();
+          return { configOptions: fake.configOptions };
+        },
+      },
+    });
+    await runner.message(live, NEXT);
+    await logUntil(live, "failed");
+
+    await runner.setOption(live, PICK);
+    await runner.message(live, { text: "And the tests", client: "web" });
+    await logUntil(live, "turn-end");
+
+    expect(processes[2]?.prompts.map(promptText)).toEqual([`${NEXT.text}\n\nAnd the tests`]);
+  });
+
+  for (const answer of ["takes", "refuses"] as const) {
+    it(`takes a failed chat out of its stop when the agent ${answer} the pick`, async () => {
+      const { runner, processes, feed } = await world({
+        script: { configOptions: OPTIONS, setConfigOption: answer === "takes" ? actAsAdapter : refusing("mode") },
+      });
+      const live = await runner.start(START);
+      await logUntil(live, "turn-end");
+      processes[0]?.exit({ code: 137, signal: null });
+      await logUntil(live, "failed");
+
+      const picked = runner.setOption(live, PICK);
+
+      if (answer === "takes") await expect(picked).resolves.toEqual([]);
+      else await expect(picked).rejects.toMatchObject({ code: "option-refused" });
+      expect((await logOf(live)).at(-1)).toEqual({ kind: "resumed" });
+      expect(live.chat.state).toBe("needs-you");
+      expect(feed.flatMap((event) => (event.kind === "chat" ? [event.state] : [])).slice(-2)).toEqual(["failed", "needs-you"]);
+    });
+  }
+
+  it("opens a new session for a lost session that never answered, sends no prompt, and keeps its texts", async () => {
+    const setup = await world({
+      script: { configOptions: OPTIONS, resume: () => Promise.reject(RequestError.resourceNotFound(SESSION)) },
+    });
+    const live = await setup.chats.create("ALPHA", "ALPHA-1", { step: START.step, agent: "claude", folder: setup.folder }, USER_MESSAGE);
+    await live.setSession("session-0");
+
+    await setup.runner.setOption(live, PICK);
+
+    expect(setup.processes[0]?.prompts).toEqual([]);
+    expect(live.chat.session).toBe(SESSION);
+    await setup.runner.message(live, NEXT);
+    await logUntil(live, "turn-end");
+    expect(setup.processes[0]?.prompts.map(promptText)).toEqual([`${START.text}\n\n${NEXT.text}`]);
+  });
+
+  it("refuses the pick with the reason, and fails the chat, when the agent cannot start", async () => {
+    const { runner, live } = await stopped({
+      script: { configOptions: OPTIONS, resume: () => Promise.reject(RequestError.resourceNotFound(SESSION)) },
+    });
+
+    await expect(runner.setOption(live, PICK)).rejects.toMatchObject({
+      code: "chat-not-running",
+      message: "chat 1 of ALPHA-1 has no agent process: The agent lost the chat",
+    });
+    expect((await logUntil(live, "failed")).at(-1)).toEqual({ kind: "failed", reason: "The agent lost the chat" });
+  });
+
+  for (const how of ["stopStarts", "close"] as const) {
+    it(`refuses the pick with chat-not-running when ${how} overtakes the wait for the last process`, async () => {
+      const setup = await world({ script: { configOptions: OPTIONS }, started: slowEnd(100) });
+      const live = await setup.runner.start(START);
+      const log = await logUntil(live, "turn-end");
+      void setup.runner.stop(live);
+      await until(() => (setup.processes[0]?.endCalls ?? 0) > 0, "the runner ended the process");
+
+      const picked = setup.runner.setOption(live, PICK);
+      if (how === "stopStarts") setup.runner.stopStarts();
+      else await setup.runner.close();
+
+      await expect(picked).rejects.toMatchObject({ code: "chat-not-running", message: "chat 1 of ALPHA-1 cannot run: the daemon is stopping" });
+      expect(await logOf(live)).toEqual(log);
+      expect(setup.processes).toHaveLength(1);
+    });
+  }
+
+  it("refuses the pick with chat-not-running when the daemon stop begins during the launch", async () => {
+    const held = gate();
+    let reads = 0;
+    const { runner, live, processes } = await stopped({
+      script: { configOptions: OPTIONS },
+      async idleLimit() {
+        reads += 1;
+        if (reads > 1) await held.opened;
+        return 60_000;
+      },
+    });
+
+    const picked = runner.setOption(live, PICK);
+    await until(() => reads === 2, "the relaunch reads its limit");
+    runner.stopStarts();
+    held.open();
+
+    await expect(picked).rejects.toMatchObject({ code: "chat-not-running", message: "chat 1 of ALPHA-1 cannot run: the daemon is stopping" });
+    expect(processes).toHaveLength(1);
+  });
+
+  it("refuses the pick with chat-not-running when the log of the chat is gone", async () => {
+    const { runner, live, processes } = await stopped();
+    vi.spyOn(live, "interrupt").mockRejectedValue(new TaskStoreError("chat-not-found", "this chat is no longer here"));
+
+    await expect(runner.setOption(live, PICK)).rejects.toMatchObject({ code: "chat-not-running" });
+    expect(processes).toHaveLength(1);
+  });
+
+  it("refuses the pick with chat-not-running when the daemon closes while the session opens", async () => {
+    const held = gate();
+    const { runner, live } = await stopped({
+      script: {
+        configOptions: OPTIONS,
+        async resume(_params, fake) {
+          await held.opened;
+          return { configOptions: fake.configOptions };
+        },
+      },
+    });
+
+    const picked = runner.setOption(live, PICK);
+    await until(() => runner.running(live)?.process !== undefined, "the agent started");
+    const closed = runner.close();
+    held.open();
+
+    await expect(picked).rejects.toMatchObject({ code: "chat-not-running", message: "chat 1 of ALPHA-1 cannot run: the daemon is stopping" });
+    await closed;
+  });
+});

@@ -2,9 +2,11 @@ import { chmod, link, mkdir, open as openFile, readdir, rm, stat, symlink, write
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
+  type ChatChange,
   type ChatInput,
   chatPath,
   type ChatRecord,
+  chatRecordPath,
   createChat,
   listChats,
   listProjectChats,
@@ -534,6 +536,14 @@ describe("chatPath", () => {
   });
 });
 
+describe("chatRecordPath", () => {
+  it("names the record file in the directory of one chat", async () => {
+    const root = await tempRoot();
+
+    expect(chatRecordPath(options(root), "SAGA-007", 2)).toBe(join(chatDir(root, "007", 2), "chat.json"));
+  });
+});
+
 describe("updateChat", () => {
   it("sets the session and answers the record", async () => {
     const root = await withTasks();
@@ -571,6 +581,62 @@ describe("updateChat", () => {
     const root = await withTasks();
 
     expect((await storeError(updateChat(options(root), "SAGA-1", 1, { session: "a" }))).code).toBe("chat-not-found");
+  });
+
+  it("sets the options, and a change of one field keeps the other", async () => {
+    const root = await withTasks();
+    const created = await createChat(options(root), "SAGA-1", CHAT_INPUT);
+
+    await updateChat(options(root), "SAGA-1", 1, { session: "a session" });
+    await updateChat(options(root), "SAGA-1", 1, { options: { mode: "acceptEdits" } });
+    const updated = await updateChat(options(root), "SAGA-1", 1, { session: "another session" });
+
+    expect(updated).toEqual({ ...created, session: "another session", options: { mode: "acceptEdits" } });
+    await expect(readChat(options(root), "SAGA-1", 1)).resolves.toEqual(updated);
+  });
+
+  it("writes only the string values of the options", async () => {
+    const root = await withTasks();
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    const change = { options: { mode: "auto", depth: 3 } } as unknown as ChatChange;
+
+    const updated = await updateChat(options(root), "SAGA-1", 1, change);
+
+    expect(updated.options).toEqual({ mode: "auto" });
+    expect(JSON.parse(await read(join(chatDir(root, "1", 1), "chat.json")))).toMatchObject({ options: { mode: "auto" } });
+  });
+
+  it.each([["a list", ["auto"]], ["a text", "auto"], ["null", null]])(
+    "refuses options that are %s and writes nothing",
+    async (_name, value) => {
+      const root = await withTasks();
+      await createChat(options(root), "SAGA-1", CHAT_INPUT);
+      const record = join(chatDir(root, "1", 1), "chat.json");
+      const before = await read(record);
+      const change = { options: value } as unknown as ChatChange;
+
+      expect((await storeError(updateChat(options(root), "SAGA-1", 1, change))).code).toBe("field-required");
+      await expect(read(record)).resolves.toBe(before);
+    },
+  );
+});
+
+describe("the options of a stored chat", () => {
+  async function stored(value: unknown): Promise<ChatRecord> {
+    const root = await withTasks();
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    const record = join(chatDir(root, "1", 1), "chat.json");
+    const kept = JSON.parse(await read(record)) as Record<string, unknown>;
+    await writeFile(record, JSON.stringify({ ...kept, options: value }));
+    return readChat(options(root), "SAGA-1", 1);
+  }
+
+  it("are read with only their string values", async () => {
+    expect((await stored({ mode: "plan", model: 7, effort: null })).options).toEqual({ mode: "plan" });
+  });
+
+  it.each([["a list", ["plan"]], ["a text", "plan"], ["null", null]])("are left out when they are %s", async (_name, value) => {
+    expect(await stored(value)).not.toHaveProperty("options");
   });
 });
 

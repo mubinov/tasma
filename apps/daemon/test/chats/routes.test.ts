@@ -2,6 +2,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { PromptResponse } from "@agentclientprotocol/sdk";
+import { openAgentDefaults } from "@tasma/engine";
 import type { Chat, ChatEntry, ChatEvent, ChatEventsReply, ChatStart } from "@tasma/protocol";
 import type { AgentAdapter } from "../../src/agents/adapter.js";
 import { createChatRegistry } from "../../src/chats/registry.js";
@@ -14,7 +15,7 @@ import { createProjectHost } from "../../src/projects/host.js";
 import { projectRoutes } from "../../src/projects/routes.js";
 import { taskRoutes } from "../../src/tasks/routes.js";
 import { WriteQueue } from "../../src/tasks/serialize.js";
-import { fakeAgent, forever } from "../agents/fake-agent.js";
+import { fakeAgent, forever, modeOption } from "../agents/fake-agent.js";
 import type { Script } from "../agents/fake-agent.js";
 import {
   bearer,
@@ -92,7 +93,14 @@ async function world(
   const writes = new WriteQueue();
   const chats = createChatRegistry({ root, host, writes, holdMs: options.holdMs ?? LONG_HOLD_MS });
   const { spawn } = fakeAgent(options.script);
-  const runner = createChatRunner({ root, chats, adapters: options.adapters ?? [ADAPTER], env: {}, spawn });
+  const runner = createChatRunner({
+    root,
+    chats,
+    adapters: options.adapters ?? [ADAPTER],
+    env: {},
+    spawn,
+    defaults: openAgentDefaults(root),
+  });
   onTestFinished(async () => {
     await runner.close();
     chats.close();
@@ -107,12 +115,12 @@ async function world(
 }
 
 /** A daemon whose project ALPHA has a folder, with chat 1 of ALPHA-1 started through the runner. */
-async function running(script?: Script): Promise<World & { live: LiveChat }> {
+async function running(script?: Script): Promise<World & { live: LiveChat; root: string }> {
   const root = await tree();
   await plant(projectConfig(root, "ALPHA"), `path: ${await target()}\n`);
   const started = await world(root, { script });
   const live = await started.runner.start({ tag: "ALPHA", task: "ALPHA-1", step: "dev:build", agent: "claude", ...MESSAGE });
-  return { ...started, live };
+  return { ...started, live, root };
 }
 
 /** A turn that asks a permission request and a question, and stays open until a cancel ends it. */
@@ -570,6 +578,13 @@ describe("the chat commands", () => {
     ["a decline with content", "questions/req-1", { action: "decline", content: {}, client: "web" }],
     ["another action", "questions/req-1", { action: "cancel", client: "web" }],
     ["an answer to a question with no client", "questions/req-1", { action: "decline" }],
+    ["a pick with no value", "options", { configId: "mode", client: "web" }],
+    ["a pick with an extra key", "options", { configId: "mode", value: "auto", client: "web", agent: "claude" }],
+    ["a pick with an empty configId", "options", { configId: "", value: "auto", client: "web" }],
+    ["a pick with a configId that is not a string", "options", { configId: 1, value: "auto", client: "web" }],
+    ["a pick with an empty value", "options", { configId: "mode", value: "", client: "web" }],
+    ["a pick with a value that is not a string", "options", { configId: "fast", value: true, client: "web" }],
+    ["a pick with an empty client", "options", { configId: "mode", value: "auto", client: "" }],
   ])("refuses %s with 400 before it reads the chat", async (_case, command, body) => {
     const { server } = await world(await tree());
 
@@ -607,6 +622,69 @@ describe("the chat commands", () => {
       expect(response.status).toBe(status);
       await expect(failure(response)).resolves.toMatchObject({ code });
     }
+  });
+
+  it("answers a pick with the chat, which holds the pick", async () => {
+    const { live, server } = await running({ configOptions: [modeOption()] });
+    await logUntil(live, "turn-end");
+
+    const response = await send(server, "POST", `${CHATS}/1/options`, { configId: "mode", value: "acceptEdits", client: "web" });
+
+    expect(response.status).toBe(200);
+    const { data, diagnostics } = await success<Chat>(response);
+    expect(data).toMatchObject({ task: "ALPHA-1", chat: 1, state: "needs-you", options: { mode: "acceptEdits" } });
+    expect(diagnostics).toEqual([]);
+  });
+
+  it.each([
+    ["a hidden value", "mode", "plan", /offers no value "plan" for "mode"/],
+    ["a value the session does not offer", "mode", "fast", /offers no value "fast" for "mode"/],
+    ["an option named constructor", "constructor", "plan", /offers no value "plan" for "constructor"/],
+    ["an option named toString", "toString", "plan", /offers no value "plan" for "toString"/],
+    ["an option named __proto__", "__proto__", "plan", /offers no value "plan" for "__proto__"/],
+    ["an option named hasOwnProperty", "hasOwnProperty", "plan", /offers no value "plan" for "hasOwnProperty"/],
+  ])("refuses %s with option-refused and 422", async (_case, configId, value, message) => {
+    const { live, server } = await running({ configOptions: [modeOption()] });
+    await logUntil(live, "turn-end");
+
+    const response = await send(server, "POST", `${CHATS}/1/options`, { configId, value, client: "web" });
+
+    expect(response.status).toBe(422);
+    const refused = await failure(response);
+    expect(refused).toMatchObject({ kind: "daemon", code: "option-refused" });
+    expect(refused.message).toMatch(message);
+    expect(live.chat.options).toBeUndefined();
+  });
+
+  it("refuses a value the agent refuses with option-refused and the message of the agent", async () => {
+    const { live, server } = await running({
+      configOptions: [modeOption()],
+      setConfigOption: () => Promise.reject(new Error("auto needs another model")),
+    });
+    await logUntil(live, "turn-end");
+
+    const response = await send(server, "POST", `${CHATS}/1/options`, { configId: "mode", value: "auto", client: "web" });
+
+    expect(response.status).toBe(422);
+    await expect(failure(response)).resolves.toMatchObject({
+      code: "option-refused",
+      message: 'the agent of chat 1 of ALPHA-1 refused "auto" for "mode": auto needs another model',
+    });
+  });
+
+  it("answers a pick with a diagnostic that names the file a write missed", async () => {
+    const { live, server, root } = await running({ configOptions: [modeOption()] });
+    await logUntil(live, "turn-end");
+    await mkdir(join(root, "agent-defaults.json", "inside"), { recursive: true });
+
+    const response = await send(server, "POST", `${CHATS}/1/options`, { configId: "mode", value: "auto", client: "web" });
+
+    expect(response.status).toBe(200);
+    const { data, diagnostics } = await success<Chat>(response);
+    expect(data.options).toEqual({ mode: "auto" });
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({ code: "option-not-saved", path: join(root, "agent-defaults.json") });
+    expect(diagnostics[0]?.message).toMatch(/^the value "auto" of "mode" is not saved as the default of claude: /);
   });
 
   it("closes a permission request for both of two clients that answer it at once", async () => {

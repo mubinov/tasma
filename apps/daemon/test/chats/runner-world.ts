@@ -1,8 +1,10 @@
 // The chat runner of the tests: a daemon over one project with a fake agent,
 // and the helpers that the runner tests share.
 
+import { join } from "node:path";
 import { expect, onTestFinished } from "vitest";
-import type { PromptResponse } from "@agentclientprotocol/sdk";
+import type { PromptResponse, SessionConfigOption } from "@agentclientprotocol/sdk";
+import { openAgentDefaults } from "@tasma/engine";
 import type { AcpObject, ChatEvent, FeedEvent } from "@tasma/protocol";
 import type { AgentProcess } from "../../src/agents/acp.js";
 import type { AgentAdapter, AgentEnv, AgentLaunch } from "../../src/agents/adapter.js";
@@ -42,6 +44,7 @@ export function fakeAdapter(launch: AgentLaunch | { failed: string } = LAUNCH) {
 }
 
 export type World = {
+  root: string;
   folder: string;
   chats: ChatRegistry;
   runner: ChatRunner;
@@ -52,7 +55,7 @@ export type World = {
   server: TestServer;
 };
 
-type Options = {
+export type WorldOptions = {
   script?: Script;
   adapter?: AgentAdapter;
   /** What the spawn does with each process it starts, before the runner gets it. */
@@ -69,7 +72,7 @@ type Options = {
 };
 
 /** A daemon over project ALPHA, whose folder is a directory, with the task ALPHA-1. */
-export async function world(options: Options = {}): Promise<World> {
+export async function world(options: WorldOptions = {}): Promise<World> {
   const root = await projectsRoot("ALPHA");
   const folder = await target();
   await plant(projectConfig(root, "ALPHA"), options.config?.(folder) ?? `path: ${folder}\n`);
@@ -106,9 +109,34 @@ export async function world(options: Options = {}): Promise<World> {
     shellEnv: options.shellEnv === null ? undefined : (options.shellEnv ?? unexpected),
     idleLimit: options.idleLimit,
     stderr: { write: (line: string) => errors.push(line) },
+    defaults: openAgentDefaults(root),
   });
   onTestFinished(() => runner.close());
-  return { folder, chats, runner, feed, errors, processes: agents.processes, envs, server };
+  return { root, folder, chats, runner, feed, errors, processes: agents.processes, envs, server };
+}
+
+/** The file of the config option defaults of the tree. */
+export function defaultsFile(root: string): string {
+  return join(root, "agent-defaults.json");
+}
+
+/** A list of options as the daemon writes it to the log. */
+export function optionsUpdate(configOptions: SessionConfigOption[]): ChatEvent {
+  return { kind: "update", update: { sessionUpdate: "config_option_update", configOptions } };
+}
+
+/** The `current_mode_update` of the agent as the log keeps it. */
+export function modeUpdate(currentModeId: string): ChatEvent {
+  return filtered({ sessionUpdate: "current_mode_update", currentModeId });
+}
+
+export const PICK = { configId: "mode", value: "acceptEdits", client: "web" } as const;
+
+/** A promise and the function that resolves it. */
+export function gate(): { opened: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  return { opened, open };
 }
 
 export const USER: ChatEvent = { kind: "user", text: START.text, client: START.client };
