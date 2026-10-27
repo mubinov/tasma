@@ -48,6 +48,8 @@ export type World = {
   folder: string;
   chats: ChatRegistry;
   runner: ChatRunner;
+  /** The queue of the registry, in which a test can hold the turns of the chat writes. */
+  writes: WriteQueue;
   feed: FeedEvent[];
   errors: string[];
   processes: FakeProcess[];
@@ -69,6 +71,8 @@ export type WorldOptions = {
   shellEnv?: ((signal: AbortSignal) => Promise<ShellEnv>) | null;
   /** Without it, the runner uses its default limit, which no test reaches. */
   idleLimit?: IdleLimit;
+  /** Without it, the runner uses its default wait of `end`. */
+  endGraceMs?: number;
 };
 
 /** A daemon over project ALPHA, whose folder is a directory, with the task ALPHA-1. */
@@ -108,11 +112,12 @@ export async function world(options: WorldOptions = {}): Promise<World> {
     }),
     shellEnv: options.shellEnv === null ? undefined : (options.shellEnv ?? unexpected),
     idleLimit: options.idleLimit,
+    endGraceMs: options.endGraceMs,
     stderr: { write: (line: string) => errors.push(line) },
     defaults: openAgentDefaults(root),
   });
   onTestFinished(() => runner.close());
-  return { root, folder, chats, runner, feed, errors, processes: agents.processes, envs, server };
+  return { root, folder, chats, runner, writes, feed, errors, processes: agents.processes, envs, server };
 }
 
 /** The file of the config option defaults of the tree. */

@@ -80,6 +80,8 @@ export type LiveChat = {
   setSession(session: string): Promise<void>;
   /** Replaces the picks of the chat. Writes in call order with `setSession`, and each keeps the field of the other. */
   setOptions(options: Record<string, string>): Promise<void>;
+  /** Resolves when every write called on the handle before it has ended, whether it failed or not. */
+  written(): Promise<void>;
   /** Takes no turn, so a read never waits for a write. */
   read(after: number, maxBytes?: number): Promise<ChatEntry[]>;
   /**
@@ -283,6 +285,10 @@ class Live implements LiveChat {
 
   setOptions(options: Record<string, string>): Promise<void> {
     return this.#update({ options });
+  }
+
+  async written(): Promise<void> {
+    await this.#writes;
   }
 
   async read(after: number, maxBytes?: number): Promise<ChatEntry[]> {

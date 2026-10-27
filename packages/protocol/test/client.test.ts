@@ -186,6 +186,13 @@ const invocations: Invocation[] = [
     body: { client: "app" },
   },
   {
+    name: "startChat with a chat to replace",
+    send: (client) => client.startChat("SAGA", "SAGA-3", { client: "app", replaces: 2 }),
+    method: "POST",
+    path: "/projects/SAGA/tasks/SAGA-3/chats",
+    body: { client: "app", replaces: 2 },
+  },
+  {
     name: "readChat",
     send: (client) => client.readChat("SAGA", "SAGA-3", 2),
     method: "GET",

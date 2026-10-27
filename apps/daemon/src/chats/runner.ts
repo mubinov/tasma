@@ -8,6 +8,7 @@
 
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 import { RequestError } from "@agentclientprotocol/sdk";
 import type { RequestPermissionRequest, SessionConfigOption } from "@agentclientprotocol/sdk";
 import { readProjectDeclaration, TaskStoreError } from "@tasma/engine";
@@ -41,6 +42,8 @@ const AUTH_REQUIRED = RequestError.authRequired().code;
 const GONE: ReadonlySet<TaskStoreErrorCode> = new Set(["chat-not-found", "task-not-found", "project-not-found"]);
 
 const KIND_NAME = { permission: "permission request", question: "question" } as const;
+
+const END_GRACE_MS = 10_000;
 
 export class ChatStartRefusal extends Error {
   readonly code: "agent-not-supported" | "project-has-no-folder";
@@ -98,8 +101,8 @@ export type ChatRunner = {
    * earlier texts of the chat that the agent has still to get. A chat with no
    * agent process gets its agent started again in the background, on the
    * stored session, after the last process of the chat has ended. Refused with
-   * `turn-running` while a turn runs, and with `chat-not-running` once
-   * `stopStarts()` was called.
+   * `turn-running` while a turn runs or the chat ends for a restart, and with
+   * `chat-not-running` once `stopStarts()` was called.
    */
   message(live: LiveChat, input: ChatMessageInput): Promise<void>;
   /**
@@ -116,7 +119,8 @@ export type ChatRunner = {
    * chat whose session is not open yet gets the value as the session opens. A
    * chat with no agent process gets its agent started again with no prompt.
    * Resolves with a diagnostic for each file that a write missed. Refused with
-   * `option-refused` when the agent does not offer or does not take the value.
+   * `option-refused` when the agent does not offer or does not take the value,
+   * and with `turn-running` while the chat ends for a restart.
    */
   setOption(live: LiveChat, change: ChatOptionChange): Promise<Diagnostic[]>;
   /**
@@ -125,6 +129,18 @@ export type ChatRunner = {
    * request of the agent is open.
    */
   stop(live: LiveChat): Promise<void>;
+  /**
+   * Cancels the turn that runs, as `cancel` does, waits up to `endGraceMs` for
+   * the turn to end, and then ends the agent of the chat. A turn that does not
+   * end in time is interrupted, as `close()` interrupts each chat. A turn whose
+   * session is not open yet is interrupted at once, with no cancel and no wait.
+   * Between turns, the open requests are cancelled in the name of `client`.
+   * The end of the process writes no event. Resolves when every process of the
+   * chat has ended. Until it settles, a message and a pick of the chat are
+   * refused with `turn-running`. Refused with `chat-not-running` when the
+   * daemon stops before it resolves.
+   */
+  end(live: LiveChat, input: ChatCancelInput): Promise<void>;
   /**
    * Aborts a read of the login shell in progress and does not wait for it, and
    * clears every idle timer, so no idle stop starts after it. A start that has
@@ -172,6 +188,12 @@ type Run = RunningChat & {
   cancelReachesAgent: boolean;
   /** Set by a cancel before `cancelReachesAgent`. `begin` then sends no first prompt, and ends the first turn. */
   cancelledEarly: boolean;
+  /**
+   * Set while `end` waits for the turn to end. Called where `turning` becomes
+   * false in a run that is not quiet. A run becomes quiet only where its
+   * process ends or the daemon stops, and each of them ends the wait too.
+   */
+  turnEnded: (() => void) | undefined;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -227,6 +249,10 @@ function turnRunning(live: LiveChat): DaemonError {
   return new DaemonError("turn-running", `a turn of ${nameOf(live)} is running`);
 }
 
+function endingForRestart(live: LiveChat): DaemonError {
+  return new DaemonError("turn-running", `${nameOf(live)} is ending for a restart`);
+}
+
 function couldNotRun(live: LiveChat, reason: string): DaemonError {
   return new DaemonError("chat-not-running", `${nameOf(live)} has no agent process: ${reason}`);
 }
@@ -260,6 +286,7 @@ function newRun(live: LiveChat): Run {
     turning: true,
     cancelReachesAgent: false,
     cancelledEarly: false,
+    turnEnded: undefined,
   };
 }
 
@@ -278,8 +305,11 @@ export function createChatRunner(options: {
   stderr?: { write(text: string): unknown };
   /** The config option defaults of each agent. */
   defaults: AgentDefaultsStore;
+  /** How long `end` waits for a cancelled turn to end. */
+  endGraceMs?: number;
 }): ChatRunner {
   const { root, chats, adapters, env, defaults } = options;
+  const endGraceMs = options.endGraceMs ?? END_GRACE_MS;
   const spawn = options.spawn ?? spawnAgent;
   const shellEnv = options.shellEnv ?? ((signal) => readShellEnv(env, { signal }));
   const idleLimit = options.idleLimit ?? (() => Promise.resolve(AGENT_STEP_IDLE_MS));
@@ -294,6 +324,8 @@ export function createChatRunner(options: {
   const lastRuns = new WeakMap<LiveChat, Run>();
   /** The end of the last pick of each chat that has not ended, which the next pick of the chat waits for. */
   const picks = new WeakMap<LiveChat, Promise<void>>();
+  /** The chats whose `end` has not settled. */
+  const ending = new WeakSet<LiveChat>();
   const stopping = new AbortController();
   /** The last shell environment in which an agent binary was found. */
   let kept: AgentEnv | undefined;
@@ -430,7 +462,9 @@ export function createChatRunner(options: {
     if (run.quiet) return;
     void Promise.allSettled(cancelOpen(run));
     run.idle?.touch();
-    await append(run, { kind: "turn-end", stopReason });
+    const written = append(run, { kind: "turn-end", stopReason });
+    run.turnEnded?.();
+    await written;
   }
 
   async function runTurn(run: Run, session: AgentSession): Promise<void> {
@@ -611,6 +645,7 @@ export function createChatRunner(options: {
       // A pick takes a failed chat out of its stop, as a message does.
       if (run.live.fold.stopped !== undefined) await append(run, { kind: "resumed" });
       run.turning = false;
+      run.turnEnded?.();
       run.idle?.touch();
       return answerAll(answers);
     }
@@ -670,14 +705,16 @@ export function createChatRunner(options: {
       for (const pick of run.waiting.splice(0)) pick.reject(daemonStopping(live));
       return;
     }
+    // An `end` stopped the run during the launch.
+    if (run.quiet) return;
     if ("failed" in launch) return fail(run, launch.failed);
     await begin(run, spawnRun(run, adapter, launch, folder, limitMs));
   }
 
-  /** A restart that the daemon stop overtakes before its `user` event writes nothing more. */
-  function refuseIfStopping(run: Run): void {
+  /** A restart that the daemon stop or an `end` overtakes before its `user` event writes nothing more. */
+  function refuseIfOvertaken(run: Run): void {
     if (!run.quiet && !stopping.signal.aborted) return;
-    const error = daemonStopping(run.live);
+    const error = stopping.signal.aborted ? daemonStopping(run.live) : endingForRestart(run.live);
     silence(run, error);
     throw error;
   }
@@ -691,9 +728,9 @@ export function createChatRunner(options: {
     await ends.get(live);
     // The log cannot show which texts of a cancelled turn with no answer reached the agent; the last run knows.
     run.unsent = [...(last?.unsent ?? live.unanswered)];
-    refuseIfStopping(run);
+    refuseIfOvertaken(run);
     await haltOnFault(run, () => live.interrupt());
-    refuseIfStopping(run);
+    refuseIfOvertaken(run);
   }
 
   /**
@@ -729,6 +766,7 @@ export function createChatRunner(options: {
   }
 
   async function pickNow(live: LiveChat, { configId, value }: ChatOptionChange): Promise<Diagnostic[]> {
+    if (ending.has(live)) throw endingForRestart(live);
     if (stopping.signal.aborted) throw daemonStopping(live);
     const run = runs.get(live);
     const session = run?.session;
@@ -741,6 +779,56 @@ export function createChatRunner(options: {
     }
     run.idle?.touch();
     return pickOn(run, session, configId, value);
+  }
+
+  /**
+   * Ends at the end of the turn, at the end of the processes of the chat,
+   * after `endGraceMs`, or at the daemon stop.
+   */
+  async function waitForTurnEnd(run: Run): Promise<void> {
+    const turn = new Promise<void>((resolve) => (run.turnEnded = resolve));
+    const clearLimit = new AbortController();
+    const limit = sleep(endGraceMs, undefined, { signal: AbortSignal.any([stopping.signal, clearLimit.signal]) })
+      .catch(() => undefined);
+    await Promise.race([turn, ends.get(run.live), limit]);
+    run.turnEnded = undefined;
+    clearLimit.abort();
+  }
+
+  /**
+   * Ends the agent of the run, and gives the writes that this end calls: the
+   * interrupt of a turn that still runs, or the cancelled resolutions of the
+   * open requests of a run with no turn, in the name of `client`. The end of
+   * the process writes no event.
+   */
+  function endNow(run: Run, client: string): Promise<unknown>[] {
+    const writes: Promise<unknown>[] = [];
+    if (!run.turning) writes.push(...cancelOpen(run, client));
+    else if (!run.quiet) {
+      silence(run);
+      writes.push(haltOnFault(run, () => run.live.interrupt()));
+    }
+    void quit(run);
+    return writes;
+  }
+
+  /** The steps of `end`. The chat is in `ending` while they run. */
+  async function endOf(live: LiveChat, client: string): Promise<void> {
+    if (stopping.signal.aborted) throw daemonStopping(live);
+    const run = runs.get(live);
+    if (run?.turning && run.cancelReachesAgent) {
+      const turnEnd = waitForTurnEnd(run);
+      // ACP wants `session/cancel` before the cancelled responses.
+      run.session!.cancel();
+      await Promise.all([turnEnd, Promise.all(cancelOpen(run, client))]);
+      // `close()` interrupts the run.
+      if (stopping.signal.aborted) throw daemonStopping(live);
+    }
+    const writes = run === undefined ? [] : endNow(run, client);
+    await Promise.all([...writes, ends.get(live)]);
+    // Only after `ends`: the handling of an exit calls its write before `ends` resolves.
+    await live.written();
+    if (stopping.signal.aborted) throw daemonStopping(live);
   }
 
   /** The open request an answer takes. The caller takes it out of `open` in the same synchronous step. */
@@ -793,6 +881,7 @@ export function createChatRunner(options: {
     },
 
     async message(live, { text, client }) {
+      if (ending.has(live)) throw endingForRestart(live);
       const run = runs.get(live);
       if (run?.turning) throw turnRunning(live);
       if (stopping.signal.aborted) throw daemonStopping(live);
@@ -852,6 +941,15 @@ export function createChatRunner(options: {
         void quit(run);
       }
       await ends.get(live);
+    },
+
+    async end(live, { client }) {
+      ending.add(live);
+      try {
+        await endOf(live, client);
+      } finally {
+        ending.delete(live);
+      }
     },
 
     stopStarts() {

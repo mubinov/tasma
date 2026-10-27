@@ -32,10 +32,17 @@ type World = {
   root: string;
   chats: ChatRegistry;
   starts: StepChats;
-  /** Each call of the runner, in call order. */
+  /** Each call of `start` of the runner, in call order. */
   calls: StartInput[];
-  /** Replaces what the next calls of the runner do. Without it, a call creates the chat with its first message. */
-  next: { start?: (input: StartInput) => Promise<LiveChat> };
+  /** The chat and the client of each call of `end` of the runner, in call order. */
+  ends: { chat: number; client: string }[];
+  /** The name of each call of the runner, in call order. */
+  order: ("start" | "end")[];
+  /**
+   * Replaces what the next calls of the runner do. Without it, a start
+   * creates the chat with its first message, and an end does nothing.
+   */
+  next: { start?: (input: StartInput) => Promise<LiveChat>; end?: (live: LiveChat) => Promise<void> };
 };
 
 /**
@@ -58,16 +65,24 @@ async function world(): Promise<World> {
     await host.close();
   });
   const calls: StartInput[] = [];
+  const ends: World["ends"] = [];
+  const order: World["order"] = [];
   const next: World["next"] = {};
-  const runner: Pick<ChatRunner, "start"> = {
+  const runner: Pick<ChatRunner, "start" | "end"> = {
     start(input) {
       calls.push(input);
+      order.push("start");
       if (next.start !== undefined) return next.start(input);
       const { tag, task, step, agent, text, client } = input;
       return chats.create(tag, task, { step, agent, folder: "/srv/alpha" }, { text, client });
     },
+    async end(live, { client }) {
+      ends.push({ chat: live.chat.chat, client });
+      order.push("end");
+      await next.end?.(live);
+    },
   };
-  return { root, chats, starts: createStepChats({ root, host, chats, runner }), calls, next };
+  return { root, chats, starts: createStepChats({ root, host, chats, runner }), calls, ends, order, next };
 }
 
 /** The refusal a start rejects with. */
@@ -304,5 +319,149 @@ describe("a start of the chat of a step", () => {
       expect.objectContaining({ path: userConfig(root) }),
     ]);
     expect(diagnostics.filter((diagnostic) => diagnostic.path?.startsWith(chatFolder(root, "ALPHA", "1", 1)))).toHaveLength(1);
+  });
+});
+
+describe("a start that replaces a chat", () => {
+  it("ends the latest chat of the step, and then starts a new chat of the step with the first message", async () => {
+    const { starts, calls, ends, order } = await world();
+    await starts.start("ALPHA", "ALPHA-1", "cli");
+
+    const { live, started } = await starts.start("ALPHA", "ALPHA-1", "app", 1);
+
+    expect(started).toBe(true);
+    expect(live.chat).toMatchObject({ task: "ALPHA-1", chat: 2, step: "build", agent: "claude", state: "working" });
+    expect(ends).toEqual([{ chat: 1, client: "app" }]);
+    expect(order).toEqual(["start", "end", "start"]);
+    expect(calls[1]).toEqual({ ...calls[0], client: "app" });
+  });
+
+  it.each([
+    ["failed", [{ kind: "user", text: "Build the parser", client: "app" }, { kind: "failed", reason: "No agent here" }]],
+    ["has an empty log", []],
+  ] as const)("replaces a latest chat that %s", async (_case, log) => {
+    const { root, starts, ends } = await world();
+    await plantChat(root, { tag: "ALPHA", digits: "1", chat: 1 }, { step: "build" }, [...log]);
+
+    const { live, started } = await starts.start("ALPHA", "ALPHA-1", "cli", 1);
+
+    expect(started).toBe(true);
+    expect(live.chat.chat).toBe(2);
+    expect(ends).toEqual([{ chat: 1, client: "cli" }]);
+  });
+
+  it.each([
+    ["an older chat", ["build", "build"], 1, "chat 1 of ALPHA-1 is not the latest chat of the task: chat 2 is"],
+    ["a chat of another step", ["plan"], 1, 'chat 1 of ALPHA-1 is of the step "plan", and the task is at the step "build"'],
+    ["a number with no chat", ["build"], 7, "ALPHA-1 has no chat 7"],
+    ["a chat of a task with no chat", [], 1, "ALPHA-1 has no chat 1"],
+  ])("refuses %s with chat-not-current, and neither ends nor starts a chat", async (_case, steps, replaces, message) => {
+    const { root, starts, calls, ends } = await world();
+    for (const [index, step] of steps.entries()) {
+      await plantChat(root, { tag: "ALPHA", digits: "1", chat: index + 1 }, { step }, [
+        { kind: "user", text: "Build the parser", client: "app" },
+      ]);
+    }
+
+    const error = await refusal(starts.start("ALPHA", "ALPHA-1", "cli", replaces));
+
+    expect(error).toBeInstanceOf(DaemonError);
+    expect(error).toMatchObject({ code: "chat-not-current", message });
+    expect(calls).toEqual([]);
+    expect(ends).toEqual([]);
+  });
+
+  it.each([
+    ["a task with no workflow", "ALPHA-4", "task-has-no-workflow"],
+    ["a step that the workflow does not have", "ALPHA-5", "step-stale"],
+  ])("refuses %s before it checks the chat", async (_case, task, code) => {
+    const { root, starts, ends } = await world();
+    await plant(taskFile(root, "ALPHA", "ALPHA-5"), onWorkflow("ALPHA-5", "flow", "ship"));
+
+    const error = await refusal(starts.start("ALPHA", task, "cli", 1));
+
+    expect(error).toMatchObject({ code });
+    expect(ends).toEqual([]);
+  });
+
+  it("refuses with chat-not-current when the task moves to another step during the end, and starts no chat", async () => {
+    const { root, starts, calls, next } = await world();
+    await starts.start("ALPHA", "ALPHA-1", "cli");
+    next.end = () => plant(taskFile(root, "ALPHA", "ALPHA-1"), onWorkflow("ALPHA-1", "flow", "plan"));
+
+    const error = await refusal(starts.start("ALPHA", "ALPHA-1", "app", 1));
+
+    expect(error).toMatchObject({
+      code: "chat-not-current",
+      message: 'chat 1 of ALPHA-1 is of the step "build", and the task is at the step "plan"',
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("passes the refusal of an end through, and starts no chat", async () => {
+    const { starts, calls, next } = await world();
+    await starts.start("ALPHA", "ALPHA-1", "cli");
+    const stop = new DaemonError("chat-not-running", "chat 1 of ALPHA-1 cannot run: the daemon is stopping");
+    next.end = () => Promise.reject(stop);
+
+    await expect(starts.start("ALPHA", "ALPHA-1", "app", 1)).rejects.toBe(stop);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("turns a refusal of the runner start after the end into a refusal of the daemon", async () => {
+    const { starts, ends, next } = await world();
+    await starts.start("ALPHA", "ALPHA-1", "cli");
+    next.start = () => Promise.reject(new ChatStartRefusal("project-has-no-folder", "no folder"));
+
+    const error = await refusal(starts.start("ALPHA", "ALPHA-1", "app", 1));
+
+    expect(error).toBeInstanceOf(DaemonError);
+    expect(error).toMatchObject({ code: "project-has-no-folder", message: "no folder" });
+    expect(ends).toHaveLength(1);
+  });
+
+  it("makes one new chat for two restarts of one chat at the same time", async () => {
+    const { starts, ends } = await world();
+    await starts.start("ALPHA", "ALPHA-1", "cli");
+
+    const [one, other] = await Promise.allSettled([
+      starts.start("ALPHA", "ALPHA-1", "cli", 1),
+      starts.start("ALPHA", "ALPHA-1", "app", 1),
+    ]);
+
+    expect(one).toMatchObject({ status: "fulfilled", value: { started: true, live: { chat: { chat: 2 } } } });
+    expect(other).toMatchObject({
+      status: "rejected",
+      reason: { code: "chat-not-current", message: "chat 1 of ALPHA-1 is not the latest chat of the task: chat 2 is" },
+    });
+    expect(ends).toHaveLength(1);
+  });
+
+  it("gives back the new chat to a start without replaces that waits for the restart", async () => {
+    const { starts } = await world();
+    await starts.start("ALPHA", "ALPHA-1", "cli");
+
+    const [restarted, plain] = await Promise.all([
+      starts.start("ALPHA", "ALPHA-1", "app", 1),
+      starts.start("ALPHA", "ALPHA-1", "cli"),
+    ]);
+
+    expect(plain).toMatchObject({ started: false });
+    expect(plain.live).toBe(restarted.live);
+  });
+
+  it("gives the findings of its reads, each finding of the user configuration one time", async () => {
+    const { root, starts } = await world();
+    await starts.start("ALPHA", "ALPHA-1", "cli");
+    await plant(userConfig(root), "colour: blue\n");
+    await mkdir(chatFolder(root, "ALPHA", "1", 2), { recursive: true });
+
+    const { live, diagnostics } = await starts.start("ALPHA", "ALPHA-1", "cli", 1);
+
+    expect(live.chat.chat).toBe(3);
+    expect(diagnostics.filter((diagnostic) => diagnostic.code === "config-key-unknown")).toEqual([
+      expect.objectContaining({ path: userConfig(root) }),
+    ]);
+    expect(diagnostics.filter((diagnostic) => diagnostic.path?.startsWith(chatFolder(root, "ALPHA", "1", 2)))).toHaveLength(1);
   });
 });

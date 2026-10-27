@@ -229,6 +229,8 @@ describe("POST …/chats", () => {
     ["a client of 101 characters", { client: LONG_CLIENT }],
     ["a client that is not a string", { client: 7 }],
     ["an extra key", { client: "cli", step: "build" }],
+    ["a replaces with no client", { replaces: 1 }],
+    ["a replaces with an extra key", { client: "cli", replaces: 1, step: "build" }],
   ])("refuses %s with 400 before it reads the task", async (_case, body) => {
     const { server } = await world(await stepTree());
 
@@ -236,6 +238,44 @@ describe("POST …/chats", () => {
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+  });
+
+  it("replaces the chat that replaces names with a new chat of the step", async () => {
+    const { server } = await world(await stepTree());
+    await send(server, "POST", START, { client: "cli" });
+
+    const response = await send(server, "POST", START, { client: "app", replaces: 1 });
+
+    expect(response.status).toBe(200);
+    const { data } = await success<ChatStart>(response);
+    expect(data).toMatchObject({ started: true, chat: { task: "ALPHA-3", chat: 2, step: "build" } });
+  });
+
+  it.each([0, -1, 2.5, 2 ** 53, "3", null, true])("refuses a replaces of %j with 400 before it reads the task", async (replaces) => {
+    const { server } = await world(await stepTree());
+
+    const response = await send(server, "POST", "/projects/ALPHA/tasks/ALPHA-9/chats", { client: "cli", replaces });
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toEqual({
+      kind: "daemon",
+      code: "malformed-request",
+      message: '"replaces" takes a chat number: a whole number of 1 or more',
+    });
+  });
+
+  it.each([
+    ["an older chat", 1, "chat 1 of ALPHA-3 is not the latest chat of the task: chat 2 is"],
+    ["a number with no chat", 5, "ALPHA-3 has no chat 5"],
+  ])("refuses a replaces of %s with 409 chat-not-current", async (_case, replaces, message) => {
+    const { server } = await world(await stepTree());
+    await send(server, "POST", START, { client: "cli" });
+    await send(server, "POST", START, { client: "app", replaces: 1 });
+
+    const response = await send(server, "POST", START, { client: "app", replaces });
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toEqual({ kind: "daemon", code: "chat-not-current", message });
   });
 
   it("refuses a query with 400", async () => {

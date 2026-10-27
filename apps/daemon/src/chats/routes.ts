@@ -40,7 +40,9 @@ const MESSAGE_KEYS = Object.keys({ text: true, client: true } satisfies Record<k
 
 const CANCEL_KEYS = Object.keys({ client: true } satisfies Record<keyof ChatCancelInput, true>);
 
-const START_KEYS = Object.keys({ client: true } satisfies Record<keyof ChatStartInput, true>);
+const START_KEYS = Object.keys({ client: true } satisfies Record<keyof Omit<ChatStartInput, "replaces">, true>);
+
+const REPLACE_KEYS = Object.keys({ client: true, replaces: true } satisfies Record<keyof ChatStartInput, true>);
 
 const PERMISSION_KEYS = Object.keys({ optionId: true, client: true } satisfies Record<keyof PermissionAnswer, true>);
 
@@ -110,8 +112,15 @@ function readCancel(raw: unknown): ChatCancelInput {
 
 function readStart(raw: unknown): ChatStartInput {
   const body = objectBody(raw);
-  assertKeys(body, START_KEYS);
-  return { client: clientOf(body) };
+  const replacing = Object.hasOwn(body, "replaces");
+  assertKeys(body, replacing ? REPLACE_KEYS : START_KEYS);
+  const client = clientOf(body);
+  if (!replacing) return { client };
+  const { replaces } = body;
+  if (typeof replaces !== "number" || !Number.isSafeInteger(replaces) || replaces < 1) {
+    throw malformed('"replaces" takes a chat number: a whole number of 1 or more');
+  }
+  return { client, replaces };
 }
 
 function readPermissionAnswer(raw: unknown): PermissionAnswer {
@@ -201,8 +210,9 @@ export function chatRoutes(chats: ChatRegistry, runner: ChatRunner, starts: Step
       route: routes.startChat,
       handler: async (request): Promise<Success<ChatStart>> => {
         assertNoQuery(request.query);
-        const { client } = readStart(request.body);
-        const { live, started, diagnostics } = await starts.start(request.params.project!, request.params.id!, client);
+        const { client, replaces } = readStart(request.body);
+        const { project, id } = request.params;
+        const { live, started, diagnostics } = await starts.start(project!, id!, client, replaces);
         return { data: { chat: live.chat, started }, diagnostics };
       },
     },

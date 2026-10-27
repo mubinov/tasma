@@ -97,7 +97,10 @@ export type Client = {
    * The chat of the current step of the task, or of the first step of its
    * workflow when the task has no step. The answer is the latest chat of the
    * task when it is of that step, holds its first message and has not failed;
-   * in other cases a new chat with its agent started.
+   * in other cases a new chat with its agent started. With `replaces`, always
+   * a new chat, after the agent of the replaced chat has stopped; refused with
+   * `chat-not-current` when that chat is not the latest chat of the task, or
+   * is not of the current step.
    */
   startChat(tag: string, id: string, input: ChatStartInput): Promise<Success<ChatStart>>;
   readChat(tag: string, id: string, chat: number): Promise<Success<Chat>>;
@@ -115,7 +118,8 @@ export type Client = {
   /**
    * Starts a turn with the message. A chat with no agent process gets its agent
    * started again, on the conversation of the chat. Refused with `turn-running`
-   * while a turn runs, and with `chat-not-running` only while the daemon stops.
+   * while a turn runs or the chat ends for a restart, and with
+   * `chat-not-running` only while the daemon stops.
    */
   sendChatMessage(tag: string, id: string, chat: number, input: ChatMessageInput): Promise<Success<Chat>>;
   /** Cancels the turn that runs. Does nothing when no turn runs. */
@@ -144,7 +148,8 @@ export type Client = {
    * default of the agent for new chats unless `AGENT_OPTION_RULES` lists it as
    * unsaved. A chat with no agent process gets its agent started again with no
    * prompt. The answer comes after the agent answers. Refused with
-   * `option-refused` when the agent does not offer or does not take the value.
+   * `option-refused` when the agent does not offer or does not take the value,
+   * and with `turn-running` while the chat ends for a restart.
    */
   setChatOption(tag: string, id: string, chat: number, change: ChatOptionChange): Promise<Success<Chat>>;
   /** One page of the chats of all projects, newest first. */

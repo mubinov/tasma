@@ -83,6 +83,7 @@ export type DaemonErrorCode
     | "turn-running"
     | "chat-not-running"
     | "already-answered"
+    | "chat-not-current"
     | "task-has-no-workflow"
     | "step-stale"
     | "project-has-no-folder"

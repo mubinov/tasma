@@ -168,6 +168,7 @@ const DAEMON_STATUS = {
   "turn-running": 409,
   "chat-not-running": 409,
   "already-answered": 409,
+  "chat-not-current": 409,
   // The task or the project cannot have a chat started until the user changes it.
   "task-has-no-workflow": 409,
   "step-stale": 409,

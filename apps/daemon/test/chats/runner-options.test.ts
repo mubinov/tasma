@@ -832,3 +832,74 @@ describe("a pick on a chat with no agent process", () => {
     await closed;
   });
 });
+
+describe("a pick and the end of a chat for a restart", () => {
+  it("is refused while the end runs", async () => {
+    const { runner, processes } = await world({ script: { configOptions: OPTIONS }, started: slowEnd(100) });
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+
+    const end = runner.end(live, { client: "web" });
+
+    await expect(runner.setOption(live, PICK)).rejects.toMatchObject({
+      code: "turn-running",
+      message: "chat 1 of ALPHA-1 is ending for a restart",
+    });
+    await end;
+    expect(processes).toHaveLength(1);
+  });
+
+  it("refuses the kept pick of a relaunch with chat-not-running, writes nothing, and ends the process", async () => {
+    const held = gate();
+    const { runner, live, log, processes } = await stopped({
+      script: {
+        configOptions: OPTIONS,
+        async resume(_params, fake) {
+          await held.opened;
+          return { configOptions: fake.configOptions };
+        },
+      },
+      endGraceMs: 60_000,
+    });
+    const picked = runner.setOption(live, PICK);
+    await until(() => processes[1]?.resumes.length === 1, "the relaunch resumes the session");
+
+    await runner.end(live, { client: "web" });
+    held.open();
+
+    await expect(picked).rejects.toMatchObject({ code: "chat-not-running" });
+    expect(await logOf(live)).toEqual(log);
+    expect(processes[1]?.endCalls).toBeGreaterThan(0);
+    expect(runner.running(live)).toBeUndefined();
+  });
+
+  it("waits for a relaunch of a failed chat that writes its resumed event, and then ends the process", async () => {
+    const { runner, processes } = await world({ script: { configOptions: OPTIONS }, endGraceMs: 60_000 });
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+    processes[0]?.exit({ code: 137, signal: null });
+    await logUntil(live, "failed");
+    const held = gate();
+    let resuming = false;
+    const append = live.append.bind(live);
+    vi.spyOn(live, "append").mockImplementation(async (event) => {
+      if (event.kind === "resumed") {
+        resuming = true;
+        await held.opened;
+      }
+      return append(event);
+    });
+    const picked = runner.setOption(live, PICK);
+    await until(() => resuming, "the relaunch writes resumed");
+
+    const end = runner.end(live, { client: "web" });
+    held.open();
+    await end;
+
+    await expect(picked).resolves.toEqual([]);
+    expect(processes[1]?.cancels).toHaveLength(1);
+    expect((await logOf(live)).at(-1)).toEqual({ kind: "resumed" });
+    expect(processes[1]?.endCalls).toBeGreaterThan(0);
+    expect(runner.running(live)).toBeUndefined();
+  });
+});

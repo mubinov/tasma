@@ -311,6 +311,24 @@ describe("appending to a chat", () => {
     expect((await logEntries(log)).map((entry) => entry.seq)).toEqual([1, 2, 3]);
   });
 
+  it("resolves written after every write called before it has ended, a failed one too", async () => {
+    const { chats, writes } = await world(await tree());
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    const held = gate();
+    void writes.run("ALPHA", () => held.wait);
+    const ended: string[] = [];
+    failNextAppend();
+    void live.append(UPDATE).catch(() => ended.push("append"));
+    void live.setSession("session-1").then(() => ended.push("session"));
+
+    const written = live.written();
+
+    expect(await stillPending(written)).toBe(true);
+    held.open();
+    await written;
+    expect(ended).toEqual(["append", "session"]);
+  });
+
   it("opens the log no second time after a refusal of the engine", async () => {
     const root = await tree();
     const { chats } = await world(root);
