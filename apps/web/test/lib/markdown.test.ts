@@ -1,4 +1,4 @@
-import type { Heading, PhrasingContent, Root, RootContent } from "mdast";
+import type { Heading, Paragraph, PhrasingContent, Root, RootContent } from "mdast";
 import type { ExtraProps } from "react-markdown";
 import { describe, expect, it } from "vitest";
 import {
@@ -8,6 +8,7 @@ import {
   rehypeLinkText,
   remarkImagesAsLinks,
   remarkRawAsSource,
+  remarkSoftBreaks,
   remarkTaskHeadings,
   type HeadingBase,
 } from "../../src/lib/markdown";
@@ -315,6 +316,111 @@ describe("an image", () => {
       { type: "link", url: "https://example.com/a.png", children: [{ type: "text", value: "a chart" }] },
       { type: "imageReference", identifier: "missing", referenceType: "full", alt: "lost" },
     ]);
+  });
+});
+
+describe("a soft line break", () => {
+  function text(value: string): PhrasingContent {
+    return { type: "text", value };
+  }
+
+  const lineBreak: PhrasingContent = { type: "break" };
+
+  function breakLines(...children: RootContent[]): Root {
+    const tree = root(...children);
+    remarkSoftBreaks()(tree);
+    return tree;
+  }
+
+  it.each(["\n", "\r\n", "\r"])("%j becomes a break between the two parts of the text", (ending) => {
+    const tree = breakLines({ type: "paragraph", children: [text(`a${ending}b`)] });
+
+    expect(tree.children).toEqual([{ type: "paragraph", children: [text("a"), lineBreak, text("b")] }]);
+  });
+
+  it("at the start or the end of a text gives no empty text", () => {
+    const tree = breakLines({ type: "paragraph", children: [text("\nb"), { type: "strong", children: [text("a\n")] }] });
+
+    expect(tree.children).toEqual([
+      { type: "paragraph", children: [lineBreak, text("b"), { type: "strong", children: [text("a"), lineBreak] }] },
+    ]);
+  });
+
+  it("becomes a break at each line ending of one text", () => {
+    const tree = breakLines({ type: "paragraph", children: [text("a\nb\r\n\rc")] });
+
+    expect(tree.children).toEqual([
+      { type: "paragraph", children: [text("a"), lineBreak, text("b"), lineBreak, lineBreak, text("c")] },
+    ]);
+  });
+
+  it("becomes a break inside a strong, a link, a list item and a block quote", () => {
+    const tree = breakLines(
+      {
+        type: "paragraph",
+        children: [
+          { type: "strong", children: [text("a\nb")] },
+          { type: "link", url: "https://example.com", children: [text("c\nd")] },
+        ],
+      },
+      {
+        type: "list",
+        children: [{ type: "listItem", children: [{ type: "paragraph", children: [text("e\nf")] }] }],
+      },
+      { type: "blockquote", children: [{ type: "paragraph", children: [text("g\nh")] }] },
+    );
+
+    expect(tree.children).toEqual([
+      {
+        type: "paragraph",
+        children: [
+          { type: "strong", children: [text("a"), lineBreak, text("b")] },
+          { type: "link", url: "https://example.com", children: [text("c"), lineBreak, text("d")] },
+        ],
+      },
+      {
+        type: "list",
+        children: [{ type: "listItem", children: [{ type: "paragraph", children: [text("e"), lineBreak, text("f")] }] }],
+      },
+      { type: "blockquote", children: [{ type: "paragraph", children: [text("g"), lineBreak, text("h")] }] },
+    ]);
+  });
+
+  it("becomes a break in a text and in the strong that follows it", () => {
+    const tree = breakLines({
+      type: "paragraph",
+      children: [text("a\n"), { type: "strong", children: [text("b\nc")] }, text("d")],
+    });
+
+    expect(tree.children).toEqual([
+      {
+        type: "paragraph",
+        children: [text("a"), lineBreak, { type: "strong", children: [text("b"), lineBreak, text("c")] }, text("d")],
+      },
+    ]);
+  });
+
+  it("stays in code, inline code and raw HTML", () => {
+    const tree = breakLines(
+      { type: "code", value: "a\nb" },
+      { type: "html", value: "<div>\n</div>" },
+      { type: "paragraph", children: [{ type: "inlineCode", value: "c\nd" }, { type: "html", value: "<b\n>" }] },
+    );
+
+    expect(tree.children).toEqual([
+      { type: "code", value: "a\nb" },
+      { type: "html", value: "<div>\n</div>" },
+      { type: "paragraph", children: [{ type: "inlineCode", value: "c\nd" }, { type: "html", value: "<b\n>" }] },
+    ]);
+  });
+
+  it("leaves a text with no line ending as the same node", () => {
+    const plain = text("a b");
+    const paragraph: Paragraph = { type: "paragraph", children: [plain] };
+
+    breakLines(paragraph);
+
+    expect(paragraph.children[0]).toBe(plain);
   });
 });
 

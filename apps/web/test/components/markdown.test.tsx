@@ -374,6 +374,54 @@ describe("raw HTML", () => {
   });
 });
 
+describe("a single newline", () => {
+  function cuesOf(link: HTMLElement): unknown {
+    return {
+      cues: [...link.querySelectorAll(".sr-only")].map((span) => span.textContent),
+      description: document.getElementById(link.getAttribute("aria-describedby") ?? "")?.textContent,
+      mark: link.closest("bdi")?.querySelector("[aria-hidden='true']")?.textContent,
+    };
+  }
+
+  it("renders as a line break, and a list after the lines stays a list", () => {
+    const wrapper = renderMarkdown("**Problem**: one\n**Outcome**: two\n**Scope**:\n- first");
+
+    expect(wrapper.querySelectorAll("p")).toHaveLength(1);
+    expect(wrapper.querySelector("p")?.innerHTML).toBe(
+      '<strong class="font-medium">Problem</strong>: one<br>\n<strong class="font-medium">Outcome</strong>: two<br>\n'
+      + '<strong class="font-medium">Scope</strong>:',
+    );
+    expect(wrapper.querySelector("p + ul li")?.textContent).toBe("first");
+  });
+
+  it.each(["hard  \nbreak", "hard\\\nbreak"])("after a hard break renders one line break: %j", (text) => {
+    const wrapper = renderMarkdown(text);
+
+    expect(wrapper.querySelector("p")?.innerHTML).toBe("hard<br>\nbreak");
+  });
+
+  it("stays a newline in a code block and a space in inline code", () => {
+    const wrapper = renderMarkdown("```\none\ntwo\n```\n\n`three\nfour`");
+
+    expect(wrapper.querySelector("pre > code")?.textContent).toBe("one\ntwo\n");
+    expect(wrapper.querySelector("p > code")?.textContent).toBe("three four");
+    expect(wrapper.querySelector("br")).toBeNull();
+  });
+
+  it.each([
+    { lines: "https://other.example\nlogin", spaced: "https://other.example login" },
+    { lines: "read\nmore", spaced: "read more" },
+  ])("in the text of a link renders as a line break, and the link keeps the cues of $spaced", ({ lines, spaced }) => {
+    renderMarkdown(`[${lines}](https://site.example)\n\n[${spaced}](https://site.example)`);
+
+    const [broken, plain] = screen.getAllByRole("link");
+    expect(broken?.querySelectorAll("br")).toHaveLength(1);
+    expect(plain?.querySelector("br")).toBeNull();
+    expect(cuesOf(plain!)).toEqual({ cues: [" (opens in a new tab)"], description: "https://site.example/", mark: undefined });
+    expect(cuesOf(broken!)).toEqual(cuesOf(plain!));
+  });
+});
+
 describe("a re-render", () => {
   it("parses the text again only when a prop changes", () => {
     vi.mocked(remarkTaskHeadings).mockClear();

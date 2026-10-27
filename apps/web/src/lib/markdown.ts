@@ -1,4 +1,4 @@
-import type { Heading, Nodes, Parents, PhrasingContent, Root, RootContent } from "mdast";
+import type { Heading, Nodes, Parents, PhrasingContent, Root, RootContent, Text } from "mdast";
 import type { ExtraProps } from "react-markdown";
 
 const FLOW_PARENTS = new Set<Parents["type"]>(["root", "blockquote", "listItem", "footnoteDefinition"]);
@@ -162,6 +162,40 @@ function imageAsPhrase(alt: string, source: string | undefined): PhrasingContent
     return { type: "text", value: alt };
   }
   return { type: "link", url: source, children: [{ type: "text", value: alt === "" ? source : alt }] };
+}
+
+/**
+ * Turns each line ending in a text into a line break, so a single newline
+ * shows as a new line. Code, inline code and raw HTML keep their line endings.
+ */
+export function remarkSoftBreaks(): (tree: Root) => void {
+  return (tree) => {
+    breakLines(tree);
+  };
+}
+
+function breakLines(parent: Parents): void {
+  const node = parent as { children: RootContent[] };
+  node.children = node.children.flatMap<RootContent>((child) => {
+    if (child.type === "text") {
+      return textWithBreaks(child);
+    }
+    if ("children" in child) {
+      breakLines(child);
+    }
+    return [child];
+  });
+}
+
+function textWithBreaks(node: Text): PhrasingContent[] {
+  const lines = node.value.split(/\r\n?|\n/);
+  if (lines.length === 1) {
+    return [node];
+  }
+  return lines.flatMap((line, index) => {
+    const parts: PhrasingContent[] = index === 0 ? [] : [{ type: "break" }];
+    return line === "" ? parts : [...parts, { type: "text", value: line }];
+  });
 }
 
 /**

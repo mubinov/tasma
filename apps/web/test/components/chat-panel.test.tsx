@@ -853,6 +853,19 @@ it("shows an image in agent text as a link, and loads no image", async () => {
   expect(document.querySelector("img")).toBeNull();
 });
 
+it("shows each line of agent text on its own line, also when the lines come in two parts", async () => {
+  await renderPanel(logOf(chatEntries([
+    userMessage("Frame the scope."),
+    textChunk("**Problem**: one\n", "msg_01"),
+    textChunk("**Outcome**: two", "msg_01"),
+    turnEnd(),
+  ])));
+
+  const paragraph = (await screen.findByText("Outcome")).closest("p");
+  expect(paragraph?.querySelectorAll("br")).toHaveLength(1);
+  expect(paragraph?.textContent).toBe("Problem: one\nOutcome: two");
+});
+
 const CODE_REPLY = ["Here is the sum:", "", "```ts", "// sum", "const total = 1 + 2;", "```"].join("\n");
 
 it("shows a fenced block of a complete agent message in Shiki colours", async () => {

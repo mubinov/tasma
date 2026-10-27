@@ -10,6 +10,7 @@ import {
   rehypeLinkText,
   remarkImagesAsLinks,
   remarkRawAsSource,
+  remarkSoftBreaks,
   remarkTaskHeadings,
   type TaskHeadingsOptions,
 } from "../lib/markdown";
@@ -173,8 +174,8 @@ const sourceComponents: Components = { ...components, pre: (props) => <CodeBlock
 
 /**
  * Renders the markdown of a task body or a comment body: GitHub-flavoured, raw
- * HTML shown as source, links opened in a new tab, no image loaded, Mermaid
- * blocks drawn as diagrams.
+ * HTML shown as source, a single newline shown as a line break, links opened
+ * in a new tab, no image loaded, Mermaid blocks drawn as diagrams.
  */
 export function Markdown({ text, base, title, diagrams = true }: MarkdownProps): ReactNode {
   return (
@@ -185,6 +186,7 @@ export function Markdown({ text, base, title, diagrams = true }: MarkdownProps):
           remarkRawAsSource,
           [remarkTaskHeadings, { base, title }],
           remarkImagesAsLinks,
+          remarkSoftBreaks,
         ]}
         // The footnote label is added after the remark plugins run, so no heading rank reaches it.
         rehypePlugins={[rehypeLinkText]}

@@ -17,9 +17,9 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import { TooltipIconButton } from "@kit/components/assistant-ui/elements/tooltip-icon-button";
 import { useCopyToClipboard } from "@kit/hooks/use-copy-to-clipboard";
 import { cn } from "@kit/lib/utils";
-// tasma-edit: agent text follows the link and image rules of a task body
+// tasma-edit: agent text follows the link, image and line break rules of a task body
 import { MarkdownLink } from "../../../../components/markdown";
-import { markdownUrl, rehypeLinkText, remarkImagesAsLinks } from "../../../../lib/markdown";
+import { markdownUrl, rehypeLinkText, remarkImagesAsLinks, remarkSoftBreaks } from "../../../../lib/markdown";
 // tasma-edit end
 // tasma-edit: fenced code in chat messages is highlighted by Shiki, loaded on first use
 import { ChatCode } from "../../../../components/chat-code";
@@ -62,8 +62,8 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({
 
   return (
     <MarkdownTextPrimitive
-      // tasma-edit: agent text follows the link and image rules of a task body; the link reads its node, which a memoized component does not get
-      remarkPlugins={[remarkGfm, remarkImagesAsLinks]}
+      // tasma-edit: agent text follows the link, image and line break rules of a task body; the link reads its node, which a memoized component does not get
+      remarkPlugins={[remarkGfm, remarkImagesAsLinks, remarkSoftBreaks]}
       className="aui-md"
       rehypePlugins={[rehypeLinkText]}
       urlTransform={markdownUrl}
