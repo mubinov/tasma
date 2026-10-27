@@ -1,12 +1,13 @@
 import type { Diagnostic, FeedEvent, Frontmatter, TaskEntry, Transport, TransportReply } from "@tasma/protocol";
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { ICON_BUTTON_CLASS } from "../../src/components/control-classes";
 import { FIND_OPEN_WIDTHS } from "../../src/components/find-open-classes";
 import { formatClock } from "../../src/lib/clock";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
+import { frame } from "../setup/notice-store";
 import {
   countReads,
   heldBack,
@@ -1225,6 +1226,42 @@ describe("deleting the task", () => {
     return requests.filter(({ method }) => method === "DELETE").length;
   }
 
+  /**
+   * Holds the popup in the DOM after it closes until the returned function
+   * runs, as a browser does until its close motion ends. Every other popup
+   * reports no animation and closes one animation frame later.
+   */
+  function holdClosingPopup(popup: Element): () => Promise<void> {
+    let end = () => {};
+    Object.defineProperty(Element.prototype, "getAnimations", {
+      configurable: true,
+      value(this: Element) {
+        if (this !== popup || !this.hasAttribute("data-ending-style")) {
+          return [];
+        }
+
+        const finished = new Promise<void>((resolve) => {
+          end = resolve;
+        });
+        return [{ finished, pending: false, playState: "running" }];
+      },
+    });
+    onTestFinished(() => {
+      Reflect.deleteProperty(Element.prototype, "getAnimations");
+    });
+
+    return async () => {
+      // Base UI reads the animations an animation frame after the popup closes.
+      await frame();
+      await act(async () => {
+        end();
+        await new Promise((resolve) => {
+          setTimeout(resolve, 0);
+        });
+      });
+    };
+  }
+
   it("offers a Task menu after Edit in the bar, holding Delete task alone", async () => {
     const user = userEvent.setup();
     const { transport } = daemon();
@@ -1332,5 +1369,34 @@ describe("deleting the task", () => {
     });
     expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-3");
     expect(deletes(requests)).toBe(0);
+  });
+
+  it("keeps focus in the dialog while the Task menu closes with its motion, and returns it to the Task menu on Cancel", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon();
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    await user.click(overflow());
+    const menu = await screen.findByRole("menu");
+    const finish = holdClosingPopup(menu);
+
+    await user.click(within(menu).getByRole("menuitem", { name: "Delete task" }));
+    const dialog = await screen.findByRole("alertdialog");
+
+    await vi.waitFor(() => {
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    });
+    expect(menu.isConnected).toBe(true);
+
+    await finish();
+
+    expect(menu.isConnected).toBe(false);
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(overflow());
+    });
   });
 });

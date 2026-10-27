@@ -318,7 +318,7 @@ type ReadingControlsProps = {
   /** The first control. */
   stepActionButton: ReactNode;
   editButtonRef: Ref<HTMLButtonElement>;
-  findButtonRef: RefObject<HTMLButtonElement | null>;
+  findButtonRef: Ref<HTMLButtonElement>;
   findOpen: boolean;
   onFind: () => void;
   onEdit: () => void;
@@ -330,8 +330,6 @@ function ReadingControls(
 ): ReactNode {
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  // Where focus goes when the menu closes, or null for the menu button.
-  const menuFinalFocusRef = useRef<HTMLElement>(null);
 
   // While find is open, a narrow line hides the menu button; the menu closes with it.
   useLayoutEffect(() => {
@@ -341,7 +339,6 @@ function ReadingControls(
     const trigger = menuTriggerRef.current!;
     const observer = new ResizeObserver(() => {
       if (!trigger.checkVisibility()) {
-        menuFinalFocusRef.current = findButtonRef.current;
         setMenuOpen(false);
       }
     });
@@ -350,7 +347,7 @@ function ReadingControls(
     return () => {
       observer.disconnect();
     };
-  }, [menuOpen, findButtonRef]);
+  }, [menuOpen]);
 
   return (
     <>
@@ -374,16 +371,7 @@ function ReadingControls(
         <PencilSimpleIcon size={14} aria-hidden="true" />
         Edit
       </Button>
-      <Menu.Root
-        highlightItemOnHover={false}
-        open={menuOpen}
-        onOpenChange={(open) => {
-          if (open) {
-            menuFinalFocusRef.current = null;
-          }
-          setMenuOpen(open);
-        }}
-      >
+      <Menu.Root highlightItemOnHover={false} open={menuOpen} onOpenChange={setMenuOpen}>
         <Menu.Trigger
           ref={menuTriggerRef}
           aria-label="Task menu"
@@ -393,7 +381,7 @@ function ReadingControls(
         </Menu.Trigger>
         <Menu.Portal>
           <Menu.Positioner align="end" sideOffset={4} className={POSITIONER_CLASS}>
-            <Menu.Popup finalFocus={() => menuFinalFocusRef.current ?? true} className={`min-w-52 ${POPUP_CLASS}`}>
+            <Menu.Popup className={`min-w-52 ${POPUP_CLASS}`}>
               <Menu.Item onClick={onDelete} className={MENU_ITEM_CLASS}>
                 <TrashIcon size={14} aria-hidden="true" />
                 Delete task
