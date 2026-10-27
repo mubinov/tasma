@@ -168,7 +168,15 @@ describe("creating a chat", () => {
 
     const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
 
-    expect(live.chat).toEqual({ task: "ALPHA-1", chat: 1, ...INPUT, created: live.chat.created, seq: 1, state: "working" });
+    expect(live.chat).toEqual({
+      task: "ALPHA-1",
+      chat: 1,
+      ...INPUT,
+      created: live.chat.created,
+      seq: 1,
+      stateSeq: 1,
+      state: "working",
+    });
     expect(live.fold).toEqual({ turn: true, open: [], status: { state: "working" } });
     expect(live.diagnostics).toEqual([]);
     await expect(live.read(0)).resolves.toMatchObject([{ seq: 1, event: { kind: "user", ...MESSAGE } }]);
@@ -433,6 +441,167 @@ describe("the options of a chat", () => {
     await expect(restarted.chats.get("ALPHA", "ALPHA-1", 1)).resolves.toMatchObject({
       chat: { session: "session-8", options: { mode: "auto", model: "large" } },
     });
+  });
+});
+
+describe("the seen of a chat", () => {
+  it("is written to the record with the options, one write after the other, and each keeps the other", async () => {
+    const root = await tree();
+    const { chats } = await world(root);
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
+
+    await Promise.all([live.setSeen(2), live.setOptions({ mode: "auto" })]);
+
+    expect(live.chat).toMatchObject({ seen: 2, options: { mode: "auto" } });
+    const restarted = await world(root);
+    await expect(restarted.chats.get("ALPHA", "ALPHA-1", 1)).resolves.toMatchObject({
+      chat: { seen: 2, options: { mode: "auto" } },
+    });
+  });
+
+  it("is clamped to the last seq that a new open of the log finds after a failed append", async () => {
+    const root = await tree();
+    const { chats } = await world(root);
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    const log = logFile(root, "ALPHA", "1", 1);
+    await chmod(log, 0o400);
+    await expect(live.append(UPDATE)).rejects.toMatchObject({ code: "EACCES" });
+    await chmod(log, 0o600);
+    await appendFile(log, `${JSON.stringify({ seq: 2, at: TIMESTAMP, event: TURN_END })}\n`);
+
+    await live.setSeen(9);
+
+    expect(live.chat).toMatchObject({ seq: 2, seen: 2 });
+  });
+
+  it("comes down to the last seq of a log that lost lines, before the next entry, also after a restart", async () => {
+    const root = await tree();
+    const live = await (await world(root)).chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
+    await live.append({ kind: "user", ...MESSAGE });
+    await live.append(TURN_END);
+    await live.setSeen(4);
+    const log = logFile(root, "ALPHA", "1", 1);
+    const kept = (await readFile(log, "utf8")).split("\n").slice(0, 2).join("\n");
+    await writeFile(log, `${kept}\n`);
+    const restarted = await (await world(root)).chats.get("ALPHA", "ALPHA-1", 1);
+
+    await restarted.append({ kind: "user", ...MESSAGE });
+
+    expect(restarted.chat).toMatchObject({ seq: 3, stateSeq: 3, seen: 2 });
+    await expect((await world(root)).chats.get("ALPHA", "ALPHA-1", 1)).resolves.toMatchObject({ chat: { seen: 2 } });
+  });
+
+  it("comes down to the last seq of the log before a recovery writes, from a record edited by hand", async () => {
+    const root = await tree();
+    await (await world(root)).chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    const record = join(chatFolder(root, "ALPHA", "1", 1), "chat.json");
+    const stored = JSON.parse(await readFile(record, "utf8")) as Record<string, unknown>;
+    await writeFile(record, JSON.stringify({ ...stored, seen: 9 }));
+
+    const live = await (await world(root)).chats.get("ALPHA", "ALPHA-1", 1);
+
+    expect(live.chat).toMatchObject({ seq: 2, stateSeq: 2, seen: 1, state: "needs-you" });
+  });
+
+  it("is refused for a chat removed by hand", async () => {
+    const root = await tree();
+    const { chats } = await world(root);
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await rm(chatFolder(root, "ALPHA", "1", 1), { recursive: true });
+
+    await expect(live.setSeen(1)).rejects.toMatchObject({ code: "chat-not-found" });
+  });
+});
+
+describe("the seq of the state of a chat", () => {
+  const PERMISSION: ChatEvent = { kind: "permission", request: "p-1", permission: { toolCall: { title: "Edit" } } };
+  const QUESTION: ChatEvent = { kind: "question", request: "q-1", question: { message: "Which one?" } };
+
+  it("is 0 for an empty log", async () => {
+    const root = await tree();
+    await createChat({ project: "ALPHA", root }, "ALPHA-1", INPUT);
+    const { chats } = await world(root);
+
+    const live = await chats.get("ALPHA", "ALPHA-1", 1);
+
+    expect(live.chat).toMatchObject({ seq: 0, stateSeq: 0, state: "needs-you" });
+  });
+
+  it("is the seq of the turn end after a turn, and an update after it keeps it, also after a restart", async () => {
+    const root = await tree();
+    const { chats } = await world(root);
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(UPDATE);
+
+    expect(live.chat).toMatchObject({ seq: 2, stateSeq: 1 });
+
+    await live.append(TURN_END);
+    await live.append(UPDATE);
+
+    expect(live.chat).toMatchObject({ seq: 4, stateSeq: 3 });
+    const restarted = await world(root);
+    await expect(restarted.chats.get("ALPHA", "ALPHA-1", 1)).resolves.toMatchObject({ chat: { seq: 4, stateSeq: 3 } });
+  });
+
+  it("moves at each permission request of a turn, also one that keeps the state", async () => {
+    const { chats, events } = await world(await tree());
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+
+    await live.append(PERMISSION);
+    await live.append({ ...PERMISSION, request: "p-2" });
+
+    expect(live.chat).toMatchObject({ seq: 3, stateSeq: 3, state: "needs-you" });
+    expect(events).toEqual([chatEvent(1, "working"), chatEvent(1, "needs-you"), chatEvent(1, "needs-you")]);
+  });
+
+  it("moves at a question after the turn end, and publishes one chat event", async () => {
+    const { chats, events } = await world(await tree());
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
+
+    await live.append(QUESTION);
+
+    expect(live.chat).toMatchObject({ seq: 3, stateSeq: 3, state: "needs-you" });
+    expect(events).toEqual([chatEvent(1, "working"), chatEvent(1, "needs-you"), chatEvent(1, "needs-you")]);
+  });
+
+  it("moves to a request line that a new open of the log finds after a failed append, and publishes it", async () => {
+    const root = await tree();
+    const { chats, events } = await world(root);
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
+    const log = logFile(root, "ALPHA", "1", 1);
+    await chmod(log, 0o400);
+    await expect(live.append(UPDATE)).rejects.toMatchObject({ code: "EACCES" });
+    await chmod(log, 0o600);
+    await appendFile(log, `${JSON.stringify({ seq: 3, at: TIMESTAMP, event: { ...PERMISSION, permission: {} } })}\n`);
+
+    await live.append(UPDATE);
+
+    expect(live.chat).toMatchObject({ seq: 4, stateSeq: 3, state: "needs-you" });
+    expect(events).toEqual([chatEvent(1, "working"), chatEvent(1, "needs-you"), chatEvent(1, "needs-you")]);
+  });
+
+  it("publishes when a new open of the log finds it lower, also when the state stays", async () => {
+    const root = await tree();
+    const { chats, events } = await world(root);
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
+    await live.append(QUESTION);
+    const log = logFile(root, "ALPHA", "1", 1);
+    const kept = (await readFile(log, "utf8")).split("\n").slice(0, 2).join("\n");
+    await chmod(log, 0o400);
+    await expect(live.append(UPDATE)).rejects.toMatchObject({ code: "EACCES" });
+    await chmod(log, 0o600);
+    await writeFile(log, `${kept}\n`);
+
+    await live.setSeen(0);
+
+    expect(live.chat).toMatchObject({ seq: 2, stateSeq: 2, state: "needs-you" });
+    expect(events).toHaveLength(4);
+    expect(events.at(-1)).toEqual(chatEvent(1, "needs-you"));
   });
 });
 

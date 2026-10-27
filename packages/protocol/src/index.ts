@@ -25,6 +25,7 @@ export type {
   ChatMessageInput,
   ChatOptionChange,
   ChatOutside,
+  ChatSeenInput,
   ChatStart,
   ChatStartInput,
   ChatState,

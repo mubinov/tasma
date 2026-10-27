@@ -38,12 +38,14 @@ export type ChatRecord = {
   session?: string;
   /** The last value picked in this chat for each config option of the agent, by option id. */
   options?: Record<string, string>;
+  /** The `seq` of the last log entry that the user saw in the app. Absent when nobody saw the chat yet. */
+  seen?: number;
 };
 
 export type ChatInput = { step: string; agent: ChatAgent; folder: string };
 
-/** A change of one field keeps the other. */
-export type ChatChange = { session?: string; options?: Record<string, string> };
+/** A change of one field keeps the others. */
+export type ChatChange = { session?: string; options?: Record<string, string>; seen?: number };
 
 export type ChatList = { chats: ChatRecord[]; diagnostics: StoreDiagnostic[] };
 
@@ -62,6 +64,10 @@ function chatNumber(name: string): number | undefined {
 
 function isText(value: unknown): value is string {
   return typeof value === "string" && value !== "";
+}
+
+function isSeq(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 /** What keeps the fields a create states from making a record, or `undefined` when they make one. */
@@ -95,6 +101,7 @@ function recordOf(task: string, chat: number, stored: Record<string, unknown>): 
   if (stored.session !== undefined) record.session = stored.session as string;
   const options = stringRecord(stored.options);
   if (options !== undefined) record.options = options;
+  if (isSeq(stored.seen)) record.seen = stored.seen;
   return record;
 }
 
@@ -295,10 +302,12 @@ export async function updateChat(
   }
   const changedOptions = change.options === undefined ? undefined : stringRecord(change.options);
   if (change.options !== undefined && changedOptions === undefined) fail("field-required", '"options" must be an object');
+  if (change.seen !== undefined && !isSeq(change.seen)) fail("field-required", '"seen" must be a whole number of 0 or more');
   const directory = chatDirectory(taskChats, chat);
   const stored = await readRecord(directory);
   if (change.session !== undefined) stored.session = change.session;
   if (changedOptions !== undefined) stored.options = changedOptions;
+  if (change.seen !== undefined) stored.seen = change.seen;
   await replaceFile(join(directory, RECORD_FILE), recordText(stored));
   return recordOf(task, chat, stored);
 }

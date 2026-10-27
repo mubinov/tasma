@@ -28,7 +28,7 @@ const PLACE = { tag: "SAGA", task: "SAGA-3", chat: 2 };
 
 const CHAT_PATH = "/projects/SAGA/tasks/SAGA-3/chats/2";
 
-const RECORD = successReply({ task: "SAGA-3", chat: 2, step: "build", agent: "claude", folder: "/work/saga", seq: 4 });
+const RECORD = successReply({ task: "SAGA-3", chat: 2, step: "build", agent: "claude", folder: "/work/saga", seq: 4, stateSeq: 4 });
 
 const FAILURE = { title: "The write failed.", line: (error: WriteError) => `line of ${failureKind(error.cause)}` };
 

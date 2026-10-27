@@ -33,6 +33,7 @@ function chatIn(state: string, fields: Record<string, unknown> = {}): Record<str
     folder: "/srv/repo",
     created: "2026-01-02T03:04:05.000Z",
     seq: 1,
+    stateSeq: 1,
     state,
     ...fields,
   };

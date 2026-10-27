@@ -54,8 +54,15 @@ export type Chat = {
    * by option id. The current values are in the log.
    */
   options?: Record<string, string>;
+  /** The `seq` of the last log entry that the user saw in the app. Absent when nobody saw the chat yet. */
+  seen?: number;
   /** The `seq` of the last entry of the log, 0 for an empty log. */
   seq: number;
+  /**
+   * The `seq` of the last log entry that changed the state or opened a
+   * permission request or a question, 0 for an empty log.
+   */
+  stateSeq: number;
 } & ChatStatus;
 
 /** One chat in the list of the chats of all projects. */
@@ -109,6 +116,9 @@ export type ChatStartInput = { client: string; replaces?: number };
 
 /** A value for one config option of the agent of a chat, as ACP's `session/set_config_option` takes it. */
 export type ChatOptionChange = { configId: string; value: string; client: string };
+
+/** `seq` is the `seq` of the last log entry that the user saw. */
+export type ChatSeenInput = { seq: number; client: string };
 
 type OptionValues = Readonly<Record<string, readonly string[]>>;
 

@@ -124,8 +124,9 @@ describe("the wire contract", () => {
     // The name is a separate argument of the engine create.
     expectTypeOf<Omit<WorkflowInput, "name">>().toEqualTypeOf<EngineWorkflowInput>();
     expectTypeOf<WorkflowChange>().toEqualTypeOf<EngineWorkflowChange>();
-    // A chat on the wire is the engine's record plus the last seq and the status the daemon folds.
-    expectTypeOf<Omit<Chat, "seq" | "state">>().toEqualTypeOf<Flat<ChatRecord>>();
+    // A chat on the wire is the engine's record plus the last seq, the seq of
+    // the state and the status, which the daemon derives from the log.
+    expectTypeOf<Omit<Chat, "seq" | "stateSeq" | "state">>().toEqualTypeOf<Flat<ChatRecord>>();
   });
 
   it("keeps the task and the write result in step, less what JSON cannot carry", () => {

@@ -6,6 +6,7 @@ import type {
   ChatListPage,
   ChatMessageInput,
   ChatOptionChange,
+  ChatSeenInput,
   ChatStart,
   ChatStartInput,
   PermissionAnswer,
@@ -152,6 +153,11 @@ export type Client = {
    * and with `turn-running` while the chat ends for a restart.
    */
   setChatOption(tag: string, id: string, chat: number, change: ChatOptionChange): Promise<Success<Chat>>;
+  /**
+   * Moves the `seen` of the chat forward to `seq`, at most to the last `seq` of
+   * the log. A `seq` at or below the stored `seen` changes nothing.
+   */
+  markChatSeen(tag: string, id: string, chat: number, input: ChatSeenInput): Promise<Success<Chat>>;
   /** One page of the chats of all projects, newest first. */
   listAllChats(query?: ChatListQuery): Promise<Success<ChatListPage>>;
   /** One chat as `listAllChats` gives it, by the id of its task. */
@@ -287,6 +293,8 @@ export function createClient(transport: Transport): Client {
       call<Chat>(routes.answerChatQuestion, { project: tag, id, chat, request }, { body: answer }),
     setChatOption: (tag, id, chat, change) =>
       call<Chat>(routes.setChatOption, { project: tag, id, chat }, { body: change }),
+    markChatSeen: (tag, id, chat, input) =>
+      call<Chat>(routes.markChatSeen, { project: tag, id, chat }, { body: input }),
     listAllChats: (query) => call<ChatListPage>(routes.listAllChats, {}, { query }),
     readChatItem: (id, chat) => call<ChatListItem>(routes.readChatItem, { id, chat }),
     listWorkflows: () => call<string[]>(routes.listWorkflows, {}),

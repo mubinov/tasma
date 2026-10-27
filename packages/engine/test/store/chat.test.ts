@@ -619,6 +619,92 @@ describe("updateChat", () => {
       await expect(read(record)).resolves.toBe(before);
     },
   );
+
+  it("sets seen, and keeps the session, the options and every key it does not know", async () => {
+    const root = await withTasks();
+    const created = await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    const record = join(chatDir(root, "1", 1), "chat.json");
+    await updateChat(options(root), "SAGA-1", 1, { session: "a session", options: { mode: "auto" } });
+    const stored = JSON.parse(await read(record)) as Record<string, unknown>;
+    await writeFile(record, JSON.stringify({ ...stored, later: { kept: true } }));
+
+    const updated = await updateChat(options(root), "SAGA-1", 1, { seen: 4 });
+
+    expect(updated).toEqual({ ...created, session: "a session", options: { mode: "auto" }, seen: 4 });
+    expect(JSON.parse(await read(record))).toEqual({ ...stored, later: { kept: true }, seen: 4 });
+    await expect(readChat(options(root), "SAGA-1", 1)).resolves.toEqual(updated);
+  });
+
+  it("takes 0 as seen", async () => {
+    const root = await withTasks();
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+
+    expect((await updateChat(options(root), "SAGA-1", 1, { seen: 0 })).seen).toBe(0);
+  });
+
+  it.each([["negative", -1], ["fractional", 1.5], ["a text", "3"], ["above the safe integers", 2 ** 53]])(
+    "refuses a seen that is %s and writes nothing",
+    async (_name, value) => {
+      const root = await withTasks();
+      await createChat(options(root), "SAGA-1", CHAT_INPUT);
+      const record = join(chatDir(root, "1", 1), "chat.json");
+      const before = await read(record);
+      const change = { seen: value } as unknown as ChatChange;
+
+      expect((await storeError(updateChat(options(root), "SAGA-1", 1, change))).code).toBe("field-required");
+      await expect(read(record)).resolves.toBe(before);
+    },
+  );
+
+  it("keeps a bad stored seen as it is when it changes another field", async () => {
+    const root = await withTasks();
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    const record = join(chatDir(root, "1", 1), "chat.json");
+    const stored = JSON.parse(await read(record)) as Record<string, unknown>;
+    await writeFile(record, JSON.stringify({ ...stored, seen: "far" }));
+
+    const updated = await updateChat(options(root), "SAGA-1", 1, { session: "a session" });
+
+    expect(updated).not.toHaveProperty("seen");
+    expect(JSON.parse(await read(record))).toMatchObject({ seen: "far", session: "a session" });
+  });
+});
+
+describe("the seen of a stored chat", () => {
+  async function stored(value: unknown): Promise<ChatRecord> {
+    const root = await withTasks();
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    const record = join(chatDir(root, "1", 1), "chat.json");
+    const kept = JSON.parse(await read(record)) as Record<string, unknown>;
+    await writeFile(record, JSON.stringify({ ...kept, seen: value }));
+    return readChat(options(root), "SAGA-1", 1);
+  }
+
+  it("is read when it is a whole number of 0 or more", async () => {
+    expect((await stored(0)).seen).toBe(0);
+    expect((await stored(12)).seen).toBe(12);
+  });
+
+  it.each([["negative", -1], ["fractional", 2.5], ["a text", "3"], ["null", null], ["above the safe integers", 2 ** 53]])(
+    "is left out when it is %s, and the chat stays readable",
+    async (_name, value) => {
+      expect(await stored(value)).not.toHaveProperty("seen");
+    },
+  );
+
+  it("is left out of a list when it is bad, and the chat stays listed", async () => {
+    const root = await withTasks();
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    const record = join(chatDir(root, "1", 1), "chat.json");
+    const kept = JSON.parse(await read(record)) as Record<string, unknown>;
+    await writeFile(record, JSON.stringify({ ...kept, seen: -3 }));
+
+    const listed = await listChats(options(root), "SAGA-1");
+
+    expect(listed.diagnostics).toEqual([]);
+    expect(listed.chats).toHaveLength(1);
+    expect(listed.chats[0]).not.toHaveProperty("seen");
+  });
 });
 
 describe("the options of a stored chat", () => {

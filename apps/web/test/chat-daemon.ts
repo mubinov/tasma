@@ -20,6 +20,8 @@ export function chatRecord(fields: Partial<Chat> = {}): Chat {
     folder: "/work/saga",
     created: atSeq(0),
     seq: 0,
+    // No daemon gives it with `seq` 0. It makes a chat with no `seen` count as not seen.
+    stateSeq: 1,
     state: "needs-you",
     ...fields,
   } as Chat;

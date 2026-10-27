@@ -257,6 +257,13 @@ const invocations: Invocation[] = [
     body: { configId: "mode", value: "acceptEdits", client: "app" },
   },
   {
+    name: "markChatSeen",
+    send: (client) => client.markChatSeen("SAGA", "SAGA-3", 2, { seq: 14, client: "app" }),
+    method: "POST",
+    path: "/projects/SAGA/tasks/SAGA-3/chats/2/seen",
+    body: { seq: 14, client: "app" },
+  },
+  {
     name: "listAllChats",
     send: (client) => client.listAllChats({ project: "SAGA", q: "parse tree", after: "c0ffee" }),
     method: "GET",
@@ -409,7 +416,7 @@ describe("the client", () => {
   });
 
   it("gives the chat a chat command answers", async () => {
-    const data = { task: "SAGA-3", chat: 2, step: "dev", agent: "claude", folder: "/srv/saga", created: "x", seq: 4, state: "working" };
+    const data = { task: "SAGA-3", chat: 2, step: "dev", agent: "claude", folder: "/srv/saga", created: "x", seq: 4, stateSeq: 1, state: "working" };
     const transport: Transport = async () => ({ status: 200, body: { ok: true, data, diagnostics: [] } });
 
     await expect(createClient(transport).sendChatMessage("SAGA", "SAGA-3", 2, { text: "Go", client: "app" }))

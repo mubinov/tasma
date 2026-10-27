@@ -80,6 +80,12 @@ export type LiveChat = {
   setSession(session: string): Promise<void>;
   /** Replaces the picks of the chat. Writes in call order with `setSession`, and each keeps the field of the other. */
   setOptions(options: Record<string, string>): Promise<void>;
+  /**
+   * Moves `seen` forward to `seq`, at most to the last `seq` of the log, and
+   * publishes a `chat` event when it moves. Writes in call order with the
+   * other writes of the chat.
+   */
+  setSeen(seq: number): Promise<void>;
   /** Resolves when every write called on the handle before it has ended, whether it failed or not. */
   written(): Promise<void>;
   /** Takes no turn, so a read never waits for a write. */
@@ -123,7 +129,7 @@ type Asked = Map<string, RequestKind>;
 
 type Answers = { answered: boolean; unanswered: string[] };
 
-type Opened = { log: ChatLog; fold: ChatFold; asked: Asked; answers: Answers };
+type Opened = { log: ChatLog; fold: ChatFold; stateSeq: number; asked: Asked; answers: Answers };
 
 /** The kinds of update that an agent sends only while it works on a prompt. */
 const WORK_UPDATES: ReadonlySet<unknown> = new Set([
@@ -196,6 +202,11 @@ function sameStatus(one: ChatStatus, other: ChatStatus): boolean {
   return one.state === other.state && whereOf(one) === whereOf(other);
 }
 
+/** Whether the entry of `event`, which folds `before` into `after`, moves the `stateSeq` of its chat. */
+function movesStateSeq(before: ChatFold, after: ChatFold, event: ChatEvent): boolean {
+  return event.kind === "permission" || event.kind === "question" || !sameStatus(before.status, after.status);
+}
+
 /** Keeps `asked` to the open requests of `fold`, the fold after `event`. */
 function trackAsked(asked: Asked, fold: ChatFold, event: ChatEvent): void {
   if (event.kind === "permission" || event.kind === "question") asked.set(event.request, event.kind);
@@ -207,15 +218,18 @@ function trackAsked(asked: Asked, fold: ChatFold, event: ChatEvent): void {
 /** Opens the log of a chat and folds it in the same read. */
 async function openFolded(root: string | undefined, tag: string, record: ChatRecord): Promise<Opened> {
   let fold = CHAT_START;
+  let stateSeq = 0;
   const asked: Asked = new Map();
   const answers: Answers = { answered: false, unanswered: [] };
   const log = await openChatLog({ project: tag, root }, record.task, record.chat, (entry) => {
     const event = entry.event as ChatEvent;
-    fold = foldChat(fold, event);
+    const next = foldChat(fold, event);
+    if (movesStateSeq(fold, next, event)) stateSeq = entry.seq;
+    fold = next;
     trackAsked(asked, fold, event);
     trackAnswers(answers, event);
   });
-  return { log, fold, asked, answers };
+  return { log, fold, stateSeq, asked, answers };
 }
 
 class Live implements LiveChat {
@@ -226,6 +240,7 @@ class Live implements LiveChat {
   #record: ChatRecord;
   #log: ChatLog;
   #fold: ChatFold;
+  #stateSeq: number;
   #asked: Asked;
   #answers: Answers;
   /** Set by a failed append that the engine did not refuse: its line can be on disk, which only a new open reads. */
@@ -238,6 +253,7 @@ class Live implements LiveChat {
     this.#record = record;
     this.#log = opened.log;
     this.#fold = opened.fold;
+    this.#stateSeq = opened.stateSeq;
     this.#asked = opened.asked;
     this.#answers = opened.answers;
     this.hold = createHold({ holdMs: context.holdMs });
@@ -252,7 +268,7 @@ class Live implements LiveChat {
   }
 
   get chat(): Chat {
-    return { ...this.#record, seq: this.#log.last, ...this.#fold.status };
+    return { ...this.#record, seq: this.#log.last, stateSeq: this.#stateSeq, ...this.#fold.status };
   }
 
   get fold(): ChatFold {
@@ -287,6 +303,18 @@ class Live implements LiveChat {
     return this.#update({ options });
   }
 
+  setSeen(seq: number): Promise<void> {
+    return this.#queued(async () => {
+      this.#assertPresent();
+      // The clamp needs the true last seq, which only a new open of a stale log reads.
+      if (this.#stale) await this.#reopen();
+      const seen = Math.min(seq, this.#log.last);
+      if (seen <= (this.#record.seen ?? 0)) return;
+      await this.#writeRecord({ seen });
+      this.#publish();
+    });
+  }
+
   async written(): Promise<void> {
     await this.#writes;
   }
@@ -307,7 +335,9 @@ class Live implements LiveChat {
   async appendInHeldTurns(event: ChatEvent): Promise<ChatEntry> {
     this.#assertPresent();
     if (this.#stale) await this.#reopen();
-    const before = this.#fold.status;
+    // A log that lost lines, by a hand edit or a crash, gives its next entries the seq of entries the user saw.
+    if ((this.#record.seen ?? 0) > this.#log.last) await this.#writeRecord({ seen: this.#log.last });
+    const before = this.#stateSeq;
     const next = foldChat(this.#fold, event);
     let entry;
     try {
@@ -317,6 +347,7 @@ class Live implements LiveChat {
       if (!(error instanceof TaskStoreError)) this.#stale = true;
       throw error;
     }
+    if (movesStateSeq(this.#fold, next, event)) this.#stateSeq = entry.seq;
     this.#fold = next;
     trackAsked(this.#asked, next, event);
     trackAnswers(this.#answers, event);
@@ -359,9 +390,13 @@ class Live implements LiveChat {
   #update(change: ChatChange): Promise<void> {
     return this.#queued(async () => {
       this.#assertPresent();
-      const { task, chat } = this.#record;
-      this.#record = await updateChat({ project: this.#tag, root: this.#context.root }, task, chat, change);
+      await this.#writeRecord(change);
     });
+  }
+
+  async #writeRecord(change: ChatChange): Promise<void> {
+    const { task, chat } = this.#record;
+    this.#record = await updateChat({ project: this.#tag, root: this.#context.root }, task, chat, change);
   }
 
   /**
@@ -398,13 +433,17 @@ class Live implements LiveChat {
     }
   }
 
-  /** A new open reads what a failed append left on disk; a status it finds changed is published. */
+  /**
+   * A new open reads what a failed append left on disk, and publishes a `chat`
+   * event when it finds `stateSeq` changed.
+   */
   async #reopen(): Promise<void> {
-    const before = this.#fold.status;
+    const before = this.#stateSeq;
     const last = this.#log.last;
     const opened = await openFolded(this.#context.root, this.#tag, this.#record);
     this.#log = opened.log;
     this.#fold = opened.fold;
+    this.#stateSeq = opened.stateSeq;
     this.#asked = opened.asked;
     this.#answers = opened.answers;
     this.#stale = false;
@@ -412,11 +451,14 @@ class Live implements LiveChat {
     if (this.#log.last !== last) this.hold.notify();
   }
 
-  #announce(before: ChatStatus): void {
-    const status = this.#fold.status;
-    if (sameStatus(before, status)) return;
+  /** Publishes a `chat` event when `stateSeq` is not `before`. A log can become shorter, so a lower one counts. */
+  #announce(before: number): void {
+    if (this.#stateSeq !== before) this.#publish();
+  }
+
+  #publish(): void {
     const { task, chat, step } = this.#record;
-    this.#context.publish?.({ kind: "chat", tag: this.#tag, task, chat, step, ...status });
+    this.#context.publish?.({ kind: "chat", tag: this.#tag, task, chat, step, ...this.#fold.status });
   }
 
   #assertPresent(): void {
@@ -428,7 +470,11 @@ export function createChatRegistry(options: {
   root?: string;
   host: ProjectHost;
   writes: WriteQueue;
-  /** Receives a `chat` event at the create of a chat and at each change of its status. */
+  /**
+   * Receives a `chat` event at the create of a chat, at each change of its
+   * status, at each new permission request or question, and when its `seen`
+   * moves forward.
+   */
   publish?: Publish;
   holdMs?: number;
   /** Where a fault of the recovery of a chat is reported. */

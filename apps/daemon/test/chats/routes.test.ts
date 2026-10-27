@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { PromptResponse } from "@agentclientprotocol/sdk";
 import { openAgentDefaults } from "@tasma/engine";
-import type { Chat, ChatEntry, ChatEvent, ChatEventsReply, ChatStart } from "@tasma/protocol";
+import type { Chat, ChatEntry, ChatEvent, ChatEventsReply, ChatStart, FeedEvent } from "@tasma/protocol";
 import type { AgentAdapter } from "../../src/agents/adapter.js";
 import { createChatRegistry } from "../../src/chats/registry.js";
 import type { ChatRegistry, LiveChat } from "../../src/chats/registry.js";
@@ -71,7 +71,7 @@ const ADAPTER: AgentAdapter = {
   filterUpdate: (update) => update,
 };
 
-type World = { chats: ChatRegistry; runner: ChatRunner; server: TestServer };
+type World = { chats: ChatRegistry; runner: ChatRunner; server: TestServer; events: FeedEvent[] };
 
 /** A tree holding project ALPHA with the tasks ALPHA-1 and ALPHA-2. */
 async function tree(): Promise<string> {
@@ -91,7 +91,9 @@ async function world(
 ): Promise<World> {
   const host = createProjectHost({ root });
   const writes = new WriteQueue();
-  const chats = createChatRegistry({ root, host, writes, holdMs: options.holdMs ?? LONG_HOLD_MS });
+  const events: FeedEvent[] = [];
+  const publish = (event: FeedEvent) => events.push(event);
+  const chats = createChatRegistry({ root, host, writes, publish, holdMs: options.holdMs ?? LONG_HOLD_MS });
   const { spawn } = fakeAgent(options.script);
   const runner = createChatRunner({
     root,
@@ -111,7 +113,7 @@ async function world(
     ...taskRoutes(host, { writes, chats }),
     ...chatRoutes(chats, runner, createStepChats({ root, host, chats, runner })),
   ]);
-  return { chats, runner, server };
+  return { chats, runner, server, events };
 }
 
 /** A daemon whose project ALPHA has a folder, with chat 1 of ALPHA-1 started through the runner. */
@@ -625,6 +627,14 @@ describe("the chat commands", () => {
     ["a pick with an empty value", "options", { configId: "mode", value: "", client: "web" }],
     ["a pick with a value that is not a string", "options", { configId: "fast", value: true, client: "web" }],
     ["a pick with an empty client", "options", { configId: "mode", value: "auto", client: "" }],
+    ["a seen with no seq", "seen", { client: "web" }],
+    ["a seen with a negative seq", "seen", { seq: -1, client: "web" }],
+    ["a seen with a fractional seq", "seen", { seq: 1.5, client: "web" }],
+    ["a seen with a seq that is a string", "seen", { seq: "3", client: "web" }],
+    ["a seen with a seq above the safe integers", "seen", { seq: 2 ** 53, client: "web" }],
+    ["a seen with an extra key", "seen", { seq: 1, client: "web", chat: 1 }],
+    ["a seen with no client", "seen", { seq: 1 }],
+    ["a seen with an empty client", "seen", { seq: 1, client: "" }],
   ])("refuses %s with 400 before it reads the chat", async (_case, command, body) => {
     const { server } = await world(await tree());
 
@@ -725,6 +735,58 @@ describe("the chat commands", () => {
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]).toMatchObject({ code: "option-not-saved", path: join(root, "agent-defaults.json") });
     expect(diagnostics[0]?.message).toMatch(/^the value "auto" of "mode" is not saved as the default of claude: /);
+  });
+
+  it("names the rule of seq when it refuses a seen", async () => {
+    const { server } = await world(await tree());
+
+    const response = await send(server, "POST", `${CHATS}/7/seen`, { seq: -1, client: "web" });
+
+    await expect(failure(response)).resolves.toMatchObject({ message: '"seq" takes a non-negative integer' });
+  });
+
+  it("answers a seen with the chat, which holds it, and publishes one chat event", async () => {
+    const { chats, server, events } = await world(await tree());
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
+    events.length = 0;
+
+    const response = await send(server, "POST", `${CHATS}/1/seen`, { seq: 2, client: "web" });
+
+    expect(response.status).toBe(200);
+    const { data, diagnostics } = await success<Chat>(response);
+    expect(data).toMatchObject({ task: "ALPHA-1", chat: 1, seq: 2, stateSeq: 2, seen: 2, state: "needs-you" });
+    expect(diagnostics).toEqual([]);
+    expect((await success<Chat>(await get(server, `${CHATS}/1`))).data.seen).toBe(2);
+    expect(events).toEqual([{ kind: "chat", tag: "ALPHA", task: "ALPHA-1", chat: 1, step: INPUT.step, state: "needs-you" }]);
+  });
+
+  it("keeps the stored seen for a seq that is not above it, clamps a seq above the log, and publishes only a move", async () => {
+    const { chats, server, events } = await world(await tree());
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(UPDATE);
+    await live.append(TURN_END);
+    events.length = 0;
+    const seen = async (seq: number) =>
+      (await success<Chat>(await send(server, "POST", `${CHATS}/1/seen`, { seq, client: "web" }))).data.seen;
+
+    await expect(seen(0)).resolves.toBeUndefined();
+    await expect(seen(2)).resolves.toBe(2);
+    await expect(seen(1)).resolves.toBe(2);
+    await expect(seen(2)).resolves.toBe(2);
+    await expect(seen(40)).resolves.toBe(3);
+    await expect(seen(41)).resolves.toBe(3);
+
+    expect(events).toHaveLength(2);
+  });
+
+  it("answers a seen of a chat that is not there with chat-not-found and 404", async () => {
+    const { server } = await world(await tree());
+
+    const response = await send(server, "POST", `${CHATS}/7/seen`, { seq: 1, client: "web" });
+
+    expect(response.status).toBe(404);
+    await expect(failure(response)).resolves.toMatchObject({ code: "chat-not-found" });
   });
 
   it("closes a permission request for both of two clients that answer it at once", async () => {

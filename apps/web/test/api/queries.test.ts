@@ -174,7 +174,7 @@ it("asks for one task with its comments in one request", async () => {
 });
 
 it("asks for one chat of a task", async () => {
-  const chat = { task: "SAGA-1", chat: 2, step: "build", agent: "claude", folder: "/repos/saga", seq: 4, state: "working" };
+  const chat = { task: "SAGA-1", chat: 2, step: "build", agent: "claude", folder: "/repos/saga", seq: 4, stateSeq: 1, state: "working" };
   const paths = stubDaemon(chat);
 
   const success = await createAppQueryClient().query({
@@ -187,7 +187,7 @@ it("asks for one chat of a task", async () => {
 });
 
 it("asks for the chats of a task", async () => {
-  const chats = [{ task: "SAGA-1", chat: 1, step: "build", agent: "claude", folder: "/repos/saga", seq: 4, state: "working" }];
+  const chats = [{ task: "SAGA-1", chat: 1, step: "build", agent: "claude", folder: "/repos/saga", seq: 4, stateSeq: 1, state: "working" }];
   const paths = stubDaemon(chats);
 
   const success = await createAppQueryClient().query({

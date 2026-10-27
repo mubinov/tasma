@@ -1,7 +1,7 @@
 // The routes over the chats of one task: the list, the start of the chat of
 // the current step, one chat, a long-poll read of the log of one chat after a
 // cursor, and the commands of a client on a chat: a message, a cancel, an
-// answer and a pick of a config option.
+// answer, a pick of a config option and a move of `seen`.
 
 import { routes } from "@tasma/protocol";
 import type {
@@ -10,6 +10,7 @@ import type {
   ChatEventsReply,
   ChatMessageInput,
   ChatOptionChange,
+  ChatSeenInput,
   ChatStart,
   ChatStartInput,
   Diagnostic,
@@ -53,6 +54,8 @@ const DECLINE_KEYS = Object.keys({ action: true, client: true } satisfies Record
 const OPTION_KEYS = Object.keys(
   { configId: true, value: true, client: true } satisfies Record<keyof ChatOptionChange, true>,
 );
+
+const SEEN_KEYS = Object.keys({ seq: true, client: true } satisfies Record<keyof ChatSeenInput, true>);
 
 /** The chat a path names. Any other text is 0, which `assertChatNumber` refuses as no chat. */
 export function chatOf(segment: string): number {
@@ -156,6 +159,14 @@ function readOptionChange(raw: unknown): ChatOptionChange {
   return { configId, value, client: clientOf(body) };
 }
 
+function readSeenInput(raw: unknown): ChatSeenInput {
+  const body = objectBody(raw);
+  assertKeys(body, SEEN_KEYS);
+  const { seq } = body;
+  if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq < 0) throw malformed('"seq" takes a non-negative integer');
+  return { seq, client: clientOf(body) };
+}
+
 /**
  * The entries after `after`, or a hold until the next one. The check of the
  * `seq` and the start of the wait run in one synchronous step, so an append
@@ -254,6 +265,10 @@ export function chatRoutes(chats: ChatRegistry, runner: ChatRunner, starts: Step
     {
       route: routes.setChatOption,
       handler: command(readOptionChange, (live, change) => runner.setOption(live, change)),
+    },
+    {
+      route: routes.markChatSeen,
+      handler: command(readSeenInput, (live, input) => live.setSeen(input.seq)),
     },
   ];
 }
