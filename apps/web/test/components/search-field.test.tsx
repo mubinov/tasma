@@ -2,6 +2,7 @@ import type { TransportReply } from "@tasma/protocol";
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { daemonKeys } from "../../src/api/queries";
 import { SEARCH_DELAY } from "../../src/components/search-field";
 import { useUiStore } from "../../src/store/ui";
 import { daemon, entry, listing } from "../board-fixtures";
@@ -251,6 +252,35 @@ it("writes no q when the address moves to a board of several projects that start
   await wait(SEARCH_DELAY);
 
   expect(router.latestLocation.search).toEqual({ projects: "SAGA,DELTA" });
+});
+
+it("shows on a board of several projects, and a write keeps its projects in the address", async () => {
+  const user = setUser();
+  const { transport } = daemon({
+    "/projects/SAGA/tasks": listing(ENTRIES),
+    "/projects/SAGA/tasks?q=parser": PARSER,
+    "/projects/DELTA/tasks?q=parser": listing([]),
+  });
+  const router = await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+
+  await user.type(input(), "parser{Enter}");
+
+  expect(router.state.location.search).toEqual({ projects: "DELTA,SAGA", q: "parser" });
+});
+
+it("writes no q when the address moves from a board of several projects to a board of its first project while the next board loads", async () => {
+  const user = setUser();
+  const { transport, replies } = daemon({ "/projects/SAGA/tasks": listing(ENTRIES) });
+  const router = await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+  // The loader reads with `staleTime: "static"`, so a cached read of DELTA ends the load at once.
+  router.options.context.queryClient.removeQueries({ queryKey: daemonKeys.project("DELTA"), exact: true });
+  replies["/projects/DELTA"] = heldBack().reply;
+
+  await user.type(input(), "parser");
+  void router.navigate({ to: "/tasks", search: { projects: "DELTA" } });
+  await wait(SEARCH_DELAY);
+
+  expect(router.latestLocation.search).toEqual({ projects: "DELTA" });
 });
 
 it("turns the magnifier into a turning spinner while the search request runs", async () => {

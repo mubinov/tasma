@@ -193,7 +193,7 @@ describe("the address", () => {
     await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
 
     expect(screen.queryByRole("button", { name: "New task" })).toBeNull();
-    expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(screen.getByRole("searchbox", { name: "Search" })).toBeTruthy();
     expect(screen.getByText("No tasks in these projects yet.")).toBeTruthy();
     expect(window.localStorage.getItem("tasma.tasks.project")).toBeNull();
     expect(useUiStore.getState().lastTasksProject).toBeNull();
@@ -1217,15 +1217,14 @@ describe("the texts of a board of several projects", () => {
 });
 
 describe("the controls of a board of several projects", () => {
-  it("shows no search field, no New task and no plus, and asks for no search of a q in the address", async () => {
-    const { transport, paths } = twoProjects({ "/projects/SAGA/tasks": listing([entry(1)]) });
-    await renderWithRouter("/tasks?projects=DELTA,SAGA&q=parser", transport);
+  it("shows the search field, and no New task and no plus", async () => {
+    const { transport } = twoProjects({ "/projects/SAGA/tasks": listing([entry(1)]) });
+    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
 
-    expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(screen.getByRole("searchbox", { name: "Search" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "New task" })).toBeNull();
     expect(screen.queryAllByRole("button", { name: /^New task in / })).toEqual([]);
     expect(titlesIn("Backlog")).toEqual(["Task 1"]);
-    expect(paths.filter((path) => path.includes("?q="))).toEqual([]);
   });
 
   it("shows the first project of the board in the picker, and a pick opens one project", async () => {

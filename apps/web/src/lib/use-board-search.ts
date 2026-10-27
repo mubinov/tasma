@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, type QueryClient } from "@tanstack/react-query";
 import type { Client, Success, TaskList } from "@tasma/protocol";
 import { useDeferredValue, useEffect, useState } from "react";
 import { taskSearchQuery } from "../api/queries";
@@ -6,17 +6,21 @@ import { taskSearchQuery } from "../api/queries";
 /** How long a search request runs before the live region says that it runs, in ms. */
 export const BUSY_ANNOUNCE_DELAY = 1000;
 
-/** A search result, and the trimmed text it answers. */
-export type SearchResult = { text: string; read: Success<TaskList> };
+/** A search result: the trimmed text it answers, and the result of each project, in board order. */
+export type SearchResult = { text: string; reads: readonly Success<TaskList>[] };
+
+/** The result the board shows, and the board value it was shown for. */
+type ShownResult = SearchResult & { board: string };
 
 export type BoardSearch = {
   /** The trimmed `q`: the text the board asks the daemon for. */
   searchText: string;
-  /** `q` has words, so the board asks for a search. */
-  searchRequested: boolean;
-  /** The request for `searchText` runs, and the board has no result for it yet. */
+  /** The search of one or more projects for `searchText` runs, and has no result yet. */
   busy: boolean;
-  /** The search for `searchText` failed while it was the board's text, and has no result. */
+  /**
+   * No search for `searchText` runs, and the search of one or more projects
+   * failed while it was the board's text, and has no result.
+   */
   failed: boolean;
   /** The text the busy sentence names, deferred with `applied`; `null` while the region says no busy sentence. */
   searching: string | null;
@@ -28,60 +32,107 @@ export type BoardSearch = {
   settled: boolean;
 };
 
-export function idsOf(read: Success<TaskList> | undefined): ReadonlySet<string> | null {
-  return read === undefined ? null : new Set(read.data.entries.map(({ id }) => id));
+/** The union of the ids of `reads`; `null` when `reads` is empty or holds an `undefined`: then every card shows. */
+export function searchIds(reads: readonly (Success<TaskList> | undefined)[]): ReadonlySet<string> | null {
+  if (reads.length === 0 || !reads.every((read) => read !== undefined)) {
+    return null;
+  }
+
+  return new Set(reads.flatMap((read) => read.data.entries.map(({ id }) => id)));
 }
 
-/** The board's search read for `q`, and the result its columns apply. */
-export function useBoardSearch(client: Client, tag: string, q: string | undefined): BoardSearch {
+/**
+ * The joined ids of the search of `text` in `tags`, from the cache; `null` for
+ * an empty `text`, or while the cache has no result of one tag.
+ */
+export function cachedSearchIds(
+  queryClient: QueryClient,
+  client: Client,
+  tags: readonly string[],
+  text: string,
+): ReadonlySet<string> | null {
+  return text === ""
+    ? null
+    : searchIds(tags.map((tag) => queryClient.getQueryData(taskSearchQuery(client, tag, text).queryKey)));
+}
+
+/** `shown` is `next` on `board`: both are `null`, or `shown` is of `board` and holds the same reads. */
+function isShown(shown: ShownResult | null, next: SearchResult | null, board: string): boolean {
+  if (shown === null || next === null) {
+    return shown === next;
+  }
+
+  return shown.board === board
+    && shown.reads.length === next.reads.length
+    && shown.reads.every((read, index) => read === next.reads[index]);
+}
+
+/** The board's search reads for `q` in the projects of `tags`, and the result its columns apply. */
+export function useBoardSearch(
+  client: Client,
+  tags: readonly string[],
+  board: string,
+  q: string | undefined,
+): BoardSearch {
   // The daemon splits `q` on whitespace, so a blank text is no search here either.
   const searchText = q?.trim() ?? "";
   const searchRequested = searchText !== "";
   // Not under Suspense: each new text is a new key. No `placeholderData`: it is
   // the data of the last query that had any, not of the previous text.
-  const searchRead = useQuery({
-    ...taskSearchQuery(client, tag, searchText),
-    enabled: searchRequested,
+  const searchReads = useQueries({
+    queries: tags.map((tag) => ({ ...taskSearchQuery(client, tag, searchText), enabled: searchRequested })),
   });
+  const errorCounts = new Map(tags.map((tag, index) => [tag, searchReads[index]!.errorUpdateCount]));
   // A refetch of a key with no data sets its status back to pending and drops
   // its error, so a failure is read from the error count, which a refetch
-  // keeps. The cache keeps the count after the board leaves the text too, so
-  // only the failures since the text became the board's count.
-  const [errorBase, setErrorBase] = useState({ tag, searchText, count: searchRead.errorUpdateCount });
-  const baseIsCurrent = errorBase.tag === tag && errorBase.searchText === searchText;
+  // keeps. The cache keeps the count after the board leaves the text or the
+  // project too, so only the failures since both became the board's count. A
+  // project that stays on the next board keeps its base: its observer does not
+  // read again.
+  const [errorBase, setErrorBase] = useState<{ searchText: string; counts: ReadonlyMap<string, number> }>({
+    searchText,
+    counts: errorCounts,
+  });
+  const textIsCurrent = errorBase.searchText === searchText;
+  const errorsBefore = new Map(tags.map((tag) => [
+    tag,
+    (textIsCurrent ? errorBase.counts.get(tag) : undefined) ?? errorCounts.get(tag)!,
+  ]));
+  const tagsChanged = errorsBefore.size !== errorBase.counts.size || tags.some((tag) => !errorBase.counts.has(tag));
 
-  if (!baseIsCurrent) {
-    setErrorBase({ tag, searchText, count: searchRead.errorUpdateCount });
+  if (!textIsCurrent || tagsChanged) {
+    setErrorBase({ searchText, counts: errorsBefore });
   }
 
-  const errorsBefore = baseIsCurrent ? errorBase.count : searchRead.errorUpdateCount;
-  const failed = searchRequested && searchRead.data === undefined && searchRead.errorUpdateCount > errorsBefore;
-  const busy = searchRequested && searchRead.data === undefined && !failed;
-  // The current text's result, else, while its request runs, the one shown
-  // before. Adjusted during render: an effect would leave one render on the
-  // ids of a dropped result.
-  const [shown, setShown] = useState<SearchResult & { tag: string } | null>(null);
+  const reads = searchReads.map((read) => read.data);
+  const readFailed = tags.map((tag, index) => (
+    reads[index] === undefined && errorCounts.get(tag)! > errorsBefore.get(tag)!
+  ));
+  const busy = searchRequested && reads.some((read, index) => read === undefined && !readFailed[index]);
+  const failed = searchRequested && !busy && readFailed.includes(true);
+  // The current text's result once every project has one, else, while a
+  // search runs, the one shown before. Adjusted during render: an effect
+  // would leave one render on the ids of a dropped result.
+  const [shown, setShown] = useState<ShownResult | null>(null);
   let nextShown: SearchResult | null = null;
 
-  if (searchRequested && searchRead.data !== undefined) {
-    nextShown = { text: searchText, read: searchRead.data };
-  } else if (busy && shown?.tag === tag) {
+  if (searchRequested && tags.length > 0 && reads.every((read) => read !== undefined)) {
+    nextShown = { text: searchText, reads };
+  } else if (busy && shown?.board === board) {
     nextShown = shown;
   }
-  if ((shown?.read ?? null) !== (nextShown?.read ?? null)) {
-    setShown(nextShown === null ? null : { ...nextShown, tag });
+  if (!isShown(shown, nextShown, board)) {
+    setShown(nextShown === null ? null : { ...nextShown, board });
   }
 
   const applied = useDeferredValue(shown);
-  const settled = searchRequested
-    ? (applied !== null && applied.read === searchRead.data) || (failed && applied === null)
-    : applied === null;
+  const settled = !busy && applied === shown;
   // The wait that has lasted BUSY_ANNOUNCE_DELAY. A new text restarts the timer
   // and keeps the mark, so the region keeps the earlier sentence until the new
   // text has also run for BUSY_ANNOUNCE_DELAY.
-  const [mark, setMark] = useState<{ tag: string; text: string } | null>(null);
+  const [mark, setMark] = useState<{ board: string; text: string } | null>(null);
 
-  if (mark !== null && (!busy || mark.tag !== tag)) {
+  if (mark !== null && (!busy || mark.board !== board)) {
     setMark(null);
   }
 
@@ -91,17 +142,18 @@ export function useBoardSearch(client: Client, tag: string, q: string | undefine
     }
 
     const timer = setTimeout(() => {
-      setMark({ tag, text: searchText });
+      setMark({ board, text: searchText });
     }, BUSY_ANNOUNCE_DELAY);
 
     return () => {
       clearTimeout(timer);
     };
-  }, [busy, tag, searchText]);
+  }, [busy, board, searchText]);
 
-  const announced = busy && mark !== null && mark.tag === tag ? mark.text : null;
+  const announced = busy && mark !== null && mark.board === board ? mark.text : null;
   // Deferred with `applied`, so the region never says a result older than the busy sentence.
   const searching = useDeferredValue(announced);
+  const ids = applied === null ? null : searchIds(applied.reads);
 
-  return { searchText, searchRequested, busy, failed, searching, applied, ids: idsOf(applied?.read), settled };
+  return { searchText, busy, failed, searching, applied, ids, settled };
 }

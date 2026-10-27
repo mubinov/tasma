@@ -11,7 +11,7 @@ import {
   usePendingTaskWrites,
   type Created,
 } from "../api/mutations";
-import { projectQuery, projectsQuery, taskSearchQuery, tasksQuery, workflowQuery } from "../api/queries";
+import { projectQuery, projectsQuery, tasksQuery, workflowQuery } from "../api/queries";
 import {
   applyPending,
   boardOrder,
@@ -45,7 +45,7 @@ import { fullIndex, placeWrites } from "../lib/order";
 import { PlusIcon } from "../lib/icons";
 import { useBoardProjects, type FailedProject } from "../lib/use-board-projects";
 import { useBoardReturn } from "../lib/use-board-return";
-import { idsOf, useBoardSearch } from "../lib/use-board-search";
+import { cachedSearchIds, useBoardSearch } from "../lib/use-board-search";
 import { useCardDrag, type BoardSnapshot } from "../lib/use-card-drag";
 import { useFocusLost } from "../lib/use-focus-lost";
 import { warningCount } from "../lib/warning-count";
@@ -221,8 +221,8 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
     failed: failedProjects,
   } = useBoardProjects(client, queryClient, { tags, refused, missing, several });
   const shown = shownProjects.map((shownProject) => shownProject.tag);
-  // The project of the picker. The New task controls, the search and the last
-  // selection use it only on a board of one project.
+  // The project of the picker. The New task controls and the last selection use
+  // it only on a board of one project.
   const tag = tags[0]!;
   const setLastTasksProject = useUiStore((state) => state.setLastTasksProject);
   const setBoardReturn = useUiStore((state) => state.setBoardReturn);
@@ -248,8 +248,7 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
   const workflowReads = useQueries({ queries: names.map((name) => workflowQuery(client, name)) });
   const selected = distinctLabels(splitList(labels));
   const deferredSelected = distinctLabels(splitList(useDeferredValue(labels)));
-  const { searchText, searchRequested, busy, failed, searching, applied, ids, settled }
-    = useBoardSearch(client, tag, several ? undefined : q);
+  const { searchText, busy, failed, searching, applied, ids, settled } = useBoardSearch(client, shown, board, q);
   const failureId = useId();
   const [lostFocus, setLostFocus] = useState<LostFocus | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -365,9 +364,7 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
   function created(result: Created): void {
     const { data: read, diagnostics } = queryClient.getQueryData(tasksQuery(client, tag).queryKey)!;
     // The write refetched the search with the listing. A failed search shows every card.
-    const searchIds = idsOf(searchRequested
-      ? queryClient.getQueryData(taskSearchQuery(client, tag, searchText).queryKey)
-      : undefined);
+    const searchIds = cachedSearchIds(queryClient, client, [tag], searchText);
     const target = createdTarget(boardProjects, read.entries, selected, searchIds, result.id, result.status);
 
     // Inside a promise continuation these would commit after the notice store's
@@ -479,7 +476,7 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
         <ScreenHeading>{TITLE}</ScreenHeading>
         <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-x-5 gap-y-3">
           <ProjectSelect projects={projects} tag={tag} />
-          {!several && <SearchField tag={tag} q={q} busy={busy} describedBy={failed ? failureId : undefined} />}
+          <SearchField board={board} q={q} busy={busy} describedBy={failed ? failureId : undefined} />
           <LabelFilter entries={listed} selected={selected} subject={subject} />
           {!several && (
             <button

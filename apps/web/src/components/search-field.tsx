@@ -165,8 +165,8 @@ export function SearchBox({
 }
 
 type SearchFieldProps = {
-  /** The project the board shows. */
-  tag: string;
+  /** The board value of the board's address. */
+  board: string;
   /** The `q` of the board's address. */
   q: string | undefined;
   /** A search request for `q` runs, and the board has no result for it yet. */
@@ -176,7 +176,7 @@ type SearchFieldProps = {
 };
 
 /** The board's search, with its visible label. It writes `q` to the address of the board. */
-export function SearchField({ tag, q, busy, describedBy }: SearchFieldProps): ReactNode {
+export function SearchField({ board, q, busy, describedBy }: SearchFieldProps): ReactNode {
   const navigate = useNavigate();
   const router = useRouter();
   const labelId = useId();
@@ -189,7 +189,7 @@ export function SearchField({ tag, q, busy, describedBy }: SearchFieldProps): Re
       <SearchBox
         labelledBy={labelId}
         q={q}
-        resetKey={tag}
+        resetKey={board}
         onWrite={(text) => {
           void navigate({
             to: "/tasks",
@@ -200,7 +200,7 @@ export function SearchField({ tag, q, busy, describedBy }: SearchFieldProps): Re
         }}
         // The address changes before the board renders the next board, while its
         // loader runs, so a delayed write checks it first.
-        canWriteDelayed={() => boardValue(readBoard(router.latestLocation.search.projects)) === tag}
+        canWriteDelayed={() => boardValue(readBoard(router.latestLocation.search.projects)) === board}
         busy={busy}
         describedBy={describedBy}
         placeholder="Id, title, body, comments"
