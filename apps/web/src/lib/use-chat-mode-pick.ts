@@ -86,8 +86,6 @@ export type ChatModePick = {
   hidden: readonly string[];
   /** The value of the pick in progress. */
   pending: string | undefined;
-  /** From the start of a write until it fails or the log reaches the `seq` of its answer. */
-  picking: boolean;
   pick: (option: ChatOption, value: string) => void;
 };
 
@@ -105,6 +103,7 @@ export function useChatModePick({ tag, task, chat, view, agent, ready, write }: 
   // The id comes from the agent, so a name of an `Object.prototype` member must find nothing.
   const hidden = mode !== undefined && Object.hasOwn(hiddenByOption, mode.id) ? hiddenByOption[mode.id]! : [];
   const pending = pendingOptions.findLast((one) => one.configId === mode?.id)?.value ?? unseenPick?.value;
+  // From the start of a write until it fails or the log reaches the `seq` of its answer.
   const picking = pendingOptions.length > 0 || unseenPick !== null;
 
   async function pick(option: ChatOption, value: string): Promise<void> {
@@ -135,7 +134,6 @@ export function useChatModePick({ tag, task, chat, view, agent, ready, write }: 
     mode,
     hidden,
     pending,
-    picking,
     pick: (option, value) => {
       void pick(option, value);
     },

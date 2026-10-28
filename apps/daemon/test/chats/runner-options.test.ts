@@ -11,7 +11,9 @@ import { actAsAdapter, forever, modelOption, modeOption, SESSION } from "../agen
 import type { Script } from "../agents/fake-agent.js";
 import {
   defaultsFile,
+  fakeAdapter,
   gate,
+  heldTurns,
   modeUpdate,
   NEXT,
   optionsUpdate,
@@ -21,11 +23,17 @@ import {
   USER,
   world,
 } from "./runner-world.js";
-import type { WorldOptions } from "./runner-world.js";
+import type { World, WorldOptions } from "./runner-world.js";
 
 const OPTIONS = [modeOption(), modelOption()];
 
 const TURN_END: ChatEvent = { kind: "turn-end", stopReason: "end_turn" };
+
+const NEXT_USER: ChatEvent = { kind: "user", ...NEXT };
+
+const LATER = { text: "And the tests", client: "web" } as const;
+
+const STOPPING = { code: "chat-not-running", message: "chat 1 of ALPHA-1 cannot run: the daemon is stopping" };
 
 const USER_MESSAGE = { text: START.text, client: START.client };
 
@@ -86,6 +94,103 @@ async function stopped(options: WorldOptions = { script: { configOptions: OPTION
   const log = await logUntil(live, "turn-end");
   await setup.runner.stop(live);
   return { ...setup, live, log };
+}
+
+/** A chat whose agent process exited after the first turn, so the chat is failed. */
+async function failed(options: WorldOptions) {
+  const setup = await world(options);
+  const live = await setup.runner.start(START);
+  await logUntil(live, "turn-end");
+  setup.processes[0]?.exit({ code: 137, signal: null });
+  const log = await logUntil(live, "failed");
+  return { ...setup, live, log };
+}
+
+/** A chat whose first turn has ended and whose agent process the runner is ending, slowly. */
+async function endingSlowly(options: WorldOptions = {}) {
+  const setup = await world({ script: { configOptions: OPTIONS }, started: slowEnd(100), ...options });
+  const live = await setup.runner.start(START);
+  const log = await logUntil(live, "turn-end");
+  void setup.runner.stop(live);
+  await until(() => (setup.processes[0]?.endCalls ?? 0) > 0, "the runner ended the process");
+  return { ...setup, live, log };
+}
+
+/** A `recording` script whose resume of the session waits for `resume.open`. */
+function gatedResume(extra: Script = {}) {
+  const resume = gate();
+  const { script, seen } = recording({
+    ...extra,
+    async resume(_params, fake) {
+      await resume.opened;
+      return { configOptions: fake.configOptions };
+    },
+  });
+  return { resume, script, seen };
+}
+
+/**
+ * Holds the log write of the `resumed` event in its turn until `open`, so a
+ * later write of the chat comes after it. `asked` tells whether the runner
+ * gave an event of the kind to the log.
+ */
+function holdResumedWrite(live: LiveChat, writes: World["writes"]) {
+  const held = gate();
+  const kinds: ChatEvent["kind"][] = [];
+  const append = live.append.bind(live);
+  vi.spyOn(live, "append").mockImplementation((event) => {
+    kinds.push(event.kind);
+    if (event.kind === "resumed") void writes.run("ALPHA", () => held.opened);
+    return append(event);
+  });
+  return { open: held.open, asked: (kind: ChatEvent["kind"]) => kinds.includes(kind) };
+}
+
+/** A stopped chat whose pick starts the agent again, which waits in the resume of the session until `resume.open`. */
+async function pickInResume(options: WorldOptions = {}) {
+  const { resume, script, seen } = gatedResume(options.script);
+  const setup = await stopped({ ...options, script });
+  const picked = setup.runner.setOption(setup.live, PICK);
+  await until(() => setup.processes[1]?.resumes.length === 1, "the relaunch resumes the session");
+  return { ...setup, resume, seen, picked };
+}
+
+/** A failed chat whose pick starts the agent again, which waits in the log write of `resumed` until `resumed.open`. */
+async function pickInResumedWrite(options: WorldOptions = {}) {
+  const { script, seen } = recording(options.script);
+  const setup = await failed({ ...options, script });
+  const resumed = holdResumedWrite(setup.live, setup.writes);
+  const picked = setup.runner.setOption(setup.live, PICK);
+  await until(() => resumed.asked("resumed"), "the relaunch writes resumed");
+  return { ...setup, resumed, seen, picked };
+}
+
+/** A stopped chat whose agent refused the resume of the restart for `NEXT`, so the agent never got `NEXT`. */
+async function failedBeforeNext() {
+  let resumes = 0;
+  const setup = await stopped({
+    script: {
+      configOptions: OPTIONS,
+      async resume(_params, fake) {
+        resumes += 1;
+        if (resumes === 1) throw RequestError.authRequired();
+        return { configOptions: fake.configOptions };
+      },
+    },
+  });
+  await setup.runner.message(setup.live, NEXT);
+  await logUntil(setup.live, "failed");
+  return setup;
+}
+
+/** A `setConfigOption` that holds a set of the mode `auto` until `open`. */
+function holdingAuto() {
+  const held = gate();
+  const setConfigOption: Script["setConfigOption"] = async (params, fake) => {
+    if (params.value === "auto") await held.opened;
+    return actAsAdapter(params, fake);
+  };
+  return { open: held.open, setConfigOption };
 }
 
 describe("the options of a session that opens", () => {
@@ -673,47 +778,313 @@ describe("a pick on a chat with no agent process", () => {
     expect(processes).toHaveLength(2);
   });
 
-  it("refuses a message while it starts the agent", async () => {
-    const held = gate();
-    const { runner, live } = await stopped({
-      script: {
-        configOptions: OPTIONS,
-        async resume(_params, fake) {
-          await held.opened;
-          return { configOptions: fake.configOptions };
-        },
-      },
+  it("takes a message while it starts the agent, refuses a second one, and sends the first after the pick", async () => {
+    const { runner, live, log, resume, seen, picked } = await pickInResume();
+
+    await runner.message(live, NEXT);
+    expect(await logOf(live)).toEqual([...log, NEXT_USER]);
+    await expect(runner.message(live, LATER)).rejects.toMatchObject({
+      code: "turn-running",
+      message: "a turn of chat 1 of ALPHA-1 is running",
     });
+    resume.open();
+
+    await expect(picked).resolves.toEqual([]);
+    expect((await logUntil(live, "turn-end")).slice(log.length)).toEqual([
+      NEXT_USER,
+      optionsUpdate(OPTIONS),
+      modeUpdate("acceptEdits"),
+      optionsUpdate([modeOption("acceptEdits"), modelOption()]),
+      TURN_END,
+    ]);
+    expect(seen).toEqual([`prompt ${START.text}`, "mode=acceptEdits", `prompt ${NEXT.text}`]);
+  });
+
+  it("sends the prompt of a message after a pick that came before the message", async () => {
+    const { runner, live, resume, seen, picked } = await pickInResume();
+    const second = runner.setOption(live, { ...PICK, value: "auto" });
+
+    await runner.message(live, NEXT);
+    resume.open();
+
+    await expect(picked).resolves.toEqual([]);
+    await expect(second).resolves.toEqual([]);
+    await logUntil(live, "turn-end");
+    expect(seen).toEqual([`prompt ${START.text}`, "mode=acceptEdits", "mode=auto", `prompt ${NEXT.text}`]);
+  });
+
+  it("sends no prompt and ends the turn as cancelled at a Stop while the message waits for a pick before it", async () => {
+    const auto = holdingAuto();
+    const { runner, live, resume, seen } = await pickInResume({ script: { setConfigOption: auto.setConfigOption } });
+    const second = runner.setOption(live, { ...PICK, value: "auto" });
+    await runner.message(live, NEXT);
+    resume.open();
+    await until(() => seen.includes("mode=auto"), "the agent got the second pick");
+
+    await runner.cancel(live, { client: "web" });
+    auto.open();
+
+    await expect(second).resolves.toEqual([]);
+    expect((await logUntil(live, "turn-end")).at(-1)).toEqual({ kind: "turn-end", stopReason: "cancelled" });
+    expect(seen).toEqual([`prompt ${START.text}`, "mode=acceptEdits", "mode=auto"]);
+  });
+
+  it("writes the user event of a message after the interrupt of the start, and sends the texts of the chat with it", async () => {
+    const { script, seen } = recording();
+    const { runner, chats, folder } = await world({ script });
+    const live = await chats.create("ALPHA", "ALPHA-1", { step: START.step, agent: "claude", folder }, USER_MESSAGE);
+    await live.setSession(SESSION);
 
     const picked = runner.setOption(live, PICK);
-    await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "turn-running" });
+    await runner.message(live, NEXT);
+
+    expect(await logOf(live)).toEqual([USER, { kind: "interrupted" }, NEXT_USER]);
+    await expect(picked).resolves.toEqual([]);
+    await logUntil(live, "turn-end");
+    expect(seen).toEqual(["mode=acceptEdits", `prompt ${START.text}\n\n${NEXT.text}`]);
+  });
+
+  it("writes the user event of a message that comes during the resumed event after it, and sends one prompt", async () => {
+    const { runner, live, log, resumed, seen, picked } = await pickInResumedWrite();
+
+    const sent = runner.message(live, NEXT);
+    resumed.open();
+    await sent;
+
+    await expect(picked).resolves.toEqual([]);
+    expect((await logUntil(live, "turn-end")).slice(log.length)).toEqual([
+      optionsUpdate(OPTIONS),
+      modeUpdate("acceptEdits"),
+      optionsUpdate([modeOption("acceptEdits"), modelOption()]),
+      { kind: "resumed" },
+      NEXT_USER,
+      TURN_END,
+    ]);
+    expect(seen).toEqual([`prompt ${START.text}`, "mode=acceptEdits", `prompt ${NEXT.text}`]);
+  });
+
+  it("writes no resumed event for a message that comes during the apply step of a failed chat", async () => {
+    const held = gate();
+    const { script, seen } = recording({
+      async setConfigOption(params, fake) {
+        await held.opened;
+        return actAsAdapter(params, fake);
+      },
+    });
+    const { runner, live, log } = await failed({ script });
+    const picked = runner.setOption(live, PICK);
+    await until(() => seen.includes("mode=acceptEdits"), "the agent got the pick");
+
+    await runner.message(live, NEXT);
     held.open();
 
     await expect(picked).resolves.toEqual([]);
+    expect((await logUntil(live, "turn-end")).slice(log.length)).toEqual([
+      optionsUpdate(OPTIONS),
+      NEXT_USER,
+      modeUpdate("acceptEdits"),
+      optionsUpdate([modeOption("acceptEdits"), modelOption()]),
+      TURN_END,
+    ]);
+    expect(live.chat.state).toBe("needs-you");
+    expect(seen).toEqual([`prompt ${START.text}`, "mode=acceptEdits", `prompt ${NEXT.text}`]);
+  });
+
+  it("refuses a message during a turn that starts after a start with no message", async () => {
+    const turns = heldTurns();
+    const { runner, processes } = await world({ script: { ...turns.script, configOptions: OPTIONS } });
+    const live = await runner.start(START);
+    await until(() => processes[0]?.prompts.length === 1, "the agent got the first prompt");
+    turns.finish();
+    await logUntil(live, "turn-end");
+    await runner.stop(live);
+    await runner.setOption(live, PICK);
+
     await runner.message(live, NEXT);
+
+    await expect(runner.message(live, LATER)).rejects.toMatchObject({ code: "turn-running" });
+    await until(() => processes[1]?.prompts.length === 1, "the agent got the prompt of the message");
+    turns.finish();
     await logUntil(live, "turn-end");
   });
 
-  it("sends the texts that the last process did not get with the next message", async () => {
-    let resumes = 0;
-    const { runner, live, processes } = await stopped({
-      script: {
-        configOptions: OPTIONS,
-        async resume(_params, fake) {
-          resumes += 1;
-          if (resumes === 1) throw RequestError.authRequired();
-          return { configOptions: fake.configOptions };
-        },
-      },
-    });
+  it("sends one prompt with every text of the chat for a lost session that never answered", async () => {
+    const { script, seen } = recording({ resume: () => Promise.reject(RequestError.resourceNotFound(SESSION)) });
+    const { runner, chats, folder } = await world({ script });
+    const live = await chats.create("ALPHA", "ALPHA-1", { step: START.step, agent: "claude", folder }, USER_MESSAGE);
+    await live.setSession("session-0");
+
+    const picked = runner.setOption(live, PICK);
     await runner.message(live, NEXT);
-    await logUntil(live, "failed");
+
+    await expect(picked).resolves.toEqual([]);
+    await logUntil(live, "turn-end");
+    expect(live.chat.session).toBe(SESSION);
+    expect(seen).toEqual(["mode=acceptEdits", `prompt ${START.text}\n\n${NEXT.text}`]);
+  });
+
+  it("sends the texts that the last process did not get before the text of a message that joins the start", async () => {
+    const { runner, live, processes } = await failedBeforeNext();
+
+    const picked = runner.setOption(live, PICK);
+    await runner.message(live, LATER);
+
+    await expect(picked).resolves.toEqual([]);
+    await logUntil(live, "turn-end");
+    expect(processes[2]?.prompts.map(promptText)).toEqual([`${NEXT.text}\n\n${LATER.text}`]);
+  });
+
+  it("sends no prompt and ends the turn as cancelled at a Stop after a message joins the start", async () => {
+    const { runner, live, log, processes, resume, picked } = await pickInResume();
+    await runner.message(live, NEXT);
+
+    await runner.cancel(live, { client: "web" });
+    resume.open();
+
+    await expect(picked).resolves.toEqual([]);
+    expect((await logUntil(live, "turn-end")).slice(log.length).at(-1)).toEqual({ kind: "turn-end", stopReason: "cancelled" });
+    expect(processes[1]?.prompts).toEqual([]);
+    expect(processes[1]?.cancels).toEqual([]);
+    await runner.message(live, LATER);
+    await until(() => processes[1]?.prompts.length === 1, "the agent got the next prompt");
+    expect(processes[1]?.prompts.map(promptText)).toEqual([LATER.text]);
+  });
+
+  it("sends the prompt of a message after a Stop during the resume, which comes before the message", async () => {
+    const { runner, live, processes, resume, picked } = await pickInResume();
+
+    await runner.cancel(live, { client: "web" });
+    const sent = runner.message(live, NEXT);
+    resume.open();
+    await sent;
+
+    await expect(picked).resolves.toEqual([]);
+    expect((await logUntil(live, "turn-end")).at(-1)).toEqual(TURN_END);
+    expect(processes[1]?.cancels).toEqual([]);
+    expect(processes[1]?.prompts.map(promptText)).toEqual([NEXT.text]);
+  });
+
+  it("sends the prompt of a message after a Stop during the write of resumed, which comes before the message", async () => {
+    const { runner, live, processes, resumed, picked } = await pickInResumedWrite();
+
+    await runner.cancel(live, { client: "web" });
+    const sent = runner.message(live, NEXT);
+    resumed.open();
+    await sent;
+
+    await expect(picked).resolves.toEqual([]);
+    expect((await logUntil(live, "turn-end")).at(-1)).toEqual(TURN_END);
+    expect(processes[1]?.cancels).toEqual([]);
+    expect(processes[1]?.prompts.map(promptText)).toEqual([NEXT.text]);
+  });
+
+  it("takes a message and fails the chat with the reason when the agent refuses the resume after the user event", async () => {
+    const { runner, live, log } = await stopped({
+      script: { configOptions: OPTIONS, resume: () => Promise.reject(RequestError.authRequired()) },
+    });
+
+    const picked = runner.setOption(live, PICK);
+    await runner.message(live, NEXT);
+
+    await expect(picked).rejects.toMatchObject({
+      code: "chat-not-running",
+      message: "chat 1 of ALPHA-1 has no agent process: Log in to the agent first",
+    });
+    expect((await logUntil(live, "failed")).slice(log.length)).toEqual([NEXT_USER, { kind: "failed", reason: "Log in to the agent first" }]);
+  });
+
+  it("handles a message again as a new message when the start ends before its user event", async () => {
+    const { adapter } = fakeAdapter();
+    const { runner, chats, folder } = await world({ adapter: { ...adapter, agent: "codex" } });
+    const live = await chats.create("ALPHA", "ALPHA-1", { step: START.step, agent: "claude", folder }, USER_MESSAGE);
+    const reason = "Tasma cannot run claude yet";
+
+    const picked = runner.setOption(live, PICK);
+    await runner.message(live, NEXT);
+
+    await expect(picked).rejects.toMatchObject({ code: "chat-not-running", message: `chat 1 of ALPHA-1 has no agent process: ${reason}` });
+    expect(await logUntil(live, "failed")).toEqual([
+      USER,
+      { kind: "interrupted" },
+      { kind: "failed", reason },
+      NEXT_USER,
+      { kind: "failed", reason },
+    ]);
+  });
+
+  it("refuses a message that joins the start with chat-not-running when the daemon stop begins in its step", async () => {
+    const { runner, live, log, processes, resume, picked } = await pickInResume();
+
+    const sent = runner.message(live, NEXT);
+    runner.stopStarts();
+
+    await expect(sent).rejects.toMatchObject(STOPPING);
+    await expect(picked).rejects.toMatchObject(STOPPING);
+    resume.open();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await logOf(live)).toEqual(log);
+    expect(processes[1]?.prompts).toEqual([]);
+  });
+
+  it("sends no prompt of a message that joined the start when the daemon stop refuses a pick before the message", async () => {
+    const { runner, live, log, resume, seen, picked } = await pickInResume();
+    const second = runner.setOption(live, { ...PICK, value: "auto" });
+    await runner.message(live, NEXT);
+
+    runner.stopStarts();
+    resume.open();
+
+    await expect(picked).resolves.toEqual([]);
+    await expect(second).rejects.toMatchObject(STOPPING);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(seen).toEqual([`prompt ${START.text}`, "mode=acceptEdits"]);
+    await runner.close();
+    expect((await logOf(live)).slice(log.length)).toEqual([
+      NEXT_USER,
+      optionsUpdate(OPTIONS),
+      modeUpdate("acceptEdits"),
+      optionsUpdate([modeOption("acceptEdits"), modelOption()]),
+      { kind: "interrupted" },
+    ]);
+  });
+
+  it("rejects a message with the fault of the write of its user event, halts the run, and sends no prompt", async () => {
+    const { runner, live, processes, errors, resumed, picked } = await pickInResumedWrite();
+    const spy = vi.spyOn(live, "append");
+    const append = spy.getMockImplementation()!;
+    spy.mockImplementation((event) => (event.kind === "user" ? Promise.reject(new Error("the disk is full")) : append(event)));
+
+    await expect(runner.message(live, NEXT)).rejects.toThrow("the disk is full");
+    resumed.open();
+
+    await expect(picked).resolves.toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((await logOf(live)).at(-1)).toEqual({ kind: "resumed" });
+    expect(processes[1]?.prompts).toEqual([]);
+    expect(runner.running(live)).toBeUndefined();
+    expect(errors).toEqual(["tasma-daemon: chat 1 of ALPHA-1: the disk is full\n"]);
+  });
+
+  it("sends the prompt in the mode of the chat when the agent refuses the kept pick", async () => {
+    const { script, seen } = recording({ setConfigOption: refusing("mode") });
+    const { runner, live } = await stopped({ script });
+
+    const picked = runner.setOption(live, { ...PICK, value: "auto" });
+    await runner.message(live, NEXT);
+
+    await expect(picked).rejects.toMatchObject({ code: "option-refused" });
+    await logUntil(live, "turn-end");
+    expect(seen).toEqual([`prompt ${START.text}`, "mode=auto", `prompt ${NEXT.text}`]);
+  });
+
+  it("sends the texts that the last process did not get with the next message", async () => {
+    const { runner, live, processes } = await failedBeforeNext();
 
     await runner.setOption(live, PICK);
-    await runner.message(live, { text: "And the tests", client: "web" });
+    await runner.message(live, LATER);
     await logUntil(live, "turn-end");
 
-    expect(processes[2]?.prompts.map(promptText)).toEqual([`${NEXT.text}\n\nAnd the tests`]);
+    expect(processes[2]?.prompts.map(promptText)).toEqual([`${NEXT.text}\n\n${LATER.text}`]);
   });
 
   for (const answer of ["takes", "refuses"] as const) {
@@ -766,19 +1137,29 @@ describe("a pick on a chat with no agent process", () => {
 
   for (const how of ["stopStarts", "close"] as const) {
     it(`refuses the pick with chat-not-running when ${how} overtakes the wait for the last process`, async () => {
-      const setup = await world({ script: { configOptions: OPTIONS }, started: slowEnd(100) });
-      const live = await setup.runner.start(START);
-      const log = await logUntil(live, "turn-end");
-      void setup.runner.stop(live);
-      await until(() => (setup.processes[0]?.endCalls ?? 0) > 0, "the runner ended the process");
+      const { runner, live, log, processes } = await endingSlowly();
 
-      const picked = setup.runner.setOption(live, PICK);
-      if (how === "stopStarts") setup.runner.stopStarts();
-      else await setup.runner.close();
+      const picked = runner.setOption(live, PICK);
+      if (how === "stopStarts") runner.stopStarts();
+      else await runner.close();
 
-      await expect(picked).rejects.toMatchObject({ code: "chat-not-running", message: "chat 1 of ALPHA-1 cannot run: the daemon is stopping" });
+      await expect(picked).rejects.toMatchObject(STOPPING);
       expect(await logOf(live)).toEqual(log);
-      expect(setup.processes).toHaveLength(1);
+      expect(processes).toHaveLength(1);
+    });
+
+    it(`refuses a message that joins the start with chat-not-running when ${how} overtakes the wait for the last process`, async () => {
+      const { runner, live, log, processes } = await endingSlowly();
+      const picked = runner.setOption(live, PICK);
+      const refused = expect(runner.message(live, NEXT)).rejects.toMatchObject(STOPPING);
+
+      if (how === "stopStarts") runner.stopStarts();
+      else await runner.close();
+
+      await refused;
+      await expect(picked).rejects.toMatchObject(STOPPING);
+      expect(await logOf(live)).toEqual(log);
+      expect(processes).toHaveLength(1);
     });
   }
 
@@ -799,7 +1180,7 @@ describe("a pick on a chat with no agent process", () => {
     runner.stopStarts();
     held.open();
 
-    await expect(picked).rejects.toMatchObject({ code: "chat-not-running", message: "chat 1 of ALPHA-1 cannot run: the daemon is stopping" });
+    await expect(picked).rejects.toMatchObject(STOPPING);
     expect(processes).toHaveLength(1);
   });
 
@@ -828,7 +1209,7 @@ describe("a pick on a chat with no agent process", () => {
     const closed = runner.close();
     held.open();
 
-    await expect(picked).rejects.toMatchObject({ code: "chat-not-running", message: "chat 1 of ALPHA-1 cannot run: the daemon is stopping" });
+    await expect(picked).rejects.toMatchObject(STOPPING);
     await closed;
   });
 });
@@ -871,6 +1252,86 @@ describe("a pick and the end of a chat for a restart", () => {
     expect(await logOf(live)).toEqual(log);
     expect(processes[1]?.endCalls).toBeGreaterThan(0);
     expect(runner.running(live)).toBeUndefined();
+  });
+
+  it("interrupts the turn of a message that joined a relaunch, sends no prompt, and ends the process", async () => {
+    const { runner, live, log, processes, resume, picked } = await pickInResume({ endGraceMs: 60_000 });
+    await runner.message(live, NEXT);
+
+    await runner.end(live, { client: "web" });
+    resume.open();
+
+    await expect(picked).rejects.toMatchObject({ code: "chat-not-running" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((await logOf(live)).slice(log.length)).toEqual([NEXT_USER, { kind: "interrupted" }]);
+    expect(processes[1]?.prompts).toEqual([]);
+    expect(processes[1]?.cancels).toEqual([]);
+    expect(processes[1]?.endCalls).toBeGreaterThan(0);
+    expect(runner.running(live)).toBeUndefined();
+  });
+
+  it("interrupts the turn of a message that joined a relaunch while it waits for a pick before it, with no prompt", async () => {
+    const auto = holdingAuto();
+    const { runner, live, log, processes, resume, seen, picked } = await pickInResume({
+      script: { setConfigOption: auto.setConfigOption },
+      endGraceMs: 60_000,
+    });
+    const second = runner.setOption(live, { ...PICK, value: "auto" });
+    await runner.message(live, NEXT);
+    resume.open();
+    await until(() => seen.includes("mode=auto"), "the agent got the second pick");
+
+    await runner.end(live, { client: "web" });
+
+    await expect(picked).resolves.toEqual([]);
+    await expect(second).rejects.toMatchObject({ code: "chat-not-running" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((await logOf(live)).slice(log.length).at(-1)).toEqual({ kind: "interrupted" });
+    expect(seen).toEqual([`prompt ${START.text}`, "mode=acceptEdits", "mode=auto"]);
+    expect(processes[1]?.cancels).toEqual([]);
+    expect(processes[1]?.endCalls).toBeGreaterThan(0);
+    expect(runner.running(live)).toBeUndefined();
+  });
+
+  it("interrupts the turn of a message that joined a relaunch during its resumed event, with no cancel and no prompt", async () => {
+    const { runner, live, log, processes, resumed, picked } = await pickInResumedWrite({ endGraceMs: 60_000 });
+    const sent = runner.message(live, NEXT);
+    await until(() => resumed.asked("user"), "the message writes its user event");
+
+    const end = runner.end(live, { client: "web" });
+    resumed.open();
+    await end;
+
+    await sent;
+    await expect(picked).resolves.toEqual([]);
+    expect((await logOf(live)).slice(log.length)).toEqual([
+      optionsUpdate(OPTIONS),
+      modeUpdate("acceptEdits"),
+      optionsUpdate([modeOption("acceptEdits"), modelOption()]),
+      { kind: "resumed" },
+      NEXT_USER,
+      { kind: "interrupted" },
+    ]);
+    expect(processes[1]?.cancels).toEqual([]);
+    expect(processes[1]?.prompts).toEqual([]);
+    expect(processes[1]?.endCalls).toBeGreaterThan(0);
+    expect(runner.running(live)).toBeUndefined();
+  });
+
+  it("refuses a message that joined a relaunch when the end comes during the wait for the last process", async () => {
+    const { runner, live, log, processes } = await endingSlowly({ endGraceMs: 60_000 });
+    const picked = runner.setOption(live, PICK);
+    const refused = expect(runner.message(live, NEXT)).rejects.toMatchObject({
+      code: "turn-running",
+      message: "chat 1 of ALPHA-1 is ending for a restart",
+    });
+
+    await runner.end(live, { client: "web" });
+
+    await refused;
+    await expect(picked).rejects.toMatchObject({ code: "chat-not-running" });
+    expect(await logOf(live)).toEqual(log);
+    expect(processes).toHaveLength(1);
   });
 
   it("waits for a relaunch of a failed chat that writes its resumed event, and then ends the process", async () => {

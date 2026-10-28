@@ -46,7 +46,7 @@ type RoundProps = ChatPlace & {
 };
 
 /** What `ChatTranscript` gives the composer slot through `extras` of the runtime. */
-type ComposerExtras = Pick<ChatModePick, "mode" | "hidden" | "pending" | "pick"> & { onFocusLost: () => void };
+type ComposerExtras = ChatModePick & { onFocusLost: () => void };
 
 function isComposerExtras(extras: unknown): extras is ComposerExtras {
   return typeof extras === "object" && extras !== null && "pick" in extras;
@@ -302,7 +302,7 @@ function ChatTranscript(
   const statusKey = JSON.stringify(status);
   const { agent, folder } = record;
   const writes = useChatWrites({ tag, task, chat });
-  const { picking, ...modePick } = useChatModePick({ tag, task, chat, view, agent, ready, write: writes.pick });
+  const modePick = useChatModePick({ tag, task, chat, view, agent, ready, write: writes.pick });
   const extras: ComposerExtras = {
     ...modePick,
     onFocusLost: () => {
@@ -314,9 +314,8 @@ function ChatTranscript(
     convertMessage: (message: ChatMessage) => chatThreadMessage(message, folder),
     // The whole turn, also while it waits at a request: the kit shows Stop and no Send.
     isRunning: turn,
-    // The kit `canSend` does not read `isRunning`, and the daemon refuses a message during a turn
-    // and while a pick starts the agent again.
-    isSendDisabled: turn || picking,
+    // The kit `canSend` does not read `isRunning`, and the daemon refuses a message during a turn.
+    isSendDisabled: turn,
     onNew: (message) => writes.send(messageText(message)),
     onCancel: () => writes.cancel(),
     onRespondToToolApproval: (options) => writes.answer(chatRequestOf(view, options.approvalId), options),

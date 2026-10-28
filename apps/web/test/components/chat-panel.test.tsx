@@ -1710,32 +1710,42 @@ it("offers the values of the agent without the hidden ones", async () => {
   );
 });
 
-it("posts a pick with the client of the window, disables Send while it runs, and enables Send after it", async () => {
+it("posts a pick with the client of the window, keeps Send on while it runs, and announces its mode one time after a message in it", async () => {
   const user = userEvent.setup();
-  const log = logOf(MODE_LOG);
+  const log = writableLogOf(MODE_LOG, MESSAGES_PATH);
   const held = holdPick(log);
   await renderPanel(log);
   await user.type(await findComposer(), "Then test it.");
+  const pickPost = { method: "POST", path: OPTIONS_PATH, body: { configId: "mode", value: "auto", client: CHAT_CLIENT } };
 
   await pickMode(user, "Auto");
 
   await waitFor(() => {
-    expect(posts(log)).toEqual([
-      { method: "POST", path: OPTIONS_PATH, body: { configId: "mode", value: "auto", client: CHAT_CLIENT } },
-    ]);
+    expect(posts(log)).toEqual([pickPost]);
   });
   expect(modeTrigger().textContent).toBe("Auto…");
-  expect(button("Send message").disabled).toBe(true);
+  expect(button("Send message").disabled).toBe(false);
   await user.type(composer(), "{Enter}");
-  expect(posts(log)).toHaveLength(1);
-
-  held.answer(optionAnswer(5));
-  log.answer(4, { cursor: 5, entries: chatEntries([AUTO_LIST], 5) });
-
   await waitFor(() => {
-    expect(button("Send message").disabled).toBe(false);
+    expect(posts(log)).toEqual([
+      pickPost,
+      { method: "POST", path: MESSAGES_PATH, body: { text: "Then test it.", client: CHAT_CLIENT } },
+    ]);
   });
-  expect(modeTrigger().textContent).toBe("Auto");
+
+  log.answer(4, { cursor: 5, entries: chatEntries([userMessage("Then test it.")], 5) });
+  held.answer(optionAnswer(6));
+  await settle();
+  expect(modeTrigger().textContent).toBe("Auto…");
+  log.answer(5, { cursor: 6, entries: chatEntries([AUTO_LIST], 6) });
+  await waitFor(() => {
+    expect(modeTrigger().textContent).toBe("Auto");
+  });
+  log.answer(6, { cursor: 8, entries: chatEntries([textChunk("Tested."), turnEnd()], 7) });
+
+  expect(await screen.findByRole("button", { name: "Send message" })).toBeTruthy();
+  await frame();
+  expect(modeWords()).toEqual(["Mode: Auto"]);
 });
 
 it("keeps Auto… until the log reaches the seq of an answer that comes first, and announces Mode: Auto one time", async () => {

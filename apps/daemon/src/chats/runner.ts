@@ -100,14 +100,18 @@ export type ChatRunner = {
    * Writes the `user` event and starts a turn with the text, and with the
    * earlier texts of the chat that the agent has still to get. A chat with no
    * agent process gets its agent started again in the background, on the
-   * stored session, after the last process of the chat has ended. Refused with
-   * `turn-running` while a turn runs or the chat ends for a restart, and with
-   * `chat-not-running` once `stopStarts()` was called.
+   * stored session, after the last process of the chat has ended. A message
+   * while a pick starts the agent again joins that start: its `user` event
+   * comes after the interrupt of the start, and its turn starts once the
+   * session has that pick and each pick that came before the message. Refused
+   * with `turn-running` while a turn runs or the chat ends for a restart, and
+   * with `chat-not-running` once `stopStarts()` was called.
    */
   message(live: LiveChat, input: ChatMessageInput): Promise<void>;
   /**
    * Cancels the turn that runs and resolves its open requests in the name of
-   * `client`. Does nothing when no turn runs.
+   * `client`. Does nothing when no turn runs, and while a pick starts the
+   * agent again and no message has joined that start.
    */
   cancel(live: LiveChat, input: ChatCancelInput): Promise<void>;
   answerPermission(live: LiveChat, request: string, answer: PermissionAnswer): Promise<void>;
@@ -117,10 +121,11 @@ export type ChatRunner = {
    * saved in the chat and, unless `AGENT_OPTION_RULES` lists it as unsaved, as
    * the default of the agent. The picks of one chat run one after the other. A
    * chat whose session is not open yet gets the value as the session opens. A
-   * chat with no agent process gets its agent started again with no prompt.
-   * Resolves with a diagnostic for each file that a write missed. Refused with
-   * `option-refused` when the agent does not offer or does not take the value,
-   * and with `turn-running` while the chat ends for a restart.
+   * chat with no agent process gets its agent started again, with no prompt
+   * unless a message joins the start. Resolves with a diagnostic for each file
+   * that a write missed. Refused with `option-refused` when the agent does not
+   * offer or does not take the value, and with `turn-running` while the chat
+   * ends for a restart.
    */
   setOption(live: LiveChat, change: ChatOptionChange): Promise<Diagnostic[]>;
   /**
@@ -132,20 +137,22 @@ export type ChatRunner = {
   /**
    * Cancels the turn that runs, as `cancel` does, waits up to `endGraceMs` for
    * the turn to end, and then ends the agent of the chat. A turn that does not
-   * end in time is interrupted, as `close()` interrupts each chat. A turn whose
-   * session is not open yet is interrupted at once, with no cancel and no wait.
-   * Between turns, the open requests are cancelled in the name of `client`.
-   * The end of the process writes no event. Resolves when every process of the
-   * chat has ended. Until it settles, a message and a pick of the chat are
-   * refused with `turn-running`. Refused with `chat-not-running` when the
-   * daemon stops before it resolves.
+   * end in time is interrupted, as `close()` interrupts each chat. A turn of a
+   * message is interrupted at once, with no cancel and no wait, until its
+   * prompt is sent. So is the turn of a pick that starts the agent again with
+   * no message, until its session is open. Between turns, the open requests
+   * are cancelled in the name of `client`. The end of the process writes no
+   * event. Resolves when every process of the chat has ended. Until it
+   * settles, a message and a pick of the chat are refused with `turn-running`.
+   * Refused with `chat-not-running` when the daemon stops before it resolves.
    */
   end(live: LiveChat, input: ChatCancelInput): Promise<void>;
   /**
    * Aborts a read of the login shell in progress and does not wait for it, and
    * clears every idle timer, so no idle stop starts after it. A start that has
-   * not spawned its agent yet then spawns none, and a later message is
-   * refused. `close()` does the same.
+   * not spawned its agent yet then spawns none, a message that joined the
+   * start of a pick gets no prompt, and a later message is refused. `close()`
+   * does the same.
    */
   stopStarts(): void;
   /**
@@ -170,8 +177,20 @@ type PickAnswer = () => void;
 type Run = RunningChat & {
   /** The picks that the session takes as it opens, in arrival order. */
   waiting: WaitingPick[];
-  /** Clear for a relaunch that a pick starts: the session gets no prompt. */
-  promptOnOpen: boolean;
+  /**
+   * Set for a relaunch that a pick starts, until a message joins it or its
+   * session has the pick. While it is set, the session gets no prompt.
+   */
+  pickRelaunch: boolean;
+  /** The wait for the last process and the interrupt of a relaunch that a pick starts. */
+  reopened: Promise<void> | undefined;
+  /**
+   * The write of the `user` event of the message that joined a pick relaunch,
+   * and the push of its text into `unsent`.
+   */
+  held: Promise<void> | undefined;
+  /** The end of the picks of the chat that came before the message that joined a pick relaunch. */
+  earlierPicks: Promise<void> | undefined;
   /** Set with the process. */
   adapter: AgentAdapter | undefined;
   /** Set with the process. */
@@ -184,9 +203,17 @@ type Run = RunningChat & {
   halted: boolean;
   /** Set from the message that starts a turn to its prompt result. While it is clear, the session is open. */
   turning: boolean;
-  /** Set when `begin` reads `cancelledEarly`, after the session id is written. Then a cancel goes to the agent. */
+  /**
+   * Set when `begin` reads `cancelledEarly`, after the session id is written,
+   * and for a pick relaunch before its `resumed` event. Then `end` sends a
+   * cancel to the agent, and so does `cancel()` while `pickRelaunch` is clear.
+   * A message that joins a pick relaunch clears it.
+   */
   cancelReachesAgent: boolean;
-  /** Set by a cancel before `cancelReachesAgent`. `begin` then sends no first prompt, and ends the first turn. */
+  /**
+   * Set by a cancel of a turn of a message before `cancelReachesAgent`. `begin`
+   * then sends no first prompt, and ends the first turn.
+   */
   cancelledEarly: boolean;
   /**
    * Set while `end` waits for the turn to end. Called where `turning` becomes
@@ -277,7 +304,10 @@ function newRun(live: LiveChat): Run {
     open: new Map(),
     options: [],
     waiting: [],
-    promptOnOpen: true,
+    pickRelaunch: false,
+    reopened: undefined,
+    held: undefined,
+    earlierPicks: undefined,
     adapter: undefined,
     idle: undefined,
     unsent: [],
@@ -640,16 +670,30 @@ export function createChatRunner(options: {
     const answers = await applyOptions(run, opened.session, opened.created);
     const { session } = run;
     if (session === undefined) return answerAll(answers);
-    run.cancelReachesAgent = true;
-    if (!run.promptOnOpen) {
+    if (run.pickRelaunch) {
+      run.cancelReachesAgent = true;
       // A pick takes a failed chat out of its stop, as a message does.
       if (run.live.fold.stopped !== undefined) await append(run, { kind: "resumed" });
+    }
+    // A message can join during the write of `resumed`.
+    if (run.pickRelaunch) {
+      run.pickRelaunch = false;
       run.turning = false;
       run.turnEnded?.();
       run.idle?.touch();
       return answerAll(answers);
     }
     answerAll(answers);
+    if (run.held !== undefined) {
+      await run.held.catch(() => undefined);
+      // Only after `answerAll`: the earlier picks wait for the answer of the pick of the relaunch.
+      await run.earlierPicks;
+      // Once the daemon stops, `pickNow` refuses the earlier picks. The run stays in a turn for `close()`.
+      if (run.quiet || stopping.signal.aborted) return;
+      // The `user` event of the message can come after `openSession` took the texts.
+      if (opened.created) run.unsent = [...run.live.unanswered];
+    }
+    run.cancelReachesAgent = true;
     if (!run.cancelledEarly) return runTurn(run, session);
     // As `LiveChat.unanswered` does at a cancelled turn end.
     if (run.live.answered) run.unsent = [];
@@ -711,10 +755,18 @@ export function createChatRunner(options: {
     await begin(run, spawnRun(run, adapter, launch, folder, limitMs));
   }
 
+  function refuseIfStopping(run: Run): void {
+    if (!stopping.signal.aborted) return;
+    const error = daemonStopping(run.live);
+    silence(run, error);
+    throw error;
+  }
+
   /** A restart that the daemon stop or an `end` overtakes before its `user` event writes nothing more. */
   function refuseIfOvertaken(run: Run): void {
-    if (!run.quiet && !stopping.signal.aborted) return;
-    const error = stopping.signal.aborted ? daemonStopping(run.live) : endingForRestart(run.live);
+    refuseIfStopping(run);
+    if (!run.quiet) return;
+    const error = endingForRestart(run.live);
     silence(run, error);
     throw error;
   }
@@ -748,21 +800,54 @@ export function createChatRunner(options: {
 
   /**
    * As `restart`, with a pick in the place of the message: the run writes no
-   * `user` event and sends no prompt. It stays in a turn until the session has
-   * the pick, so a message meanwhile is refused.
+   * `user` event and sends no prompt, and stays in a turn until the session
+   * has the pick. A message that joins it adds its `user` event and a turn, as
+   * `restart` does.
    */
   async function relaunchForPick(live: LiveChat, pick: WaitingPick): Promise<void> {
     const last = lastRuns.get(live);
     const run = register(live);
-    run.promptOnOpen = false;
+    run.pickRelaunch = true;
     run.waiting.push(pick);
+    run.reopened = reopen(run, last);
     try {
-      await reopen(run, last);
+      await run.reopened;
     } catch {
       // The end of the run refused the pick.
       return;
     }
     void relaunch(run);
+  }
+
+  /** The part of a message that joins a pick relaunch, after the relaunch has interrupted the chat. */
+  async function hold(run: Run, text: string, client: string): Promise<void> {
+    await run.reopened;
+    refuseIfStopping(run);
+    // The relaunch ended in the step after its interrupt.
+    if (run.quiet) return message(run.live, { text, client });
+    await record(run, { kind: "user", text, client });
+    run.unsent.push(text);
+  }
+
+  async function message(live: LiveChat, { text, client }: ChatMessageInput): Promise<void> {
+    if (ending.has(live)) throw endingForRestart(live);
+    const run = runs.get(live);
+    if (run?.turning && !run.pickRelaunch) throw turnRunning(live);
+    if (stopping.signal.aborted) throw daemonStopping(live);
+    if (run === undefined) return restart(live, text, client);
+    if (run.pickRelaunch) {
+      run.pickRelaunch = false;
+      run.cancelReachesAgent = false;
+      run.earlierPicks = picks.get(live);
+      run.held = hold(run, text, client);
+      return run.held;
+    }
+    run.turning = true;
+    run.idle?.touch();
+    run.unsent.push(text);
+    const written = record(run, { kind: "user", text, client });
+    void runTurn(run, run.session!);
+    await written;
   }
 
   async function pickNow(live: LiveChat, { configId, value }: ChatOptionChange): Promise<Diagnostic[]> {
@@ -880,23 +965,12 @@ export function createChatRunner(options: {
       return runs.get(live);
     },
 
-    async message(live, { text, client }) {
-      if (ending.has(live)) throw endingForRestart(live);
-      const run = runs.get(live);
-      if (run?.turning) throw turnRunning(live);
-      if (stopping.signal.aborted) throw daemonStopping(live);
-      if (run === undefined) return restart(live, text, client);
-      run.turning = true;
-      run.idle?.touch();
-      run.unsent.push(text);
-      const written = record(run, { kind: "user", text, client });
-      void runTurn(run, run.session!);
-      await written;
-    },
+    message,
 
     async cancel(live, { client }) {
       const run = runs.get(live);
-      if (!run?.turning) return;
+      // A pick relaunch that no message joined has no turn of a message to cancel.
+      if (!run?.turning || run.pickRelaunch) return;
       // ACP wants `session/cancel` before the cancelled responses.
       if (run.cancelReachesAgent) run.session!.cancel();
       else run.cancelledEarly = true;
