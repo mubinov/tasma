@@ -575,6 +575,20 @@ describe("live updates", () => {
     expect(within(itemLink("SAGA-3", 2)).getByText("Build the lexer")).toBeTruthy();
   });
 
+  it("drops the state of the open chat from its item and its header when a chat event reads an item with none", async () => {
+    const stub = stubDashboard();
+    await renderDashboard(stub, OPEN_PATH);
+    const [acme, open, older] = ITEMS as [ChatListItem, ChatListItem, ChatListItem];
+    stub.replies["/chats"] = pageReply([acme, { ...open, status: undefined }, older]);
+
+    await stub.send([{ kind: "chat", tag: "SAGA", task: "SAGA-3", chat: 2, step: "dev:review", state: "needs-you" }]);
+
+    await waitFor(() => {
+      expect(itemState("SAGA-3", 2)).toBeNull();
+    });
+    expect(chatHeading().nextElementSibling?.textContent).toBe("Claude · dev:review · Chat 2");
+  });
+
   it("drops the items of a removed project", async () => {
     const stub = stubDashboard();
     await renderDashboard(stub);

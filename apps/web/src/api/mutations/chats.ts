@@ -132,6 +132,19 @@ export function chatWriteOptions(client: Client, place: ChatPlace) {
   });
 }
 
+/**
+ * A move of `seen` of one chat to a `seq`. The `chat` feed event of the move
+ * makes the lists read again, so the write changes no cache and shows no
+ * notice. Its key is not under `chatWriteKey`, so no pending write shows it.
+ */
+export function chatSeenOptions(client: Client, { tag, task, chat }: ChatPlace) {
+  return mutationOptions<Success<Chat>, Error, number>({
+    mutationKey: [...daemonKeys.chat(tag, task, chat), "seen"],
+    mutationFn: (seq) => client.markChatSeen(tag, task, chat, { seq, client: CHAT_CLIENT }),
+    retry: 0,
+  });
+}
+
 /** A start of the chat of a step. The variables carry the texts of the failure notice. */
 export type StartChat = {
   tag: string;

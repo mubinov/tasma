@@ -1,3 +1,4 @@
+import type { TransportReply } from "@tasma/protocol";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
@@ -7,7 +8,7 @@ import { useUiStore } from "../../src/store/ui";
 import { chatPath, chatRecord, stubChatLog, type ChatLogStub } from "../chat-daemon";
 import { TERMINAL_LOG, TEXT_LOG } from "../chat-fixtures";
 import { renderWithRouter, stubIntersectionObserver, stubResizeObservers, stubThreadDom, successReply } from "../helpers";
-import { backLink, daemon, sidebar, topBar } from "../task-screen-fixtures";
+import { backLink, daemon, sidebar, task, TASK_PATH, topBar, WORKFLOW } from "../task-screen-fixtures";
 
 const PAGE = "/tasks/SAGA/SAGA-3";
 
@@ -31,12 +32,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** The task page's daemon, with chat 2 of the task, whose log is TEXT_LOG, and chat 3, whose log is TERMINAL_LOG. */
-function chatDaemon(): ChatLogStub {
+/**
+ * The task page's daemon, with chat 2 of the task, whose log is TEXT_LOG, and
+ * chat 3, whose log is TERMINAL_LOG. `replies` replaces any of its replies.
+ */
+function chatDaemon(replies: Record<string, TransportReply> = {}): ChatLogStub {
   const log = stubChatLog({
     ...daemon().replies,
     [chatPath()]: successReply(chatRecord({ seq: TEXT_LOG.length })),
     [chatPath(3)]: successReply(chatRecord({ chat: 3, step: "test", seq: TERMINAL_LOG.length })),
+    ...replies,
   });
   log.serve(0, { cursor: TEXT_LOG.length, entries: [...TEXT_LOG] });
   log.serve(0, { cursor: TERMINAL_LOG.length, entries: [...TERMINAL_LOG] }, 3);
@@ -109,6 +114,47 @@ it("shows the chat panel in place of the task sidebar, and keeps the h1 and the 
   expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   expect(taskHeading().textContent).toBe("Build the parser");
   expect(document.title).toBe("SAGA-3 Build the parser · tasma");
+});
+
+const ENDED = chatRecord({ seq: TEXT_LOG.length, stateSeq: TEXT_LOG.length });
+
+it.each<[string, Record<string, TransportReply>, boolean]>([
+  ["the state of the newest chat of a task that is not final", { [`${TASK_PATH}/chats`]: successReply([ENDED]) }, true],
+  [
+    "no state for an older chat",
+    { [`${TASK_PATH}/chats`]: successReply([ENDED, chatRecord({ chat: 3, step: "test", seq: TERMINAL_LOG.length })]) },
+    false,
+  ],
+  [
+    "no state for the newest chat of a task in a final status",
+    { [`${TASK_PATH}/chats`]: successReply([ENDED]), [TASK_PATH]: task({ fields: { status: "Done" } }) },
+    false,
+  ],
+  [
+    "no state for the newest chat on a past step that the user saw",
+    {
+      [`${TASK_PATH}/chats`]: successReply([{ ...ENDED, seen: TEXT_LOG.length }]),
+      [TASK_PATH]: task({ fields: { workflow: "dev", step: "approve" } }),
+    },
+    false,
+  ],
+  [
+    "the state of a seen chat on the first step of the workflow of a task with no step",
+    {
+      [`${TASK_PATH}/chats`]: successReply([{ ...ENDED, seen: TEXT_LOG.length }]),
+      [TASK_PATH]: task({ fields: { workflow: "dev" } }),
+      "/workflows/dev": successReply({ ...WORKFLOW, steps: [{ name: "build", file: "/w/dev/build.md", owner: "agent" }] }),
+    },
+    true,
+  ],
+])("shows %s in the header of the chat panel", async (_case, replies, marked) => {
+  await renderWithRouter(`${PAGE}?chat=2`, chatDaemon(replies).transport);
+  const panel = await screen.findByRole("region", { name: "Claude · build" });
+  await waitFor(() => {
+    expect(panel.querySelector(':scope > [role="status"]')!.textContent).toBe("");
+  });
+
+  expect(within(chatHeading().parentElement!).queryByText("Needs you") !== null).toBe(marked);
 });
 
 it("closes the chat by replacing the address, shows the sidebar and moves focus to the h1", async () => {

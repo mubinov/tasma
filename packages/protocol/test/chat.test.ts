@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CHAT_START, foldChat } from "@tasma/protocol";
-import type { ChatEvent, ChatFold } from "@tasma/protocol";
+import { CHAT_START, chatMark, currentStep, foldChat } from "@tasma/protocol";
+import type { Chat, ChatEvent, ChatFold, ChatStatus, Workflow } from "@tasma/protocol";
 
 const USER: ChatEvent = { kind: "user", text: "Start", client: "app" };
 
@@ -145,5 +145,65 @@ describe("foldChat", () => {
 
   it("keeps a running turn at resumed", () => {
     expect(fold(USER, { kind: "resumed" })).toEqual({ turn: true, open: [], status: { state: "working" } });
+  });
+});
+
+describe("chatMark", () => {
+  const base: Chat = {
+    task: "ALPHA-3",
+    chat: 1,
+    step: "dev:research",
+    agent: "claude",
+    folder: "/work/alpha",
+    created: "2026-01-02T10:00:00Z",
+    seq: 6,
+    stateSeq: 4,
+    state: "needs-you",
+  };
+
+  it.each<[string, Chat, string | undefined, ChatStatus | undefined]>([
+    ["working on a past step", { ...base, state: "working", seen: 4 }, "dev:plan", { state: "working" }],
+    ["needs-you on the current step that the user saw", { ...base, seen: 4 }, "dev:research", { state: "needs-you" }],
+    ["needs-you on a past step that the user did not see to the end", { ...base, seen: 3 }, "dev:plan", { state: "needs-you" }],
+    ["a past step seen to its state, with later entries", { ...base, seen: 4 }, "dev:plan", undefined],
+    ["a past step that nobody saw", base, "dev:plan", { state: "needs-you" }],
+    ["no current step, not seen", { ...base, seen: 3 }, undefined, { state: "needs-you" }],
+    ["no current step, seen", { ...base, seen: 6 }, undefined, undefined],
+    ["failed on a past step", { ...base, state: "failed" }, "dev:plan", { state: "failed" }],
+    [
+      "continued-outside on a past step",
+      { ...base, state: "continued-outside", where: "terminal" },
+      "dev:plan",
+      { state: "continued-outside", where: "terminal" },
+    ],
+  ])("gives the mark of %s", (_case, chat, step, mark) => {
+    expect(chatMark(chat, step)).toEqual(mark);
+  });
+
+  it("gives a new object, not the chat", () => {
+    const chat: Chat = { ...base, state: "working" };
+
+    expect(chatMark(chat, chat.step)).not.toBe(chat);
+  });
+});
+
+describe("currentStep", () => {
+  const dev: Pick<Workflow, "steps"> = {
+    steps: [
+      { name: "dev:research", file: "/flows/dev/research.md", owner: "human" },
+      { name: "dev:plan", file: "/flows/dev/plan.md", owner: "agent" },
+    ],
+  };
+
+  it.each<[string, { workflow?: string; step?: string }, Pick<Workflow, "steps"> | null | undefined, string | undefined]>([
+    ["the step of the task", { workflow: "dev", step: "dev:plan" }, dev, "dev:plan"],
+    ["the step of the task while its workflow is not read", { workflow: "dev", step: "dev:plan" }, undefined, "dev:plan"],
+    ["the step of a task with no workflow", { step: "dev:plan" }, undefined, "dev:plan"],
+    ["the first step of the workflow for a task with no step", { workflow: "dev" }, dev, "dev:research"],
+    ["no step while the workflow is not read", { workflow: "dev" }, undefined, undefined],
+    ["no step when the workflow read failed", { workflow: "dev" }, null, undefined],
+    ["no step for a task with no workflow", {}, dev, undefined],
+  ])("gives %s", (_case, task, workflow, step) => {
+    expect(currentStep(task, workflow)).toBe(step);
   });
 });

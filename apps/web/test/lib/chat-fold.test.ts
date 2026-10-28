@@ -2,6 +2,7 @@ import { CHAT_START, foldChat, type ChatEntry, type ChatEvent } from "@tasma/pro
 import { describe, expect, it } from "vitest";
 import {
   CHAT_VIEW_START,
+  chatBusy,
   foldChatEntries,
   type ChatAgentMessage,
   type ChatOption,
@@ -1256,5 +1257,19 @@ describe("foldChatEntries: options", () => {
     const view = foldEvents([optionsUpdate(modeOption("default")), modeUpdate("auto")], before);
 
     expect(view.messages).toEqual(before.messages);
+  });
+});
+
+describe("chatBusy", () => {
+  const user = userMessage("Go");
+  const question = questionRequest("q1", { message: "Which one?" });
+
+  it.each<[string, ChatEvent[], boolean]>([
+    ["a running turn", [user], true],
+    ["a turn that waits at a question", [user, question], true],
+    ["a request that is open outside a turn", [user, turnEnd(), question], true],
+    ["an ended turn with no open request", [user, turnEnd()], false],
+  ])("is %s busy", (_case, events, busy) => {
+    expect(chatBusy(events.reduce(foldChat, CHAT_START))).toBe(busy);
   });
 });

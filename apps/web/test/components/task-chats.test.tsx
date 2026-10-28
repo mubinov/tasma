@@ -127,6 +127,21 @@ describe("the list", () => {
     expect(rows().map(stateOf)).toEqual([text, null]);
   });
 
+  it.each([
+    ["on a past step that the user did not see", "approve", undefined, "Needs you"],
+    ["on a past step that the user saw", "approve", 1, null],
+    ["on the current step that the user saw", "research", 1, "Needs you"],
+    ["on the first step of the workflow of a task with no step, which the user saw", undefined, 1, "Needs you"],
+  ] as const)("shows the mark of the newest chat %s", async (_case, taskStep, seen, text) => {
+    const newest = { ...chat(2, "needs-you", "research"), seen };
+    const fields = taskStep === undefined ? { workflow: "dev" } : { workflow: "dev", step: taskStep };
+    await openPage(stubTaskChats([chat(1), newest], { [TASK_PATH]: task({ fields }) }));
+
+    expect(rows().map(stateOf)).toEqual([text, null]);
+    const state = text === null ? "" : `${text}, `;
+    expect(rows()[0]!.getAttribute("aria-label")).toBe(`research, ${state}${fullChatTime(newest.created)}`);
+  });
+
   it("shows no state on any row while the status of the task is final", async () => {
     await openPage(stubTaskChats([chat(1), chat(2, "needs-you")], { [TASK_PATH]: task({ fields: { status: "Done" } }) }));
 

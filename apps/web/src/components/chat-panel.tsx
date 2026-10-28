@@ -4,6 +4,7 @@ import {
   useAui,
   useAuiState,
   useExternalStoreRuntime,
+  useThreadViewport,
   type AppendMessage,
 } from "@assistant-ui/react";
 import { Thread, type ThreadComponents } from "@kit/components/assistant-ui/elements/thread.aui";
@@ -14,11 +15,12 @@ import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode, typ
 import { useChatLog } from "../api/chat-log";
 import { chatQuery, type ChatPlace } from "../api/queries";
 import { chatRequestOf } from "../lib/chat-approval";
-import type { ChatMessage } from "../lib/chat-fold";
+import { chatBusy, type ChatMessage } from "../lib/chat-fold";
 import { chatAgentName, chatStateText, chatThreadMessage, isChatMissing } from "../lib/chat-messages";
 import { WarningIcon, XIcon } from "../lib/icons";
 import { CHAT_HEADING_MARK, focusInView } from "../lib/focus-in-view";
 import { useChatModePick, type ChatModePick } from "../lib/use-chat-mode-pick";
+import { useChatSeen, type SeenWatch } from "../lib/use-chat-seen";
 import { useChatWrites } from "../lib/use-chat-writes";
 import { useFocusLost } from "../lib/use-focus-lost";
 import { chatDraft, subscribeChatDraft, useChatDraftStore } from "../store/chat-drafts";
@@ -31,13 +33,15 @@ type ChatPanelProps = {
   tag: string;
   task: string;
   chat: number;
+  /** The header shows the state. A busy chat shows it also when this is false. */
+  marked: boolean;
   onClose: () => void;
   /** Move focus to the panel heading when the panel mounts. A host sets it when the user opens a chat. */
   focusOnMount?: boolean;
 };
 
-/** What the panel shows of the log that its transcript reads. */
-type LogState = { status: ChatStatus; ready: boolean; failures: number };
+/** What the panel shows of the log that its transcript reads. `busy` is from `chatBusy`. */
+type LogState = { status: ChatStatus; busy: boolean; ready: boolean; failures: number };
 
 type RoundProps = ChatPlace & {
   headingRef: RefObject<HTMLHeadingElement | null>;
@@ -45,36 +49,55 @@ type RoundProps = ChatPlace & {
   onReset: () => void;
 };
 
+/** What the transcript knows of `SeenWatch`. The tracker reads the viewport. */
+type SeenInput = Omit<SeenWatch, "viewport">;
+
 /** What `ChatTranscript` gives the composer slot through `extras` of the runtime. */
-type ComposerExtras = ChatModePick & { onFocusLost: () => void };
+type ComposerExtras = ChatModePick & {
+  seenWatch: SeenInput;
+  onFocusLost: () => void;
+};
 
 function isComposerExtras(extras: unknown): extras is ComposerExtras {
   return typeof extras === "object" && extras !== null && "pick" in extras;
 }
 
+/** It sits inside the thread viewport, so it can read the scroll box of the thread. */
+function ChatSeenTracker(watch: SeenInput): null {
+  const viewport = useThreadViewport((s) => s.element.viewport);
+
+  useChatSeen({ ...watch, viewport });
+  return null;
+}
+
 /**
- * The mode picker in the composer. Its data comes through the runtime extras, so
- * `THREAD_COMPONENTS` stays one object: a new one would change the context that
- * every message of the thread reads.
+ * The seen tracker and the mode picker in the composer. Their data comes
+ * through the runtime extras, so `THREAD_COMPONENTS` stays one object: a new
+ * one would change the context that every message of the thread reads.
  */
 function ChatComposerStart(): ReactNode {
   const extras = useAuiState((s) => s.thread.extras);
 
-  if (!isComposerExtras(extras) || extras.mode === undefined) {
+  if (!isComposerExtras(extras)) {
     return null;
   }
 
-  const { mode, hidden, pending, pick, onFocusLost } = extras;
+  const { mode, hidden, pending, pick, onFocusLost, seenWatch } = extras;
   return (
-    <ChatOptionMenu
-      option={mode}
-      hidden={hidden}
-      pending={pending}
-      onPick={(value) => {
-        pick(mode, value);
-      }}
-      onFocusLost={onFocusLost}
-    />
+    <>
+      <ChatSeenTracker {...seenWatch} />
+      {mode !== undefined && (
+        <ChatOptionMenu
+          option={mode}
+          hidden={hidden}
+          pending={pending}
+          onPick={(value) => {
+            pick(mode, value);
+          }}
+          onFocusLost={onFocusLost}
+        />
+      )}
+    </>
   );
 }
 
@@ -138,7 +161,7 @@ export function ChatPanel(props: ChatPanelProps): ReactNode {
   return <ChatPanelBody key={JSON.stringify([props.tag, props.task, props.chat])} {...props} />;
 }
 
-function ChatPanelBody({ tag, task, chat, onClose, focusOnMount = false }: ChatPanelProps): ReactNode {
+function ChatPanelBody({ tag, task, chat, marked, onClose, focusOnMount = false }: ChatPanelProps): ReactNode {
   // Any host can place the panel, so it takes the clients from the router.
   const { client, queryClient } = useRouter().options.context;
   const read = useQuery(chatQuery(client, tag, task, chat), queryClient);
@@ -171,7 +194,7 @@ function ChatPanelBody({ tag, task, chat, onClose, focusOnMount = false }: ChatP
           </h2>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
             {record !== undefined && <span className="text-subtle">{`Chat ${String(chat)}`}</span>}
-            {log?.ready === true && <StateMark status={log.status} />}
+            {log?.ready === true && (marked || log.busy) && <StateMark status={log.status} />}
           </p>
         </div>
         <Tooltip content="Close the chat">
@@ -300,11 +323,13 @@ function ChatTranscript(
   const ready = caughtUp && resets === 0;
   const { status, turn } = view.fold;
   const statusKey = JSON.stringify(status);
+  const busy = chatBusy(view.fold);
   const { agent, folder } = record;
   const writes = useChatWrites({ tag, task, chat });
   const modePick = useChatModePick({ tag, task, chat, view, agent, ready, write: writes.pick });
   const extras: ComposerExtras = {
     ...modePick,
+    seenWatch: { tag, task, chat, seq: view.seq, seen: record.seen, busy },
     onFocusLost: () => {
       focusInView(headingRef.current);
     },
@@ -322,13 +347,13 @@ function ChatTranscript(
     extras,
   });
   const report = useEffectEvent(() => {
-    onLog({ status, ready, failures });
+    onLog({ status, busy, ready, failures });
   });
   const endRound = useEffectEvent(onReset);
 
   useEffect(() => {
     report();
-  }, [statusKey, ready, failures]);
+  }, [statusKey, busy, ready, failures]);
 
   useEffect(() => {
     if (resets > 0) {

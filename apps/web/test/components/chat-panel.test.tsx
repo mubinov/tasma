@@ -65,6 +65,8 @@ afterEach(() => {
 
 type PanelOptions = {
   focusOnMount?: boolean;
+  /** True by default. */
+  marked?: boolean;
   onClose?: () => void;
   /** The record of chat 2 in the cache before the panel mounts. */
   cached?: Chat;
@@ -72,7 +74,10 @@ type PanelOptions = {
   host?: ReactNode;
 };
 
-async function renderPanel(log: ChatLogStub, { focusOnMount, onClose = () => {}, cached, host }: PanelOptions = {}) {
+async function renderPanel(
+  log: ChatLogStub,
+  { focusOnMount, marked = true, onClose = () => {}, cached, host }: PanelOptions = {},
+) {
   const context: RouterContext = { ...testContext(log.transport), client: log.client };
   if (cached !== undefined) {
     cacheRecord(context, cached);
@@ -83,6 +88,7 @@ async function renderPanel(log: ChatLogStub, { focusOnMount, onClose = () => {},
       tag="SAGA"
       task="SAGA-3"
       chat={2}
+      marked={marked}
       onClose={onClose}
       {...(focusOnMount === undefined ? {} : { focusOnMount })}
     />
@@ -214,6 +220,71 @@ it.each<[string, readonly ChatEvent[], string]>([
   await renderPanel(logOf(chatEntries(events)));
 
   expect(await screen.findByText(text)).toBeTruthy();
+});
+
+/** The heading of the panel and the line under it, which holds the state. */
+function header(): HTMLElement {
+  return heading().parentElement!;
+}
+
+const QUESTION = questionRequest("r1", { message: "Which one?" });
+
+it("shows no state in the header of a chat that is not marked and not busy", async () => {
+  await renderPanel(logOf(chatEntries([userMessage("Build."), turnEnd()])), { marked: false });
+  await waitFor(() => {
+    expect(screen.getByRole("log")).toBeTruthy();
+    expect(statusLine().textContent).toBe("");
+  });
+
+  expect(within(header()).queryByText("Needs you")).toBeNull();
+});
+
+it.each<[string, readonly ChatEvent[], string]>([
+  ["Agent works while a turn runs", [userMessage("Build.")], "Agent works"],
+  ["Needs you while the turn waits at a request", [userMessage("Build."), QUESTION], "Needs you"],
+])("shows %s in the header of a chat that is not marked", async (_case, events, text) => {
+  await renderPanel(logOf(chatEntries(events)), { marked: false });
+
+  expect(await within(header()).findByText(text)).toBeTruthy();
+});
+
+it("shows the state of a chat that is not marked when only its busy time changes", async () => {
+  const log = stubChatLog({ [chatPath()]: successReply(chatRecord({ seq: 2 })) });
+  await renderPanel(log, { marked: false });
+  await readStarted(log, eventsPath(0));
+  log.answer(0, { cursor: 2, entries: chatEntries([userMessage("Build."), turnEnd()]) });
+  await waitFor(() => {
+    expect(statusLine().textContent).toBe("");
+  });
+  expect(within(header()).queryByText("Needs you")).toBeNull();
+
+  log.answer(2, { cursor: 3, entries: chatEntries([QUESTION], 3) });
+  expect(await within(header()).findByText("Needs you")).toBeTruthy();
+
+  log.answer(3, { cursor: 4, entries: chatEntries([turnEnd()], 4) });
+  await waitFor(() => {
+    expect(within(header()).queryByText("Needs you")).toBeNull();
+  });
+});
+
+it("writes seen from the composer of a chat with no mode picker when its end stays in view", async () => {
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ bottom: 700 } as DOMRect);
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 600 });
+  onTestFinished(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+  });
+  const log = logOf(TEXT_LOG);
+  const seenPath = `${chatPath()}/seen`;
+  log.replies[`POST ${seenPath}`] = successReply(chatRecord({ seq: TEXT_LOG.length, seen: TEXT_LOG.length }));
+  await renderPanel(log);
+  expect(await screen.findByText("Rename the parser module.")).toBeTruthy();
+  expect(screen.queryByRole("button", MODE_TRIGGER)).toBeNull();
+
+  await waitFor(() => {
+    const sent = log.requests.filter(({ path }) => path === seenPath).map(({ body }) => body);
+    expect(sent).toEqual([{ seq: TEXT_LOG.length, client: CHAT_CLIENT }]);
+  }, { timeout: 3_000 });
 });
 
 it("shows Loading the chat until the log reaches the seq of the record, and the transcript only then", async () => {
@@ -808,7 +879,7 @@ it("shows another chat when its host changes the chat with no remount, and reads
     return (
       <>
         <button type="button" onClick={() => { setChat(3); }}>Next chat</button>
-        <ChatPanel tag="SAGA" task="SAGA-3" chat={chat} onClose={() => {}} />
+        <ChatPanel tag="SAGA" task="SAGA-3" chat={chat} marked onClose={() => {}} />
       </>
     );
   }
@@ -1258,7 +1329,7 @@ function TwoChats(): ReactNode {
   return (
     <>
       <button type="button" onClick={() => { setChat(chat === 2 ? 3 : 2); }}>Other chat</button>
-      <ChatPanel tag="SAGA" task="SAGA-3" chat={chat} onClose={() => {}} />
+      <ChatPanel tag="SAGA" task="SAGA-3" chat={chat} marked onClose={() => {}} />
     </>
   );
 }

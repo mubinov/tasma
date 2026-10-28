@@ -38,6 +38,14 @@ describe("chatListAnnouncements", () => {
     expect(chatListAnnouncements(before, after, undefined)).toEqual([]);
   });
 
+  it("announces nothing for an item whose mark goes away, and announces the mark when it comes back", () => {
+    const marked = [item("SAGA-3", 1, 5, NEEDS_YOU)];
+    const seen = [item("SAGA-3", 1, 5)];
+
+    expect(chatListAnnouncements(marked, seen, undefined)).toEqual([]);
+    expect(chatListAnnouncements(seen, marked, undefined)).toEqual(["SAGA-3 needs you"]);
+  });
+
   it("announces a new item at the top, and not a new item below the newest item of the last result", () => {
     const before = [item("SAGA-2", 1, 4), item("SAGA-1", 1, 2)];
     const after = [item("SAGA-4", 1, 6, FAILED), item("SAGA-2", 1, 4), item("SAGA-9", 1, 3, NEEDS_YOU), item("SAGA-1", 1, 2)];

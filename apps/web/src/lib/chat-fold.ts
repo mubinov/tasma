@@ -136,6 +136,11 @@ export type ChatNotice
 
 export const CHAT_VIEW_START: ChatView = { seq: 0, fold: CHAT_START, messages: [], options: [] };
 
+/** A turn runs or a request is open. The runner can open a request outside a turn. */
+export function chatBusy({ turn, open }: ChatFold): boolean {
+  return turn || open.length > 0;
+}
+
 /** One entry as the fold applies it: the list it changes, and whether a turn ran before it. */
 type Step = { messages: ChatMessage[]; entry: ChatEntry; turn: boolean };
 

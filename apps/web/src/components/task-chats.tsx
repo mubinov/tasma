@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
-import type { Chat } from "@tasma/protocol";
+import { chatMark } from "@tasma/protocol";
+import type { Chat, ChatStatus } from "@tasma/protocol";
 import { useId, type ReactNode } from "react";
 import { chatStateText } from "../lib/chat-messages";
 import { fullChatTime, shortChatTime } from "../lib/chat-time";
@@ -13,8 +14,10 @@ type TaskChatsProps = {
   task: string;
   /** As read, oldest first. */
   chats: readonly Chat[];
-  /** The status of the task is not final, so the newest chat shows its state. */
+  /** The status of the task is not final, so the newest chat can show a mark. */
   stateful: boolean;
+  /** From `currentStep`. */
+  currentStep: string | undefined;
   openChat: number | undefined;
 };
 
@@ -22,14 +25,14 @@ type ChatRowProps = {
   tag: string;
   task: string;
   chat: Chat;
-  showState: boolean;
+  mark: ChatStatus | undefined;
   open: boolean;
   now: number;
 };
 
-function ChatRow({ tag, task, chat, showState, open, now }: ChatRowProps): ReactNode {
+function ChatRow({ tag, task, chat, mark, open, now }: ChatRowProps): ReactNode {
   const { step, created } = chat;
-  const label = [step, ...(showState ? [chatStateText(chat)] : []), fullChatTime(created)];
+  const label = [step, ...(mark === undefined ? [] : [chatStateText(mark)]), fullChatTime(created)];
 
   return (
     <Link
@@ -50,15 +53,15 @@ function ChatRow({ tag, task, chat, showState, open, now }: ChatRowProps): React
     >
       <span className="min-w-0 truncate font-mono text-sm">{step}</span>
       <span className="ml-auto flex shrink-0 items-center gap-3 text-xs">
-        {showState && <StateMark status={chat} />}
+        {mark !== undefined && <StateMark status={mark} />}
         <time dateTime={created} className="text-dim">{shortChatTime(created, now)}</time>
       </span>
     </Link>
   );
 }
 
-/** The chats of a task, newest first. Only the newest chat shows a state. */
-export function TaskChats({ tag, task, chats, stateful, openChat }: TaskChatsProps): ReactNode {
+/** The chats of a task, newest first. Only the newest chat can show a mark. */
+export function TaskChats({ tag, task, chats, stateful, currentStep, openChat }: TaskChatsProps): ReactNode {
   const headingId = useId();
   const now = useMinute();
 
@@ -82,7 +85,7 @@ export function TaskChats({ tag, task, chats, stateful, openChat }: TaskChatsPro
               tag={tag}
               task={task}
               chat={chat}
-              showState={stateful && index === 0}
+              mark={stateful && index === 0 ? chatMark(chat, currentStep) : undefined}
               open={chat.chat === openChat}
               now={now}
             />

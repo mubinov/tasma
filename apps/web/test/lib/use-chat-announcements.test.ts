@@ -11,7 +11,14 @@ import { useNoticeStore } from "../../src/store/notices";
 import { chatRecord } from "../chat-daemon";
 import { frame } from "../setup/notice-store";
 
-const BASE: ChatAnnouncementsInput = { chats: [], fetching: false, stateful: true, openChat: undefined, quiet: false };
+const BASE: ChatAnnouncementsInput = {
+  chats: [],
+  fetching: false,
+  stateful: true,
+  currentStep: undefined,
+  openChat: undefined,
+  quiet: false,
+};
 
 afterEach(() => {
   cleanup();
@@ -111,6 +118,35 @@ describe("nextChatAnnouncement", () => {
     expect(spoken(
       { chats: [chat(1)] },
       { chats: [chat(1, "needs-you")], fetching: true },
+    )).toEqual([null, "The build chat needs you."]);
+  });
+});
+
+describe("the mark", () => {
+  /** Chat 1 on the build step, needing you since `stateSeq`, seen up to `seen`. */
+  function ended(seen: number, stateSeq = 4): Chat {
+    return { ...chat(1, "needs-you"), stateSeq, seen };
+  }
+
+  it("announces nothing for a chat on a past step that the user saw in its state", () => {
+    expect(spoken(
+      { chats: [chat(1)], currentStep: "review" },
+      { chats: [ended(4)], currentStep: "review" },
+    )).toEqual([null, null]);
+  });
+
+  it("announces nothing when the mark goes away, and announces it when it comes back in the same state", () => {
+    expect(spoken(
+      { chats: [ended(3)], currentStep: "review" },
+      { chats: [ended(4)], currentStep: "review" },
+      { chats: [ended(4, 5)], currentStep: "review" },
+    )).toEqual([null, null, "The build chat needs you."]);
+  });
+
+  it("announces a chat on the current step that changes to needs you, also when the user saw it", () => {
+    expect(spoken(
+      { chats: [chat(1)], currentStep: "build" },
+      { chats: [ended(4)], currentStep: "build" },
     )).toEqual([null, "The build chat needs you."]);
   });
 });
@@ -291,6 +327,15 @@ describe("useChatAnnouncements", () => {
 
     render({ chats });
     render({ chats: [chat(1, "needs-you")] });
+
+    expect(await announced()).toEqual(["The build chat needs you."]);
+  });
+
+  it("announces a mark that comes back when only the step of the task changes", async () => {
+    const chats = [{ ...chat(1, "needs-you"), seen: 1 }];
+    const render = mount({ chats, currentStep: "review" });
+
+    render({ chats, currentStep: "build" });
 
     expect(await announced()).toEqual(["The build chat needs you."]);
   });

@@ -2,6 +2,9 @@
 // that derives the state from the events. No file stores the state: the daemon
 // and every client derive it from the log with `foldChat`.
 
+import type { Frontmatter } from "./task.js";
+import type { Workflow } from "./workflow.js";
+
 /** As the engine declares it; `test/protocol-contract.test.ts` keeps the two equal. */
 export type ChatAgent = "claude" | "codex";
 
@@ -75,7 +78,7 @@ export type ChatListItem = {
   step: string;
   agent: ChatAgent;
   created: string;
-  /** Only on the latest chat of a task whose status is not final. */
+  /** Only on the latest chat of a task whose status is not final, and only when `chatMark` gives a mark. */
   status?: ChatStatus;
 };
 
@@ -192,4 +195,30 @@ export function foldChat(fold: ChatFold, event: ChatEvent): ChatFold {
     default:
       return fold;
   }
+}
+
+/**
+ * The current step of a task, which `chatMark` compares with the step of a
+ * chat: the step of the task, or else the first step of its workflow.
+ * Undefined for a task with no step whose workflow is absent or not read.
+ */
+export function currentStep(
+  task: Pick<Frontmatter, "workflow" | "step">,
+  workflow: Pick<Workflow, "steps"> | null | undefined,
+): string | undefined {
+  if (task.step !== undefined || task.workflow === undefined) return task.step;
+  return workflow?.steps[0]?.name;
+}
+
+/**
+ * The state that a list shows for the latest chat of a task that is not
+ * final, or undefined for no mark. `step` is from `currentStep`. A chat on a
+ * past step loses its mark once the user saw the entry that set its state.
+ */
+export function chatMark(
+  chat: Pick<Chat, "step" | "stateSeq" | "seen"> & ChatStatus,
+  step: string | undefined,
+): ChatStatus | undefined {
+  if (chat.state !== "working" && chat.step !== step && (chat.seen ?? 0) >= chat.stateSeq) return undefined;
+  return chat.state === "continued-outside" ? { state: chat.state, where: chat.where } : { state: chat.state };
 }

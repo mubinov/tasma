@@ -15,8 +15,10 @@ import {
   failure,
   get,
   logFile,
+  onWorkflow,
   plant,
   plantChat,
+  plantSteps,
   projectConfig,
   projectDir,
   projectsRoot,
@@ -89,10 +91,31 @@ async function threeTasks(): Promise<string> {
   await plantTask(root, "ALPHA-1", "Parse the tree");
   await plantTask(root, "ALPHA-2", "Draw the board");
   await plantTask(root, "BETA-1", "Parse the board");
-  await plantChat(root, at("ALPHA-1", 1), { created: "2026-01-01T10:00:00+03:00" });
-  await plantChat(root, at("ALPHA-2", 1), { step: "dev:review", created: "2026-01-01T09:00:00+00:00" });
-  await plantChat(root, at("BETA-1", 1), { created: "2026-01-01T08:00:00+00:00" });
+  await plantChat(root, at("ALPHA-1", 1), { created: "2026-01-01T10:00:00+03:00" }, [USER, TURN_END]);
+  await plantChat(root, at("ALPHA-2", 1), { step: "dev:review", created: "2026-01-01T09:00:00+00:00" }, [USER, TURN_END]);
+  await plantChat(root, at("BETA-1", 1), { created: "2026-01-01T08:00:00+00:00" }, [USER, TURN_END]);
   return root;
+}
+
+/**
+ * ALPHA-1 on `workflow` at `taskStep`, with one chat on `dev:build` whose turn
+ * ended at seq 2, followed by an update at seq 3. The workflow "flow" has the
+ * steps `dev:build` and `dev:review`.
+ */
+async function endedChat(taskStep: string | undefined, workflow = "flow"): Promise<World> {
+  const root = await projectsRoot("ALPHA");
+  await plantSteps(root, "flow", "dev:build", "dev:review");
+  await plant(taskFile(root, "ALPHA", "ALPHA-1"), onWorkflow("ALPHA-1", workflow, taskStep));
+  const update: ChatEvent = { kind: "update", update: { sessionUpdate: "usage_update" } };
+  await plantChat(root, at("ALPHA-1", 1), { step: "dev:build" }, [USER, TURN_END, update]);
+  return world(root);
+}
+
+/** The status of chat 1 of ALPHA-1 in the list and in the item, which agree. */
+async function statusOf(server: TestServer): Promise<ChatListItem["status"]> {
+  const listed = (await page(server)).data.items[0]!.status;
+  expect((await item(server, "/chats/ALPHA-1/1")).data.status).toEqual(listed);
+  return listed;
 }
 
 /** ALPHA-1 with 60 chats, one minute apart. */
@@ -269,6 +292,36 @@ describe("GET /chats", () => {
       ["ALPHA-1", 1, undefined],
     ]);
     expect(data.items[1]!.status).toEqual((await chats.get("ALPHA", "ALPHA-1", 2)).fold.status);
+  });
+
+  it("gives a state to the latest chat on a past step until seen reaches the entry that set the state", async () => {
+    const { server, chats } = await endedChat("dev:review");
+    const live = await chats.get("ALPHA", "ALPHA-1", 1);
+
+    expect(await statusOf(server)).toEqual({ state: "needs-you" });
+    await live.setSeen(1);
+    expect(await statusOf(server)).toEqual({ state: "needs-you" });
+    await live.setSeen(2);
+    expect(await statusOf(server)).toBeUndefined();
+  });
+
+  it.each<[string, string | undefined]>([
+    ["on the step of the task", "dev:build"],
+    ["on the first step of the workflow of a task with no step", undefined],
+  ])("keeps the state of the latest chat %s after seen reaches the entry that set it", async (_case, taskStep) => {
+    const { server, chats } = await endedChat(taskStep);
+
+    await (await chats.get("ALPHA", "ALPHA-1", 1)).setSeen(2);
+
+    expect(await statusOf(server)).toEqual({ state: "needs-you" });
+  });
+
+  it("counts no current step for a task with no step whose workflow is not read", async () => {
+    const { server, chats } = await endedChat(undefined, "gone");
+
+    await (await chats.get("ALPHA", "ALPHA-1", 1)).setSeen(2);
+
+    expect(await statusOf(server)).toBeUndefined();
   });
 
   it.each(["Done", "dOnE"])("gives no state to the chats of a task whose status is %s", async (status) => {

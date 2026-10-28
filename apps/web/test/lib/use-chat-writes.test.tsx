@@ -1,20 +1,12 @@
 import { isMessageNotSentError } from "@assistant-ui/react";
-import {
-  createMemoryHistory,
-  createRootRouteWithContext,
-  createRouter,
-  RouterContextProvider,
-} from "@tanstack/react-router";
 import type { TransportReply } from "@tasma/protocol";
 import { cleanup, renderHook } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { CHAT_CLIENT } from "../../src/api/mutations";
-import type { RouterContext } from "../../src/routes";
 import { useChatWrites } from "../../src/lib/use-chat-writes";
 import { chatDraft, useChatDraftStore } from "../../src/store/chat-drafts";
 import { useNoticeStore } from "../../src/store/notices";
-import { refusalReply, stubTransport, successReply, testContext } from "../helpers";
+import { refusalReply, routerWrapper, stubTransport, successReply } from "../helpers";
 
 const PLACE = { tag: "SAGA", task: "SAGA-3", chat: 2 };
 
@@ -33,16 +25,7 @@ afterEach(() => {
 /** The writes of chat 2 of SAGA-3, under a router over the stub daemon. */
 function renderWrites(replies: Record<string, TransportReply> = {}) {
   const stub = stubTransport(replies);
-  const router = createRouter({
-    routeTree: createRootRouteWithContext<RouterContext>()(),
-    history: createMemoryHistory({ initialEntries: ["/"] }),
-    context: testContext(stub.transport),
-  });
-  const { result } = renderHook(() => useChatWrites(PLACE), {
-    wrapper: ({ children }: { children: ReactNode }) => (
-      <RouterContextProvider router={router}>{children}</RouterContextProvider>
-    ),
-  });
+  const { result } = renderHook(() => useChatWrites(PLACE), { wrapper: routerWrapper(stub.transport) });
 
   return { ...stub, writes: result.current };
 }

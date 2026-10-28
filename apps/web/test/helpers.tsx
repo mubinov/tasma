@@ -2,9 +2,11 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
   createRootRoute,
+  createRootRouteWithContext,
   createRoute,
   createRouter,
   Outlet,
+  RouterContextProvider,
   RouterProvider,
 } from "@tanstack/react-router";
 import {
@@ -206,6 +208,19 @@ export function testContext(transport?: Transport): RouterContext {
   return {
     queryClient: createAppQueryClient(),
     client: createClient(transport ?? stubTransport().transport),
+  };
+}
+
+/** The `wrapper` of `renderHook` for a hook that takes the clients from the router, over a stub daemon. */
+export function routerWrapper(transport: Transport) {
+  const router = createRouter({
+    routeTree: createRootRouteWithContext<RouterContext>()(),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+    context: testContext(transport),
+  });
+
+  return function RouterWrapper({ children }: { children: ReactNode }): ReactNode {
+    return <RouterContextProvider router={router}>{children}</RouterContextProvider>;
   };
 }
 

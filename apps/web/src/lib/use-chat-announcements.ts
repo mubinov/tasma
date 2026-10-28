@@ -1,4 +1,5 @@
-import type { Chat, ChatState } from "@tasma/protocol";
+import { chatMark } from "@tasma/protocol";
+import type { Chat, ChatState, ChatStatus } from "@tasma/protocol";
 import { useEffect, useEffectEvent, useRef } from "react";
 import { useNoticeStore } from "../store/notices";
 
@@ -15,6 +16,8 @@ export type ChatAnnouncementsInput = {
   fetching: boolean;
   /** The status of the task is not final. */
   stateful: boolean;
+  /** From `currentStep`. */
+  currentStep: string | undefined;
   /** The chat that the panel shows. The panel announces it. */
   openChat: number | undefined;
   /**
@@ -32,7 +35,8 @@ export type ChatAnnouncementsInput = {
 };
 
 export type KeptChats = {
-  newest: ChatInState | null;
+  /** The newest chat and the state of its mark, undefined for no mark. */
+  newest: { chat: number; markState: ChatState | undefined } | null;
   /** While quiet, the number of the newest chat when quiet began, or 0 for none. */
   quietAfter: number | null;
   seen: ChatInState | undefined;
@@ -44,11 +48,11 @@ function sameChatState(one: ChatInState | undefined, other: ChatInState | undefi
   return one?.chat === other?.chat && one?.state === other?.state;
 }
 
-function announcement({ step, state }: Chat): string | null {
-  if (state === "needs-you") {
+function announcement(step: string, mark: ChatStatus | undefined): string | null {
+  if (mark?.state === "needs-you") {
     return `The ${step} chat needs you.`;
   }
-  return state === "failed" ? `The ${step} chat failed.` : null;
+  return mark?.state === "failed" ? `The ${step} chat failed.` : null;
 }
 
 function nextSeenPhase(kept: KeptChats | null, seen: ChatInState | undefined, chats: readonly Chat[]): KeptChats["seenPhase"] {
@@ -72,14 +76,15 @@ function nextSeenPhase(kept: KeptChats | null, seen: ChatInState | undefined, ch
  */
 export function nextChatAnnouncement(
   kept: KeptChats | null,
-  { chats, fetching, stateful, openChat, quiet, seen }: ChatAnnouncementsInput,
+  { chats, fetching, stateful, currentStep, openChat, quiet, seen }: ChatAnnouncementsInput,
 ): { kept: KeptChats | null; words: string | null } {
   if (kept === null && fetching) {
     return { kept: null, words: null };
   }
 
   const newest = chats.at(-1);
-  const current = newest === undefined ? null : { chat: newest.chat, state: newest.state };
+  const mark = newest === undefined ? undefined : chatMark(newest, currentStep);
+  const current = newest === undefined ? null : { chat: newest.chat, markState: mark?.state };
   const floor = kept === null ? current : kept.newest;
   const quietAfter = quiet ? kept?.quietAfter ?? floor?.chat ?? 0 : null;
   const seenPhase = nextSeenPhase(kept, seen, chats);
@@ -92,18 +97,18 @@ export function nextChatAnnouncement(
   const before = kept.newest;
   const changed = before === null
     || newest.chat > before.chat
-    || (newest.chat === before.chat && newest.state !== before.state);
+    || (newest.chat === before.chat && mark?.state !== before.markState);
   const held = quietAfter !== null && newest.chat > quietAfter;
   const released = quietAfter === null && kept.quietAfter !== null && newest.chat > kept.quietAfter;
   const known = seenPhase !== "spent" && sameChatState(seen, newest);
   const announced = (changed || released) && stateful && newest.chat !== openChat && !held && !known;
 
-  return { kept: next, words: announced ? announcement(newest) : null };
+  return { kept: next, words: announced ? announcement(newest.step, mark) : null };
 }
 
 /**
- * Announces the newest chat of a task when it changes to a state that needs a
- * human, or comes in with one.
+ * Announces the newest chat of a task when its mark changes to a state that
+ * needs a human, or comes in with one.
  */
 export function useChatAnnouncements(input: ChatAnnouncementsInput): void {
   const keptRef = useRef<KeptChats | null>(null);
@@ -116,8 +121,8 @@ export function useChatAnnouncements(input: ChatAnnouncementsInput): void {
     }
   });
 
-  const { chats, fetching, stateful, openChat, quiet, seen } = input;
+  const { chats, fetching, stateful, currentStep, openChat, quiet, seen } = input;
   useEffect(() => {
     announceChange();
-  }, [chats, fetching, stateful, openChat, quiet, seen?.chat, seen?.state]);
+  }, [chats, fetching, stateful, currentStep, openChat, quiet, seen?.chat, seen?.state]);
 }

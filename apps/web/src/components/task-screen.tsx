@@ -2,7 +2,7 @@ import { Button } from "@base-ui/react/button";
 import { Menu } from "@base-ui/react/menu";
 import { useMutation, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
-import type { Task } from "@tasma/protocol";
+import { chatMark, currentStep, type Task } from "@tasma/protocol";
 import {
   Fragment,
   useId,
@@ -542,10 +542,12 @@ export function TaskScreen(): ReactNode {
   // The start write speaks for its own start, so the list holds back the chat it starts.
   const pendingStart = usePendingChatStart(id);
   const failedStart = useFailedChatStart(id);
+  const stepNow = currentStep(live, workflow);
   useChatAnnouncements({
     chats,
     fetching: chatsFetching,
     stateful: !final,
+    currentStep: stepNow,
     openChat: chat,
     quiet: pendingStart !== undefined,
     seen: failedStart,
@@ -558,6 +560,11 @@ export function TaskScreen(): ReactNode {
   const actionShows = action !== null && draft === null && !find.open && !(action.kind === "open" && action.chat === chat);
   const actionFocusLost = useStepActionFocus(action, actionShows, chat, headingRef);
   const column: PageColumn = chat === undefined ? "sidebar" : "chat";
+  const newestChat = chats.at(-1);
+  const chatMarked = !final
+    && newestChat !== undefined
+    && newestChat.chat === chat
+    && chatMark(newestChat, stepNow) !== undefined;
   const layout = COLUMN_LAYOUT[column];
   const { mutate: sendDelete, isIdle: deleteUnsent } = useMutation(taskDeleteOptions(queryClient, client));
   const [deleteAsked, setDeleteAsked] = useState(false);
@@ -688,7 +695,14 @@ export function TaskScreen(): ReactNode {
                     {idLine}
                   </div>
                   {metaLine}
-                  <TaskChats tag={tag} task={taskId} chats={chats} stateful={!final} openChat={chat} />
+                  <TaskChats
+                    tag={tag}
+                    task={taskId}
+                    chats={chats}
+                    stateful={!final}
+                    currentStep={stepNow}
+                    openChat={chat}
+                  />
                   {body.trim() !== "" && (
                     <div ref={bodyRef} data-find-scope="body" className={`${chats.length > 0 ? "mt-10" : "mt-8"} max-w-2xl`}>
                       <Markdown text={body} base={2} title={title} />
@@ -799,7 +813,14 @@ export function TaskScreen(): ReactNode {
         : (
             // Under xl the top bar sticks over the panel too, so the panel is shorter than the window by the bar.
             <div className="h-[calc(100vh-var(--spacing-top-bar))] w-full border-t border-line bg-bg pb-(--notice-stack-height) xl:sticky xl:top-0 xl:h-screen xl:w-chat-panel xl:shrink-0 xl:self-start xl:border-t-0 xl:border-l">
-              <ChatPanel tag={tag} task={taskId} chat={chat} onClose={closeChat} focusOnMount={chatOpened} />
+              <ChatPanel
+                tag={tag}
+                task={taskId}
+                chat={chat}
+                marked={chatMarked}
+                onClose={closeChat}
+                focusOnMount={chatOpened}
+              />
             </div>
           )}
       {/* Cancel asks about one editor, so it keeps the editor's own dialog. */}

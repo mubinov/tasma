@@ -10,11 +10,12 @@ import {
   listChats,
   listProjectChats,
   openProject,
+  openTreeWorkflows,
   readListedChat,
   TaskStoreError,
 } from "@tasma/engine";
 import type { ChatRecord, IndexEntry, TaskStoreErrorCode } from "@tasma/engine";
-import { routes } from "@tasma/protocol";
+import { chatMark, currentStep, routes } from "@tasma/protocol";
 import type { ChatListItem, ChatListPage, Diagnostic, Success } from "@tasma/protocol";
 import { causeOf, DaemonError } from "../http/failure.js";
 import type { RouteEntry } from "../http/router.js";
@@ -35,7 +36,9 @@ const GONE: ReadonlySet<TaskStoreErrorCode> = new Set(["project-not-found", "ind
 
 type SortKey = [time: number, tag: string, number: number, task: string, chat: number];
 
-type Candidate = { item: ChatListItem; key: SortKey; text: string; stateful: boolean };
+type Frontmatter = IndexEntry["frontmatter"];
+
+type Candidate = { item: ChatListItem; key: SortKey; text: string; stateful: boolean; frontmatter: Frontmatter };
 
 type Found<T> = { found: T; diagnostics: Diagnostic[] };
 
@@ -103,7 +106,8 @@ function candidateOf(tag: string, record: ChatRecord, entry: IndexEntry, statefu
   const { chat, step, agent, created } = record;
   const item = { tag, task: entry.id, title: entry.frontmatter.title, chat, step, agent, created };
   const key: SortKey = [Date.parse(created), tag, Number(entry.id.slice(tag.length + 1)), entry.id, chat];
-  return { item, key, text: `${item.task}\n${item.title}\n${item.step}`.toLowerCase(), stateful };
+  const { frontmatter } = entry;
+  return { item, key, text: `${item.task}\n${item.title}\n${item.step}`.toLowerCase(), stateful, frontmatter };
 }
 
 function isOpen(entry: IndexEntry, finalStatuses: readonly string[]): boolean {
@@ -153,12 +157,23 @@ export function chatListRoutes(options: { root?: string; host: ProjectHost; chat
     return { found, diagnostics };
   }
 
+  /** `currentStep` of the task. The workflow is read only for a task with no step, and a failed read gives no step. */
+  async function stepOf(frontmatter: Frontmatter): Promise<string | undefined> {
+    const { workflow: name, step } = frontmatter;
+    if (step !== undefined || name === undefined) return step;
+    const workflow = await openTreeWorkflows(root)
+      .then(({ workflows }) => workflows.read(name))
+      .then((read) => read.workflow, () => null);
+    return currentStep(frontmatter, workflow);
+  }
+
   async function withState(candidate: Candidate): Promise<Found<ChatListItem>> {
     const { item } = candidate;
     if (!candidate.stateful) return { found: item, diagnostics: [] };
     try {
       const live = await chats.get(item.tag, item.task, item.chat);
-      return { found: { ...item, status: live.fold.status }, diagnostics: live.diagnostics };
+      const status = chatMark(live.chat, await stepOf(candidate.frontmatter));
+      return { found: status === undefined ? item : { ...item, status }, diagnostics: live.diagnostics };
     } catch (error) {
       const finding = chatFinding(error, chatPath({ project: item.tag, root }, item.task, item.chat));
       return { found: item, diagnostics: [finding] };

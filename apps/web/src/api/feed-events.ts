@@ -26,9 +26,10 @@ export const FEED_MAPPINGS: FeedMappings = {
     ...(event.change === "renamed" ? [{ queryKey: daemonKeys.project(event.to) }] : []),
     { queryKey: daemonKeys.chats() },
   ],
-  // The list of all chats and the chats of the task read again, and the record
-  // reads do not. The chat panel reads the state from the log, and the `seq` of
-  // the record when it opens and after each reset of the log.
+  // A change of state, a new request and a move of `seen` send it. The list of
+  // all chats and the chats of the task read again, and the record reads do
+  // not. The chat panel reads the state from the log, and the `seq` of the
+  // record when it opens and after each reset of the log.
   chat: ({ tag, task }) => [
     { queryKey: daemonKeys.chats() },
     { queryKey: daemonKeys.taskChats(tag, task), exact: true },
