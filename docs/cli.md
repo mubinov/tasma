@@ -192,11 +192,13 @@ Remove a comment. Prints the comment id.
 
 A chat runs a coding agent on one step of a task. The Tasma app shows it.
 
-### `tasma chat start <task-id>`
+### `tasma chat start <task-id> [--restart]`
 
 Start the chat of the task's current step. For a task with no step, the chat is for the first step of its workflow. If the latest chat of the task is for the same step and has not failed, the command gives back that chat and starts no new one. The agent is Claude. Its first message asks it to run the current step of the task.
 
-Prints the chat number. A note on stderr says whether the chat is new or was already open. Exits 1 when the task has no workflow, when its step is not in its workflow, when the project has no folder, or when the chat fails at its start.
+`--restart` starts a new chat for the step, also when the step already has a chat. If the latest chat of the task is for the same step, its agent stops first. The old chat stays in the chats of the task, and a message in it starts its agent again.
+
+Prints the chat number. A note on stderr says whether the chat is new or was already open. Exits 1 when the task has no workflow, when its step is not in its workflow, when the project has no folder, when the chat fails at its start, or, with `--restart`, when the task moves to another step while the old agent stops.
 
 ## workflow
 

@@ -75,6 +75,32 @@ describe("chat start", () => {
     expect(bodies[1]).toEqual({ client: "cli" });
   });
 
+  it("sends a restart once with --restart, and prints the chat it started", async () => {
+    const { code, out, err, seen, bodies } = await runChat([...START_ARGS, "--restart"], {
+      [START]: startAnswer("working", true),
+    });
+
+    expect(code).toBe(0);
+    expect(out).toBe("3\n");
+    expect(err).toBe("tasma: started chat 3 of SAGA-1 for step plan:review\n");
+    expect(seen).toEqual([HEALTH, START]);
+    expect(bodies[1]).toEqual({ client: "cli", restart: true });
+  });
+
+  it("reports a refusal of a restart at exit 1, and reads no log", async () => {
+    const { code, out, err, seen } = await runChat([...START_ARGS, "--restart"], {
+      [START]: {
+        ok: false,
+        error: { kind: "daemon", code: "chat-not-current", message: "SAGA-1 moved to the step \"plan:draft\"" },
+      },
+    });
+
+    expect(code).toBe(1);
+    expect(out).toBe("");
+    expect(err).toBe("tasma: daemon/chat-not-current: SAGA-1 moved to the step \"plan:draft\"\n");
+    expect(seen).toEqual([HEALTH, START]);
+  });
+
   it("gives its requests a budget of 30 seconds", async () => {
     vi.mocked(createDaemonClient).mockClear();
 
@@ -200,6 +226,7 @@ describe("chat start", () => {
     await refuses(["start"], "chat start needs a task id");
     await refuses(["start", "a/b"], "not a task id: a/b");
     await refuses(["start", "SAGA-1", "SAGA-2"], "chat start takes one argument: SAGA-2");
+    await refuses(["start", "SAGA-1", "--restart=yes"], "Option '--restart' does not take an argument");
   });
 });
 
@@ -216,7 +243,11 @@ describe("the chat noun", () => {
       const { code, out, err, seen } = await runChat(["start", flag]);
 
       expect(code, flag).toBe(0);
-      expect(out).toBe("Usage: tasma chat start <task-id>\n\n  -h, --help  Print this help\n");
+      expect(out).toBe(
+        "Usage: tasma chat start <task-id> [options]\n\n"
+        + "      --restart  Stop the chat of the current step and start a new chat\n"
+        + "  -h, --help     Print this help\n",
+      );
       expect(err).toBe("");
       expect(seen).toEqual([]);
     }

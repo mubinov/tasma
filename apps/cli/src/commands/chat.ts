@@ -2,20 +2,28 @@
 // Tasma app shows.
 
 import { parseArgs } from "node:util";
-import type { Client, Success } from "@tasma/protocol";
+import type { ChatStartInput, Client, Success } from "@tasma/protocol";
 import { attempt, readOrNothing, refuseAnswer, REFUSED } from "../failure.js";
 import { fieldsOf } from "../output.js";
 import { noun, wireText } from "../shell.js";
 import type { Io, Options, Target } from "../types.js";
 import { readTaskId } from "./task-id.js";
 import type { TaskId } from "./task-id.js";
-import { HELP_OPTION, readVerb, usageBlock } from "./verb.js";
+import { HELP_OPTION, readVerb } from "./verb.js";
 
-const START_OPTIONS = { ...HELP_OPTION } as const satisfies Options;
+const START_OPTIONS = { restart: { type: "boolean" }, ...HELP_OPTION } as const satisfies Options;
 
-const START_HELP = usageBlock("chat start <task-id>");
+const START_HELP = [
+  "Usage: tasma chat start <task-id> [options]",
+  "",
+  "      --restart  Stop the chat of the current step and start a new chat",
+  "  -h, --help     Print this help",
+];
 
-/** The route answers after the agent starts, and a start can read the login shell for up to 10 s. */
+/**
+ * The route answers after the agent starts. Before that, a restart waits for the
+ * old agent to stop, and a start can read the login shell for up to 10 s.
+ */
 const START_TIMEOUT_MS = 30_000;
 
 /** The fields of a start answer that this verb reads. */
@@ -62,9 +70,11 @@ async function start(args: string[], io: Io, target: Target): Promise<number> {
 
   if (typeof task === "number") return task;
 
+  const input: ChatStartInput = parsed.values.restart === true ? { client: "cli", restart: true } : { client: "cli" };
+
   // `print` gets no client, so the log of a failed chat is read here.
   const call = async (client: Client): Promise<Success<Outcome>> => {
-    const { data, diagnostics } = await client.startChat(task.tag, task.id, { client: "cli" });
+    const { data, diagnostics } = await client.startChat(task.tag, task.id, input);
     const answer: unknown = data;
 
     if (!isStartAnswer(answer) || answer.chat.state !== "failed") return { data: { answer }, diagnostics };
