@@ -1,6 +1,6 @@
 // The start of the chat of the current step of a task: the rule that gives
-// back the chat the step already has, starts a new one or replaces one, and
-// the lock that runs the starts of one task one after the other.
+// back the chat the step already has, starts a new one or restarts the step,
+// and the lock that runs the starts of one task one after the other.
 
 import { openWorkflows, TaskStoreError } from "@tasma/engine";
 import type { ChatAgent, Diagnostic } from "@tasma/protocol";
@@ -20,11 +20,11 @@ export type StepChats = {
    * The step is the step of the task, or the first step of its workflow when
    * the task has no step; the task does not change.
    *
-   * With `replaces`, the chat of that number must be the latest chat of the
-   * task, and of the step, or the start is refused with `chat-not-current`.
-   * Its agent stops before a new chat starts, and the step is read again then.
+   * With `restart`, a new chat always starts. When the latest chat of the task
+   * is of the step, its agent stops first, and the step is read again then:
+   * the start is refused with `chat-not-current` when the step changed.
    */
-  start(tag: string, task: string, client: string, replaces?: number): Promise<{
+  start(tag: string, task: string, client: string, restart?: boolean): Promise<{
     live: LiveChat;
     started: boolean;
     diagnostics: Diagnostic[];
@@ -44,21 +44,9 @@ function notCurrent(message: string): DaemonError {
   return new DaemonError("chat-not-current", message);
 }
 
-function otherStep(live: LiveChat, step: string): DaemonError {
-  const { chat, task, step: own } = live.chat;
-  return notCurrent(`chat ${chat} of ${task} is of the step "${own}", and the task is at the step "${step}"`);
-}
-
-/** The chat `replaces` names, when it is the latest chat of the task and of the step. */
-function replaced(task: string, chats: readonly LiveChat[], replaces: number, step: string): LiveChat {
-  const named = chats.find((live) => live.chat.chat === replaces);
-  if (named === undefined) throw notCurrent(`${task} has no chat ${replaces}`);
-  const latest = chats.at(-1)!;
-  if (latest !== named) {
-    throw notCurrent(`chat ${replaces} of ${task} is not the latest chat of the task: chat ${latest.chat.chat} is`);
-  }
-  if (named.chat.step !== step) throw otherStep(named, step);
-  return named;
+function movedTo(stopped: LiveChat, step: string): DaemonError {
+  const { chat, task } = stopped.chat;
+  return notCurrent(`${task} moved to the step "${step}" while the agent of chat ${chat} stopped, so no chat started`);
 }
 
 export function createStepChats(options: {
@@ -118,26 +106,27 @@ export function createStepChats(options: {
     }
   }
 
-  async function startOf(tag: string, task: string, client: string, replaces?: number): ReturnType<StepChats["start"]> {
+  async function startOf(tag: string, task: string, client: string, restart = false): ReturnType<StepChats["start"]> {
     const { step, diagnostics: stepFindings } = await stepOf(tag, task);
     const listed = await chats.list(tag, task);
-    if (replaces === undefined) {
-      const diagnostics = [...stepFindings, ...listed.diagnostics];
-      const latest = listed.chats.at(-1);
-      if (latest !== undefined && continues(latest, step)) return { live: latest, started: false, diagnostics };
+    const latest = listed.chats.at(-1);
+    if (restart && latest?.chat.step === step) {
+      await runner.end(latest, { client });
+      // The agent of the old chat can move the task to another step before it stops.
+      const now = await stepOf(tag, task);
+      if (now.step !== step) throw movedTo(latest, now.step);
+      const diagnostics = [...now.diagnostics, ...listed.diagnostics];
       return { live: await launch(tag, task, step, client), started: true, diagnostics };
     }
 
-    const old = replaced(task, listed.chats, replaces, step);
-    await runner.end(old, { client });
-    // The agent of the old chat can move the task to another step before it stops.
-    const now = await stepOf(tag, task);
-    if (now.step !== step) throw otherStep(old, now.step);
-    const diagnostics = [...now.diagnostics, ...listed.diagnostics];
+    const diagnostics = [...stepFindings, ...listed.diagnostics];
+    if (!restart && latest !== undefined && continues(latest, step)) {
+      return { live: latest, started: false, diagnostics };
+    }
     return { live: await launch(tag, task, step, client), started: true, diagnostics };
   }
 
   return {
-    start: (tag, task, client, replaces) => locked(taskKey(tag, task), () => startOf(tag, task, client, replaces)),
+    start: (tag, task, client, restart) => locked(taskKey(tag, task), () => startOf(tag, task, client, restart)),
   };
 }

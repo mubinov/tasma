@@ -108,11 +108,11 @@ export type ChatMessageInput = { text: string; client: string };
 export type ChatCancelInput = { client: string };
 
 /**
- * `replaces` names the chat that the new chat replaces: the daemon stops the
- * agent of that chat and starts a new chat for the step. Without it, the
- * daemon gives back the chat that the step already has, or starts one.
+ * With `restart`, the daemon stops the agent of the latest chat of the task
+ * when that chat is of the step, and starts a new chat for the step. Without
+ * it, the daemon gives back the chat that the step already has, or starts one.
  */
-export type ChatStartInput = { client: string; replaces?: number };
+export type ChatStartInput = { client: string; restart?: boolean };
 
 /** A value for one config option of the agent of a chat, as ACP's `session/set_config_option` takes it. */
 export type ChatOptionChange = { configId: string; value: string; client: string };

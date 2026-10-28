@@ -41,9 +41,9 @@ const MESSAGE_KEYS = Object.keys({ text: true, client: true } satisfies Record<k
 
 const CANCEL_KEYS = Object.keys({ client: true } satisfies Record<keyof ChatCancelInput, true>);
 
-const START_KEYS = Object.keys({ client: true } satisfies Record<keyof Omit<ChatStartInput, "replaces">, true>);
+const START_KEYS = Object.keys({ client: true } satisfies Record<keyof Omit<ChatStartInput, "restart">, true>);
 
-const REPLACE_KEYS = Object.keys({ client: true, replaces: true } satisfies Record<keyof ChatStartInput, true>);
+const RESTART_KEYS = Object.keys({ client: true, restart: true } satisfies Record<keyof ChatStartInput, true>);
 
 const PERMISSION_KEYS = Object.keys({ optionId: true, client: true } satisfies Record<keyof PermissionAnswer, true>);
 
@@ -115,15 +115,13 @@ function readCancel(raw: unknown): ChatCancelInput {
 
 function readStart(raw: unknown): ChatStartInput {
   const body = objectBody(raw);
-  const replacing = Object.hasOwn(body, "replaces");
-  assertKeys(body, replacing ? REPLACE_KEYS : START_KEYS);
+  const restarting = Object.hasOwn(body, "restart");
+  assertKeys(body, restarting ? RESTART_KEYS : START_KEYS);
   const client = clientOf(body);
-  if (!replacing) return { client };
-  const { replaces } = body;
-  if (typeof replaces !== "number" || !Number.isSafeInteger(replaces) || replaces < 1) {
-    throw malformed('"replaces" takes a chat number: a whole number of 1 or more');
-  }
-  return { client, replaces };
+  if (!restarting) return { client };
+  const { restart } = body;
+  if (typeof restart !== "boolean") throw malformed('"restart" takes true or false');
+  return { client, restart };
 }
 
 function readPermissionAnswer(raw: unknown): PermissionAnswer {
@@ -221,9 +219,9 @@ export function chatRoutes(chats: ChatRegistry, runner: ChatRunner, starts: Step
       route: routes.startChat,
       handler: async (request): Promise<Success<ChatStart>> => {
         assertNoQuery(request.query);
-        const { client, replaces } = readStart(request.body);
+        const { client, restart } = readStart(request.body);
         const { project, id } = request.params;
-        const { live, started, diagnostics } = await starts.start(project!, id!, client, replaces);
+        const { live, started, diagnostics } = await starts.start(project!, id!, client, restart === true);
         return { data: { chat: live.chat, started }, diagnostics };
       },
     },

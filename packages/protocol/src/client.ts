@@ -98,10 +98,10 @@ export type Client = {
    * The chat of the current step of the task, or of the first step of its
    * workflow when the task has no step. The answer is the latest chat of the
    * task when it is of that step, holds its first message and has not failed;
-   * in other cases a new chat with its agent started. With `replaces`, always
-   * a new chat, after the agent of the replaced chat has stopped; refused with
-   * `chat-not-current` when that chat is not the latest chat of the task, or
-   * is not of the current step.
+   * in other cases a new chat with its agent started. With `restart`, always a
+   * new chat, after the agent of the latest chat of the task has stopped when
+   * that chat is of the step; refused with `chat-not-current` when the task
+   * moves to another step while that agent stops.
    */
   startChat(tag: string, id: string, input: ChatStartInput): Promise<Success<ChatStart>>;
   readChat(tag: string, id: string, chat: number): Promise<Success<Chat>>;
