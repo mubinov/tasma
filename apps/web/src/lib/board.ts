@@ -1,4 +1,5 @@
 import type { Config, Diagnostic, Frontmatter, StepOwner, TaskEntry, TaskInput, Workflow } from "@tasma/protocol";
+import type { LastBoard } from "../store/ui";
 
 /** A project of the board, in board order. */
 export type BoardProject = {
@@ -386,7 +387,7 @@ export function joinList(values: readonly string[]): string | undefined {
   return values.length === 0 ? undefined : values.join(",");
 }
 
-const ALL_PROJECTS = "all";
+export const ALL_PROJECTS = "all";
 
 /** How a text names the projects of a board. */
 export type BoardSubject = "this project" | "these projects";
@@ -425,6 +426,52 @@ export function boardOrder(...lists: (readonly string[])[]): string[] {
 /** One value for every address that names the same board. */
 export function boardValue({ all, tags }: BoardAddress): string {
   return all ? ALL_PROJECTS : tags.join(",");
+}
+
+/** The board after a click in the project picker on `item`: the keyword `all` or a tag. */
+export function pickBoard(board: BoardAddress, item: string): BoardAddress {
+  if (item === ALL_PROJECTS) {
+    return { all: true, tags: [] };
+  }
+  if (board.all) {
+    return { all: false, tags: [item] };
+  }
+  if (!board.tags.includes(item)) {
+    return { all: false, tags: boardOrder(board.tags, [item]) };
+  }
+
+  const tags = board.tags.filter((tag) => tag !== item);
+
+  return tags.length === 0 ? { all: true, tags: [] } : { all: false, tags };
+}
+
+/**
+ * The board an address with no projects opens: the last board of the session,
+ * else the stored projects, without the tags `listed` does not hold. With no tag
+ * left, the first project of `listed`, with no filters.
+ */
+export function openedBoard(
+  remembered: LastBoard | null,
+  stored: string | null,
+  listed: readonly string[],
+): LastBoard | undefined {
+  const first = listed[0];
+  if (first === undefined) {
+    return undefined;
+  }
+
+  const source = remembered ?? (stored === null ? null : { projects: stored });
+  if (source === null) {
+    return { projects: first };
+  }
+
+  const { all, tags } = readBoard(source.projects);
+  const kept = tags.filter((tag) => listed.includes(tag));
+  if (!all && kept.length === 0) {
+    return { projects: first };
+  }
+
+  return { ...source, projects: boardValue({ all, tags: kept }) };
 }
 
 /** Whether the board of the `projects` value `board` shows the project `tag`. */

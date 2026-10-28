@@ -151,24 +151,44 @@ describe("the sidebar collapse state", () => {
   });
 });
 
-describe("the last opened tasks project", () => {
+describe("the projects of the last board", () => {
   it("starts on null", () => {
     expect(hydrateUiStore().lastTasksProject).toBeNull();
     expect(useUiStore.getState().lastTasksProject).toBeNull();
   });
 
-  it("persists the tag under its own key and hydrates it back", () => {
-    useUiStore.getState().setLastTasksProject("SAGA");
-    expect(useUiStore.getState().lastTasksProject).toBe("SAGA");
-    expect(window.localStorage.getItem(TASKS_PROJECT_KEY)).toBe("SAGA");
+  it("persists the board value under its own key and hydrates it back", () => {
+    useUiStore.getState().setLastTasksProject("DELTA,SAGA");
+    expect(useUiStore.getState().lastTasksProject).toBe("DELTA,SAGA");
+    expect(window.localStorage.getItem(TASKS_PROJECT_KEY)).toBe("DELTA,SAGA");
 
     useUiStore.setState({ lastTasksProject: null });
-    expect(hydrateUiStore().lastTasksProject).toBe("SAGA");
-    expect(useUiStore.getState().lastTasksProject).toBe("SAGA");
+    expect(hydrateUiStore().lastTasksProject).toBe("DELTA,SAGA");
+    expect(useUiStore.getState().lastTasksProject).toBe("DELTA,SAGA");
   });
 
-  it.each([{ stored: "saga" }, { stored: "" }, { stored: "SAGA-1" }, { stored: "../SAGA" }])(
-    "hydrates the stored value \"$stored\", which is not a tag, as null",
+  it.each([
+    { stored: "SAGA", hydrated: "SAGA" },
+    { stored: "SAGA,", hydrated: "SAGA" },
+    { stored: "DELTA,SAGA", hydrated: "DELTA,SAGA" },
+    { stored: "SAGA,DELTA", hydrated: "DELTA,SAGA" },
+    { stored: "all", hydrated: "all" },
+    { stored: "SAGA,all", hydrated: "all" },
+  ])("hydrates the stored value $stored as $hydrated", ({ stored, hydrated }) => {
+    window.localStorage.setItem(TASKS_PROJECT_KEY, stored);
+
+    expect(hydrateUiStore().lastTasksProject).toBe(hydrated);
+  });
+
+  it.each([
+    { stored: "saga" },
+    { stored: "" },
+    { stored: "SAGA-1" },
+    { stored: "../SAGA" },
+    { stored: "SAGA,saga" },
+    { stored: "," },
+  ])(
+    "hydrates the stored value \"$stored\", which is no board, as null",
     ({ stored }) => {
       window.localStorage.setItem(TASKS_PROJECT_KEY, stored);
 

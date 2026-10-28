@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent, useState } from "react";
 import { create } from "zustand";
+import { ALL_PROJECTS, boardValue, readBoard, splitList } from "../lib/board";
 
 export const THEME_PREFERENCES = ["system", "light", "dark"] as const;
 
@@ -93,8 +94,9 @@ type UiState = {
   setThemePreference: (preference: ThemePreference) => void;
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (collapsed: boolean) => void;
+  /** The board value of the last board shown: one tag, a comma list of tags, or `all`. */
   lastTasksProject: string | null;
-  setLastTasksProject: (tag: string) => void;
+  setLastTasksProject: (board: string) => void;
   /** What the next board visit puts back. Never persisted: a reload has no board behind the page. */
   boardReturn: BoardReturn | null;
   /** Whether a board that matches `boardReturn` still has to put itself back. One board visit consumes it. */
@@ -167,9 +169,9 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ sidebarCollapsed: collapsed });
   },
   lastTasksProject: null,
-  setLastTasksProject: (tag) => {
-    storage.write(TASKS_PROJECT_STORAGE_KEY, tag);
-    set({ lastTasksProject: tag });
+  setLastTasksProject: (board) => {
+    storage.write(TASKS_PROJECT_STORAGE_KEY, board);
+    set({ lastTasksProject: board });
   },
   boardReturn: null,
   boardRestorePending: false,
@@ -288,12 +290,21 @@ export type HydratedUi = {
   lastTasksProject: string | null;
 };
 
+function readStoredBoard(stored: string | null): string | null {
+  const value = stored ?? "";
+  const parts = splitList(value);
+
+  if (parts.length === 0 || !parts.every((part) => part === ALL_PROJECTS || PROJECT_TAG.test(part))) {
+    return null;
+  }
+  return boardValue(readBoard(value));
+}
+
 export function hydrateUiStore(): HydratedUi {
   const stored = storage.read(THEME_STORAGE_KEY);
   const themePreference = isThemePreference(stored) ? stored : "system";
   const sidebarCollapsed = readSidebarState(storage.read(SIDEBAR_STORAGE_KEY)) ?? false;
-  const storedProject = storage.read(TASKS_PROJECT_STORAGE_KEY);
-  const lastTasksProject = storedProject !== null && PROJECT_TAG.test(storedProject) ? storedProject : null;
+  const lastTasksProject = readStoredBoard(storage.read(TASKS_PROJECT_STORAGE_KEY));
 
   useUiStore.setState({ themePreference, sidebarCollapsed, lastTasksProject });
   return { themePreference, sidebarCollapsed, lastTasksProject };

@@ -24,6 +24,44 @@ export function PickerCheck(): ReactNode {
   );
 }
 
+type FilterPopupProps = {
+  /** The id of the row's label. */
+  labelId: string;
+  placeholder: string;
+  /** Shown when the list has no item to show. */
+  empty: ReactNode;
+  /** Renders one `Combobox.Item`. */
+  children: (item: string) => ReactNode;
+};
+
+/**
+ * The popup of a board filter: a filter input over the list. The row's label
+ * names the popup, the input and the list; it stays in view beside the trigger
+ * while the popup is open.
+ */
+export function FilterPopup({ labelId, placeholder, empty, children }: FilterPopupProps): ReactNode {
+  return (
+    <Combobox.Portal>
+      <Combobox.Positioner align="end" sideOffset={4} className={POSITIONER_CLASS}>
+        <Combobox.Popup aria-labelledby={labelId} className={`w-62 ${POPUP_CLASS}`}>
+          <div className="mb-1.5 flex h-8 items-center gap-2 rounded-control border border-line bg-bg px-2 text-sm">
+            <MagnifyingGlassIcon size={14} aria-hidden="true" className="text-dim" />
+            <Combobox.Input
+              aria-labelledby={labelId}
+              placeholder={placeholder}
+              className="min-w-0 flex-1 bg-transparent placeholder:text-dim focus-visible:outline-none"
+            />
+          </div>
+          <Combobox.Empty className="px-2 py-1.5 text-sm text-dim empty:p-0">{empty}</Combobox.Empty>
+          <Combobox.List aria-labelledby={labelId} className="max-h-72 overflow-y-auto">
+            {children}
+          </Combobox.List>
+        </Combobox.Popup>
+      </Combobox.Positioner>
+    </Combobox.Portal>
+  );
+}
+
 /** What a caller derives its view from, on each render of an open picker. */
 export type PickerQuery<Item> = {
   items: readonly Item[];

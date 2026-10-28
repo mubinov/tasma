@@ -57,7 +57,7 @@ it("names the input by the visible label, in the toolbar between the project and
 
   const field = input();
   const labels = screen.getByRole("combobox", { name: /^Labels/ });
-  const project = screen.getByRole("button", { name: /^Project/ });
+  const project = screen.getByRole("combobox", { name: /^Project/ });
 
   expect(field.getAttribute("type")).toBe("text");
   expect(field.getAttribute("autocomplete")).toBe("off");
@@ -222,8 +222,9 @@ it("writes no q to the next project when the project changes inside the delay, a
   const router = await renderBoard();
 
   await user.type(input(), "parser");
-  await user.click(screen.getByRole("button", { name: /^Project/ }));
-  await user.click(await screen.findByRole("menuitemradio", { name: /Delta/ }));
+  await user.click(screen.getByRole("combobox", { name: /^Project/ }));
+  await user.click(await screen.findByRole("option", { name: /Delta/ }));
+  await user.click(screen.getByRole("option", { name: /Saga/ }));
   await wait(SEARCH_DELAY);
 
   expect(router.state.location.search).toEqual({ projects: "DELTA" });

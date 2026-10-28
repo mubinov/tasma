@@ -77,23 +77,51 @@ describe("the address", () => {
     const router = await renderWithRouter("/tasks", transport);
 
     expect(router.state.location.search).toEqual({ projects: "SAGA" });
-    expect(screen.getByRole("button", { name: "Project Saga SAGA" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Project Saga SAGA" })).toBeTruthy();
   });
 
-  it("opens the project opened last when the listing holds it", async () => {
-    useUiStore.setState({ lastTasksProject: "DELTA" });
+  it.each([
+    { remembered: { projects: "DELTA,SAGA", labels: "web", q: "fix" }, opened: { projects: "DELTA,SAGA", labels: "web", q: "fix" } },
+    { remembered: { projects: "DELTA,GONE", labels: "web" }, opened: { projects: "DELTA", labels: "web" } },
+    { remembered: { projects: "GONE,NOPE", labels: "web", q: "fix" }, opened: { projects: "SAGA" } },
+    { remembered: { projects: "all", q: "fix" }, opened: { projects: "all", q: "fix" } },
+  ])("opens the last board of the session $remembered.projects as $opened.projects", async ({ remembered, opened }) => {
+    useUiStore.setState({ lastBoard: remembered, lastTasksProject: "SAGA" });
     const { transport } = daemon();
     const router = await renderWithRouter("/tasks", transport);
 
-    expect(router.state.location.search).toEqual({ projects: "DELTA" });
+    expect(router.state.location.search).toEqual(opened);
   });
 
-  it("opens the first project when the project opened last is gone", async () => {
-    useUiStore.setState({ lastTasksProject: "GONE" });
+  it.each([
+    { stored: "DELTA", opened: "DELTA" },
+    { stored: "GONE", opened: "SAGA" },
+    { stored: "DELTA,SAGA", opened: "DELTA,SAGA" },
+    { stored: "all", opened: "all" },
+    { stored: "DELTA,GONE", opened: "DELTA" },
+    { stored: "GONE,NOPE", opened: "SAGA" },
+  ])("opens the stored projects $stored as $opened with no last board", async ({ stored, opened }) => {
+    useUiStore.setState({ lastTasksProject: stored });
     const { transport } = daemon();
     const router = await renderWithRouter("/tasks", transport);
 
-    expect(router.state.location.search).toEqual({ projects: "SAGA" });
+    expect(router.state.location.search).toEqual({ projects: opened });
+  });
+
+  it("keeps the labels of its own address over those of the last board", async () => {
+    useUiStore.setState({ lastBoard: { projects: "DELTA,SAGA", labels: "web", q: "fix" } });
+    const { transport } = daemon();
+    const router = await renderWithRouter("/tasks?labels=api", transport);
+
+    expect(router.state.location.search).toEqual({ projects: "DELTA,SAGA", labels: "api", q: "fix" });
+  });
+
+  it("opens the last board for an address whose projects name none", async () => {
+    useUiStore.setState({ lastBoard: { projects: "DELTA,SAGA", labels: "web" } });
+    const { transport } = daemon();
+    const router = await renderWithRouter("/tasks?projects=,", transport);
+
+    expect(router.state.location.search).toEqual({ projects: "DELTA,SAGA", labels: "web" });
   });
 
   it("keeps several projects, and the labels", async () => {
@@ -124,7 +152,7 @@ describe("the address", () => {
     const router = await renderWithRouter("/tasks?projects=SAGA&projects=DELTA", transport);
 
     expect(router.state.location.search).toEqual({ projects: "SAGA" });
-    expect(screen.getByRole("button", { name: "Project Saga SAGA" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Project Saga SAGA" })).toBeTruthy();
   });
 
   it("asks the daemon for a tag that reads as a number, and keeps the selector under its refusal", async () => {
@@ -134,7 +162,7 @@ describe("the address", () => {
     await renderWithRouter("/tasks?projects=2026", transport);
 
     expect(screen.getByRole("alert").textContent).toContain("store/project-not-found");
-    expect(screen.getByRole("button", { name: "Project 2026" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Project 2026" })).toBeTruthy();
   });
 
   it("hands a tag no URL segment can carry to the not-found screen, with no request", async () => {
@@ -159,7 +187,7 @@ describe("the address", () => {
 describe("a refused project", () => {
   const INVALID = refusalReply(422, { kind: "store", code: "config-invalid", message: "statuses is empty" });
 
-  it("keeps the project selector under the failure panel, so another project opens", async () => {
+  it("keeps the project selector under the failure panel, where an added project opens beside the refused one", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const user = userEvent.setup();
     const { transport } = daemon({ "/projects/SAGA": INVALID, "/projects/SAGA/tasks": INVALID });
@@ -168,15 +196,39 @@ describe("a refused project", () => {
     expect(router.state.location.search).toEqual({ projects: "SAGA" });
     expect(screen.getByRole("alert").textContent).toContain("store/config-invalid");
 
-    await user.click(screen.getByRole("button", { name: "Project Saga SAGA" }));
-    const menu = await screen.findByRole("menu");
+    await user.click(screen.getByRole("combobox", { name: "Project Saga SAGA" }));
+    const delta = await screen.findByRole("option", { name: "Delta DELTA" });
     await act(async () => {
-      await user.click(within(menu).getByRole("menuitemradio", { name: "Delta DELTA" }));
+      await user.click(delta);
     });
 
-    expect(router.state.location.search).toEqual({ projects: "DELTA" });
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.getByText("No tasks in Delta yet.")).toBeTruthy();
+    expect(router.state.location.search).toEqual({ projects: "DELTA,SAGA" });
+    await waitFor(() => {
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+    expect(screen.getByRole("heading", { level: 2, name: "SAGA did not load" })).toBeTruthy();
+    expect(screen.getByText("No tasks in these projects yet.")).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+  });
+
+  it("opens the failure screen of the project left on the board, with the focus on the content region", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const user = userEvent.setup();
+    const { transport } = daemon({ "/projects/SAGA": INVALID, "/projects/SAGA/tasks": INVALID });
+    const router = await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+
+    await user.click(screen.getByRole("combobox", { name: "Project Delta, Saga" }));
+    const delta = await screen.findByRole("option", { name: "Delta DELTA" });
+    await act(async () => {
+      await user.click(delta);
+    });
+
+    expect(router.state.location.search).toEqual({ projects: "SAGA" });
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toContain("store/config-invalid");
+    });
+    expect(screen.getByRole("combobox", { name: "Project Saga SAGA" })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("main"));
   });
 
   it.each(["/tasks", "/tasks?projects=SAGA", "/tasks?projects=all"])("shows no selector at %s when the listing of projects was refused", async (path) => {
@@ -185,7 +237,7 @@ describe("a refused project", () => {
     await renderWithRouter(path, transport);
 
     expect(screen.getByRole("alert").textContent).toContain("store/config-invalid");
-    expect(screen.queryByRole("button", { name: /^Project/ })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: /^Project/ })).toBeNull();
   });
 });
 
@@ -1207,13 +1259,31 @@ describe("the board a card was opened from", () => {
     const router = await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
 
     await user.click(cardLink("Task 2"));
-    // The sidebar's own item carries no label, so its redirect lands on the same board unfiltered.
-    await user.click(within(screen.getByRole("navigation")).getByRole("link", { name: "Tasks" }));
+    await act(async () => {
+      await router.navigate({ to: "/tasks", search: { projects: "SAGA" } });
+    });
     await nextFrame();
 
-    expect(router.state.location.search).toEqual({ projects: "SAGA" });
     expect(restoredTo(scrollTo)).toBeNull();
     expect(useUiStore.getState().boardRestorePending).toBe(false);
+  });
+
+  it("comes back filtered, scrolled and focused through the Dashboard and the sidebar Tasks link", async () => {
+    const user = userEvent.setup();
+    const scrollTo = watchScroll();
+    const { transport } = boardDaemon();
+    const router = await renderWithRouter("/tasks?projects=SAGA&labels=web", transport);
+    const sidebar = within(screen.getByRole("navigation"));
+
+    await user.click(cardLink("Task 2"));
+    await user.click(sidebar.getByRole("link", { name: "Dashboard" }));
+    expect(router.state.location.pathname).toBe("/");
+    await user.click(sidebar.getByRole("link", { name: "Tasks" }));
+
+    expect(router.state.location.search).toEqual({ projects: "SAGA", labels: "web" });
+    expect(restoredTo(scrollTo)).toEqual([SCROLL_X, SCROLL_Y]);
+    await nextFrame();
+    expect(document.activeElement).toBe(cardLink("Task 2"));
   });
 
   it("scrolls back but leaves focus on the content region when the recorded card is gone", async () => {

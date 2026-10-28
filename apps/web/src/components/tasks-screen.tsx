@@ -221,8 +221,7 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
     failed: failedProjects,
   } = useBoardProjects(client, queryClient, { tags, refused, missing, several });
   const shown = shownProjects.map((shownProject) => shownProject.tag);
-  // The project of the picker. The New task controls and the last selection use
-  // it only on a board of one project.
+  // The project of a board of one project; nothing reads it on a board of several projects.
   const tag = tags[0]!;
   const setLastTasksProject = useUiStore((state) => state.setLastTasksProject);
   const setBoardReturn = useUiStore((state) => state.setBoardReturn);
@@ -254,10 +253,8 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!several) {
-      setLastTasksProject(tag);
-    }
-  }, [several, tag, setLastTasksProject]);
+    setLastTasksProject(board);
+  }, [board, setLastTasksProject]);
 
   // When the last project leaves the board of all projects, the empty-tree
   // screen replaces the board at the same path, where the shell moves no focus.
@@ -475,7 +472,7 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
       <div className={HEADING_LINE_CLASS}>
         <ScreenHeading>{TITLE}</ScreenHeading>
         <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-x-5 gap-y-3">
-          <ProjectSelect projects={projects} tag={tag} />
+          <ProjectSelect projects={projects} board={board} labels={labels} q={q} />
           <SearchField board={board} q={q} busy={busy} describedBy={failed ? failureId : undefined} />
           <LabelFilter entries={listed} selected={selected} subject={subject} />
           {!several && (
@@ -720,16 +717,15 @@ export function TasksScreen(): ReactNode {
  */
 export function TasksFailure(props: ErrorComponentProps): ReactNode {
   const { client } = route.useRouteContext();
-  const { all, tags } = readBoard(route.useSearch().projects);
+  const { projects, labels, q } = route.useSearch();
   const { data: read } = useQuery({ ...projectsQuery(client), enabled: false });
-  const tag = all ? read?.data[0]?.tag : tags[0];
 
   return (
     <>
       <RouteFailure {...props} />
-      {tag !== undefined && read !== undefined && (
+      {read !== undefined && (
         <div className="mt-6">
-          <ProjectSelect projects={read.data} tag={tag} />
+          <ProjectSelect projects={read.data} board={boardValue(readBoard(projects))} labels={labels} q={q} />
         </div>
       )}
     </>

@@ -38,7 +38,7 @@ import { TaskScreen } from "./components/task-screen";
 import { TasksFailure, TasksScreen } from "./components/tasks-screen";
 import { WorkflowScreen } from "./components/workflow-screen";
 import { WorkflowsScreen } from "./components/workflows-screen";
-import { boardValue, isSeveral, readBoard, workflowNames } from "./lib/board";
+import { boardValue, isSeveral, openedBoard, readBoard, workflowNames } from "./lib/board";
 import { chatFilterOf } from "./lib/use-chat-filter";
 import { useUiStore } from "./store/ui";
 
@@ -145,11 +145,13 @@ const tasksRoute = createRoute({
     }
 
     const { data: projects } = await context.queryClient.query({ ...projectsQuery(context.client), staleTime: "static" });
-    const last = useUiStore.getState().lastTasksProject;
-    const opened = projects.find((project) => project.tag === last) ?? projects[0];
+    const { lastBoard, lastTasksProject } = useUiStore.getState();
+    const opened = openedBoard(lastBoard, lastTasksProject, projects.map(({ tag }) => tag));
 
+    // The filters of the address win over the remembered ones; the projects of
+    // the board win over an address such as `?projects=,`, which reads as none.
     if (opened !== undefined) {
-      throw redirect({ to: "/tasks", search: { ...search, projects: opened.tag }, replace: true });
+      throw redirect({ to: "/tasks", search: { ...opened, ...search, projects: opened.projects }, replace: true });
     }
   },
   loaderDeps: ({ search }) => ({ board: boardValue(readBoard(search.projects)) }),

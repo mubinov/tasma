@@ -21,7 +21,9 @@ import {
   joinList,
   labelChoices,
   moveTarget,
+  openedBoard,
   opensTask,
+  pickBoard,
   readBoard,
   splitList,
   statusColumn,
@@ -149,6 +151,68 @@ describe("boardHolds", () => {
     { board: "", tag: "SAGA", holds: false },
   ])("reads $board as holding $tag: $holds", ({ board, tag, holds }) => {
     expect(boardHolds(board, tag)).toBe(holds);
+  });
+});
+
+describe("pickBoard", () => {
+  it.each([
+    { board: "SAGA", item: "all", next: "all" },
+    { board: "DELTA,SAGA", item: "all", next: "all" },
+    { board: "all", item: "all", next: "all" },
+    { board: "all", item: "SAGA", next: "SAGA" },
+    { board: "SAGA", item: "DELTA", next: "DELTA,SAGA" },
+    { board: "ACME,SAGA", item: "DELTA", next: "ACME,DELTA,SAGA" },
+    { board: "DELTA,SAGA", item: "DELTA", next: "SAGA" },
+    { board: "ACME,DELTA,SAGA", item: "DELTA", next: "ACME,SAGA" },
+    { board: "SAGA", item: "SAGA", next: "all" },
+    { board: "SAGA", item: "ALL", next: "ALL,SAGA" },
+    { board: "ALL", item: "ALL", next: "all" },
+  ])("gives $next for a click on $item on $board", ({ board, item, next }) => {
+    expect(boardValue(pickBoard(readBoard(board), item))).toBe(next);
+  });
+});
+
+describe("openedBoard", () => {
+  const LISTED = ["ACME", "DELTA", "SAGA"];
+
+  it("is undefined when the project list is empty", () => {
+    expect(openedBoard({ projects: "SAGA" }, "SAGA", [])).toBeUndefined();
+  });
+
+  it("is the first project when nothing is remembered or stored", () => {
+    expect(openedBoard(null, null, LISTED)).toEqual({ projects: "ACME" });
+  });
+
+  it("is the remembered board with its labels and search text", () => {
+    expect(openedBoard({ projects: "DELTA,SAGA", labels: "web", q: "fix" }, null, LISTED))
+      .toEqual({ projects: "DELTA,SAGA", labels: "web", q: "fix" });
+  });
+
+  it("drops a deleted tag of the remembered board and keeps its filters", () => {
+    expect(openedBoard({ projects: "DELTA,NOPE,SAGA", labels: "web" }, null, LISTED))
+      .toEqual({ projects: "DELTA,SAGA", labels: "web" });
+  });
+
+  it("is the first project with no filters when every remembered tag is deleted", () => {
+    expect(openedBoard({ projects: "GONE,NOPE", labels: "web", q: "fix" }, "SAGA", LISTED)).toEqual({ projects: "ACME" });
+  });
+
+  it("is the remembered board of all projects with its filters", () => {
+    expect(openedBoard({ projects: "all", q: "fix" }, null, LISTED)).toEqual({ projects: "all", q: "fix" });
+  });
+
+  it.each([
+    { stored: "DELTA,SAGA", opened: "DELTA,SAGA" },
+    { stored: "all", opened: "all" },
+    { stored: "SAGA", opened: "SAGA" },
+    { stored: "NOPE,SAGA", opened: "SAGA" },
+    { stored: "NOPE", opened: "ACME" },
+  ])("opens the stored $stored as $opened", ({ stored, opened }) => {
+    expect(openedBoard(null, stored, LISTED)).toEqual({ projects: opened });
+  });
+
+  it("prefers the remembered board to the stored projects", () => {
+    expect(openedBoard({ projects: "DELTA" }, "SAGA", LISTED)).toEqual({ projects: "DELTA" });
   });
 });
 

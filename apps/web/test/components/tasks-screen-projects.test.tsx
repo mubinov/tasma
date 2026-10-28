@@ -195,8 +195,8 @@ describe("the address", () => {
     expect(screen.queryByRole("button", { name: "New task" })).toBeNull();
     expect(screen.getByRole("searchbox", { name: "Search" })).toBeTruthy();
     expect(screen.getByText("No tasks in these projects yet.")).toBeTruthy();
-    expect(window.localStorage.getItem("tasma.tasks.project")).toBeNull();
-    expect(useUiStore.getState().lastTasksProject).toBeNull();
+    expect(window.localStorage.getItem("tasma.tasks.project")).toBe("DELTA,SAGA");
+    expect(useUiStore.getState().lastTasksProject).toBe("DELTA,SAGA");
   });
 
   it("reads the project list once more for tags it does not hold, and sends no read for them", async () => {
@@ -240,7 +240,7 @@ describe("the address", () => {
     expect(screen.queryByRole("note")).toBeNull();
   });
 
-  it("shows the failure screen with the refusal of the first project when every project is refused", async () => {
+  it("shows the failure screen with the refusal of the first project and the projects of the address in the picker when every project is refused", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const broken = refusalReply(422, { kind: "store", code: "project-invalid", message: "config.yml is broken" });
     const { transport } = twoProjects({ "/projects/DELTA": INVALID, "/projects/SAGA/tasks": broken });
@@ -248,7 +248,7 @@ describe("the address", () => {
 
     expect(screen.getByRole("alert").textContent).toContain("store/config-invalid");
     expect(screen.getByRole("alert").textContent).not.toContain("config.yml is broken");
-    expect(screen.getByRole("button", { name: "Project Delta DELTA" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Project Delta, Saga" })).toBeTruthy();
   });
 
   it("reads the first of the tags the project list does not hold once, for the failure screen, when no tag loads", async () => {
@@ -298,13 +298,13 @@ describe("the address", () => {
     expect(screen.getByRole("heading", { level: 2, name: "SAGA did not load" })).toBeTruthy();
   });
 
-  it("shows the failure screen with the first project of the list in the picker when all projects are refused", async () => {
+  it("shows the failure screen with All projects in the picker when all projects are refused", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const { transport } = twoProjects({ "/projects/SAGA": INVALID, "/projects/DELTA/tasks": INVALID });
     await renderWithRouter("/tasks?projects=all", transport);
 
     expect(screen.getByRole("alert").textContent).toContain("store/config-invalid");
-    expect(screen.getByRole("button", { name: "Project Delta DELTA" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Project All projects" })).toBeTruthy();
   });
 
   it("reads the workflows of the entries of both projects", async () => {
@@ -1227,25 +1227,30 @@ describe("the controls of a board of several projects", () => {
     expect(titlesIn("Backlog")).toEqual(["Task 1"]);
   });
 
-  it("shows the first project of the board in the picker, and a pick opens one project", async () => {
+  it("shows the names of the board in the picker, where a click removes a project and keeps the labels", async () => {
     const user = userEvent.setup();
     const { transport } = twoProjects();
     const router = await renderWithRouter("/tasks?projects=SAGA,DELTA&labels=web", transport);
 
-    await user.click(screen.getByRole("button", { name: "Project Delta DELTA" }));
-    await user.click(await screen.findByRole("menuitemradio", { name: /Saga/ }));
-
-    await waitFor(() => {
-      expect(router.state.location.search).toEqual({ projects: "SAGA" });
+    await user.click(screen.getByRole("combobox", { name: "Project Delta, Saga" }));
+    const saga = await screen.findByRole("option", { name: /Saga/ });
+    await act(async () => {
+      await user.click(saga);
     });
+
+    expect(router.state.location.search).toEqual({ projects: "DELTA", labels: "web" });
   });
 
-  it("does not save the last selection", async () => {
+  it.each([
+    { path: "/tasks?projects=DELTA,SAGA", stored: "DELTA,SAGA" },
+    { path: "/tasks?projects=all", stored: "all" },
+    { path: "/tasks?projects=DELTA,NOPE", stored: "DELTA,NOPE" },
+  ])("stores the board value of $path", async ({ path, stored }) => {
     const { transport } = twoProjects();
-    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+    await renderWithRouter(path, transport);
 
-    expect(window.localStorage.getItem("tasma.tasks.project")).toBeNull();
-    expect(useUiStore.getState().lastTasksProject).toBeNull();
+    expect(window.localStorage.getItem("tasma.tasks.project")).toBe(stored);
+    expect(useUiStore.getState().lastTasksProject).toBe(stored);
   });
 
   it("keeps Show all of a final column to its own board", async () => {

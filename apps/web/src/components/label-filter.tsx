@@ -3,9 +3,9 @@ import { useNavigate } from "@tanstack/react-router";
 import type { TaskEntry } from "@tasma/protocol";
 import { useId, type ReactNode } from "react";
 import { joinList, labelChoices, type BoardSubject } from "../lib/board";
-import { CaretDownIcon, CheckIcon, MagnifyingGlassIcon } from "../lib/icons";
-import { GROUP_CLASS, LABEL_CLASS, POPUP_CLASS, POSITIONER_CLASS, TRIGGER_CLASS } from "./control-classes";
-import { PICKER_ITEM_CLASS } from "./property-picker";
+import { CaretDownIcon, CheckIcon } from "../lib/icons";
+import { GROUP_CLASS, LABEL_CLASS, TRIGGER_CLASS } from "./control-classes";
+import { FilterPopup, PICKER_ITEM_CLASS } from "./property-picker";
 
 type LabelFilterProps = {
   entries: readonly TaskEntry[];
@@ -61,40 +61,25 @@ export function LabelFilter({ entries, selected, subject }: LabelFilterProps): R
           </span>
           <CaretDownIcon size={14} aria-hidden="true" className="shrink-0 text-dim" />
         </Combobox.Trigger>
-        <Combobox.Portal>
-          <Combobox.Positioner align="end" sideOffset={4} className={POSITIONER_CLASS}>
-            {/* The popup, the input and the list are named by the "Labels" text,
-                which stays in view beside the trigger while the popup is open. */}
-            <Combobox.Popup aria-labelledby={labelId} className={`w-62 ${POPUP_CLASS}`}>
-              <div className="mb-1.5 flex h-8 items-center gap-2 rounded-control border border-line bg-bg px-2 text-sm">
-                <MagnifyingGlassIcon size={14} aria-hidden="true" className="text-dim" />
-                <Combobox.Input
-                  aria-labelledby={labelId}
-                  placeholder="Filter labels"
-                  className="min-w-0 flex-1 bg-transparent placeholder:text-dim focus-visible:outline-none"
-                />
-              </div>
-              <Combobox.Empty className="px-2 py-1.5 text-sm text-dim empty:p-0">
-                {items.length === 0 ? `No labels in ${subject}` : "No label matches"}
-              </Combobox.Empty>
-              <Combobox.List aria-labelledby={labelId} className="max-h-72 overflow-y-auto">
-                {(label: string) => (
-                  <Combobox.Item key={label} value={label} className={PICKER_ITEM_CLASS}>
-                    <Combobox.ItemIndicator
-                      keepMounted
-                      className={({ selected: checked }) => `flex w-3.5 shrink-0 ${checked ? "" : "invisible"}`}
-                    >
-                      <CheckIcon size={14} aria-hidden="true" />
-                    </Combobox.ItemIndicator>
-                    <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-graphic" />
-                    <span className="min-w-0 wrap-anywhere">{label}</span>
-                    <span className="ml-auto text-xs text-dim">{counts.get(label.toLowerCase()) ?? 0}</span>
-                  </Combobox.Item>
-                )}
-              </Combobox.List>
-            </Combobox.Popup>
-          </Combobox.Positioner>
-        </Combobox.Portal>
+        <FilterPopup
+          labelId={labelId}
+          placeholder="Filter labels"
+          empty={items.length === 0 ? `No labels in ${subject}` : "No label matches"}
+        >
+          {(label) => (
+            <Combobox.Item key={label} value={label} className={PICKER_ITEM_CLASS}>
+              <Combobox.ItemIndicator
+                keepMounted
+                className={({ selected: checked }) => `flex w-3.5 shrink-0 ${checked ? "" : "invisible"}`}
+              >
+                <CheckIcon size={14} aria-hidden="true" />
+              </Combobox.ItemIndicator>
+              <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-graphic" />
+              <span className="min-w-0 wrap-anywhere">{label}</span>
+              <span className="ml-auto text-xs text-dim">{counts.get(label.toLowerCase()) ?? 0}</span>
+            </Combobox.Item>
+          )}
+        </FilterPopup>
       </Combobox.Root>
     </div>
   );
