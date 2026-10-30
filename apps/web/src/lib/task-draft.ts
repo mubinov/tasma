@@ -1,4 +1,4 @@
-import type { TaskInput } from "@tasma/protocol";
+import type { Config, TaskInput } from "@tasma/protocol";
 
 /** The fields of the create dialog, as they show them. */
 export type TaskDraft = {
@@ -28,6 +28,32 @@ export function hasContent(first: TaskDraft, draft: TaskDraft): boolean {
     || draft.priority !== first.priority
     || !sameList(draft.labels, first.labels)
     || draft.body !== first.body;
+}
+
+/** The values the user picked by hand in the Status and Priority menus. `priority: null` is a pick of None. */
+export type PickedValues = { status?: string; priority?: string | null };
+
+function spelling(names: readonly string[], value: string): string | undefined {
+  const key = value.toLowerCase();
+
+  return names.find((name) => name.toLowerCase() === key);
+}
+
+/**
+ * The draft in the project of `config`. A picked value stays in the spelling of
+ * that project when the project has it, without case. Else the status is
+ * `columnStatus`, else the project's `default_status`, and the priority is none.
+ */
+export function draftForProject(
+  draft: TaskDraft,
+  picked: PickedValues,
+  config: Pick<Config, "statuses" | "priorities" | "default_status">,
+  columnStatus: string | undefined,
+): TaskDraft {
+  const status = picked.status === undefined ? undefined : spelling(config.statuses, picked.status);
+  const priority = typeof picked.priority === "string" ? spelling(config.priorities, picked.priority) : undefined;
+
+  return { ...draft, status: status ?? columnStatus ?? config.default_status, priority: priority ?? null };
 }
 
 /**

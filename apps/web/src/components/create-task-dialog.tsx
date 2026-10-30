@@ -1,15 +1,25 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { Field } from "@base-ui/react/field";
+import { Menu } from "@base-ui/react/menu";
 import { useMutation, type QueryClient } from "@tanstack/react-query";
-import type { Client, Config, TaskEntry } from "@tasma/protocol";
-import { useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import type { Client, Config, ProjectSummary, TaskEntry } from "@tasma/protocol";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { bodyCorrection, createRefusal, taskCreateOptions, type Created } from "../api/mutations";
+import { boardOrder } from "../lib/board";
 import type { FinalFocus } from "../lib/final-focus";
 import { CaretDownIcon, WarningIcon } from "../lib/icons";
-import { createInput, firstDraft, hasContent, type TaskDraft } from "../lib/task-draft";
+import {
+  createInput,
+  draftForProject,
+  firstDraft,
+  hasContent,
+  type PickedValues,
+  type TaskDraft,
+} from "../lib/task-draft";
 import { priorityChoices, statusChoices } from "../lib/task-properties";
 import { BLANK_TITLE, isBlankTitle } from "../lib/text-draft";
 import { useFocusEmptiedWhileOpening } from "../lib/use-focus-emptied-while-opening";
+import { useFocusLost } from "../lib/use-focus-lost";
 import { asSentences, useNoticeStore } from "../store/notices";
 import { useModalDialog } from "../store/ui";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -22,12 +32,18 @@ import {
   DIALOG_VIEWPORT_CLASS,
   FIELD_BORDER_CLASS,
   FIELD_ERROR_CLASS,
+  POPUP_CLASS,
+  POSITIONER_CLASS,
+  PROPERTY_TRIGGER_CLASS,
 } from "./control-classes";
 import { LabelPicker } from "./label-picker";
 import { KeyHint, MarkdownEditor, MarkdownEditorHint } from "./markdown-editor";
+import { ProjectMenuItems, ProjectName } from "./project-select";
 import { PropertyMenu } from "./property-menu";
 
 const CANNOT_CANCEL = "The task is being created and cannot be cancelled now.";
+
+const CANNOT_CHANGE_PROJECT = "The task is being created. Its project cannot change now.";
 
 const ROW_LABEL_CLASS = "text-dim";
 
@@ -35,20 +51,34 @@ const TITLE_CLASS = `h-8 w-full rounded-control bg-surface px-2.5 text-sm text-t
 
 const WORDS_CLASS = "mt-2 rounded-control bg-surface-2 px-2.5 py-2 font-mono text-xs-plus text-dim wrap-anywhere";
 
+/**
+ * A project the dialog can create in. `config` gives the statuses and the
+ * priorities the menus offer; `entries` are every task of that project,
+ * unfiltered, which the labels and their counts come from.
+ */
+export type CreateProject = ProjectSummary & { config: Config; entries: readonly TaskEntry[] };
+
 export type CreateTaskDialogProps = {
   queryClient: QueryClient;
   client: Client;
-  tag: string;
-  /** The statuses and the priorities the menus offer. */
-  config: Config;
-  /** Every task of the project, unfiltered, which the labels and their counts come from. */
-  entries: readonly TaskEntry[];
-  /** The status the draft starts with. */
-  status: string;
+  /** The projects the board shows, in board order. */
+  projects: readonly CreateProject[];
+  /** The project the dialog opens on. One of `projects`. */
+  startTag: string;
+  /** The `byTag` of the column whose "+" was pressed; `null` for the New task button. */
+  column: Readonly<Record<string, string>> | null;
+  /** Shows the Project field: the board has several projects. */
+  chooseProject: boolean;
   /** The control pressed, where focus returns when nothing is created. */
   opener: HTMLElement;
   /** Where focus returns when the opener has left the document. */
   newTaskRef: RefObject<HTMLElement | null>;
+  /**
+   * Moves focus when nothing is created and neither the opener nor New task is
+   * in the document. Base UI would move it into the first control of an
+   * element that Tab does not reach, such as `<main>`.
+   */
+  focusFallback: () => void;
   /** Closed with nothing created. */
   onClose: () => void;
   /** The query cache already holds the new task. The dialog leaves focus where it is. */
@@ -63,6 +93,80 @@ function Caret(): ReactNode {
   return <CaretDownIcon size={14} aria-hidden="true" className="shrink-0 text-dim" />;
 }
 
+function projectWords({ name, tag }: ProjectSummary): string {
+  return name === undefined ? tag : `${name} ${tag}`;
+}
+
+/** What a change of project changed in Status and Priority, one sentence for each. */
+function changedWords(before: TaskDraft, after: TaskDraft): string[] {
+  return [
+    ...(after.status === before.status ? [] : [`Status is now ${after.status}.`]),
+    ...(after.priority === before.priority ? [] : [`Priority is now ${after.priority ?? "None"}.`]),
+  ];
+}
+
+type ProjectFieldProps = {
+  labelId: string;
+  projects: readonly ProjectSummary[];
+  selected: ProjectSummary;
+  onPick: (tag: string) => void;
+  /** The menu has closed, and focus is back on its trigger. */
+  onClosed: () => void;
+  onFocusLost: () => void;
+};
+
+function ProjectField({ labelId, projects, selected, onPick, onClosed, onFocusLost }: ProjectFieldProps): ReactNode {
+  const triggerId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+
+  useFocusLost(triggerRef, onFocusLost, open);
+
+  return (
+    <Menu.Root
+      highlightItemOnHover={false}
+      open={open}
+      onOpenChange={setOpen}
+      onOpenChangeComplete={(opened) => {
+        if (!opened) {
+          onClosed();
+        }
+      }}
+    >
+      <Menu.Trigger
+        ref={triggerRef}
+        id={triggerId}
+        aria-labelledby={`${labelId} ${triggerId}`}
+        className={PROPERTY_TRIGGER_CLASS.field}
+      >
+        <ProjectName name={selected.name} tag={selected.tag} />
+        <Caret />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner align="end" sideOffset={4} className={POSITIONER_CLASS}>
+          {/* The modal dialog locks the scroll of the page, and the list of all projects can be longer than the
+              window. */}
+          <Menu.Popup
+            aria-labelledby={labelId}
+            className={`max-h-(--available-height) min-w-52 overflow-y-auto ${POPUP_CLASS}`}
+          >
+            <Menu.RadioGroup
+              value={selected.tag}
+              onValueChange={(next: string) => {
+                if (next !== selected.tag) {
+                  onPick(next);
+                }
+              }}
+            >
+              <ProjectMenuItems projects={projects} />
+            </Menu.RadioGroup>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}
+
 /**
  * The create dialog: a draft of a task that is written once, on Create.
  *
@@ -73,21 +177,39 @@ function Caret(): ReactNode {
 export function CreateTaskDialog({
   queryClient,
   client,
-  tag,
-  config,
-  entries,
-  status,
+  projects,
+  startTag,
+  column,
+  chooseProject,
   opener,
   newTaskRef,
+  focusFallback,
   onClose,
   onCreated,
 }: CreateTaskDialogProps): ReactNode {
-  const { mutateAsync: create, isPending } = useMutation(taskCreateOptions(queryClient, client, tag));
-  const [first] = useState(() => firstDraft(status));
+  const { mutateAsync: create, isPending } = useMutation(taskCreateOptions(queryClient, client));
+  const [tag, setTag] = useState(startTag);
+  const current = projects.find((project) => project.tag === tag);
+  // A selected project that leaves the board is still the one a create goes to.
+  const [kept, setKept] = useState(current!);
+  if (current !== undefined && current !== kept) {
+    setKept(current);
+  }
+  const selected = current ?? kept;
+  const menuProjects = current === undefined
+    ? boardOrder(projects.map((project) => project.tag), [tag])
+        .map((menuTag) => projects.find((project) => project.tag === menuTag) ?? selected)
+    : projects;
+  const [first] = useState(() => firstDraft(column?.[startTag] ?? selected.config.default_status));
   const [draft, setDraft] = useState(first);
   // A pick and a ⌘↩ of one key press both land before the render, so the
-  // submit reads the draft from here.
+  // submit reads the draft and the project from here.
   const draftRef = useRef(first);
+  const tagRef = useRef(startTag);
+  // The board can change while the create runs, and the receipt goes to the board as it stands.
+  const onCreatedRef = useRef(onCreated);
+  const pickedRef = useRef<PickedValues>({});
+  const projectWordsRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
   const createdRef = useRef(false);
   const [titleError, setTitleError] = useState<string | undefined>(undefined);
@@ -99,14 +221,24 @@ export function CreateTaskDialog({
   const formRef = useRef<HTMLFormElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const projectId = useId();
   const statusId = useId();
   const priorityId = useId();
   const labelsId = useId();
   const refusalId = useId();
+  const summaryId = useId();
+  const describedBy = [
+    ...(chooseProject ? [summaryId] : []),
+    ...(refusal === null ? [] : [refusalId]),
+  ].join(" ");
 
   // Mounted only while open. The return focus is `opener`, not the element handed back.
   useFocusEmptiedWhileOpening(true);
   useModalDialog(true);
+
+  useLayoutEffect(() => {
+    onCreatedRef.current = onCreated;
+  });
 
   function change(fields: Partial<TaskDraft>): void {
     const previous = draftRef.current;
@@ -126,13 +258,40 @@ export function CreateTaskDialog({
     titleRef.current?.focus();
   }
 
+  /** The words are said once the menu has closed: a live message in the same commit as a focus move loses to it. */
+  function pickProject(next: string): void {
+    if (sendingRef.current) {
+      projectWordsRef.current = CANNOT_CHANGE_PROJECT;
+      return;
+    }
+
+    const project = menuProjects.find((menuProject) => menuProject.tag === next)!;
+    const before = draftRef.current;
+    const after = draftForProject(before, pickedRef.current, project.config, column?.[next]);
+
+    tagRef.current = next;
+    setTag(next);
+    setRefusal(null);
+    change(after);
+    const said = changedWords(before, after);
+    projectWordsRef.current = said.length === 0 ? null : said.join(" ");
+  }
+
+  function sayProjectWords(): void {
+    const words = projectWordsRef.current;
+    projectWordsRef.current = null;
+    if (words !== null) {
+      announce(words);
+    }
+  }
+
   /** Cancel, Esc and a press on the scrim. */
   function requestClose(): void {
     if (sendingRef.current) {
       announce(CANNOT_CANCEL);
       return;
     }
-    if (!hasContent(first, draftRef.current)) {
+    if (!hasContent(first, draftRef.current) && tagRef.current === startTag) {
       onClose();
       return;
     }
@@ -182,7 +341,7 @@ export function CreateTaskDialog({
 
     let created: Created;
     try {
-      created = await create({ input: createInput(sent) });
+      created = await create({ tag: tagRef.current, input: createInput(sent) });
     } catch (error) {
       sendingRef.current = false;
       const shown = createRefusal(error);
@@ -199,7 +358,7 @@ export function CreateTaskDialog({
     }
 
     createdRef.current = true;
-    onCreated(created);
+    onCreatedRef.current(created);
   }
 
   return (
@@ -225,14 +384,29 @@ export function CreateTaskDialog({
               if (createdRef.current) {
                 return false;
               }
+              if (opener.isConnected) {
+                return opener;
+              }
 
-              return opener.isConnected ? opener : newTaskRef.current;
+              const newTask = newTaskRef.current;
+              if (newTask?.isConnected === true) {
+                return newTask;
+              }
+
+              focusFallback();
+              return false;
             }}
             // A value here replaces the one Base UI sets rather than joining it.
-            aria-describedby={refusal === null ? undefined : refusalId}
+            aria-describedby={describedBy === "" ? undefined : describedBy}
             className={DIALOG_PANEL_WIDE_CLASS}
           >
             <Dialog.Title className="font-chrome text-lg font-semibold">New task</Dialog.Title>
+            {/* The first focus is in Title, below the Project row, so the dialog says where the task goes. */}
+            {chooseProject && (
+              <p id={summaryId} className="sr-only">
+                {`The task is created in ${projectWords(selected)}, with the status ${draft.status}.`}
+              </p>
+            )}
             <form
               ref={formRef}
               onSubmit={(event) => {
@@ -249,6 +423,19 @@ export function CreateTaskDialog({
               }}
             >
               <div className="mt-4 grid grid-cols-[84px_minmax(0,1fr)] items-center gap-x-3 gap-y-2.5 text-sm">
+                {chooseProject && (
+                  <>
+                    <span id={projectId} className={ROW_LABEL_CLASS}>Project</span>
+                    <ProjectField
+                      labelId={projectId}
+                      projects={menuProjects}
+                      selected={selected}
+                      onPick={pickProject}
+                      onClosed={sayProjectWords}
+                      onFocusLost={focusTitle}
+                    />
+                  </>
+                )}
                 <Field.Root name="title" invalid={titleError !== undefined} className="contents">
                   {/* The label is held level with the input, as the Body label is:
                       centred on the cell it would sit between input and error. */}
@@ -277,11 +464,12 @@ export function CreateTaskDialog({
                   labelId={statusId}
                   value={draft.status}
                   row={{
-                    choices: statusChoices(config),
+                    choices: statusChoices(selected.config),
                     match: "without case",
                     busy: false,
                     onPick: (value) => {
                       // Not clearable, so a pick is always a status.
+                      pickedRef.current = { ...pickedRef.current, status: value! };
                       change({ status: value! });
                     },
                   }}
@@ -300,10 +488,11 @@ export function CreateTaskDialog({
                   labelId={priorityId}
                   value={draft.priority ?? undefined}
                   row={{
-                    choices: priorityChoices(config),
+                    choices: priorityChoices(selected.config),
                     match: "without case",
                     busy: false,
                     onPick: (priority) => {
+                      pickedRef.current = { ...pickedRef.current, priority };
                       change({ priority });
                     },
                   }}
@@ -322,7 +511,7 @@ export function CreateTaskDialog({
                 <LabelPicker
                   look="field"
                   labelId={labelsId}
-                  entries={entries}
+                  entries={selected.entries}
                   labels={draft.labels}
                   row={{
                     busy: false,

@@ -703,7 +703,7 @@ describe("taskCreateOptions", () => {
   function createSetup(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
     const context = setup(replies);
     const { queryClient, client } = context;
-    const creator = new MutationObserver(queryClient, taskCreateOptions(queryClient, client, TAG));
+    const creator = new MutationObserver(queryClient, taskCreateOptions(queryClient, client));
 
     return { ...context, creator };
   }
@@ -715,7 +715,7 @@ describe("taskCreateOptions", () => {
   it("sends one POST with the input, and resolves with the id, the stored status and the diagnostics", async () => {
     const { creator, requests } = createSetup({ [CREATE]: successReply({ id: "NOTE-7", status: "To Do" }, [FRESH]) });
 
-    const created = await creator.mutate({ input: INPUT });
+    const created = await creator.mutate({ tag: TAG, input: INPUT });
 
     expect(creates(requests)).toEqual([{ method: "POST", path: LISTING, body: INPUT }]);
     expect(created).toEqual({ id: "NOTE-7", status: "To Do", diagnostics: [FRESH] });
@@ -724,7 +724,7 @@ describe("taskCreateOptions", () => {
   it("takes the status of the input when the receipt names none", async () => {
     const { creator } = createSetup({ [CREATE]: successReply({ id: "NOTE-7" }) });
 
-    await expect(creator.mutate({ input: INPUT })).resolves.toEqual({ id: "NOTE-7", status: "To Do", diagnostics: [] });
+    await expect(creator.mutate({ tag: TAG, input: INPUT })).resolves.toEqual({ id: "NOTE-7", status: "To Do", diagnostics: [] });
   });
 
   it("stays pending after the answer until the listing is read again", async () => {
@@ -734,7 +734,7 @@ describe("taskCreateOptions", () => {
     await queryClient.query(tasksQuery(client, TAG));
     replies[LISTING] = listing.reply;
 
-    const done = creator.mutate({ input: INPUT });
+    const done = creator.mutate({ tag: TAG, input: INPUT });
     await vi.waitFor(() => {
       expect(queryClient.getQueryState(tasksQuery(client, TAG).queryKey)?.fetchStatus).toBe("fetching");
     });
@@ -756,7 +756,7 @@ describe("taskCreateOptions", () => {
     useNoticeStore.getState().showNotice({ key: "task-read:NOTE-9", form: "warning", title: "1 warning about NOTE-9", words: ["a"] });
     await expect(observer.mutate(moveOf("NOTE-1"))).rejects.toThrow();
 
-    await creator.mutate({ input: INPUT });
+    await creator.mutate({ tag: TAG, input: INPUT });
 
     expect(notices().map(({ key }) => key)).toEqual(["task-read:NOTE-9"]);
   });
@@ -767,7 +767,7 @@ describe("taskCreateOptions", () => {
     await queryClient.query(tasksQuery(client, TAG));
     requests.length = 0;
 
-    const error = await creator.mutate({ input: INPUT }).catch((thrown: unknown) => thrown);
+    const error = await creator.mutate({ tag: TAG, input: INPUT }).catch((thrown: unknown) => thrown);
 
     expect(error).toBeInstanceOf(WriteError);
     expect((error as WriteError).cause).toBeInstanceOf(ProtocolError);
@@ -781,7 +781,7 @@ describe("taskCreateOptions", () => {
   it("does not try a create again", async () => {
     const { creator, requests } = createSetup({ [CREATE]: { status: 502 } });
 
-    await expect(creator.mutate({ input: INPUT })).rejects.toThrow();
+    await expect(creator.mutate({ tag: TAG, input: INPUT })).rejects.toThrow();
 
     expect(creates(requests)).toHaveLength(1);
   });
@@ -793,7 +793,7 @@ describe("taskCreateOptions", () => {
       [CREATE]: successReply({ id: "NOTE-7", status: "To Do" }),
     });
 
-    const done = [observer.mutate(moveOf("NOTE-1")), creator.mutate({ input: INPUT })];
+    const done = [observer.mutate(moveOf("NOTE-1")), creator.mutate({ tag: TAG, input: INPUT })];
     await vi.waitFor(() => {
       expect(requests.filter(({ method }) => method !== "GET")).toHaveLength(1);
     });
@@ -807,21 +807,21 @@ describe("taskCreateOptions", () => {
     expect(requests.filter(({ method }) => method !== "GET").map(({ method }) => method)).toEqual(["PATCH", "POST"]);
   });
 
-  it("is keyed under the tasks of its project, apart from the writes the board lays over its cards", async () => {
+  it("is keyed under one key for all projects, apart from the writes the board lays over its cards", async () => {
     const held = heldBack();
     const { queryClient, client } = createSetup({ [CREATE]: held.reply });
     const wrapper = ({ children }: { children: ReactNode }) =>
       createElement(QueryClientProvider, { client: queryClient }, children);
     const { result } = renderHook(() => usePendingTaskWrites([TAG]), { wrapper });
-    const options = taskCreateOptions(queryClient, client, TAG);
+    const options = taskCreateOptions(queryClient, client);
     let done: Promise<unknown> = Promise.resolve();
 
     await act(async () => {
-      done = new MutationObserver(queryClient, options).mutate({ input: INPUT });
+      done = new MutationObserver(queryClient, options).mutate({ tag: TAG, input: INPUT });
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
 
-    expect(options.mutationKey).toEqual(["daemon", "projects", TAG, "tasks", "create"]);
+    expect(options.mutationKey).toEqual(["daemon", "projects", "task-create"]);
     expect(result.current.writes).toEqual([]);
     expect([...result.current.movedIds]).toEqual([]);
 
@@ -1366,8 +1366,8 @@ describe("the writes and deletes of several projects", () => {
     const done = [
       observer.mutate(moveOf("ALPHA-4")),
       another().mutate(pageSave("BETA-7")),
-      new MutationObserver(queryClient, taskCreateOptions(queryClient, client, "BETA"))
-        .mutate({ input: { title: "Draw the map", status: "To Do" } }),
+      new MutationObserver(queryClient, taskCreateOptions(queryClient, client))
+        .mutate({ tag: "BETA", input: { title: "Draw the map", status: "To Do" } }),
       deleter().mutate({ id: "BETA-2" }),
     ];
     await vi.waitFor(() => {
@@ -1434,6 +1434,22 @@ describe("the writes and deletes of several projects", () => {
 
     expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([`DELETE ${taskPath("BETA-2", "BETA")}`, `GET ${BETA_LISTING}`]);
     expect(queryClient.getQueryState(taskQuery(client, "BETA", "BETA-2").queryKey)).toBeUndefined();
+    stop();
+  });
+
+  it.each([
+    { outcome: "succeeds", reply: successReply({ id: "BETA-8", status: "To Do" }) },
+    { outcome: "is refused", reply: REFUSAL },
+  ])("sends a create to the project of its variables, and reads that project alone again when it $outcome", async ({ reply }) => {
+    const { queryClient, client, requests, watchBoth } = severalSetup({ [`POST ${BETA_LISTING}`]: reply });
+    const stop = await watchBoth();
+    const creator = new MutationObserver(queryClient, taskCreateOptions(queryClient, client));
+
+    await creator.mutate({ tag: "BETA", input: { title: "Draw the map", status: "To Do" } }).catch(() => undefined);
+
+    await vi.waitFor(() => {
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([`POST ${BETA_LISTING}`, `GET ${BETA_LISTING}`]);
+    });
     stop();
   });
 

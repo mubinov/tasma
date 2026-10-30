@@ -274,12 +274,13 @@ function CreateTask({ queryClient }: { queryClient: QueryClient }): ReactNode {
       <CreateTaskDialog
         queryClient={queryClient}
         client={createClient(stubTransport({}).transport)}
-        tag="SAGA"
-        config={CONFIG}
-        entries={[]}
-        status="To Do"
+        projects={[{ tag: "SAGA", config: CONFIG, entries: [] }]}
+        startTag="SAGA"
+        column={{ SAGA: "To Do" }}
+        chooseProject={false}
         opener={document.body}
         newTaskRef={newTaskRef}
+        focusFallback={() => undefined}
         onClose={() => undefined}
         onCreated={() => undefined}
       />

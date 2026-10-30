@@ -14,6 +14,7 @@ import {
 const THEME_KEY = "tasma.theme";
 const SIDEBAR_KEY = "tasma.sidebar";
 const TASKS_PROJECT_KEY = "tasma.tasks.project";
+const CREATE_PROJECT_KEY = "tasma.tasks.createProject";
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -22,6 +23,7 @@ beforeEach(() => {
     themePreference: "system",
     sidebarCollapsed: false,
     lastTasksProject: null,
+    lastCreateProject: null,
     boardReturn: null,
     boardRestorePending: false,
     lastBoard: null,
@@ -63,7 +65,12 @@ describe("the ui store", () => {
       throw new Error("storage is not available on this origin");
     });
 
-    expect(hydrateUiStore()).toEqual({ themePreference: "system", sidebarCollapsed: false, lastTasksProject: null });
+    expect(hydrateUiStore()).toEqual({
+      themePreference: "system",
+      sidebarCollapsed: false,
+      lastTasksProject: null,
+      lastCreateProject: null,
+    });
   });
 
   it("persists a new preference", () => {
@@ -88,7 +95,12 @@ describe("the ui store", () => {
       write: (key, value) => void written.push([key, value]),
     });
 
-    expect(hydrateUiStore()).toEqual({ themePreference: "dark", sidebarCollapsed: true, lastTasksProject: null });
+    expect(hydrateUiStore()).toEqual({
+      themePreference: "dark",
+      sidebarCollapsed: true,
+      lastTasksProject: null,
+      lastCreateProject: null,
+    });
     useUiStore.getState().setThemePreference("light");
     useUiStore.getState().setSidebarCollapsed(false);
 
@@ -197,6 +209,33 @@ describe("the projects of the last board", () => {
   );
 });
 
+describe("the project of the last create", () => {
+  it("starts on null", () => {
+    expect(hydrateUiStore().lastCreateProject).toBeNull();
+    expect(useUiStore.getState().lastCreateProject).toBeNull();
+  });
+
+  it("persists the tag under its own key and hydrates it back", () => {
+    useUiStore.getState().setLastCreateProject("SAGA");
+    expect(useUiStore.getState().lastCreateProject).toBe("SAGA");
+    expect(window.localStorage.getItem(CREATE_PROJECT_KEY)).toBe("SAGA");
+    expect(window.localStorage.getItem(TASKS_PROJECT_KEY)).toBeNull();
+
+    useUiStore.setState({ lastCreateProject: null });
+    expect(hydrateUiStore().lastCreateProject).toBe("SAGA");
+    expect(useUiStore.getState().lastCreateProject).toBe("SAGA");
+  });
+
+  it.each([{ stored: "saga" }, { stored: "" }, { stored: "SAGA-1" }, { stored: "DELTA,SAGA" }, { stored: "all" }])(
+    "hydrates the stored value \"$stored\", which is no tag, as null",
+    ({ stored }) => {
+      window.localStorage.setItem(CREATE_PROJECT_KEY, stored);
+
+      expect(hydrateUiStore().lastCreateProject).toBeNull();
+    },
+  );
+});
+
 describe("the preference list", () => {
   it("labels every preference exactly once", () => {
     expect(Object.keys(THEME_PREFERENCE_LABELS).sort()).toEqual([...THEME_PREFERENCES].sort());
@@ -251,7 +290,12 @@ describe("the restore a card open asks for", () => {
     useUiStore.getState().setLastBoard({ projects: "DELTA,SAGA", labels: "web" });
 
     expect(written).toEqual([]);
-    expect(hydrateUiStore()).toEqual({ themePreference: "system", sidebarCollapsed: false, lastTasksProject: null });
+    expect(hydrateUiStore()).toEqual({
+      themePreference: "system",
+      sidebarCollapsed: false,
+      lastTasksProject: null,
+      lastCreateProject: null,
+    });
     expect(useUiStore.getState().lastBoard).toEqual({ projects: "DELTA,SAGA", labels: "web" });
   });
 });

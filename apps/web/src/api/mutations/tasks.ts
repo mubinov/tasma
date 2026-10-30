@@ -183,7 +183,12 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client) {
 /** The receipt of a create. */
 export type Created = { id: string; status: string; diagnostics: Diagnostic[] };
 
-export type CreateTask = { input: CreateInput };
+export type CreateTask = { tag: string; input: CreateInput };
+
+/** One key for the creates of all projects. A tag is uppercase, so no project key is the same. */
+function taskCreateKey() {
+  return [...daemonKeys.projects(), "task-create"] as const;
+}
 
 /** A create is one write, and nothing was created on any path. */
 const CREATE_FAILURE_LINES: Record<FailureKind, string> = {
@@ -204,14 +209,15 @@ export function createRefusal(error: unknown): { line: string; words: string } {
 }
 
 /**
- * The create of a task, in the one queue of the writes of all projects. It
- * opens no notice: the dialog shows a refusal, and the board opens the warnings
- * once the dialog has closed, where no scrim covers them.
+ * The create of a task, sent to the project of its variables, in the one queue
+ * of the writes of all projects. It opens no notice: the dialog shows a
+ * refusal, and the board opens the warnings once the dialog has closed, where
+ * no scrim covers them.
  */
-export function taskCreateOptions(queryClient: QueryClient, client: Client, tag: string) {
+export function taskCreateOptions(queryClient: QueryClient, client: Client) {
   return mutationOptions<Created, WriteError, CreateTask>({
-    mutationKey: [...daemonKeys.tasks(tag), "create"],
-    mutationFn: async ({ input }) => {
+    mutationKey: taskCreateKey(),
+    mutationFn: async ({ tag, input }) => {
       try {
         const { data, diagnostics } = await client.createTask(tag, input);
 
@@ -222,13 +228,13 @@ export function taskCreateOptions(queryClient: QueryClient, client: Client, tag:
     },
     retry: 0,
     scope: TASK_WRITE_SCOPE,
-    onSuccess: () => {
+    onSuccess: (_created, { tag }) => {
       closeFailureNotices();
 
       // Returned, so the create stays pending until the listing holds the task.
       return queryClient.invalidateQueries({ queryKey: daemonKeys.tasks(tag) });
     },
-    onError: () => {
+    onError: (_error, { tag }) => {
       void queryClient.invalidateQueries({ queryKey: daemonKeys.tasks(tag) });
     },
   });

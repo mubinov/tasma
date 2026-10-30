@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createInput, firstDraft, hasContent, type TaskDraft } from "../../src/lib/task-draft";
+import { createInput, draftForProject, firstDraft, hasContent, type TaskDraft } from "../../src/lib/task-draft";
 
 describe("firstDraft", () => {
   it("carries the given status and nothing else", () => {
@@ -57,5 +57,50 @@ describe("createInput", () => {
     const input = createInput({ ...firstDraft("Done"), title: "Map", labels });
 
     expect(input.labels).not.toBe(labels);
+  });
+});
+
+describe("draftForProject", () => {
+  const DELTA = { statuses: ["backlog", "Review", "Done"], default_status: "backlog", priorities: ["Urgent", "high"] };
+  const draft: TaskDraft = { title: "Map", status: "To Do", priority: "medium", labels: ["web"], body: "Notes" };
+
+  it("gives the status of the column with no pick, and no priority", () => {
+    expect(draftForProject(draft, {}, DELTA, "Review")).toEqual({ ...draft, status: "Review", priority: null });
+  });
+
+  it("gives the default status of the project with no pick and no column status", () => {
+    expect(draftForProject(draft, {}, DELTA, undefined).status).toBe("backlog");
+  });
+
+  it("keeps a picked status that the project has, in the spelling of the project", () => {
+    expect(draftForProject(draft, { status: "DONE" }, DELTA, "Review").status).toBe("Done");
+  });
+
+  it.each([
+    { columnStatus: "Review", status: "Review" },
+    { columnStatus: undefined, status: "backlog" },
+  ])(
+    "gives $status for a picked status that the project does not have, with the column status $columnStatus",
+    ({ columnStatus, status }) => {
+      expect(draftForProject(draft, { status: "To Do" }, DELTA, columnStatus).status).toBe(status);
+    },
+  );
+
+  it("keeps a picked priority that the project has, in the spelling of the project", () => {
+    expect(draftForProject(draft, { priority: "urgent" }, DELTA, undefined).priority).toBe("Urgent");
+  });
+
+  it.each([
+    { picked: "medium" },
+    { picked: null },
+  ])("gives no priority for the picked priority $picked", ({ picked }) => {
+    expect(draftForProject(draft, { priority: picked }, DELTA, undefined).priority).toBeNull();
+  });
+
+  it("keeps the title, the labels and the body", () => {
+    const next = draftForProject(draft, { status: "Done", priority: "high" }, DELTA, undefined);
+
+    expect(next).toEqual({ title: "Map", status: "Done", priority: "high", labels: ["web"], body: "Notes" });
+    expect(next.labels).toBe(draft.labels);
   });
 });

@@ -31,6 +31,28 @@ export type BoardProjects = {
   failed: readonly FailedProject[];
 };
 
+type ReadState = Parameters<typeof isRefused>[0];
+
+function isLeftOut(project: ReadState, listing: ReadState): boolean {
+  return isRefused(project) || isRefused(listing);
+}
+
+/**
+ * The tags of `tags` the board shows by the reads in the cache. A read reaches
+ * the board only when the cache tells its observers, after the call that
+ * changed it.
+ */
+export function cachedShownTags(
+  queryClient: QueryClient,
+  client: Client,
+  { tags, several }: Pick<BoardProjectsInput, "tags" | "several">,
+): string[] {
+  return tags.filter((tag) => !several || !isLeftOut(
+    queryClient.getQueryState(projectQuery(client, tag).queryKey)!,
+    queryClient.getQueryState(tasksQuery(client, tag).queryKey)!,
+  ));
+}
+
 /**
  * Reads the projects the loader read, and splits the projects of the board
  * into those it shows and those it does not. On a board of several projects, a
@@ -50,7 +72,7 @@ export function useBoardProjects(
       { ...tasksQuery(client, tag), enabled: false },
     ]),
     combine: (reads) => (several
-      ? tags.filter((_, index) => isRefused(reads[2 * index]!) || isRefused(reads[2 * index + 1]!))
+      ? tags.filter((_, index) => isLeftOut(reads[2 * index]!, reads[2 * index + 1]!))
       : []),
   });
   const loaded = tags.map((tag, index) => ({

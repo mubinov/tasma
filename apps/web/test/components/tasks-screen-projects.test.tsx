@@ -94,6 +94,10 @@ async function focusOn(element: HTMLElement) {
   expect(document.activeElement).toBe(element);
 }
 
+function projectTrigger(): HTMLElement {
+  return within(screen.getByRole("dialog", { name: "New task" })).getByRole("button", { name: /^Project / });
+}
+
 /** Every text announced from now on, in order. */
 function recordAnnounced(): string[] {
   const words: string[] = [];
@@ -117,6 +121,7 @@ beforeEach(() => {
   window.localStorage.clear();
   useUiStore.setState({
     lastTasksProject: null,
+    lastCreateProject: null,
     boardReturn: null,
     boardRestorePending: false,
     lastBoard: null,
@@ -188,15 +193,21 @@ describe("the address", () => {
     expect(useNoticeStore.getState().notices).toEqual([]);
   });
 
-  it("is a board of several projects while one of its two projects is refused", async () => {
+  it("is a board of several projects while one of its two projects is refused, whose Project field offers the other", async () => {
+    const user = userEvent.setup();
     const { transport } = twoProjects({ "/projects/SAGA": INVALID, "/projects/SAGA/tasks": INVALID });
     await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
 
-    expect(screen.queryByRole("button", { name: "New task" })).toBeNull();
     expect(screen.getByRole("searchbox", { name: "Search" })).toBeTruthy();
     expect(screen.getByText("No tasks in these projects yet.")).toBeTruthy();
     expect(window.localStorage.getItem("tasma.tasks.project")).toBe("DELTA,SAGA");
     expect(useUiStore.getState().lastTasksProject).toBe("DELTA,SAGA");
+
+    await user.click(screen.getByRole("button", { name: "New task" }));
+    await user.click(projectTrigger());
+
+    const menu = await screen.findByRole("menu", { name: "Project" });
+    expect(within(menu).getAllByRole("menuitemradio").map((item) => item.textContent)).toEqual(["Delta DELTA"]);
   });
 
   it("reads the project list once more for tags it does not hold, and sends no read for them", async () => {
@@ -327,7 +338,8 @@ describe("the board of all projects", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
-  it("shows every project in the order of the project list", async () => {
+  it("shows every project in the order of the project list, and creates with a Project field", async () => {
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
     const { transport } = twoProjects({
       "/projects/SAGA/tasks": listing([entry(1)]),
       "/projects/DELTA/tasks": listing([delta(11, { status: "Review" })]),
@@ -338,7 +350,10 @@ describe("the board of all projects", () => {
     expect(columnNames()).toEqual(MERGED);
     expect(titlesIn("Backlog")).toEqual(["Task 1"]);
     expect(titlesIn("Review")).toEqual(["Task 11"]);
-    expect(screen.queryByRole("button", { name: "New task" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "New task" }));
+
+    expect(projectTrigger()).toBeTruthy();
   });
 
   it("shows a project added to the tree after an event, and leaves out a project removed from it", async () => {
@@ -588,6 +603,27 @@ describe("the board of all projects", () => {
       await vi.waitFor(() => {
         expect(screen.getByText(/^No projects yet/)).toBeTruthy();
       });
+      expect(document.activeElement).toBe(screen.getByRole("main"));
+    });
+
+    it("goes to the main region when the last project leaves while the delete dialog is open", async () => {
+      const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+      const stub = twoProjects({
+        "/projects": successReply([SAGA]),
+        "/projects/SAGA/tasks": listing([entry(1)]),
+      });
+      const { feed } = await openWithFeed("/tasks?projects=all", stub);
+      await user.click(menuButton("Task 1"));
+      await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /^Delete / }));
+      await screen.findByRole("alertdialog");
+
+      stub.replies["/projects"] = successReply([]);
+      await sendAndWaitPastRetry(feed, [projectEvent("SAGA", "deleted")]);
+
+      await vi.waitFor(() => {
+        expect(screen.getByText(/^No projects yet/)).toBeTruthy();
+      });
+      expect(screen.queryByRole("alertdialog")).toBeNull();
       expect(document.activeElement).toBe(screen.getByRole("main"));
     });
   });
@@ -1217,13 +1253,16 @@ describe("the texts of a board of several projects", () => {
 });
 
 describe("the controls of a board of several projects", () => {
-  it("shows the search field, and no New task and no plus", async () => {
+  it("shows the search field, New task and the plus of each column", async () => {
     const { transport } = twoProjects({ "/projects/SAGA/tasks": listing([entry(1)]) });
     await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
 
     expect(screen.getByRole("searchbox", { name: "Search" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "New task" })).toBeNull();
-    expect(screen.queryAllByRole("button", { name: /^New task in / })).toEqual([]);
+    expect(screen.getByRole("button", { name: "New task" })).toBeTruthy();
+    for (const status of MERGED) {
+      expect(within(screen.getByRole("region", { name: status })).getByRole("button", { name: `New task in ${status}` }))
+        .toBeTruthy();
+    }
     expect(titlesIn("Backlog")).toEqual(["Task 1"]);
   });
 
@@ -1267,6 +1306,367 @@ describe("the controls of a board of several projects", () => {
     });
 
     expect(titlesIn("Done")).toHaveLength(20);
+  });
+});
+
+describe("creating a task on a board of several projects", () => {
+  const CREATE_DELTA = "POST /projects/DELTA/tasks";
+
+  function dialog(): HTMLElement {
+    return screen.getByRole("dialog", { name: "New task" });
+  }
+
+  function newTask(): HTMLElement {
+    return screen.getByRole("button", { name: "New task" });
+  }
+
+  function creates(requests: { method: string; path: string }[]): string[] {
+    return requests.filter(({ method }) => method === "POST").map(({ path }) => path);
+  }
+
+  /** The dialog's description as a screen reader reads it. */
+  function described(): string {
+    return (dialog().getAttribute("aria-describedby") ?? "")
+      .split(" ")
+      .map((id) => document.getElementById(id)?.textContent ?? `missing ${id}`)
+      .join(" ");
+  }
+
+  /** Opens the dialog from the control, and waits for focus to land in Title. */
+  async function openDialog(user: ReturnType<typeof userEvent.setup>, opener: HTMLElement) {
+    await user.click(opener);
+    const input = await screen.findByRole("textbox", { name: "Title" });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(input);
+    });
+  }
+
+  async function submit(user: ReturnType<typeof userEvent.setup>, title: string) {
+    await user.keyboard(title);
+    await user.click(within(dialog()).getByRole("button", { name: "Create" }));
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  it.each([
+    { remembered: null, opens: "Delta DELTA", status: "To Do" },
+    { remembered: "SAGA", opens: "Saga SAGA", status: "Backlog" },
+    { remembered: "ECHO", opens: "Delta DELTA", status: "To Do" },
+  ])("opens New task on $opens with $remembered remembered", async ({ remembered, opens, status }) => {
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+    useUiStore.setState({ lastCreateProject: remembered });
+    const { transport } = twoProjects();
+    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+
+    await openDialog(user, newTask());
+
+    expect(projectTrigger().textContent).toBe(opens);
+    expect(described()).toBe(`The task is created in ${opens}, with the status ${status}.`);
+  });
+
+  it("opens the plus of a column the start project has no status for on the default status of that project", async () => {
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+    useUiStore.setState({ lastCreateProject: "SAGA" });
+    const { transport } = twoProjects();
+    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+
+    await openDialog(user, within(screen.getByRole("region", { name: "Review" })).getByRole("button", { name: "New task in Review" }));
+
+    expect(projectTrigger().textContent).toBe("Saga SAGA");
+    expect(within(dialog()).getByRole("button", { name: "Status Backlog" })).toBeTruthy();
+    expect(described()).toBe("The task is created in Saga SAGA, with the status Backlog.");
+  });
+
+  it("creates in the selected project, focuses the new card, and remembers the project", async () => {
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+    const { transport, replies, requests } = twoProjects({
+      "/projects/SAGA/tasks": listing([entry(1)]),
+      [CREATE_DELTA]: successReply({ id: "DELTA-7", status: "To Do" }),
+    });
+    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+    replies["/projects/DELTA/tasks"] = listing([delta(7, { status: "To Do" })]);
+    await openDialog(user, newTask());
+
+    await submit(user, "Task 7");
+
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("link", { name: "DELTA-7 Task 7" }));
+    });
+    expect(creates(requests)).toEqual(["/projects/DELTA/tasks"]);
+    expect(useUiStore.getState().lastCreateProject).toBe("DELTA");
+    expect(window.localStorage.getItem("tasma.tasks.createProject")).toBe("DELTA");
+  });
+
+  it.each([
+    {
+      what: "a search of both projects that hides the new card",
+      sagaSearch: listing([entry(1)]),
+      focus: "heading",
+      words: "DELTA-7 was created. The search hides it.",
+    },
+    {
+      what: "a failed search of the other project, which shows every card",
+      sagaSearch: INVALID,
+      focus: "card",
+      words: "DELTA-7 was created.",
+    },
+  ])("focuses the target of the joined search ids for $what", async ({ sagaSearch, focus, words }) => {
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+    const said = recordAnnounced();
+    const { transport, replies } = twoProjects({
+      "/projects/SAGA/tasks": listing([entry(1)]),
+      "/projects/SAGA/tasks?q=parser": sagaSearch,
+      "/projects/DELTA/tasks?q=parser": listing([]),
+      [CREATE_DELTA]: successReply({ id: "DELTA-7", status: "To Do" }),
+    });
+    await renderWithRouter("/tasks?projects=DELTA,SAGA&q=parser", transport);
+    replies["/projects/DELTA/tasks"] = listing([delta(7, { status: "To Do" })]);
+    await openDialog(user, newTask());
+
+    await submit(user, "Task 7");
+
+    const toDo = screen.getByRole("region", { name: "To Do" });
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(focus === "heading"
+        ? within(toDo).getByRole("heading", { level: 2 })
+        : screen.getByRole("link", { name: "DELTA-7 Task 7" }));
+    });
+    await vi.waitFor(() => {
+      expect(said).toContain(words);
+    });
+  });
+
+  it("opens the warning notice of a create from the reads of the project of the new task", async () => {
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+    const shown: Diagnostic = { code: "config-key-unknown", message: "unknown key: colour", path: "/repos/delta/config.yml" };
+    const fresh: Diagnostic = { code: "label-case-converted", message: "label \"Web\" was converted to \"web\"" };
+    const { transport } = twoProjects({
+      "/projects/DELTA": successReply({ ...DELTA, live: true, config: OTHER_CONFIG }, [shown]),
+      [CREATE_DELTA]: successReply({ id: "DELTA-7", status: "To Do" }, [shown, fresh]),
+    });
+    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+    await openDialog(user, newTask());
+
+    await submit(user, "Task 7");
+
+    await vi.waitFor(() => {
+      expect(useNoticeStore.getState().notices.map(({ title }) => title)).toEqual(["1 warning about DELTA-7"]);
+    });
+    expect(useNoticeStore.getState().notices[0]?.words).toEqual(["label-case-converted · label \"Web\" was converted to \"web\""]);
+  });
+
+  it("creates in a selected project that leaves the board, focuses the main region and says the board does not show it", async () => {
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+    const said = recordAnnounced();
+    useUiStore.setState({ lastCreateProject: "SAGA" });
+    const stub = twoProjects({
+      "/projects/SAGA/tasks": listing([entry(1)]),
+      "POST /projects/SAGA/tasks": successReply({ id: "SAGA-7", status: "Backlog" }),
+    });
+    const { feed } = await openWithFeed("/tasks?projects=DELTA,SAGA", stub);
+    await openDialog(user, newTask());
+
+    stub.replies["/projects/SAGA/tasks"] = INVALID;
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
+    await vi.waitFor(() => {
+      expect(boardState()).toBe("SAGA did not load.");
+    });
+    expect(projectTrigger().textContent).toBe("Saga SAGA");
+
+    await submit(user, "Task 7");
+
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("main"));
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(creates(stub.requests)).toEqual(["/projects/SAGA/tasks"]);
+    expect(useUiStore.getState().lastCreateProject).toBe("SAGA");
+    await vi.waitFor(() => {
+      expect(said).toContain("SAGA-7 was created. The board does not show SAGA.");
+    });
+  });
+
+  it("suggests the labels of the tasks of the selected project, without a task being deleted", async () => {
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+    const { transport } = twoProjects({
+      "/projects/SAGA/tasks": listing([entry(1, { labels: ["web"] })]),
+      "/projects/DELTA/tasks": listing([
+        delta(11, { status: "Review", labels: ["cellar"] }),
+        delta(12, { status: "Review", labels: ["attic"] }),
+      ]),
+      "DELETE /projects/DELTA/tasks/DELTA-12": heldBack().reply,
+    });
+    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+    await user.click(menuButton("Task 12"));
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /^Delete / }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+    await vi.waitFor(() => {
+      expect(screen.queryByText("Task 12")).toBeNull();
+    });
+    await openDialog(user, newTask());
+
+    await user.click(within(dialog()).getByRole("combobox", { name: /^Labels/ }));
+
+    expect((await screen.findAllByRole("option")).map((option) => option.textContent)).toEqual(["cellar1"]);
+  });
+
+  it("opens the warnings of a create from the receipt alone when the cache no longer holds the reads of its project", async () => {
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+    const said = recordAnnounced();
+    const create = heldBack();
+    const fresh: Diagnostic = { code: "label-case-converted", message: "label \"Web\" was converted to \"web\"" };
+    useUiStore.setState({ lastCreateProject: "SAGA" });
+    const stub = twoProjects({
+      "/projects/SAGA/tasks": listing([entry(1)]),
+      "POST /projects/SAGA/tasks": create.reply,
+    });
+    const { router, feed } = await openWithFeed("/tasks?projects=all", stub);
+    await openDialog(user, newTask());
+    await submit(user, "Task 7");
+
+    stub.replies["/projects"] = successReply([DELTA]);
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA", "deleted")]);
+    await vi.waitFor(() => {
+      expect(columnNames()).toEqual(OTHER_CONFIG.statuses);
+    });
+    router.options.context.queryClient.removeQueries({ queryKey: daemonKeys.project("SAGA") });
+    await act(async () => {
+      create.answer(successReply({ id: "SAGA-7", status: "Backlog" }, [fresh]));
+    });
+
+    await vi.waitFor(() => {
+      expect(useNoticeStore.getState().notices.map(({ title }) => title)).toEqual(["1 warning about SAGA-7"]);
+    });
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+    expect(said).toContain("SAGA-7 was created. The board does not show SAGA.");
+  });
+
+  it("focuses the main region and says the board does not show a project whose read of the new task is refused", async () => {
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+    const said = recordAnnounced();
+    const create = heldBack();
+    const { transport, replies } = twoProjects({
+      "/projects/SAGA/tasks": listing([entry(1)]),
+      [CREATE_DELTA]: create.reply,
+    });
+    await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
+    await openDialog(user, newTask());
+    await submit(user, "Task 7");
+
+    replies["/projects/DELTA/tasks"] = INVALID;
+    await act(async () => {
+      create.answer(successReply({ id: "DELTA-7", status: "To Do" }));
+    });
+
+    await vi.waitFor(() => {
+      expect(said).toContain("DELTA-7 was created. The board does not show DELTA.");
+    });
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("main"));
+    });
+    expect(columnNames()).toEqual(CONFIG.statuses);
+  });
+
+  it("focuses the new card of a selected project that the read of the new task brings back to the board", async () => {
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+    const said = recordAnnounced();
+    useUiStore.setState({ lastCreateProject: "SAGA" });
+    const stub = twoProjects({
+      "/projects/SAGA/tasks": listing([entry(1)]),
+      "POST /projects/SAGA/tasks": successReply({ id: "SAGA-7", status: "Backlog" }),
+    });
+    const { feed } = await openWithFeed("/tasks?projects=DELTA,SAGA", stub);
+    await openDialog(user, newTask());
+    stub.replies["/projects/SAGA/tasks"] = INVALID;
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA")]);
+    await vi.waitFor(() => {
+      expect(boardState()).toBe("SAGA did not load.");
+    });
+
+    stub.replies["/projects/SAGA/tasks"] = listing([entry(1), entry(7)]);
+    await submit(user, "Task 7");
+
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("link", { name: "SAGA-7 Task 7" }));
+    });
+    await vi.waitFor(() => {
+      expect(said).toContain("SAGA-7 was created.");
+    });
+    expect(said).not.toContain("SAGA-7 was created. The board does not show SAGA.");
+  });
+
+  it("focuses the column of a hidden new card on the board as it stands when the create lands", async () => {
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+    const said = recordAnnounced();
+    const create = heldBack();
+    const stub = twoProjects({
+      "/projects": successReply([SAGA]),
+      "/projects/SAGA/tasks": listing([entry(1, { labels: ["web"] })]),
+      "/projects/DELTA/tasks": listing([delta(11, { status: "Review" })]),
+      "POST /projects/SAGA/tasks": create.reply,
+    });
+    const { feed } = await openWithFeed("/tasks?projects=all&labels=web", stub);
+    await openDialog(user, newTask());
+    await submit(user, "Task 7");
+
+    stub.replies["/projects"] = successReply(SORTED);
+    await sendAndWaitPastRetry(feed, [projectEvent("DELTA", "created")]);
+    await vi.waitFor(() => {
+      expect(columnNames()).toEqual(MERGED);
+    });
+    stub.replies["/projects/SAGA/tasks"] = listing([entry(1, { labels: ["web"] }), entry(7, { status: "In Progress" })]);
+    await act(async () => {
+      create.answer(successReply({ id: "SAGA-7", status: "In Progress" }));
+    });
+
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(columnHeading("In Progress"));
+    });
+    await vi.waitFor(() => {
+      expect(said).toContain("SAGA-7 was created. The label filter hides it.");
+    });
+  });
+
+  it("gives the focus to the main region when the last project leaves the board of all projects while the dialog is open", async () => {
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+    const stub = twoProjects({
+      "/projects": successReply([SAGA]),
+      "/projects/SAGA/tasks": listing([entry(1)]),
+    });
+    const { feed } = await openWithFeed("/tasks?projects=all", stub);
+    await openDialog(user, newTask());
+
+    stub.replies["/projects"] = successReply([]);
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA", "deleted")]);
+
+    await vi.waitFor(() => {
+      expect(screen.getByText(/^No projects yet/)).toBeTruthy();
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+  });
+
+  it("gives the focus to the main region on a cancel after the reads of every project are refused", async () => {
+    const user = userEvent.setup({ advanceTimers: (delay) => vi.advanceTimersByTime(delay) });
+    const stub = twoProjects();
+    const { feed } = await openWithFeed("/tasks?projects=DELTA,SAGA", stub);
+    await openDialog(user, within(screen.getByRole("region", { name: "Review" })).getByRole("button", { name: "New task in Review" }));
+
+    stub.replies["/projects/SAGA"] = INVALID;
+    stub.replies["/projects/DELTA"] = INVALID;
+    await sendAndWaitPastRetry(feed, [projectEvent("SAGA"), projectEvent("DELTA")]);
+    await vi.waitFor(() => {
+      expect(columnNames()).toEqual([]);
+    });
+    expect(screen.queryByRole("button", { name: "New task", hidden: true })).toBeNull();
+
+    await user.click(within(dialog()).getByRole("button", { name: "Cancel" }));
+
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("main"));
+    });
   });
 });
 

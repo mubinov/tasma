@@ -37,6 +37,7 @@ beforeEach(() => {
   window.localStorage.clear();
   useUiStore.setState({
     lastTasksProject: null,
+    lastCreateProject: null,
     boardReturn: null,
     boardRestorePending: false,
     lastBoard: null,
@@ -1690,6 +1691,24 @@ describe("creating a task", () => {
     await waitFor(() => {
       expect(announced()).toEqual(["Creating…", "SAGA-7 was created."]);
     });
+  });
+
+  it("shows no Project field, and remembers the project of the create", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon({ [CREATE]: successReply({ id: "SAGA-7", status: "Backlog" }) });
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+    await user.click(newTask());
+
+    expect(within(dialog()).queryByRole("button", { name: /^Project/ })).toBeNull();
+
+    await user.click(within(dialog()).getByRole("button", { name: "Cancel" }));
+    await create(user, newTask(), "Task 7");
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    expect(useUiStore.getState().lastCreateProject).toBe("SAGA");
+    expect(window.localStorage.getItem("tasma.tasks.createProject")).toBe("SAGA");
   });
 
   it("opens the warning notice of new diagnostics after the dialog has closed, and says it after the created line", async () => {

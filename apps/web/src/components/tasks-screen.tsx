@@ -43,7 +43,7 @@ import type { DropPlace } from "../lib/drag-place";
 import type { FinalFocus } from "../lib/final-focus";
 import { fullIndex, placeWrites } from "../lib/order";
 import { PlusIcon } from "../lib/icons";
-import { useBoardProjects, type FailedProject } from "../lib/use-board-projects";
+import { cachedShownTags, useBoardProjects, type FailedProject } from "../lib/use-board-projects";
 import { useBoardReturn } from "../lib/use-board-return";
 import { cachedSearchIds, useBoardSearch } from "../lib/use-board-search";
 import { useCardDrag, type BoardSnapshot } from "../lib/use-card-drag";
@@ -224,6 +224,8 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
   // The project of a board of one project; nothing reads it on a board of several projects.
   const tag = tags[0]!;
   const setLastTasksProject = useUiStore((state) => state.setLastTasksProject);
+  const lastCreateProject = useUiStore((state) => state.lastCreateProject);
+  const setLastCreateProject = useUiStore((state) => state.setLastCreateProject);
   const setBoardReturn = useUiStore((state) => state.setBoardReturn);
   const { mutateAsync: write } = useMutation(taskWriteOptions(queryClient, client));
   const pending = usePendingTaskWrites(shown);
@@ -236,7 +238,11 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
   // A count, so each request moves the focus once and none has to be cleared.
   const [mainFocusRequests, setMainFocusRequests] = useState(0);
   // The opener is kept, not read from focus: WebKit focuses no button on a pointer press.
-  const [creating, setCreating] = useState<{ status: string; opener: HTMLElement } | null>(null);
+  const [creating, setCreating] = useState<{
+    column: Readonly<Record<string, string>> | null;
+    startTag: string;
+    opener: HTMLElement;
+  } | null>(null);
   const newTaskRef = useRef<HTMLButtonElement>(null);
   const listed = shownProjects
     .flatMap(({ listing: { data: listing } }) => listing.entries)
@@ -258,9 +264,10 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
 
   // When the last project leaves the board of all projects, the empty-tree
   // screen replaces the board at the same path, where the shell moves no focus.
+  // An open dialog renders outside the board, so it counts as focus inside.
   useFocusLost(rootRef, (root) => {
     root.closest("main")?.focus();
-  });
+  }, creating !== null || deleteAsk?.open === true);
 
   useBoardReturn(board, labels, q, settled);
 
@@ -270,7 +277,7 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
     }
   }, [mainFocusRequests]);
 
-  const { name, config } = loaded[0]!.project.data;
+  const { name } = loaded[0]!.project.data;
   const unlive = shownProjects.filter(({ project }) => !project.data.live).map((shownProject) => shownProject.tag);
   const reports: ProjectReport[] = shownProjects
     .map(({ tag: reportTag, project, listing }) => ({
@@ -353,16 +360,51 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
     });
   }
 
+  /** Opens the dialog on the project of the last create when the board shows it, else on the first project shown. */
+  function startCreate(column: Readonly<Record<string, string>> | null, opener: HTMLElement): void {
+    const startTag = lastCreateProject !== null && shown.includes(lastCreateProject) ? lastCreateProject : shown[0]!;
+
+    setCreating({ column, startTag, opener });
+  }
+
+  /** A create in a project that left the board while the dialog was open: no column takes its card. */
+  function createdOffBoard(result: Created, createdTag: string): void {
+    const projectRead = queryClient.getQueryData(projectQuery(client, createdTag).queryKey);
+    const listingRead = queryClient.getQueryData(tasksQuery(client, createdTag).queryKey);
+
+    // eslint-disable-next-line @eslint-react/dom-no-flush-sync -- the dialog closes before any notice opens
+    flushSync(() => {
+      setCreating(null);
+      setMainFocusRequests((count) => count + 1);
+    });
+
+    useNoticeStore.getState().announce(`${result.id} was created. The board does not show ${createdTag}.`);
+    openCreateWarnings(result, boardWarnings(projectRead?.diagnostics ?? [], listingRead?.diagnostics ?? []));
+  }
+
   /**
    * The mutation resolves once the query cache holds the new task, but the
-   * query tells its observers later, not in this call, so the target is read
-   * from the cache rather than from this render.
+   * query tells its observers later, not in this call, so the projects and the
+   * target are read from the cache rather than from this render.
    */
   function created(result: Created): void {
-    const { data: read, diagnostics } = queryClient.getQueryData(tasksQuery(client, tag).queryKey)!;
+    const createdTag = tagOf(result.id);
+    const onBoard = cachedShownTags(queryClient, client, { tags, several });
+
+    setLastCreateProject(createdTag);
+    if (!onBoard.includes(createdTag)) {
+      createdOffBoard(result, createdTag);
+      return;
+    }
+
+    const projectsNow = onBoard.map((onBoardTag) => ({
+      tag: onBoardTag,
+      config: queryClient.getQueryData(projectQuery(client, onBoardTag).queryKey)!.data.config,
+    }));
+    const { data: read, diagnostics } = queryClient.getQueryData(tasksQuery(client, createdTag).queryKey)!;
     // The write refetched the search with the listing. A failed search shows every card.
-    const searchIds = cachedSearchIds(queryClient, client, [tag], searchText);
-    const target = createdTarget(boardProjects, read.entries, selected, searchIds, result.id, result.status);
+    const searchIds = cachedSearchIds(queryClient, client, onBoard, searchText);
+    const target = createdTarget(projectsNow, read.entries, selected, searchIds, result.id, result.status);
 
     // Inside a promise continuation these would commit after the notice store's
     // update, and the warning notice would show for a frame under the scrim.
@@ -382,7 +424,7 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
         : `${result.id} was created.`,
     );
     openCreateWarnings(result, boardWarnings(
-      queryClient.getQueryData(projectQuery(client, tag).queryKey)!.diagnostics,
+      queryClient.getQueryData(projectQuery(client, createdTag).queryKey)!.diagnostics,
       diagnostics,
     ));
   }
@@ -475,12 +517,12 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
           <ProjectSelect projects={projects} board={board} labels={labels} q={q} />
           <SearchField board={board} q={q} busy={busy} describedBy={failed ? failureId : undefined} />
           <LabelFilter entries={listed} selected={selected} subject={subject} />
-          {!several && (
+          {shown.length > 0 && (
             <button
               ref={newTaskRef}
               type="button"
               onClick={(event) => {
-                setCreating({ status: config.default_status, opener: event.currentTarget });
+                startCreate(null, event.currentTarget);
               }}
               className={`ml-1 ${BUTTON_CLASS}`}
             >
@@ -586,11 +628,9 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
             onHeaderFocused={() => {
               setFocusColumn(null);
             }}
-            onCreate={several
-              ? undefined
-              : (status, opener) => {
-                  setCreating({ status, opener });
-                }}
+            onCreate={(_status, opener) => {
+              startCreate(column.byTag, opener);
+            }}
             draggingId={drag?.taskId ?? null}
             slot={drag?.place?.column === index
               ? { index: drag.place.index, height: drag.box.height }
@@ -617,16 +657,24 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
         <ProjectListReload all={all} tags={boardOrder(tags, refused)} missing={missing} />
       )}
       {refused.length > 0 && <RefusedProjectsReload tags={refused} />}
-      {creating !== null && !several && (
+      {creating !== null && (
         <CreateTaskDialog
           queryClient={queryClient}
           client={client}
-          tag={tag}
-          config={config}
-          entries={listed}
-          status={creating.status}
+          projects={shownProjects.map(({ tag: shownTag, project: { data }, listing }) => ({
+            tag: shownTag,
+            name: data.name,
+            config: data.config,
+            entries: listing.data.entries.filter(({ id }) => !deletingIds.has(id)),
+          }))}
+          startTag={creating.startTag}
+          column={creating.column}
+          chooseProject={several}
           opener={creating.opener}
           newTaskRef={newTaskRef}
+          focusFallback={() => {
+            setMainFocusRequests((count) => count + 1);
+          }}
           onClose={() => {
             setCreating(null);
           }}
