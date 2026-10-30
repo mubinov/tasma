@@ -1,16 +1,16 @@
 import { useSuspenseInfiniteQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
-import type { ChatListItem as Item, ProjectSummary } from "@tasma/protocol";
+import { isActiveChat, type ChatListItem as Item, type ProjectSummary } from "@tasma/protocol";
 import { useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { chatListQuery, type ChatFilter } from "../api/queries";
-import { chatKey } from "../lib/chat-list-announcements";
+import { chatKey, chatListItems } from "../lib/chat-list-announcements";
 import { searchWords } from "../lib/match-ranges";
 import { filterKey, type FailedFields } from "../lib/use-chat-filter";
 import { useFocusLost } from "../lib/use-focus-lost";
 import { useMinute } from "../lib/use-minute";
 import { usePendingFocus } from "../lib/use-pending-focus";
 import { ChatFilterBar } from "./chat-filter-bar";
-import { ChatListItem } from "./chat-list-item";
+import { BAND_HEIGHT, ChatListItem, type Band } from "./chat-list-item";
 import { RetryButton } from "./retry-button";
 import { VirtualList } from "./virtual-list";
 
@@ -50,7 +50,10 @@ function emptyText({ project, q }: ChatFilter): string {
     : "This project has no chats.";
 }
 
-/** The list of the chats, newest first, the older pages it loads, and the filter above it. */
+/**
+ * The list of the chats, the active chats first and each group newest first,
+ * the older pages it loads, and the filter above it.
+ */
 export function ChatList({
   filter,
   requested,
@@ -66,7 +69,7 @@ export function ChatList({
   const { client } = route.useRouteContext();
   const { data, fetchNextPage, hasNextPage, isFetching, isFetchingNextPage, isFetchNextPageError }
     = useSuspenseInfiniteQuery(chatListQuery(client, filter));
-  const items = data.pages.flatMap((page) => page.data.items);
+  const items = chatListItems(data.pages);
   const listKey = filterKey(filter);
   // The preferred tab stop of the list of the filter at mount, after `returnKey` is cleared.
   const [mountReturn, setMountReturn] = useState({ key: returnKey, listKey });
@@ -132,6 +135,7 @@ export function ChatList({
             <ChatRows
               items={items}
               total={data.pages[0]!.data.total}
+              active={data.pages[0]!.data.active}
               listKey={listKey}
               words={searchWords(filter.q ?? "")}
               headingId={headingId}
@@ -153,6 +157,8 @@ export function ChatList({
 type ChatRowsProps = {
   items: readonly Item[];
   total: number;
+  /** The count of the active chats on all pages. */
+  active: number;
   /** The filter of the items. A new one mounts a new list. */
   listKey: string;
   /** The words of the search, which the items mark. */
@@ -174,6 +180,7 @@ type ChatRowsProps = {
 function ChatRows({
   items,
   total,
+  active,
   listKey,
   words,
   headingId,
@@ -201,6 +208,8 @@ function ChatRows({
 
   useFocusLost(rowsRef, onFocusLost);
 
+  const bands = groupBands(items, total, active);
+
   return (
     <div
       ref={rowsRef}
@@ -216,13 +225,21 @@ function ChatRows({
       <VirtualList
         key={listKey}
         items={items}
-        estimateSize={ITEM_HEIGHT}
+        estimateSize={(_item, index) => ITEM_HEIGHT + (bands.has(index) ? BAND_HEIGHT : 0)}
         getKey={chatKey}
         labelledBy={headingId}
         roving={{ preferredKey: openKey ?? mountReturnKey, focusOnMount: focusOnMount || focusNewList }}
-        renderItem={(item, _index, tabIndex) => (
-          <ChatListItem item={item} selected={chatKey(item) === openKey} now={now} tabIndex={tabIndex} words={words} />
+        renderItem={(item, index, tabIndex) => (
+          <ChatListItem
+            item={item}
+            selected={chatKey(item) === openKey}
+            now={now}
+            tabIndex={tabIndex}
+            words={words}
+            band={bands.get(index)}
+          />
         )}
+        keepRendered={[...bands.keys()]}
         height="100%"
         className="pb-(--notice-stack-height) scroll-pb-(--notice-stack-height)"
         total={total}
@@ -241,6 +258,19 @@ function ChatRows({
       />
     </div>
   );
+}
+
+/** The band of each group of the items, by the index of the first item of the group. */
+function groupBands(items: readonly Item[], total: number, active: number): Map<number, Band> {
+  const bands = new Map<number, Band>();
+  if (isActiveChat(items[0]?.status)) {
+    bands.set(0, { name: "Active", count: active });
+  }
+  const firstOther = items.findIndex((item) => !isActiveChat(item.status));
+  if (firstOther > 0) {
+    bands.set(firstOther, { name: "Other chats", count: total - active });
+  }
+  return bands;
 }
 
 type OlderFooterProps = {

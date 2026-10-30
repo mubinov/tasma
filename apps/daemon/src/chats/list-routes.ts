@@ -1,7 +1,7 @@
-// The list of the chats of all projects, newest first in pages, and one item of
-// that list. The records of the chats are read from disk at each request. The
-// state of a chat comes from the chat registry, the source of the `chat` events
-// of the feed.
+// The list of the chats of all projects in pages, the active chats first and each
+// group newest first, and one item of that list. The records of the chats are
+// read from disk at each request. The state of a chat comes from the chat
+// registry, the source of the `chat` events of the feed.
 
 import { Buffer } from "node:buffer";
 import {
@@ -15,8 +15,8 @@ import {
   TaskStoreError,
 } from "@tasma/engine";
 import type { ChatRecord, IndexEntry, TaskStoreErrorCode } from "@tasma/engine";
-import { chatMark, currentStep, routes } from "@tasma/protocol";
-import type { ChatListItem, ChatListPage, Diagnostic, Success } from "@tasma/protocol";
+import { chatMark, currentStep, isActiveChat, routes } from "@tasma/protocol";
+import type { ChatListItem, ChatListPage, Diagnostic, Success, Workflow } from "@tasma/protocol";
 import { causeOf, DaemonError } from "../http/failure.js";
 import type { RouteEntry } from "../http/router.js";
 import type { ProjectHost } from "../projects/host.js";
@@ -34,35 +34,49 @@ const READ_LIMIT = 8;
 /** The refusals that mean a project went away during the read. */
 const GONE: ReadonlySet<TaskStoreErrorCode> = new Set(["project-not-found", "index-closed"]);
 
-type SortKey = [time: number, tag: string, number: number, task: string, chat: number];
+type SortKey = [group: 0 | 1, time: number, tag: string, number: number, task: string, chat: number];
 
 type Frontmatter = IndexEntry["frontmatter"];
 
-type Candidate = { item: ChatListItem; key: SortKey; text: string; stateful: boolean; frontmatter: Frontmatter };
+type Candidate = { item: ChatListItem; text: string; stateful: boolean; frontmatter: Frontmatter };
 
 type Found<T> = { found: T; diagnostics: Diagnostic[] };
+
+type Row = { item: ChatListItem; key: SortKey; diagnostics: Diagnostic[] };
+
+/** The reads of the workflows of one request, by workflow name. */
+type WorkflowReads = Map<string, Promise<Pick<Workflow, "steps"> | null>>;
 
 function byText(one: string, other: string): number {
   return Number(one > other) - Number(one < other);
 }
 
-/** Newest first, then the tag A to Z, the task number high first, the task id A to Z, the chat number high first. */
+/**
+ * The active chats first, then newest first, the tag A to Z, the task number
+ * high first, the task id A to Z, the chat number high first.
+ */
 function compareKeys(one: SortKey, other: SortKey): number {
-  return other[0] - one[0]
-    || byText(one[1], other[1])
-    || other[2] - one[2]
-    || byText(one[3], other[3])
-    || other[4] - one[4];
+  return one[0] - other[0]
+    || other[1] - one[1]
+    || byText(one[2], other[2])
+    || other[3] - one[3]
+    || byText(one[4], other[4])
+    || other[5] - one[5];
 }
 
 function isSortKey(value: unknown): value is SortKey {
-  if (!Array.isArray(value) || value.length !== 5) return false;
-  const [time, tag, number, task, chat] = value as unknown[];
-  return Number.isFinite(time)
+  if (!Array.isArray(value) || value.length !== 6) return false;
+  const [group, time, tag, number, task, chat] = value as unknown[];
+  return (group === 0 || group === 1)
+    && Number.isFinite(time)
     && typeof tag === "string"
     && Number.isSafeInteger(number)
     && typeof task === "string"
     && Number.isSafeInteger(chat);
+}
+
+function sortKeyOf({ tag, task, chat, created, status }: ChatListItem): SortKey {
+  return [isActiveChat(status) ? 0 : 1, Date.parse(created), tag, Number(task.slice(tag.length + 1)), task, chat];
 }
 
 function cursorOf(key: SortKey): string {
@@ -80,9 +94,9 @@ function keyOf(cursor: string): SortKey {
   return key;
 }
 
-function firstAfter(sorted: readonly Candidate[], after: SortKey | undefined): number {
+function firstAfter(sorted: readonly Row[], after: SortKey | undefined): number {
   if (after === undefined) return 0;
-  const at = sorted.findIndex((candidate) => compareKeys(candidate.key, after) > 0);
+  const at = sorted.findIndex((row) => compareKeys(row.key, after) > 0);
   return at === -1 ? sorted.length : at;
 }
 
@@ -105,9 +119,8 @@ function latestChats(records: readonly ChatRecord[]): Map<string, number> {
 function candidateOf(tag: string, record: ChatRecord, entry: IndexEntry, stateful: boolean): Candidate {
   const { chat, step, agent, created } = record;
   const item = { tag, task: entry.id, title: entry.frontmatter.title, chat, step, agent, created };
-  const key: SortKey = [Date.parse(created), tag, Number(entry.id.slice(tag.length + 1)), entry.id, chat];
   const { frontmatter } = entry;
-  return { item, key, text: `${item.task}\n${item.title}\n${item.step}`.toLowerCase(), stateful, frontmatter };
+  return { item, text: `${item.task}\n${item.title}\n${item.step}`.toLowerCase(), stateful, frontmatter };
 }
 
 function isOpen(entry: IndexEntry, finalStatuses: readonly string[]): boolean {
@@ -157,22 +170,29 @@ export function chatListRoutes(options: { root?: string; host: ProjectHost; chat
     return { found, diagnostics };
   }
 
-  /** `currentStep` of the task. The workflow is read only for a task with no step, and a failed read gives no step. */
-  async function stepOf(frontmatter: Frontmatter): Promise<string | undefined> {
+  /**
+   * `currentStep` of the task. The workflow is read only for a task with no
+   * step, one time in `reads`, and a failed read gives no step.
+   */
+  async function stepOf(frontmatter: Frontmatter, reads: WorkflowReads): Promise<string | undefined> {
     const { workflow: name, step } = frontmatter;
     if (step !== undefined || name === undefined) return step;
-    const workflow = await openTreeWorkflows(root)
-      .then(({ workflows }) => workflows.read(name))
-      .then((read) => read.workflow, () => null);
-    return currentStep(frontmatter, workflow);
+    let read = reads.get(name);
+    if (read === undefined) {
+      read = openTreeWorkflows(root)
+        .then(({ workflows }) => workflows.read(name))
+        .then((found) => found.workflow, () => null);
+      reads.set(name, read);
+    }
+    return currentStep(frontmatter, await read);
   }
 
-  async function withState(candidate: Candidate): Promise<Found<ChatListItem>> {
+  async function withState(candidate: Candidate, reads: WorkflowReads): Promise<Found<ChatListItem>> {
     const { item } = candidate;
     if (!candidate.stateful) return { found: item, diagnostics: [] };
     try {
       const live = await chats.get(item.tag, item.task, item.chat);
-      const status = chatMark(live.chat, await stepOf(candidate.frontmatter));
+      const status = chatMark(live.chat, await stepOf(candidate.frontmatter, reads));
       return { found: status === undefined ? item : { ...item, status }, diagnostics: live.diagnostics };
     } catch (error) {
       const finding = chatFinding(error, chatPath({ project: item.tag, root }, item.task, item.chat));
@@ -190,14 +210,18 @@ export function chatListRoutes(options: { root?: string; host: ProjectHost; chat
         const terms = words(query.q);
         const matched = listings
           .flatMap((listing) => listing.found)
-          .filter((candidate) => terms.every((term) => candidate.text.includes(term)))
+          .filter((candidate) => terms.every((term) => candidate.text.includes(term)));
+        const reads: WorkflowReads = new Map();
+        const stated = await mapLimited(matched, (candidate) => withState(candidate, reads));
+        const rows = stated
+          .map(({ found, diagnostics }): Row => ({ item: found, key: sortKeyOf(found), diagnostics }))
           .sort((one, other) => compareKeys(one.key, other.key));
-        const start = firstAfter(matched, after);
-        const shown = matched.slice(start, start + PAGE_SIZE);
-        const stated = await mapLimited(shown, withState);
-        const data: ChatListPage = { items: stated.map((one) => one.found), total: matched.length };
-        if (start + PAGE_SIZE < matched.length) data.next = cursorOf(shown.at(-1)!.key);
-        const diagnostics = [...listings, ...stated].flatMap((one) => one.diagnostics);
+        const start = firstAfter(rows, after);
+        const shown = rows.slice(start, start + PAGE_SIZE);
+        const active = rows.filter((row) => isActiveChat(row.item.status)).length;
+        const data: ChatListPage = { items: shown.map((row) => row.item), total: rows.length, active };
+        if (start + PAGE_SIZE < rows.length) data.next = cursorOf(shown.at(-1)!.key);
+        const diagnostics = [...listings, ...shown].flatMap((one) => one.diagnostics);
         return { data, diagnostics };
       },
     },
@@ -219,7 +243,7 @@ export function chatListRoutes(options: { root?: string; host: ProjectHost; chat
         const listed = await listChats(options, id);
         const finalStatuses = (await index.config()).config.final_statuses;
         const stateful = latestChats(listed.chats).get(id) === record.chat && isOpen(entry, finalStatuses);
-        const { found, diagnostics } = await withState(candidateOf(tag, record, entry, stateful));
+        const { found, diagnostics } = await withState(candidateOf(tag, record, entry, stateful), new Map());
         return { data: found, diagnostics: [...listed.diagnostics, ...diagnostics] };
       },
     },

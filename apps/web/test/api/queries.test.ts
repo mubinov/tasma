@@ -216,14 +216,14 @@ it("nests the list of the chats of all projects and one item of it under one pre
 describe("chatListQuery", () => {
   it("asks for the first page with no cursor, and for the next page after the cursor of the page before", async () => {
     const { transport, paths } = stubTransport({
-      "/chats": successReply({ items: [CHAT_ITEM], total: 2, next: "c1" }),
-      "/chats?after=c1": successReply({ items: [{ ...CHAT_ITEM, chat: 1 }], total: 2 }),
+      "/chats": successReply({ items: [CHAT_ITEM], total: 2, active: 0, next: "c1" }),
+      "/chats?after=c1": successReply({ items: [{ ...CHAT_ITEM, chat: 1 }], total: 2, active: 0 }),
     });
     const queryClient = createAppQueryClient();
     const options = chatListQuery(createClient(transport), {});
 
     const first = await queryClient.infiniteQuery({ ...options, staleTime: "static" });
-    expect(first.pages).toEqual([{ data: { items: [CHAT_ITEM], total: 2, next: "c1" }, diagnostics: [] }]);
+    expect(first.pages).toEqual([{ data: { items: [CHAT_ITEM], total: 2, active: 0, next: "c1" }, diagnostics: [] }]);
     expect(options.getNextPageParam(first.pages[0]!, first.pages, undefined, [undefined])).toBe("c1");
 
     const both = await queryClient.infiniteQuery({ ...options, pages: 2, staleTime: 0 });
@@ -235,8 +235,8 @@ describe("chatListQuery", () => {
 
   it("asks for the project and the search of the filter, on the first page and after the cursor", async () => {
     const { transport, paths } = stubTransport({
-      "/chats?project=SAGA&q=plan%20it": successReply({ items: [CHAT_ITEM], total: 2, next: "c1" }),
-      "/chats?project=SAGA&q=plan%20it&after=c1": successReply({ items: [{ ...CHAT_ITEM, chat: 1 }], total: 2 }),
+      "/chats?project=SAGA&q=plan%20it": successReply({ items: [CHAT_ITEM], total: 2, active: 0, next: "c1" }),
+      "/chats?project=SAGA&q=plan%20it&after=c1": successReply({ items: [{ ...CHAT_ITEM, chat: 1 }], total: 2, active: 0 }),
     });
     const queryClient = createAppQueryClient();
     const filter = { project: "SAGA", q: "plan it" };

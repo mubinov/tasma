@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PageVirtualList, VirtualList } from "../../src/components/virtual-list";
-import { stubResizeObservers } from "../helpers";
+import { stubFocusVisible, stubResizeObservers, stubScrollIntoView } from "../helpers";
 
 const ROW_HEIGHT = 32;
 const rows = Array.from({ length: 500 }, (_, index) => `row ${index}`);
@@ -33,7 +33,7 @@ function renderRows(height: number, getKey: (row: string) => string = (row) => r
   return render(
     <VirtualList
       items={rows}
-      estimateSize={ROW_HEIGHT}
+      estimateSize={() => ROW_HEIGHT}
       label="Rows"
       height={height}
       getKey={getKey}
@@ -63,6 +63,22 @@ it("sizes the window from the height it is given", () => {
   expect(tall).toBeLessThan(rows.length);
 });
 
+it("sizes a row it does not render by the estimate of its item", () => {
+  render(
+    <VirtualList
+      items={rows}
+      estimateSize={(row) => (row === "row 400" ? 100 : ROW_HEIGHT)}
+      label="Rows"
+      height={320}
+      getKey={(row) => row}
+      renderItem={(row) => row}
+    />,
+  );
+
+  expect(screen.queryByText("row 400")).toBeNull();
+  expect(screen.getByRole("list").style.height).toBe(`${String((rows.length - 1) * ROW_HEIGHT + 100)}px`);
+});
+
 it("puts the scroll region on the tab order under its own name", () => {
   renderRows(320);
 
@@ -90,7 +106,7 @@ it("names the scroll region by the element that labelledBy names, in place of a 
   render(
     <>
       <h2 id="rows-heading">Rows</h2>
-      <VirtualList items={rows} estimateSize={ROW_HEIGHT} labelledBy="rows-heading" height={320} getKey={(row) => row} renderItem={(row) => row} />
+      <VirtualList items={rows} estimateSize={() => ROW_HEIGHT} labelledBy="rows-heading" height={320} getKey={(row) => row} renderItem={(row) => row} />
     </>,
   );
 
@@ -101,7 +117,7 @@ it("names the scroll region by the element that labelledBy names, in place of a 
 });
 
 it("states the total it is given as the size of the list", () => {
-  render(<VirtualList items={rows} estimateSize={ROW_HEIGHT} label="Rows" height={320} getKey={(row) => row} renderItem={(row) => row} total={1200} />);
+  render(<VirtualList items={rows} estimateSize={() => ROW_HEIGHT} label="Rows" height={320} getKey={(row) => row} renderItem={(row) => row} total={1200} />);
 
   expect(screen.getAllByRole("listitem")[0]?.getAttribute("aria-setsize")).toBe("1200");
 });
@@ -110,7 +126,7 @@ it("shows the footer after the rows, inside the scroll region, as no row", () =>
   render(
     <VirtualList
       items={rows}
-      estimateSize={ROW_HEIGHT}
+      estimateSize={() => ROW_HEIGHT}
       label="Rows"
       height={320}
       getKey={(row) => row}
@@ -155,7 +171,7 @@ describe("onEnd", () => {
   it("is called when the end of the rows is one list height or less below the part in view", () => {
     const onEnd = vi.fn();
     const { container } = render(
-      <VirtualList items={rows} estimateSize={ROW_HEIGHT} label="Rows" height={320} getKey={(row) => row} renderItem={(row) => row} onEnd={onEnd} />,
+      <VirtualList items={rows} estimateSize={() => ROW_HEIGHT} label="Rows" height={320} getKey={(row) => row} renderItem={(row) => row} onEnd={onEnd} />,
     );
     const region = scrollable(container.firstElementChild as HTMLElement);
     expect(onEnd).not.toHaveBeenCalled();
@@ -172,7 +188,7 @@ describe("onEnd", () => {
     const onEnd = vi.fn();
 
     render(
-      <VirtualList items={rows.slice(0, 3)} estimateSize={ROW_HEIGHT} label="Rows" height={320} getKey={(row) => row} renderItem={(row) => row} onEnd={onEnd} />,
+      <VirtualList items={rows.slice(0, 3)} estimateSize={() => ROW_HEIGHT} label="Rows" height={320} getKey={(row) => row} renderItem={(row) => row} onEnd={onEnd} />,
     );
 
     expect(onEnd).toHaveBeenCalled();
@@ -198,7 +214,7 @@ function rovingList(
       <h2 id="rows-heading">Rows</h2>
       <VirtualList
         items={items}
-        estimateSize={ROW_HEIGHT}
+        estimateSize={() => ROW_HEIGHT}
         labelledBy="rows-heading"
         roving={{ preferredKey, focusOnMount }}
         height={height}
@@ -342,6 +358,33 @@ describe("roving", () => {
     expect(focus).not.toHaveBeenCalled();
   });
 
+  it("does nothing for a click on a part of a row outside the element that takes the focus", () => {
+    render(
+      <>
+        <h2 id="rows-heading">Rows</h2>
+        <VirtualList
+          items={rows}
+          estimateSize={() => ROW_HEIGHT}
+          labelledBy="rows-heading"
+          roving={{}}
+          height={320}
+          getKey={(row) => row}
+          renderItem={(row, _index, tabIndex) => (
+            <>
+              <span>{`Above ${row}`}</span>
+              <a href={`#${row}`} tabIndex={tabIndex}>{row}</a>
+            </>
+          )}
+        />
+      </>,
+    );
+
+    fireEvent.click(screen.getByText("Above row 4"));
+
+    expect(document.activeElement).toBe(document.body);
+    expect(tabStops()).toEqual(["row 0"]);
+  });
+
   it("does nothing for a click outside a row", () => {
     render(rovingList());
 
@@ -447,13 +490,185 @@ describe("roving", () => {
 
   it("moves no focus from a focused row that leaves a list without roving", () => {
     const list = (items: readonly string[]) => (
-      <VirtualList items={items} estimateSize={ROW_HEIGHT} label="Rows" height={320} getKey={(row) => row} renderItem={(row) => <button type="button">{row}</button>} />
+      <VirtualList items={items} estimateSize={() => ROW_HEIGHT} label="Rows" height={320} getKey={(row) => row} renderItem={(row) => <button type="button">{row}</button>} />
     );
     const { rerender } = render(list(rows.slice(0, 3)));
     screen.getByRole("button", { name: "row 1" }).focus();
 
     rerender(list(["row 0", "row 2"]));
 
+    expect(document.activeElement).toBe(document.body);
+  });
+});
+
+describe("keepRendered", () => {
+  const list = (keepRendered?: readonly number[]) => (
+    <VirtualList
+      items={rows}
+      estimateSize={() => ROW_HEIGHT}
+      label="Rows"
+      height={320}
+      getKey={(row) => row}
+      renderItem={(row) => row}
+      keepRendered={keepRendered}
+    />
+  );
+
+  function renderedIndexes(): number[] {
+    return screen.getAllByRole("listitem").map((row) => Number(row.getAttribute("data-index")));
+  }
+
+  it("renders the rows of the indexes far from the view, in index order", () => {
+    render(list([450, 300, 3]));
+    const indexes = renderedIndexes();
+
+    expect(screen.getByText("row 300")).toBeTruthy();
+    expect(screen.getByText("row 450")).toBeTruthy();
+    expect(indexes).toEqual(indexes.toSorted((one, other) => one - other));
+    expect(indexes.filter((index) => index === 3)).toEqual([3]);
+  });
+
+  it("renders the rows near the view alone without it", () => {
+    const { rerender } = render(list());
+    const near = renderedIndexes();
+
+    rerender(list([]));
+
+    expect(renderedIndexes()).toEqual(near);
+    expect(Math.max(...near)).toBeLessThan(50);
+  });
+
+  it("renders a kept row once when it is the row of the tab stop", () => {
+    render(
+      <>
+        <h2 id="rows-heading">Rows</h2>
+        <VirtualList
+          items={rows}
+          estimateSize={() => ROW_HEIGHT}
+          labelledBy="rows-heading"
+          roving={{ preferredKey: "row 300" }}
+          height={320}
+          getKey={(row) => row}
+          renderItem={(row, _index, tabIndex) => <a href={`#${row}`} tabIndex={tabIndex}>{row}</a>}
+          keepRendered={[300, 400]}
+        />
+      </>,
+    );
+
+    expect(renderedIndexes().filter((index) => index >= 300)).toEqual([300, 400]);
+  });
+});
+
+describe("a focused row that a new list moves", () => {
+  const FIVE = rows.slice(0, 5);
+  const MOVED = ["row 1", "row 2", "row 3", "row 0", "row 4"];
+
+  function page(items: readonly string[]) {
+    return (
+      <>
+        {rovingList({ items })}
+        <button type="button">After</button>
+      </>
+    );
+  }
+
+  it("keeps the focus on a row with a keyboard focus at its later place, and scrolls the row into view", () => {
+    stubFocusVisible(true);
+    const scrollIntoView = stubScrollIntoView();
+    const { rerender } = render(page(FIVE));
+    const row = link("row 0");
+    row.focus();
+
+    rerender(page(MOVED));
+
+    expect(document.activeElement).toBe(row);
+    expect(row.closest("li")!.getAttribute("data-index")).toBe("3");
+    expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: "nearest" });
+    expect(scrollIntoView.mock.contexts[0]).toBe(row);
+  });
+
+  it("keeps the focus on a row with a keyboard focus at an earlier place far from the view, and scrolls the row into view", () => {
+    stubFocusVisible(true);
+    const scrollIntoView = stubScrollIntoView();
+    const { rerender } = render(rovingList({ preferredKey: "row 300", anchorTop: true }));
+    const row = link("row 300");
+    row.focus();
+
+    rerender(rovingList({ items: ["row 300", ...rows.filter((one) => one !== "row 300")], anchorTop: true }));
+
+    expect(document.activeElement).toBe(row);
+    expect(row.closest("li")!.getAttribute("data-index")).toBe("0");
+    expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: "nearest" });
+    expect(scrollIntoView.mock.contexts[0]).toBe(row);
+  });
+
+  it("scrolls a row with a keyboard focus that changes places with the row after it into view", () => {
+    stubFocusVisible(true);
+    const scrollIntoView = stubScrollIntoView();
+    const { rerender } = render(page(FIVE));
+    const row = link("row 0");
+    row.focus();
+
+    rerender(page(["row 1", "row 0", "row 2", "row 3", "row 4"]));
+
+    expect(document.activeElement).toBe(row);
+    expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: "nearest" });
+    expect(scrollIntoView.mock.contexts[0]).toBe(row);
+  });
+
+  it("keeps the focus on a row with a pointer focus at its later place, and keeps the view", () => {
+    stubFocusVisible(false);
+    const scrollIntoView = stubScrollIntoView();
+    const { rerender } = render(page(FIVE));
+    const row = link("row 0");
+    row.focus();
+
+    rerender(page(MOVED));
+
+    expect(document.activeElement).toBe(row);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["rows come before it", ["new 0", ...FIVE]],
+    ["a row before it leaves the list", FIVE.slice(1)],
+    ["two rows after it change places", ["row 0", "row 1", "row 3", "row 2", "row 4"]],
+    ["a row before it goes past it", ["row 1", "row 2", "row 0", "row 3", "row 4"]],
+  ])("does not scroll to a row with a keyboard focus that keeps its place among the other rows when %s", (_case, items) => {
+    stubFocusVisible(true);
+    const scrollIntoView = stubScrollIntoView();
+    const { rerender } = render(page(FIVE));
+    const row = link("row 1");
+    row.focus();
+
+    rerender(page(items));
+
+    expect(document.activeElement).toBe(row);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("does not take the focus back after the user moves it out of the list", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(page(FIVE));
+    const before = screen.getByRole("button", { name: "Before" });
+    const after = screen.getByRole("button", { name: "After" });
+
+    await user.click(link("row 0"));
+    await user.tab();
+    expect(document.activeElement).toBe(after);
+    rerender(page(MOVED));
+    expect(document.activeElement).toBe(after);
+
+    await user.click(link("row 0"));
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(before);
+    rerender(page(FIVE));
+    expect(document.activeElement).toBe(before);
+
+    await user.click(link("row 0"));
+    await user.click(document.body);
+    expect(document.activeElement).toBe(document.body);
+    rerender(page(MOVED));
     expect(document.activeElement).toBe(document.body);
   });
 });
@@ -583,6 +798,65 @@ describe("anchorTop", () => {
     rerender(anchored(added));
 
     expect(region.top()).toBe(2 * ROW_HEIGHT);
+  });
+
+  it.each([
+    ["the pointer", (region: HTMLElement) => {
+      fireEvent.pointerEnter(region);
+    }],
+    ["the focus", () => {
+      stubFocusVisible(false);
+      link("row 5").focus();
+    }],
+  ])("keeps the view when the first row in view goes to a later place while %s is in the list", (_case, enter) => {
+    const { container, rerender } = render(anchored(rows));
+    const region = regionOf(container);
+    enter(container.querySelector<HTMLElement>("ul")!.parentElement!);
+
+    rerender(anchored([...rows.slice(1, 11), "row 0", ...rows.slice(11)]));
+
+    expect(region.top()).toBe(0);
+  });
+
+  it("keeps the view when the first row in view and the row after it change places while the pointer is in the list", () => {
+    const { container, rerender } = render(anchored(rows));
+    const region = regionOf(container);
+    fireEvent.pointerEnter(container.querySelector("ul")!.parentElement!);
+
+    rerender(anchored(["row 1", "row 0", ...rows.slice(2)]));
+
+    expect(region.top()).toBe(0);
+  });
+
+  it("keeps the rows after the first row in view in place when it goes to a later place and a row comes first", () => {
+    const { container, rerender } = render(anchored(rows));
+    const region = regionOf(container);
+    fireEvent.pointerEnter(container.querySelector("ul")!.parentElement!);
+
+    rerender(anchored(["new 0", ...rows.slice(1, 11), "row 0", ...rows.slice(11)]));
+
+    expect(region.top()).toBe(0);
+    expect(screen.getAllByRole("listitem")[0]?.textContent).toBe("new 0");
+  });
+
+  it("moves the rows below the first row in view up when it goes to a later place while the list is scrolled", () => {
+    const { container, rerender } = render(anchored(rows));
+    const region = regionOf(container);
+    region.scrollTo(320);
+
+    rerender(anchored([...rows.slice(0, 10), ...rows.slice(11, 21), "row 10", ...rows.slice(21)]));
+
+    expect(region.top()).toBe(320);
+  });
+
+  it("keeps the rows in view in place when a row above the view goes past the first row in view", () => {
+    const { container, rerender } = render(anchored(rows));
+    const region = regionOf(container);
+    region.scrollTo(320);
+
+    rerender(anchored([...rows.slice(1, 16), "row 0", ...rows.slice(16)]));
+
+    expect(region.top()).toBe(320 - ROW_HEIGHT);
   });
 
   it("shows rows that come first at the top again after the pointer leaves", () => {

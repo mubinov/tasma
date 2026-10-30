@@ -13,8 +13,9 @@ const SURFACES = ["bg", "surface", "surface-2"] as const;
  * The design contract: which role has to stay readable on every surface, and
  * the ratio it has to keep. Text roles meet WCAG 2.2 AA (1.4.3) at 4.5:1;
  * `graphic` carries meaning without being text, so it meets 1.4.11 at 3:1.
- * `line` is decorative by definition and appears in no pair, and so are the
- * `chart-*` fills, which tell diagram series apart by hue.
+ * `line` is decorative and is no surface of this contract; its one text pair
+ * is the band of a group of the chat list, below. The `chart-*` fills are
+ * decorative too, and tell diagram series apart by hue.
  */
 const READABILITY_CONTRACT: readonly { role: string; minimum: number }[] = [
   { role: "text", minimum: 4.5 },
@@ -93,6 +94,10 @@ describe.each([...palettes])("the %s palette", (_theme, palette) => {
 
   it.each(MATCH_ROLES)("keeps text readable on the %s fill at 4.5:1", (fill) => {
     expect(contrast(palette.get("text")!, palette.get(fill)!)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("keeps muted readable on the line fill of a chat list band at 4.5:1", () => {
+    expect(contrast(palette.get("muted")!, palette.get("line")!)).toBeGreaterThanOrEqual(4.5);
   });
 });
 

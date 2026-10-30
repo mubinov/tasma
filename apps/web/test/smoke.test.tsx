@@ -36,7 +36,7 @@ beforeEach(() => {
   // created, so every test states where it opens before it imports the entry.
   window.location.hash = "#/";
   // The dashboard at #/ lists the projects and the chats before it renders.
-  const replies: Record<string, unknown> = { "/daemon/chats": { items: [], total: 0 }, "/daemon/projects": [] };
+  const replies: Record<string, unknown> = { "/daemon/chats": { items: [], total: 0, active: 0 }, "/daemon/projects": [] };
   vi.stubGlobal("fetch", (input: string) => {
     const path = Object.keys(replies).find((key) => input.endsWith(key));
     return path === undefined

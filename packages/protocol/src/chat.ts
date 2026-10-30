@@ -82,11 +82,16 @@ export type ChatListItem = {
   status?: ChatStatus;
 };
 
-/** One page of the list of the chats of all projects, newest first. */
+/**
+ * One page of the list of the chats of all projects: the active chats first,
+ * then the others, each group newest first.
+ */
 export type ChatListPage = {
   items: ChatListItem[];
   /** The count of all chats that match `project` and `q`, on all pages. */
   total: number;
+  /** The count of the active chats that match `project` and `q`, on all pages. */
+  active: number;
   /** The `after` of the next page. Absent on the last page. */
   next?: string;
 };
@@ -221,4 +226,9 @@ export function chatMark(
 ): ChatStatus | undefined {
   if (chat.state !== "working" && chat.step !== step && (chat.seen ?? 0) >= chat.stateSeq) return undefined;
   return chat.state === "continued-outside" ? { state: chat.state, where: chat.where } : { state: chat.state };
+}
+
+/** Whether a row of the chat list with this mark is in the Active group. */
+export function isActiveChat(status: ChatStatus | undefined): boolean {
+  return status?.state === "working" || status?.state === "needs-you";
 }

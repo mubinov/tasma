@@ -158,7 +158,7 @@ export type Client = {
    * the log. A `seq` at or below the stored `seen` changes nothing.
    */
   markChatSeen(tag: string, id: string, chat: number, input: ChatSeenInput): Promise<Success<Chat>>;
-  /** One page of the chats of all projects, newest first. */
+  /** One page of the chats of all projects, the active chats first and each group newest first. */
   listAllChats(query?: ChatListQuery): Promise<Success<ChatListPage>>;
   /** One chat as `listAllChats` gives it, by the id of its task. */
   readChatItem(id: string, chat: number): Promise<Success<ChatListItem>>;

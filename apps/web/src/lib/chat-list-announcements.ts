@@ -1,4 +1,4 @@
-import type { ChatListItem } from "@tasma/protocol";
+import { isActiveChat, type ChatListItem, type ChatListPage } from "@tasma/protocol";
 import { idNumber } from "./board";
 
 /** The chat that the dashboard shows. */
@@ -14,8 +14,9 @@ function byText(one: string, other: string): number {
 }
 
 /**
- * The order of the daemon: newest first, then the tag A to Z, the task number
- * high first, the task id A to Z, the chat number high first.
+ * The order of the daemon inside one group of the list: newest first, then the
+ * tag A to Z, the task number high first, the task id A to Z, the chat number
+ * high first.
  */
 function compareChats(one: ChatListItem, other: ChatListItem): number {
   return Date.parse(other.created) - Date.parse(one.created)
@@ -32,6 +33,18 @@ export function sameChat(one: OpenChat, other: OpenChat): boolean {
 /** The identity of a chat in the list. */
 export function chatKey({ task, chat }: OpenChat): string {
   return `${task}/${String(chat)}`;
+}
+
+/** The items of all loaded pages, each chat one time, at its first place. */
+export function chatListItems(pages: readonly { data: ChatListPage }[]): ChatListItem[] {
+  const items = new Map<string, ChatListItem>();
+  for (const item of pages.flatMap((page) => page.data.items)) {
+    const key = chatKey(item);
+    if (!items.has(key)) {
+      items.set(key, item);
+    }
+  }
+  return [...items.values()];
 }
 
 function announcedState(item: ChatListItem): Announced | null {
@@ -57,16 +70,32 @@ function countWords(count: number, state: Announced): string {
 /**
  * What a new result of the list of all chats announces after the last one: an
  * item, not the open chat, that is now "Needs you" or "Failed" and was in the
- * last result with another state, or is newer than every item of the last
- * result. An item of an older page is neither.
+ * last result with another state, or is newer than every item of its group in
+ * the last result. An item of an older page is neither. `complete` tells that
+ * the last result held all pages; an empty last result is complete.
+ *
+ * With no active item in the last result, no page held one, so every "Needs
+ * you" item is new. With no other item, a "Failed" item can come from a page
+ * the last result did not load, so it is new only after a complete result.
  */
 export function chatListAnnouncements(
   before: readonly ChatListItem[],
   after: readonly ChatListItem[],
   open: OpenChat | undefined,
+  complete = false,
 ): string[] {
-  const newest = before[0];
+  const newestActive = before.find((one) => isActiveChat(one.status));
+  const newestOther = before.find((one) => !isActiveChat(one.status));
   const found: { task: string; state: Announced }[] = [];
+
+  function isNew(item: ChatListItem): boolean {
+    const active = isActiveChat(item.status);
+    const newest = active ? newestActive : newestOther;
+    if (newest === undefined) {
+      return active || complete || before.length === 0;
+    }
+    return compareChats(item, newest) < 0;
+  }
 
   for (const item of after) {
     const state = announcedState(item);
@@ -75,9 +104,7 @@ export function chatListAnnouncements(
     }
 
     const last = before.find((one) => sameChat(one, item));
-    const changed = last === undefined
-      ? newest === undefined || compareChats(item, newest) < 0
-      : announcedState(last) !== state;
+    const changed = last === undefined ? isNew(item) : announcedState(last) !== state;
     if (changed) {
       found.push({ task: item.task, state });
     }

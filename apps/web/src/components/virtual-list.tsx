@@ -1,4 +1,11 @@
-import { defaultRangeExtractor, useVirtualizer, useWindowVirtualizer, type Range } from "@tanstack/react-virtual";
+import {
+  defaultRangeExtractor,
+  useVirtualizer,
+  useWindowVirtualizer,
+  type Range,
+  type VirtualItem,
+  type Virtualizer,
+} from "@tanstack/react-virtual";
 import {
   useEffect,
   useEffectEvent,
@@ -13,6 +20,8 @@ import {
 import { useFocusLost } from "../lib/use-focus-lost";
 
 type RowKey = string | number;
+
+type Key = VirtualItem["key"];
 
 type RovingOptions = {
   /**
@@ -36,8 +45,12 @@ type ListName
 
 type VirtualListProps<T> = ListName & {
   items: readonly T[];
-  /** Row height in pixels before measurement; measured rows override it. */
-  estimateSize: number;
+  /**
+   * A row's height in pixels before measurement; measured rows override it. A row that first renders above the view
+   * at another height moves the scroll inside the commit, where React refuses the `flushSync` that the virtualizer
+   * calls.
+   */
+  estimateSize: (item: T, index: number) => number;
   /** Row identity across reorders. Keying by index reuses DOM and state silently. */
   getKey: (item: T, index: number) => RowKey;
   /**
@@ -73,7 +86,52 @@ type VirtualListProps<T> = ListName & {
    * show at the top.
    */
   anchorTop?: boolean;
+  /** The indexes of rows that render also when they are far from the view, as the row of the tab stop does. */
+  keepRendered?: readonly number[];
 };
+
+/** The length of the longest series of `keys` whose indexes in `indexes` increase. A key with no index is skipped. */
+function orderedLength(keys: readonly Key[], indexes: ReadonlyMap<Key, number>): number {
+  // At each length, the lowest last index of a series of that length.
+  const ends: number[] = [];
+  for (const key of keys) {
+    const index = indexes.get(key);
+    if (index === undefined) {
+      continue;
+    }
+
+    let low = 0;
+    let high = ends.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (ends[middle]! < index) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    ends[low] = index;
+  }
+  return ends.length;
+}
+
+/**
+ * Whether the row of `key` moved from `last` to the list of `indexes`: some longest series of the rows of both lists
+ * that keep their order leaves it out. A row that other rows move past keeps its place. Of two rows that change
+ * places, both moved: the order cannot tell which of them did.
+ */
+function moved(last: readonly Key[], indexes: ReadonlyMap<Key, number>, key: Key): boolean {
+  return last.includes(key) && indexes.has(key)
+    && orderedLength(last.filter((one) => one !== key), indexes) === orderedLength(last, indexes);
+}
+
+/** Whether the row at the scroll offset of `virtualizer`, before it gets the list of `indexes`, moves in that list. */
+function offsetRowMoves(virtualizer: Virtualizer<HTMLDivElement, Element>, indexes: ReadonlyMap<Key, number>): boolean {
+  const { count, getItemKey } = virtualizer.options;
+  // The offset is set in the first render.
+  const row = virtualizer.getVirtualItemForOffset(virtualizer.scrollOffset!);
+  return row !== undefined && moved(Array.from({ length: count }, (_, index) => getItemKey(index)), indexes, row.key);
+}
 
 /** The element of the row at `index` that takes the focus, when the row is rendered. */
 function rowTarget(list: HTMLUListElement | null, index: number): HTMLElement | null {
@@ -136,6 +194,7 @@ export function VirtualList<T>({
   footer,
   onEnd,
   anchorTop = false,
+  keepRendered = [],
 }: VirtualListProps<T>): ReactNode {
   const scrollRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -149,8 +208,12 @@ export function VirtualList<T>({
   const [atTop, setAtTop] = useState(true);
   const [pointerIn, setPointerIn] = useState(false);
   const [focusIn, setFocusIn] = useState(false);
+  // The element in the region that holds the focus got it from the keyboard.
+  const [keyboardFocus, setKeyboardFocus] = useState(false);
   const lostRef = useRef<RowKey | null>(null);
   const lastKeysRef = useRef<readonly RowKey[]>(keys);
+  // The virtualizer, to read before the call that gives it the rows of this render.
+  const [instance, setInstance] = useState<Virtualizer<HTMLDivElement, Element> | null>(null);
 
   if (lastFocusedKey !== null && !indexes.has(lastFocusedKey)) {
     setLastFocusedKey(null);
@@ -166,22 +229,32 @@ export function VirtualList<T>({
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => estimateSize,
     // The virtualizer counts items.length, so every index it hands back is in range.
+    estimateSize: (index) => estimateSize(items[index] as T, index),
     getItemKey: (index) => keys[index]!,
     overscan: 8,
     // The row of the tab stop is the focused row while the focus is in the list,
     // and it stays rendered, so Tab reaches the list from anywhere it scrolls.
     rangeExtractor: (range: Range) => {
       const shown = defaultRangeExtractor(range);
-      return stopIndex === -1 || shown.includes(stopIndex)
-        ? shown
-        : [...shown, stopIndex].sort((one, other) => one - other);
+      const kept = new Set([stopIndex, ...keepRendered].filter((index) => index !== -1 && !shown.includes(index)));
+      return kept.size === 0 ? shown : [...shown, ...kept].sort((one, other) => one - other);
     },
-    // "end" keeps the row at the scroll offset in place when rows come before it.
-    anchorTo: anchorTop && (!atTop || pointerIn || focusIn) ? "end" : "start",
+    // "end" keeps the row at the scroll offset in place when rows come before it, and takes the view along when that
+    // row moves.
+    anchorTo: anchorTop && (!atTop || pointerIn || focusIn) && !(instance !== null && offsetRowMoves(instance, indexes))
+      ? "end"
+      : "start",
   });
   const rows = virtualizer.getVirtualItems();
+
+  const keepInstance = useEffectEvent(() => {
+    setInstance(virtualizer);
+  });
+
+  useLayoutEffect(() => {
+    keepInstance();
+  }, []);
 
   function rowIndexOf(target: EventTarget): number | null {
     const list = listRef.current;
@@ -232,6 +305,17 @@ export function VirtualList<T>({
   useLayoutEffect(() => {
     readPointer();
   }, []);
+
+  // React gives the focus back to a focused row that a commit moves in the document, and keeps the scroll offsets.
+  // A row with a keyboard focus that moves then scrolls into view, so that its focus ring stays in view. Runs before
+  // the effect that updates `lastKeysRef`.
+  useLayoutEffect(() => {
+    const active = document.activeElement;
+    const index = active === null ? null : rowIndexOf(active);
+    if (keyboardFocus && active !== null && index !== null && moved(lastKeysRef.current, indexes, keys[index]!)) {
+      active.scrollIntoView({ block: "nearest" });
+    }
+  });
 
   // A focused row that leaves the list hands the focus to the row after it, else the row before it.
   useLayoutEffect(() => {
@@ -324,7 +408,7 @@ export function VirtualList<T>({
   function onClick(event: MouseEvent<HTMLUListElement>): void {
     const index = rowIndexOf(event.target);
     const target = index === null ? null : rowTarget(listRef.current, index);
-    if (target !== null && document.activeElement !== target) {
+    if (target !== null && target.contains(event.target as Node) && document.activeElement !== target) {
       target.focus({ preventScroll: true });
     }
   }
@@ -361,8 +445,9 @@ export function VirtualList<T>({
       onPointerLeave={() => {
         setPointerIn(false);
       }}
-      onFocus={() => {
+      onFocus={(event) => {
         setFocusIn(true);
+        setKeyboardFocus(event.target.matches(":focus-visible"));
       }}
       onBlur={(event) => {
         setFocusIn(event.currentTarget.contains(event.relatedTarget));

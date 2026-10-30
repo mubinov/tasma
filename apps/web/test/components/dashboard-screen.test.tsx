@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { CHAT_CLIENT } from "../../src/api/mutations";
 import { daemonKeys } from "../../src/api/queries";
+import { BAND_HEIGHT, BANDED_ROW_CLASS } from "../../src/components/chat-list-item";
 import { FindShortcut } from "../../src/components/find-shortcut";
 import { chatPath, chatRecord } from "../chat-daemon";
 import { chatEntries, modeOption, optionsUpdate, TEXT_LOG } from "../chat-fixtures";
@@ -25,7 +26,16 @@ import {
   stubLayout,
   type DashboardStub,
 } from "../dashboard-fixtures";
-import { countReads, heldBack, pathsBeforeFeed, refusalReply, stubThreadDom, successReply } from "../helpers";
+import {
+  countReads,
+  heldBack,
+  pathsBeforeFeed,
+  refusalReply,
+  stubFocusVisible,
+  stubScrollIntoView,
+  stubThreadDom,
+  successReply,
+} from "../helpers";
 import { stubWindowWidth } from "../setup/match-media";
 import { frame } from "../setup/notice-store";
 import { spoken } from "../update-fixtures";
@@ -107,7 +117,15 @@ function scrollableList() {
   const region = chatList().parentElement!;
   let top = 0;
   Object.defineProperty(region, "scrollTop", { configurable: true, get: () => top, set: (value: number) => (top = value) });
+  // The virtualizer scrolls inside a commit, where a browser fires no `scroll`, and it keeps the new offset itself.
+  Object.defineProperty(region, "scrollTo", {
+    configurable: true,
+    value: (options: ScrollToOptions) => {
+      top = options.top!;
+    },
+  });
   return {
+    top: () => top,
     scrollTo(y: number) {
       act(() => {
         top = y;
@@ -139,7 +157,7 @@ describe("the screen", () => {
 });
 
 describe("the items", () => {
-  it("lists the chats newest first, with the id, the time, the title, the step, and the state only where there is one", async () => {
+  it("lists the chats in the order of the daemon, with the id, the time, the title, the step, and the state only where there is one", async () => {
     await renderDashboard(stubDashboard());
 
     expect(itemLinks().map((link) => link.getAttribute("data-chat-key"))).toEqual(["ACME-7/1", "SAGA-3/2", "SAGA-3/1"]);
@@ -198,6 +216,201 @@ describe("the items", () => {
     });
 
     expect(itemLink("ACME-7", 1).querySelector("time")?.textContent).toBe("1h");
+  });
+});
+
+/** The headings of the groups in the list, by their names. */
+function bandNames(): string[] {
+  return within(chatList()).queryAllByRole("heading", { level: 3 }).map((heading) => heading.textContent);
+}
+
+function band(name: RegExp): HTMLElement {
+  return within(chatList()).getByRole("heading", { level: 3, name });
+}
+
+const NEEDS_YOU = { status: { state: "needs-you" } } as const;
+
+describe("the groups", () => {
+  it("shows the band Active with the count of the active chats above the first row, and Other chats with the count of the others above the first other row", async () => {
+    const stub = stubDashboard({ "/chats": pageReply(ITEMS, "c1", 12, 4), "/chats?after=c1": heldBack().reply });
+    await renderDashboard(stub);
+
+    expect(bandNames()).toEqual(["Active 4 chats", "Other chats 8"]);
+    const active = band(/^Active/);
+    const other = band(/^Other chats/);
+    expect(active.closest("li")).toBe(itemLink("ACME-7", 1).closest("li"));
+    expect(other.closest("li")).toBe(itemLink("SAGA-3", 1).closest("li"));
+    expect(active.compareDocumentPosition(itemLink("ACME-7", 1)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(active.parentElement!.className).toContain("bg-line");
+    expect(active.className).toContain("text-subtle");
+    expect(active.className).toContain("uppercase");
+  });
+
+  it("gives a scroll margin of the height of the band to the item under a band alone", async () => {
+    await renderDashboard(stubDashboard());
+
+    expect(itemLinks().map((link) => link.className.includes(BANDED_ROW_CLASS))).toEqual([true, false, true]);
+  });
+
+  it("shows no band with no active chat", async () => {
+    const others = [ITEMS[2]!, listItem("SAGA-1", 1, 120, { status: { state: "failed" } })];
+    await renderDashboard(stubDashboard({ "/chats": pageReply(others) }));
+
+    expect(bandNames()).toEqual([]);
+  });
+
+  it("shows the band Active alone with only active chats", async () => {
+    await renderDashboard(stubDashboard({ "/chats": pageReply(ITEMS.slice(0, 2)) }));
+
+    expect(bandNames()).toEqual(["Active 2 chats"]);
+  });
+
+  it("says 1 chat in the hidden word of the band Active, and has no hidden word in Other chats", async () => {
+    await renderDashboard(stubDashboard({ "/chats": pageReply([OPEN, ITEMS[2]!]) }));
+
+    expect(bandNames()).toEqual(["Active 1 chat", "Other chats 1"]);
+    expect(band(/^Active/).querySelector(".sr-only")?.textContent).toBe(" chat");
+    expect(band(/^Other chats/).querySelector(".sr-only")).toBeNull();
+  });
+
+  it.each([
+    ["the project filter", "/?project=SAGA", { project: "SAGA" }],
+    ["the search", "/?q=parser", { q: "parser" }],
+  ])("shows the counts of the page of %s", async (_name, path, filter) => {
+    await renderDashboard(stubDashboard({ [chatsPath(filter)]: pageReply([OPEN, ITEMS[2]!], undefined, 9, 3) }), path);
+
+    await waitFor(() => {
+      expect(bandNames()).toEqual(["Active 3 chats", "Other chats 6"]);
+    });
+  });
+
+  it("makes each band a heading that takes no focus, and moves Down from the last active row to the first other row", async () => {
+    const user = userEvent.setup();
+    await renderDashboard(stubDashboard());
+
+    for (const heading of [band(/^Active/), band(/^Other chats/)]) {
+      const row = heading.closest("li")!;
+      expect([...row.querySelectorAll("[tabindex]")]).toEqual([row.querySelector("a")]);
+      fireEvent.click(heading);
+      expect(document.activeElement).toBe(document.body);
+    }
+    itemLink("SAGA-3", 2).focus();
+    await user.keyboard("{ArrowDown}");
+
+    expect(document.activeElement).toBe(itemLink("SAGA-3", 1));
+  });
+
+  it("keeps both headings in the document at the top of a long Active group and after a scroll to its end", async () => {
+    const active = Array.from({ length: 19 }, (_, index) => listItem(`BETA-${String(40 - index)}`, 1, 10 + index, NEEDS_YOU));
+    const others = [ITEMS[2]!, listItem("BETA-2", 1, 200), listItem("BETA-1", 1, 300)];
+    await renderDashboard(stubDashboard({ "/chats": pageReply([...active, OPEN, ...others]) }), OPEN_PATH);
+
+    expect(bandNames()).toEqual(["Active 20 chats", "Other chats 3"]);
+    expect(itemLink("BETA-23", 1)).toBeNull();
+
+    scrollableList().scrollTo(23 * 79 - 600);
+
+    expect(bandNames()).toEqual(["Active 20 chats", "Other chats 3"]);
+    expect(itemLink("BETA-38", 1)).toBeNull();
+  });
+
+  it("logs no error when a new chat comes first, under the band, above the view", async () => {
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.tagName === "LI" ? 79 + (this.querySelector("h3") === null ? 0 : BAND_HEIGHT) : 600;
+    });
+    const error = vi.spyOn(console, "error");
+    const others = Array.from({ length: 10 }, (_, index) => listItem(`BETA-${String(20 - index)}`, 1, 100 + index));
+    const stub = stubDashboard({ "/chats": pageReply([...ITEMS, ...others]) });
+    await renderDashboard(stub);
+    scrollableList().scrollTo(300);
+    // The virtualizer measures no row in a commit until 150 ms after the last scroll.
+    await act(async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 200);
+      });
+    });
+
+    stub.replies["/chats"] = pageReply([listItem("ACME-8", 1, 1, NEEDS_YOU), ...ITEMS, ...others]);
+    await stub.send([LIST_EVENT]);
+
+    await waitFor(() => {
+      expect(itemLinks()[0]?.getAttribute("data-chat-key")).toBe("ACME-8/1");
+    });
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("shows a chat that two loaded pages hold one time", async () => {
+    const stub = stubDashboard({
+      "/chats": pageReply(ITEMS, "c1", 4),
+      "/chats?after=c1": pageReply([ITEMS[2]!, listItem("SAGA-1", 1, 600)], undefined, 4),
+    });
+    await renderDashboard(stub);
+
+    await waitFor(() => {
+      expect(itemLinks().map((link) => link.getAttribute("data-chat-key"))).toEqual(["ACME-7/1", "SAGA-3/2", "SAGA-3/1", "SAGA-1/1"]);
+    });
+  });
+});
+
+describe("a focused item that leaves the group Active", () => {
+  /** ACME-7 loses its mark and goes to Other chats, after OPEN. */
+  async function moveAcme(stub: DashboardStub): Promise<void> {
+    const [acme, open, older] = ITEMS as [ChatListItem, ChatListItem, ChatListItem];
+    stub.replies["/chats"] = pageReply([open, { ...acme, status: undefined }, older]);
+
+    await stub.send([LIST_EVENT]);
+
+    await waitFor(() => {
+      expect(itemLinks().map((link) => link.getAttribute("data-chat-key"))).toEqual(["SAGA-3/2", "ACME-7/1", "SAGA-3/1"]);
+    });
+  }
+
+  it("keeps the focus on the item after a keyboard focus, and scrolls it into view", async () => {
+    stubFocusVisible(true);
+    const scrollIntoView = stubScrollIntoView();
+    const stub = stubDashboard();
+    await renderDashboard(stub);
+    const acme = itemLink("ACME-7", 1);
+    acme.focus();
+
+    await moveAcme(stub);
+
+    expect(document.activeElement).toBe(acme);
+    expect(band(/^Other chats/).closest("li")).toBe(acme.closest("li"));
+    expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: "nearest" });
+    expect(scrollIntoView.mock.contexts[0]).toBe(acme);
+  });
+
+  it("keeps the focus on the item after a pointer focus, and keeps the view", async () => {
+    stubFocusVisible(false);
+    const scrollIntoView = stubScrollIntoView();
+    const stub = stubDashboard();
+    await renderDashboard(stub);
+    const acme = itemLink("ACME-7", 1);
+    acme.focus();
+
+    await moveAcme(stub);
+
+    expect(document.activeElement).toBe(acme);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("keeps the view at the top when the focused first item leaves Active and a new chat comes first", async () => {
+    stubFocusVisible(false);
+    const [acme, open, older] = ITEMS as [ChatListItem, ChatListItem, ChatListItem];
+    const others = Array.from({ length: 10 }, (_, index) => listItem(`BETA-${String(20 - index)}`, 1, 100 + index));
+    const stub = stubDashboard({ "/chats": pageReply([...ITEMS, ...others]) });
+    await renderDashboard(stub);
+    const list = scrollableList();
+    itemLink("ACME-7", 1).focus();
+
+    stub.replies["/chats"] = pageReply([listItem("ACME-8", 1, 1, NEEDS_YOU), open, { ...acme, status: undefined }, older, ...others]);
+    await stub.send([LIST_EVENT]);
+
+    await waitFor(() => {
+      expect(itemLinks()[0]?.getAttribute("data-chat-key")).toBe("ACME-8/1");
+    });
+    expect(list.top()).toBe(0);
   });
 });
 

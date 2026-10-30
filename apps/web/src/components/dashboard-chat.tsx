@@ -4,7 +4,7 @@ import type { ChatListItem } from "@tasma/protocol";
 import { useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { chatItemQuery, chatListQuery, type ChatFilter } from "../api/queries";
 import { opensHere, tagOf } from "../lib/board";
-import { sameChat, type OpenChat } from "../lib/chat-list-announcements";
+import { chatListItems, sameChat, type OpenChat } from "../lib/chat-list-announcements";
 import { chatAgentName, isChatMissing } from "../lib/chat-messages";
 import { focusInView } from "../lib/focus-in-view";
 import { ArrowLeftIcon } from "../lib/icons";
@@ -32,7 +32,7 @@ type DashboardChatProps = {
 export function DashboardChat({ filter, open, wide, headingRef, onBack }: DashboardChatProps): ReactNode {
   const { client } = route.useRouteContext();
   const { data } = useSuspenseInfiniteQuery(chatListQuery(client, filter));
-  const items = data.pages.flatMap((page) => page.data.items);
+  const items = chatListItems(data.pages);
 
   if (open === undefined) {
     return (

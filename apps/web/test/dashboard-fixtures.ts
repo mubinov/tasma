@@ -1,5 +1,6 @@
 import {
   buildPath,
+  isActiveChat,
   routes,
   type ChatListItem,
   type ChatListPage,
@@ -41,15 +42,21 @@ export function listItem(
   };
 }
 
-export function pageReply(items: readonly ChatListItem[], next?: string, total = items.length): TransportReply {
-  const page: ChatListPage = { items: [...items], total, ...(next === undefined ? {} : { next }) };
+/** A page of the list. `active` counts the active items of this page by default. */
+export function pageReply(
+  items: readonly ChatListItem[],
+  next?: string,
+  total = items.length,
+  active = items.filter((item) => isActiveChat(item.status)).length,
+): TransportReply {
+  const page: ChatListPage = { items: [...items], total, active, ...(next === undefined ? {} : { next }) };
   return successReply(page);
 }
 
 /** SAGA-3, chat 2: the chat that the record and the log of `stubChatLog` answer for. */
 export const OPEN = listItem("SAGA-3", 2, 5, { title: "Build the parser", step: "dev:review", status: { state: "needs-you" } });
 
-/** Three chats of two projects, newest first. */
+/** Three chats of two projects: two active chats, then one other chat, each group newest first. */
 export const ITEMS: readonly ChatListItem[] = [
   listItem("ACME-7", 1, 2, { title: "Ship the release", step: "dev:test", status: { state: "working" } }),
   OPEN,

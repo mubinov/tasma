@@ -1,8 +1,8 @@
 import { Buffer } from "node:buffer";
 import { chmod, link, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it, onTestFinished } from "vitest";
-import { TaskStoreError } from "@tasma/engine";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { openTreeWorkflows, TaskStoreError } from "@tasma/engine";
 import type { ChatEvent, ChatListItem, ChatListPage, Diagnostic, FeedEvent } from "@tasma/protocol";
 import { chatListRoutes } from "../../src/chats/list-routes.js";
 import { createChatRegistry } from "../../src/chats/registry.js";
@@ -31,9 +31,17 @@ import {
 } from "../helpers.js";
 import type { TestServer } from "../helpers.js";
 
+vi.mock("@tasma/engine", async (importActual) => {
+  const actual = await importActual<typeof import("@tasma/engine")>();
+
+  return { ...actual, openTreeWorkflows: vi.fn(actual.openTreeWorkflows) };
+});
+
 const USER: ChatEvent = { kind: "user", text: "Build the parser", client: "app" };
 
 const TURN_END: ChatEvent = { kind: "turn-end", stopReason: "end_turn" };
+
+const FAILED: ChatEvent = { kind: "failed", reason: "the agent stopped" };
 
 type World = { server: TestServer; chats: ChatRegistry; events: FeedEvent[] };
 
@@ -118,6 +126,51 @@ async function statusOf(server: TestServer): Promise<ChatListItem["status"]> {
   return listed;
 }
 
+/**
+ * One chat of each task, one minute apart: ALPHA-1 needs you, ALPHA-2 failed,
+ * ALPHA-3 with no mark, ALPHA-4 continued outside, BETA-1 needs you.
+ */
+async function markedTasks(): Promise<string> {
+  const root = await projectsRoot("ALPHA", "BETA");
+  const tasks: [string, string, ChatEvent[]][] = [
+    ["ALPHA-1", "Parse the tree", [USER, TURN_END]],
+    ["ALPHA-2", "Draw the board", [USER, FAILED]],
+    ["ALPHA-3", "Parse the board", []],
+    ["ALPHA-4", "Draw the tree", [USER, { kind: "continued-outside", where: "terminal" }]],
+    ["BETA-1", "Parse the list", [USER, TURN_END]],
+  ];
+  for (const [minute, [task, title, events]] of tasks.entries()) {
+    await plantTask(root, task, title);
+    await plantChat(root, at(task, 1), { created: `2026-01-01T00:0${String(minute)}:00Z` }, events);
+  }
+  return root;
+}
+
+/**
+ * ALPHA-1 to ALPHA-60 with one chat each, one minute apart. The chats of
+ * ALPHA-1 to ALPHA-55 need you, the others have no mark.
+ */
+async function sixtyTasks(): Promise<string> {
+  const root = await projectsRoot("ALPHA");
+  for (let number = 1; number <= 60; number += 1) {
+    const task = `ALPHA-${String(number)}`;
+    await plantTask(root, task);
+    const created = `2026-01-01T00:${String(number - 1).padStart(2, "0")}:00Z`;
+    await plantChat(root, at(task, 1), { created }, number <= 55 ? [USER, TURN_END] : []);
+  }
+  return root;
+}
+
+/** The places `ALPHA-<from>/1` down to `ALPHA-<to>/1`. */
+function placesDown(from: number, to: number): string[] {
+  return Array.from({ length: from - to + 1 }, (_, at) => `ALPHA-${String(from - at)}/1`);
+}
+
+/** A cursor that holds `key`. */
+function cursor(key: unknown[]): string {
+  return Buffer.from(JSON.stringify(key)).toString("base64url");
+}
+
 /** ALPHA-1 with 60 chats, one minute apart. */
 async function sixtyChats(): Promise<string> {
   const root = await projectsRoot("ALPHA");
@@ -141,8 +194,67 @@ describe("GET /chats", () => {
         { tag: "ALPHA", task: "ALPHA-1", title: "Parse the tree", chat: 1, step: "dev:build", agent: "claude", created: "2026-01-01T10:00:00+03:00", status: { state: "needs-you" } },
       ],
       total: 3,
+      active: 3,
     });
     expect(diagnostics).toEqual([]);
+  });
+
+  it("lists the active chats first, then the other chats, each group newest first", async () => {
+    const { server } = await world(await markedTasks());
+
+    const { data } = await page(server);
+
+    expect(data.items.map((listed) => [listed.task, listed.status?.state])).toEqual([
+      ["BETA-1", "needs-you"],
+      ["ALPHA-1", "needs-you"],
+      ["ALPHA-4", "continued-outside"],
+      ["ALPHA-3", undefined],
+      ["ALPHA-2", "failed"],
+    ]);
+    expect([data.total, data.active]).toEqual([5, 2]);
+  });
+
+  it.each([
+    ["no filter", "", ["BETA-1/1", "ALPHA-1/1", "ALPHA-4/1", "ALPHA-3/1", "ALPHA-2/1"], 2],
+    ["project", "?project=ALPHA", ["ALPHA-1/1", "ALPHA-4/1", "ALPHA-3/1", "ALPHA-2/1"], 1],
+    ["q", "?q=parse", ["BETA-1/1", "ALPHA-1/1", "ALPHA-3/1"], 2],
+    ["project and q", "?project=ALPHA&q=draw", ["ALPHA-4/1", "ALPHA-2/1"], 0],
+  ])("counts the active chats that %s keeps", async (_name, query, expected, active) => {
+    const { server } = await world(await markedTasks());
+
+    const { data } = await page(server, query);
+
+    expect(places(data.items)).toEqual(expected);
+    expect([data.total, data.active]).toEqual([expected.length, active]);
+  });
+
+  it("serves a page that ends inside the active group, and goes on with the next active chat", async () => {
+    const { server } = await world(await sixtyTasks());
+
+    const pages = await allPages(server);
+
+    expect(pages.map((one) => [one.items.length, one.total, one.active, one.next !== undefined])).toEqual([
+      [50, 60, 55, true],
+      [10, 60, 55, false],
+    ]);
+    expect(pages.flatMap((one) => places(one.items))).toEqual([...placesDown(55, 1), ...placesDown(60, 56)]);
+  });
+
+  it("puts a chat whose log does not open in the other group, and reports it on its page alone", async () => {
+    const root = await sixtyTasks();
+    await chmod(logFile(root, "ALPHA", "55", 1), 0o000);
+    onTestFinished(() => chmod(logFile(root, "ALPHA", "55", 1), 0o600));
+    const { server } = await world(root);
+
+    const first = await page(server);
+    const second = await page(server, `?after=${first.data.next}`);
+
+    expect(places(first.data.items)).toEqual(placesDown(54, 5));
+    expect(first.data.active).toBe(54);
+    expect(first.diagnostics).toEqual([]);
+    expect(places(second.data.items)).toEqual([...placesDown(4, 1), ...placesDown(60, 56), "ALPHA-55/1"]);
+    expect(second.data.items.at(-1)!.status).toBeUndefined();
+    expect(second.diagnostics).toMatchObject([{ code: "chat-file-unreadable", path: logFile(root, "ALPHA", "55", 1) }]);
   });
 
   it("orders chats of one time by the tag, the task number high first, the task id, and the chat number high first", async () => {
@@ -204,17 +316,22 @@ describe("GET /chats", () => {
 
     for (let chat = 1; chat <= 10; chat += 1) await rm(chatFolder(root, "ALPHA", "1", chat), { recursive: true });
 
-    await expect(page(server, `?after=${first.next}`)).resolves.toEqual({ data: { items: [], total: 50 }, diagnostics: [] });
+    await expect(page(server, `?after=${first.next}`)).resolves.toEqual({
+      data: { items: [], total: 50, active: 0 },
+      diagnostics: [],
+    });
   });
 
   it.each([
     ["no base64url JSON", "not-a-cursor"],
-    ["a JSON value of another shape", Buffer.from(JSON.stringify([1, "ALPHA"])).toString("base64url")],
-    ["a key with a time that is no number", Buffer.from(JSON.stringify(["x", "ALPHA", 1, "ALPHA-1", 1])).toString("base64url")],
-  ])("refuses a cursor that holds %s with malformed-request", async (_name, cursor) => {
+    ["a JSON value of another shape", cursor([1, "ALPHA"])],
+    ["a key in the form without the group", cursor([1_767_225_600_000, "ALPHA", 1, "ALPHA-1", 1])],
+    ["a key with a group other than 0 and 1", cursor([2, 1_767_225_600_000, "ALPHA", 1, "ALPHA-1", 1])],
+    ["a key with a time that is no number", cursor([0, "x", "ALPHA", 1, "ALPHA-1", 1])],
+  ])("refuses a cursor that holds %s with malformed-request", async (_name, after) => {
     const { server } = await world(await threeTasks());
 
-    const response = await get(server, `/chats?after=${cursor}`);
+    const response = await get(server, `/chats?after=${after}`);
 
     expect(response.status).toBe(400);
     expect(await failure(response)).toMatchObject({ code: "malformed-request" });
@@ -287,11 +404,11 @@ describe("GET /chats", () => {
     const { data } = await page(server);
 
     expect(data.items.map((listed) => [listed.task, listed.chat, listed.status])).toEqual([
-      ["ALPHA-2", 1, { state: "continued-outside", where: "vscode" }],
       ["ALPHA-1", 2, { state: "needs-you" }],
+      ["ALPHA-2", 1, { state: "continued-outside", where: "vscode" }],
       ["ALPHA-1", 1, undefined],
     ]);
-    expect(data.items[1]!.status).toEqual((await chats.get("ALPHA", "ALPHA-1", 2)).fold.status);
+    expect(data.items[0]!.status).toEqual((await chats.get("ALPHA", "ALPHA-1", 2)).fold.status);
   });
 
   it("gives a state to the latest chat on a past step until seen reaches the entry that set the state", async () => {
@@ -322,6 +439,24 @@ describe("GET /chats", () => {
     await (await chats.get("ALPHA", "ALPHA-1", 1)).setSeen(2);
 
     expect(await statusOf(server)).toBeUndefined();
+  });
+
+  it("reads the workflow of the tasks with no step one time for each request", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantSteps(root, "flow", "dev:build", "dev:review");
+    for (const task of ["ALPHA-1", "ALPHA-2"]) {
+      await plant(taskFile(root, "ALPHA", task), onWorkflow(task, "flow"));
+      await plantChat(root, at(task, 1), { step: "dev:build" }, [USER, TURN_END]);
+    }
+    const { server, chats } = await world(root);
+    for (const task of ["ALPHA-1", "ALPHA-2"]) await (await chats.get("ALPHA", task, 1)).setSeen(2);
+    vi.mocked(openTreeWorkflows).mockClear();
+
+    const { data } = await page(server);
+    await item(server, "/chats/ALPHA-1/1");
+
+    expect(data.items.map((listed) => listed.status)).toEqual([{ state: "needs-you" }, { state: "needs-you" }]);
+    expect(openTreeWorkflows).toHaveBeenCalledTimes(2);
   });
 
   it.each(["Done", "dOnE"])("gives no state to the chats of a task whose status is %s", async (status) => {
@@ -416,7 +551,7 @@ describe("GET /chats", () => {
 
     const { data, diagnostics } = await page(server, "?project=BETA");
 
-    expect(data).toEqual({ items: [], total: 0 });
+    expect(data).toEqual({ items: [], total: 0, active: 0 });
     expect(diagnostics).toMatchObject([{ code: "project-unreadable", path: projectDir(root, "BETA") }]);
   });
 
@@ -430,7 +565,7 @@ describe("GET /chats", () => {
       };
       const { server } = await world(root, () => gone);
 
-      await expect(page(server)).resolves.toEqual({ data: { items: [], total: 0 }, diagnostics: [] });
+      await expect(page(server)).resolves.toEqual({ data: { items: [], total: 0, active: 0 }, diagnostics: [] });
     },
   );
 

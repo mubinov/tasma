@@ -13,7 +13,7 @@ const PROJECTS: readonly ProjectSummary[] = [{ tag: "ACME", name: "Acme" }, { ta
 const BROKEN = refusalReply(500, { kind: "store", code: "chat-unreadable", message: "broken" });
 
 function page(task: string) {
-  return successReply({ items: [{ tag: "ACME", task, title: "Ship", chat: 1, step: "build", agent: "claude", created: "2026-09-01T10:00:00.000Z" }], total: 1 });
+  return successReply({ items: [{ tag: "ACME", task, title: "Ship", chat: 1, step: "build", agent: "claude", created: "2026-09-01T10:00:00.000Z" }], total: 1, active: 0 });
 }
 
 afterEach(() => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHAT_START, chatMark, currentStep, foldChat } from "@tasma/protocol";
+import { CHAT_START, chatMark, currentStep, foldChat, isActiveChat } from "@tasma/protocol";
 import type { Chat, ChatEvent, ChatFold, ChatStatus, Workflow } from "@tasma/protocol";
 
 const USER: ChatEvent = { kind: "user", text: "Start", client: "app" };
@@ -184,6 +184,18 @@ describe("chatMark", () => {
     const chat: Chat = { ...base, state: "working" };
 
     expect(chatMark(chat, chat.step)).not.toBe(chat);
+  });
+});
+
+describe("isActiveChat", () => {
+  it.each<[string, ChatStatus | undefined, boolean]>([
+    ["working", { state: "working" }, true],
+    ["needs-you", { state: "needs-you" }, true],
+    ["failed", { state: "failed" }, false],
+    ["continued-outside", { state: "continued-outside", where: "vscode" }, false],
+    ["no mark", undefined, false],
+  ])("counts a row with the mark %s as active: %s", (_case, status, active) => {
+    expect(isActiveChat(status)).toBe(active);
   });
 });
 

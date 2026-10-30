@@ -165,7 +165,7 @@ export function stubTransport(replies: Record<string, TransportReply | Promise<T
     "/health": successReply({ name: "tasma-daemon", version: "0.0.0" }),
     "/projects": successReply([]),
     "/workflows": successReply([]),
-    "/chats": successReply({ items: [], total: 0 }),
+    "/chats": successReply({ items: [], total: 0, active: 0 }),
     ...replies,
   };
 
@@ -446,6 +446,28 @@ export function stubThreadDom(): void {
   Object.defineProperty(Element.prototype, "scrollTo", { configurable: true, value: () => {} });
   onTestFinished(() => {
     Reflect.deleteProperty(Element.prototype, "scrollTo");
+  });
+}
+
+/**
+ * Gives jsdom `Element.prototype.scrollIntoView`, which it does not have, for
+ * the rest of the test, as a mock that records each element it scrolls.
+ */
+export function stubScrollIntoView() {
+  const scrollIntoView = vi.fn<(this: Element, options?: ScrollIntoViewOptions) => void>();
+  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+  onTestFinished(() => {
+    Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+  });
+  return scrollIntoView;
+}
+
+/** Makes `:focus-visible` match every element while `visible` is true, and no element otherwise. */
+export function stubFocusVisible(visible: boolean): void {
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- called with the element as `this`
+  const matches = Element.prototype.matches;
+  vi.spyOn(Element.prototype, "matches").mockImplementation(function (this: Element, selectors: string) {
+    return selectors === ":focus-visible" ? visible : matches.call(this, selectors);
   });
 }
 
