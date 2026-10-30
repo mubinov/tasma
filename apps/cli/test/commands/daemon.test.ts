@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { execPath } from "node:process";
 import { DAEMON_NAME } from "@tasma/protocol";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
 import { daemon, stop } from "../../src/commands/daemon.js";
 import { PROBE_TIMEOUT_MS, recordPath } from "../../src/daemon/record.js";
@@ -328,6 +328,37 @@ describe("daemon stop", () => {
     expect(await run(["daemon", "stop"], io, { HOME: home }, CWD)).toBe(0);
     expect(out.join("")).toBe(`${DAEMON_NAME} at ${url} stopped\n`);
     expect(err.join("")).toBe(`tasma: the record at ${path} is stale\n`);
+  });
+
+  // The daemon removes its record and exits in one moment, which can fall
+  // between the read of the record and the check of the process.
+  it("reports a clean stop of a daemon that ends between the two checks of the wait", async () => {
+    const home = treeHome();
+    const server = await startServer(tasmaHealth);
+    const path = seedRecord(home, { port: Number(new URL(server.url).port), pid: UNUSED_PID });
+    const kill = process.kill.bind(process);
+
+    vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (pid !== UNUSED_PID) return kill(pid, signal);
+      if (signal !== 0) return true;
+
+      rmSync(path);
+      throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+    });
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+
+    const { io, out, err } = capture();
+
+    try {
+      expect(await run(["daemon", "stop"], io, { HOME: home }, CWD)).toBe(0);
+    } finally {
+      await server.close();
+    }
+
+    expect(out.join("")).toBe(`${DAEMON_NAME} at ${server.url} stopped\n`);
+    expect(err).toEqual([]);
   });
 
   // A daemon whose event loop is held for a moment still answers `status`, and

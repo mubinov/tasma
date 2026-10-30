@@ -132,7 +132,9 @@ async function waitForStop(path: string, pid: number, budgetMs: number): Promise
 
   for (;;) {
     if ((await readRecord(path))?.pid !== pid) return { ended: true, stale: false };
-    if (hasGone(pid)) return { ended: true, stale: true };
+    // The daemon can remove its record and exit after the read above. A process
+    // that is gone changes the record no more, so this second read is final.
+    if (hasGone(pid)) return { ended: true, stale: (await readRecord(path))?.pid === pid };
     if (Date.now() >= deadline) return { ended: false };
 
     await delay(TICK_MS);

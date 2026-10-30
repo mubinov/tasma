@@ -440,7 +440,7 @@ describe("the write routes over a task", () => {
 
     expect(response.status).toBe(200);
     const { data } = await success<WriteResult>(response);
-    expect(data).toEqual({ id: "SAGA-2", status: "Backlog" });
+    expect(data).toEqual({ id: "SAGA-2", status: "Backlog", workflow: null });
     await expect(readFile(taskFile(root, "SAGA", "SAGA-2"), "utf8")).resolves.toContain("title: Write it");
   });
 

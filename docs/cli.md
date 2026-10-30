@@ -135,6 +135,8 @@ Print the text of one task. The bodies of collapsed comments are not included, a
 
 Create a task. Prints the new task id.
 
+Without `--workflow`, a line on stderr names the workflow of the new task: `tasma: <id> has the workflow "<w>"`, or `tasma: <id> has no workflow` when the project lists no workflows.
+
 - `-p, --project <tag>`: the project. See **Project** in Shared rules.
 - `--status <s>`: the status. The default is the `default_status` of the project.
 - `--workflow <w>`: the workflow. The default is the first entry of the `workflows` list of the project.

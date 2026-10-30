@@ -200,20 +200,22 @@ describe("a create that states no workflow", () => {
     return root;
   }
 
-  it("writes the first workflow the project declares", async () => {
+  it("writes the first workflow the project declares, and names it in the receipt", async () => {
     const root = await twoWorkflows();
 
-    const { diagnostics } = await project(root).createTask({ title: "First" });
+    const { workflow, diagnostics } = await project(root).createTask({ title: "First" });
 
     expect(diagnostics).toEqual([]);
+    expect(workflow).toBe("dev");
     expect((await project(root).readTask("SAGA-1")).task.frontmatter.workflow).toBe("dev");
   });
 
-  it("leaves a workflow the create states in place of the first", async () => {
+  it("leaves a workflow the create states in place of the first, and names it in the receipt", async () => {
     const root = await twoWorkflows();
 
-    await project(root).createTask({ title: "First", workflow: "design" });
+    const { workflow } = await project(root).createTask({ title: "First", workflow: "design" });
 
+    expect(workflow).toBe("design");
     expect((await project(root).readTask("SAGA-1")).task.frontmatter.workflow).toBe("design");
   });
 
@@ -222,12 +224,13 @@ describe("a create that states no workflow", () => {
     ["an empty workflows list", "workflows: []\n"],
   ];
 
-  it.each(noWorkflow)("writes no workflow in a project with %s", async (_name, config) => {
+  it.each(noWorkflow)("writes no workflow in a project with %s, and the receipt holds null", async (_name, config) => {
     const root = await tempRoot();
     if (config !== undefined) await plant(projectConfig(root), config);
 
-    await project(root).createTask({ title: "First" });
+    const { workflow } = await project(root).createTask({ title: "First" });
 
+    expect(workflow).toBeNull();
     expect((await project(root).readTask("SAGA-1")).task.frontmatter.workflow).toBeUndefined();
   });
 

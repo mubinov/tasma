@@ -154,8 +154,8 @@ function fieldsFrom(values: FieldValues): TaskInput {
 }
 
 /**
- * How every write reports what it did: the receipt's id, one line, and nothing
- * else on stdout, so `id=$(tasma task create …)` holds the id.
+ * How an edit and a delete report what they did: the receipt's id, one line,
+ * and nothing else on stdout.
  *
  * No other field of the receipt is read. What the write stored is visible
  * through `task view`, and a correction the engine made arrives as a note on
@@ -166,6 +166,33 @@ function receiptPrinter(io: Io): (data: unknown, url: string) => number {
     const { id } = fieldsOf(data);
 
     if (typeof id !== "string") return refuseAnswer(io, url, "a write receipt");
+
+    io.stdout.write(`${wireText(id)}\n`);
+    return 0;
+  };
+}
+
+/**
+ * How a create reports what it did: the receipt's id, one line, and nothing else
+ * on stdout, so `id=$(tasma task create …)` holds the id.
+ *
+ * Where `--workflow` was not typed, a line on stderr names the workflow the new
+ * task got. A receipt with no `workflow` comes from a daemon older than the
+ * field, which may have given the task a workflow, so it gets no line.
+ */
+function createPrinter(io: Io, statesWorkflow: boolean): (data: unknown, url: string) => number {
+  return (data, url) => {
+    const { id, workflow } = fieldsOf(data);
+
+    if (typeof id !== "string") return refuseAnswer(io, url, "a write receipt");
+
+    if (!statesWorkflow) {
+      if (typeof workflow === "string") {
+        io.stderr.write(`tasma: ${wireText(id)} has the workflow "${wireText(workflow)}"\n`);
+      } else if (workflow === null) {
+        io.stderr.write(`tasma: ${wireText(id)} has no workflow\n`);
+      }
+    }
 
     io.stdout.write(`${wireText(id)}\n`);
     return 0;
@@ -225,7 +252,9 @@ async function create(args: string[], io: Io, target: Target, cwd: string): Prom
 
   if (body !== undefined) input.body = body;
 
-  return attempt(io, target, (client) => client.createTask(tag, input), receiptPrinter(io), { prove: true });
+  const print = createPrinter(io, values.workflow !== undefined);
+
+  return attempt(io, target, (client) => client.createTask(tag, input), print, { prove: true });
 }
 
 async function edit(args: string[], io: Io, target: Target): Promise<number> {

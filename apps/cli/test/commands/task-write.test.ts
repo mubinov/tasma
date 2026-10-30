@@ -135,12 +135,84 @@ describe("task create", () => {
 
   // The notes come after the answer, so the id is what survives a truncated pipe.
   it("writes the notes of the write after the id", async () => {
-    const { out, err } = await runTask(CREATE, {
+    const { out, merged } = await runTask(CREATE, {
       [CREATED]: ok({ id: "SAGA-2" }, [{ code: "next-task-id-rebuilt", message: "the counter was rebuilt", path: "/t" }]),
     });
 
     expect(out).toBe("SAGA-2\n");
-    expect(err).toBe("tasma: note: next-task-id-rebuilt: the counter was rebuilt (/t)\n");
+    expect(merged).toBe("SAGA-2\ntasma: note: next-task-id-rebuilt: the counter was rebuilt (/t)\n");
+  });
+
+  it("names the workflow the receipt carries where no --workflow was typed", async () => {
+    const { code, out, err } = await runTask(CREATE, { [CREATED]: ok({ id: "SAGA-2", workflow: "delivery" }) });
+
+    expect(code).toBe(0);
+    expect(out).toBe("SAGA-2\n");
+    expect(err).toBe('tasma: SAGA-2 has the workflow "delivery"\n');
+  });
+
+  it("says the task has no workflow where the receipt carries null", async () => {
+    const { code, out, err } = await runTask(CREATE, { [CREATED]: ok({ id: "SAGA-2", workflow: null }) });
+
+    expect(code).toBe(0);
+    expect(out).toBe("SAGA-2\n");
+    expect(err).toBe("tasma: SAGA-2 has no workflow\n");
+  });
+
+  it("names the workflow where --step was typed without --workflow", async () => {
+    const { err } = await runTask([...CREATE, "--step", "build"], {
+      [CREATED]: ok({ id: "SAGA-2", workflow: "delivery" }),
+    });
+
+    expect(err).toBe('tasma: SAGA-2 has the workflow "delivery"\n');
+  });
+
+  it("writes no workflow line where --workflow was typed", async () => {
+    for (const workflow of ["hotfix", null]) {
+      const { out, err } = await runTask([...CREATE, "--workflow", "hotfix"], {
+        [CREATED]: ok({ id: "SAGA-2", workflow }),
+      });
+
+      expect(out, String(workflow)).toBe("SAGA-2\n");
+      expect(err, String(workflow)).toBe("");
+    }
+  });
+
+  it("writes no workflow line where the receipt carries no string and no null", async () => {
+    for (const data of [{ id: "SAGA-2" }, { id: "SAGA-2", workflow: 7 }, { id: "SAGA-2", workflow: ["delivery"] }]) {
+      const { code, out, err } = await runTask(CREATE, { [CREATED]: ok(data) });
+
+      expect(code, JSON.stringify(data)).toBe(0);
+      expect(out, JSON.stringify(data)).toBe("SAGA-2\n");
+      expect(err, JSON.stringify(data)).toBe("");
+    }
+  });
+
+  it("prints the workflow and the id as safe text", async () => {
+    const { out, err } = await runTask(CREATE, {
+      [CREATED]: ok({ id: "SAGA-2\u001b[2J", workflow: "\u001b[2Jdelivery" }),
+    });
+
+    expect(out).toBe("SAGA-2\\u001b[2J\n");
+    expect(err).toBe('tasma: SAGA-2\\u001b[2J has the workflow "\\u001b[2Jdelivery"\n');
+  });
+
+  it("writes the project line, the workflow line, the id and then the notes of the write", async () => {
+    const { out, merged } = await runTask(["create", "--title", "Second"], {
+      [RESOLVED]: ok({ tag: "SAGA" }),
+      [CREATED]: ok(
+        { id: "SAGA-2", workflow: "delivery" },
+        [{ code: "next-task-id-rebuilt", message: "the counter was rebuilt", path: "/t" }],
+      ),
+    });
+
+    expect(out).toBe("SAGA-2\n");
+    expect(merged).toBe([
+      `tasma: project SAGA, from ${CWD}\n`,
+      'tasma: SAGA-2 has the workflow "delivery"\n',
+      "SAGA-2\n",
+      "tasma: note: next-task-id-rebuilt: the counter was rebuilt (/t)\n",
+    ].join(""));
   });
 
   it("refuses every fault visible from argv alone, before it reaches a daemon", async () => {
@@ -179,16 +251,6 @@ describe("task create", () => {
     expect(code).toBe(1);
     expect(out).toBe("");
     expect(err).toBe('tasma: store/field-required: a task needs a "title"\n');
-  });
-
-  it("refuses an answer that is not a write receipt", async () => {
-    for (const data of [{ id: 7 }, {}, "SAGA-2", null]) {
-      const { code, out, err } = await runTask(CREATE, { [CREATED]: ok(data) });
-
-      expect(code).toBe(3);
-      expect(out).toBe("");
-      expect(err).toContain("answered, but not with a write receipt");
-    }
   });
 
   it("resolves the project from the working directory, each call proven", async () => {
@@ -439,6 +501,24 @@ describe("every write", () => {
 
       expect(code, args.join(" ")).toBe(0);
       expect(seen, args.join(" ")).toEqual(calls);
+    }
+  });
+
+  it("refuses an answer that is not a write receipt", async () => {
+    const invocations: [string[], string][] = [
+      [CREATE, CREATED],
+      [["edit", "SAGA-1", "--status", "Done"], UPDATED],
+      [["delete", "SAGA-1"], DELETED],
+    ];
+
+    for (const [args, route] of invocations) {
+      for (const data of [{ id: 7 }, {}, "SAGA-1", null]) {
+        const { code, out, err } = await runTask(args, { [route]: ok(data) });
+
+        expect(code, args.join(" ")).toBe(3);
+        expect(out, args.join(" ")).toBe("");
+        expect(err, args.join(" ")).toContain("answered, but not with a write receipt");
+      }
     }
   });
 });

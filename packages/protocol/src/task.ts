@@ -126,6 +126,8 @@ export type WriteResult = {
   blocked_by?: string[];
   status?: string;
   priority?: string;
+  /** Present on a create only: the workflow of the new task, or `null` when it has none. */
+  workflow?: string | null;
 };
 
 /**

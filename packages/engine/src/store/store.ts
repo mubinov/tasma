@@ -492,7 +492,7 @@ class ProjectStore implements Project {
       const task: Task = { frontmatter: { ...frontmatter, id } as Frontmatter, body: body ?? "", comments: [] };
       return serializeTask(task, { filename: taskPath(this.paths, id) });
     });
-    return { id: created.id, ...written, diagnostics };
+    return { id: created.id, ...written, workflow: typeof workflow === "string" ? workflow : null, diagnostics };
   }
 
   async updateTask(id: string, change: TaskChange): Promise<WriteResult> {

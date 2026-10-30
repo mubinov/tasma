@@ -24,18 +24,33 @@ export const TEST_VERSION = "1.2.3";
  *
  * Text arrives as one chunk; a source is taken as it stands, which is how a case
  * states chunks of its own or a read that throws part way.
+ *
+ * `merged` holds the writes of both streams in the order they were made, which
+ * is the only place an order between stdout and stderr is visible.
  */
-export function capture(stdin: string | Source = ""): { io: Io; out: string[]; err: string[] } {
+export function capture(stdin: string | Source = ""): { io: Io; out: string[]; err: string[]; merged: string[] } {
   const out: string[] = [];
   const err: string[] = [];
+  const merged: string[] = [];
   return {
     io: {
       stdin: typeof stdin === "string" ? Readable.from([stdin]) : stdin,
-      stdout: { write: (text: string) => out.push(text) },
-      stderr: { write: (text: string) => err.push(text) },
+      stdout: {
+        write: (text: string) => {
+          out.push(text);
+          merged.push(text);
+        },
+      },
+      stderr: {
+        write: (text: string) => {
+          err.push(text);
+          merged.push(text);
+        },
+      },
     },
     out,
     err,
+    merged,
   };
 }
 
@@ -165,7 +180,7 @@ export function ok(data: unknown, diagnostics: unknown[] = []): unknown {
 }
 
 /** What one command wrote, the code it returned, and the calls the server saw. */
-export type Ran = { code: number; out: string; err: string; seen: string[]; bodies: unknown[] };
+export type Ran = { code: number; out: string; err: string; merged: string; seen: string[]; bodies: unknown[] };
 
 /** The directory a command is run from. */
 export const CWD = "/srv/repo";
@@ -187,12 +202,19 @@ export async function runCommand(
 ): Promise<Ran> {
   const answers = serveAnswers(table);
   const server = await startServer(answers.handle);
-  const { io, out, err } = capture(options.stdin);
+  const { io, out, err, merged } = capture(options.stdin);
 
   try {
     const code = await command.run(args, io, at(server.url), options.cwd ?? CWD);
 
-    return { code, out: out.join(""), err: err.join(""), seen: answers.seen, bodies: answers.bodies };
+    return {
+      code,
+      out: out.join(""),
+      err: err.join(""),
+      merged: merged.join(""),
+      seen: answers.seen,
+      bodies: answers.bodies,
+    };
   } finally {
     await server.close();
   }

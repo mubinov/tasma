@@ -592,7 +592,8 @@ describe("the built executables", () => {
       // Validation runs before the file has a name, so its note quotes the
       // directory the task is about to stand in.
       expect(stderr).toBe(
-        `tasma: note: label-case-converted: the label "Infra" was stored as "infra" (${tasksDirIn(home)})\n`
+        "tasma: SAGA-2 has no workflow\n"
+        + `tasma: note: label-case-converted: the label "Infra" was stored as "infra" (${tasksDirIn(home)})\n`
         + "tasma: note: next-task-id-rebuilt: the task counter was rebuilt from the files on disk and is now 2 "
         + `(${join(projectDirIn(home), "state.yml")})\n`,
       );
@@ -673,7 +674,7 @@ describe("the built executables", () => {
         // create wrote when an assertion here fails.
         bunTask = stdout.trim();
 
-        expect(stderr).toBe("");
+        expect(stderr).toBe(`tasma: ${bunTask} has no workflow\n`);
         expect(code).toBe(0);
         expect(stdout).toMatch(/^SAGA-\d+\n$/);
       } finally {
