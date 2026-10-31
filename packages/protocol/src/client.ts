@@ -26,11 +26,13 @@ import type {
   PathQuery,
   ProjectQuery,
   Route,
+  SetupQuery,
   TaskFilter,
   TaskReadOptions,
   TaskTextOptions,
 } from "./routes.js";
 import { buildPath, routes } from "./routes.js";
+import type { SetupStatus } from "./setup.js";
 import type { CommentHeader, CommentInput, Task, TaskInput, TaskList, TaskText, WriteResult } from "./task.js";
 import type { Workflow, WorkflowChange, WorkflowInput, WorkflowReceipt } from "./workflow.js";
 
@@ -169,6 +171,8 @@ export type Client = {
   deleteWorkflow(name: string): Promise<Success<WorkflowReceipt>>;
   readUserConfig(): Promise<Success<UserConfig>>;
   updateUserConfig(change: UserConfigChange): Promise<Success<UserConfig>>;
+  /** A failed check never refuses the call: the check gives `fail` or `unknown`. */
+  readSetup(query?: SetupQuery): Promise<Success<SetupStatus>>;
   /**
    * With the current cursor the daemon holds the call until the next event, so
    * a transport timeout must be longer than the hold.
@@ -304,6 +308,7 @@ export function createClient(transport: Transport): Client {
     deleteWorkflow: (name) => call<WorkflowReceipt>(routes.deleteWorkflow, { workflow: name }),
     readUserConfig: () => call<UserConfig>(routes.readUserConfig, {}),
     updateUserConfig: (change) => call<UserConfig>(routes.updateUserConfig, {}, { body: change }),
+    readSetup: (query) => call<SetupStatus>(routes.readSetup, {}, { query }),
     readEvents: (after, options) =>
       call<EventsReply>(routes.readEvents, {}, { query: { after } satisfies EventsQuery, signal: options?.signal }),
   };

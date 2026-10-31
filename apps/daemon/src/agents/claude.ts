@@ -1,13 +1,16 @@
 // Claude through the ACP adapter `claude-agent-acp`, which runs the user's own
 // `claude` install.
 
+import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { homedir } from "node:os";
 import { delimiter, isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AcpObject } from "@tasma/protocol";
 import { causeOf } from "../http/failure.js";
 import { AGENT_MODE } from "./adapter.js";
 import type { AgentAdapter, AgentEnv, LaunchResult } from "./adapter.js";
-import { isExecutableFile } from "./process.js";
+import { isExecutableFile, killGroup } from "./process.js";
 
 const ADAPTER_ENTRY = "@agentclientprotocol/claude-agent-acp/dist/index.js";
 
@@ -38,6 +41,10 @@ export const CLAUDE_SESSION_VARIABLES = [
 
 /** The largest `_meta.claudeCode.toolResponse` an update keeps, in bytes of JSON. */
 const TOOL_RESPONSE_LIMIT = 8 * 1024;
+
+const AUTH_TIMEOUT_MS = 5000;
+
+const AUTH_OUTPUT_LIMIT = 64 * 1024;
 
 /** `compiled` is a binary that `bun build --compile` made, which holds the adapter in its own file system. */
 export type ClaudeHost = { runtime: "node" | "bun" | "compiled"; resolve(specifier: string): string };
@@ -70,8 +77,9 @@ function findClaude(dirs: string[]): string | undefined {
   return dirs.map((dir) => join(dir, "claude")).find(isExecutableFile);
 }
 
-function withoutSession(env: AgentEnv): AgentEnv {
-  const kept = { ...env };
+/** The environment of each process that runs Claude Code: the agent of a chat and the login check. */
+function claudeEnv(env: AgentEnv, path: string[]): AgentEnv {
+  const kept: AgentEnv = { ...env, PATH: path.join(delimiter) };
   for (const name of CLAUDE_SESSION_VARIABLES) delete kept[name];
   return kept;
 }
@@ -92,11 +100,76 @@ function filterUpdate(update: AcpObject): AcpObject {
   return { ...update, _meta: { ...meta, claudeCode: kept } };
 }
 
-/** `host` is a parameter for the tests alone. */
-export function createClaudeAdapter(host: ClaudeHost = {
-  runtime: runtimeOf(),
-  resolve: (specifier) => import.meta.resolve(specifier),
-}): AgentAdapter {
+function loginOf(stdout: string): boolean | undefined {
+  let status: unknown;
+  try {
+    status = JSON.parse(stdout);
+  } catch {
+    return undefined;
+  }
+  return isRecord(status) && typeof status.loggedIn === "boolean" ? status.loggedIn : undefined;
+}
+
+/**
+ * Runs `claude auth status --json`. The variables of an API key or a token
+ * count as a login there, as they do for a chat in the same environment.
+ */
+function loggedIn(env: AgentEnv, signal: AbortSignal, timeoutMs: number): Promise<boolean | undefined> {
+  const path = agentPath(env.PATH);
+  const claude = findClaude(path);
+  if (claude === undefined || signal.aborted) return Promise.resolve(undefined);
+  let child: ChildProcess;
+  try {
+    child = spawn(claude, ["auth", "status", "--json"], {
+      cwd: env.HOME ?? homedir(),
+      env: claudeEnv(env, path),
+      stdio: ["ignore", "pipe", "ignore"],
+      // A group of its own, so that the kill also ends the processes that claude starts.
+      detached: true,
+    });
+  } catch {
+    // Node throws most errors of the system call, for example ENOEXEC.
+    return Promise.resolve(undefined);
+  }
+
+  const { pid, stdout } = child;
+  // The spawn failed, and `error` comes next. At EMFILE and ENFILE, there is no stdout either.
+  if (pid === undefined || stdout === null) return new Promise((resolve) => child.once("error", () => resolve(undefined)));
+
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const finish = (answer: boolean | undefined): void => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", stop);
+      resolve(answer);
+    };
+    const stop = (): void => {
+      killGroup(child, pid);
+      stdout.destroy();
+      finish(undefined);
+    };
+    const timer = setTimeout(stop, timeoutMs);
+    signal.addEventListener("abort", stop, { once: true });
+
+    stdout.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > AUTH_OUTPUT_LIMIT) stop();
+      else chunks.push(chunk);
+    });
+    // A kill that fails emits `error`.
+    child.on("error", () => finish(undefined));
+    // A number is an exit code: exit code 1 with JSON is the answer for a user who is not logged in.
+    child.on("close", (code) => finish(code === null ? undefined : loginOf(Buffer.concat(chunks).toString("utf8"))));
+  });
+}
+
+/** The options are for the tests alone. */
+export function createClaudeAdapter(options: { host?: ClaudeHost; authTimeoutMs?: number } = {}): AgentAdapter {
+  const {
+    host = { runtime: runtimeOf(), resolve: (specifier) => import.meta.resolve(specifier) },
+    authTimeoutMs = AUTH_TIMEOUT_MS,
+  } = options;
   return {
     agent: "claude",
     notLoggedIn: 'Claude is not logged in. Run "claude /login" in a terminal.',
@@ -105,7 +178,7 @@ export function createClaudeAdapter(host: ClaudeHost = {
       const path = agentPath(env.PATH);
       const claude = findClaude(path);
       if (claude === undefined) return { missing: "Claude Code is not installed" };
-      const agentEnv = { ...withoutSession(env), PATH: path.join(delimiter), CLAUDE_CODE_EXECUTABLE: claude };
+      const agentEnv = { ...claudeEnv(env, path), CLAUDE_CODE_EXECUTABLE: claude };
       // `process.execPath` is the compiled daemon itself.
       if (host.runtime === "compiled") return { command: process.execPath, args: [AGENT_MODE, "claude"], env: agentEnv };
       let entry: string;
@@ -118,6 +191,7 @@ export function createClaudeAdapter(host: ClaudeHost = {
       const flags = host.runtime === "bun" ? ["--no-env-file", "--config=/dev/null"] : [];
       return { command: process.execPath, args: [...flags, entry], env: agentEnv };
     },
+    loggedIn: (env, signal) => loggedIn(env, signal, authTimeoutMs),
     async serve() {
       // A literal, so that the build keeps it as an external import and
       // `bun build --compile` puts the adapter into the binary.

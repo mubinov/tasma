@@ -1,4 +1,5 @@
 import { once } from "node:events";
+import { existsSync } from "node:fs";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { Agent, request as httpRequest } from "node:http";
 import type { IncomingHttpHeaders } from "node:http";
@@ -6,7 +7,7 @@ import { connect } from "node:net";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it, onTestFinished } from "vitest";
-import type { Chat, ChatEntry, DaemonRecord, EventsReply, FeedEvent } from "@tasma/protocol";
+import type { Chat, ChatEntry, DaemonRecord, EventsReply, FeedEvent, SetupStatus } from "@tasma/protocol";
 import { daemonAnswers } from "../../src/lifecycle/probe.js";
 import { readRecord, recordPath } from "../../src/lifecycle/record.js";
 import { runDaemon, startDaemon } from "../../src/lifecycle/run.js";
@@ -600,6 +601,42 @@ describe("the daemon as a process", () => {
 
     expect(err).toEqual([`tasma-daemon: a daemon is already serving this tree at ${first.url}\n`]);
     expect(out).toEqual([]);
+  });
+});
+
+describe("the setup route", () => {
+  it("answers with the checks of the tree and of every agent", async () => {
+    const root = await projectsRoot();
+    const start = await daemonOn(root);
+
+    const response = await fetch(`${start.url}/setup`, { headers: bearer(await tokenOf(root)) });
+
+    expect(response.status).toBe(200);
+    expect((await success<SetupStatus>(response)).data).toEqual({
+      project: "fail",
+      workflow: "fail",
+      cli: "not-run",
+      agents: [{ agent: "claude", installed: "not-run", loggedIn: "not-run", skill: "not-run" }],
+    });
+  });
+
+  it("does not hold a stop with a full request that waits for the login shell", async () => {
+    const root = await projectsRoot();
+    const home = await target();
+    const shell = join(home, "slow-shell");
+    await writeFile(shell, "#!/bin/sh\n: > \"$HOME/started\"; exec /bin/sleep 30\n");
+    await chmod(shell, 0o755);
+    const start = await startDaemon({ port: 0, root, env: { SHELL: shell, HOME: home, PATH: "" }, drainMs: 60_000 });
+    if (!start.started) throw new Error(start.message);
+    onTestFinished(() => start.stop());
+
+    const reply = fetch(`${start.url}/setup?mode=full`, { headers: bearer(await tokenOf(root)) });
+    await until(() => existsSync(join(home, "started")), "the login shell started");
+    await start.stop();
+
+    const response = await reply;
+    expect(response.status).toBe(200);
+    expect((await success<SetupStatus>(response)).data).toMatchObject({ cli: "unknown" });
   });
 });
 

@@ -1,11 +1,15 @@
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter, getEventListeners } from "node:events";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
+import { PassThrough } from "node:stream";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AcpObject } from "@tasma/protocol";
 import type { AgentLaunch } from "../../src/agents/adapter.js";
 import { CLAUDE_SESSION_VARIABLES, claudeAdapter, createClaudeAdapter } from "../../src/agents/claude.js";
-import { target } from "../helpers.js";
+import { target, until } from "../helpers.js";
 
 /** Counts the evaluations of the adapter entry. The real entry would serve ACP over the stdio of the test worker. */
 const entry = vi.hoisted(() => ({ evaluated: 0 }));
@@ -13,6 +17,22 @@ const entry = vi.hoisted(() => ({ evaluated: 0 }));
 vi.mock("@agentclientprotocol/claude-agent-acp/dist/index.js", () => {
   entry.evaluated += 1;
   return {};
+});
+
+/** A child that the next spawn gives in place of a real one. */
+const spawning = vi.hoisted(() => ({ next: undefined as ChildProcess | undefined }));
+
+vi.mock("node:child_process", async (importActual) => {
+  const actual = await importActual<typeof import("node:child_process")>();
+
+  return {
+    ...actual,
+    spawn(...args: Parameters<typeof actual.spawn>) {
+      const { next } = spawning;
+      spawning.next = undefined;
+      return next ?? actual.spawn(...args);
+    },
+  };
 });
 
 /** A directory holding a file named `claude` with the given mode. */
@@ -87,7 +107,7 @@ describe("claudeAdapter.launch", () => {
     const resolve = vi.fn((specifier: string) => specifier);
 
     for (const runtime of ["node", "bun", "compiled"] as const) {
-      const adapter = createClaudeAdapter({ runtime, resolve });
+      const adapter = createClaudeAdapter({ host: { runtime, resolve } });
       expect(adapter.launch({ PATH: empty })).toEqual({ missing: "Claude Code is not installed" });
       expect(adapter.launch({})).toEqual({ missing: "Claude Code is not installed" });
     }
@@ -114,7 +134,7 @@ describe("claudeAdapter.launch", () => {
 
   it("runs the adapter under bun with no bunfig.toml and no .env of the chat folder", async () => {
     const bin = await binWith(0o755);
-    const adapter = createClaudeAdapter({ runtime: "bun", resolve: () => "file:///opt/app/adapter/dist/index.js" });
+    const adapter = createClaudeAdapter({ host: { runtime: "bun", resolve: () => "file:///opt/app/adapter/dist/index.js" } });
 
     const launch = launched({ PATH: bin.dir }, adapter);
 
@@ -126,7 +146,7 @@ describe("claudeAdapter.launch", () => {
     const bin = await binWith(0o755);
     const session = Object.fromEntries(CLAUDE_SESSION_VARIABLES.map((name) => [name, "1"]));
     const resolve = vi.fn((specifier: string) => specifier);
-    const adapter = createClaudeAdapter({ runtime: "compiled", resolve });
+    const adapter = createClaudeAdapter({ host: { runtime: "compiled", resolve } });
 
     const launch = launched({ ...session, PATH: `node_modules/.bin${delimiter}${bin.dir}`, HOME: "/home/alice" }, adapter);
 
@@ -165,9 +185,11 @@ describe("claudeAdapter.launch", () => {
   it("fails when the adapter package cannot be resolved", async () => {
     const bin = await binWith(0o755);
     const adapter = createClaudeAdapter({
-      runtime: "node",
-      resolve: () => {
-        throw new Error("Cannot find package");
+      host: {
+        runtime: "node",
+        resolve: () => {
+          throw new Error("Cannot find package");
+        },
       },
     });
 
@@ -232,5 +254,203 @@ describe("claudeAdapter.filterUpdate", () => {
     ];
 
     for (const update of updates) expect(claudeAdapter.filterUpdate(update)).toBe(update);
+  });
+});
+
+describe("claudeAdapter.loggedIn", () => {
+  /** A directory holding an executable `claude` that runs `script`. */
+  async function claudeRunning(script: string): Promise<string> {
+    const dir = await target();
+    await writeFile(join(dir, "claude"), `#!/bin/sh\n${script}\n`);
+    await chmod(join(dir, "claude"), 0o755);
+    return dir;
+  }
+
+  function liveSignal(): AbortSignal {
+    return new AbortController().signal;
+  }
+
+  it("gives true for loggedIn true with exit code 0", async () => {
+    const dir = await claudeRunning("echo '{\"loggedIn\":true,\"authMethod\":\"claude.ai\"}'");
+
+    await expect(claudeAdapter.loggedIn({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBe(true);
+  });
+
+  it("gives false for loggedIn false with exit code 1", async () => {
+    const dir = await claudeRunning("echo '{\"loggedIn\":false,\"authMethod\":\"none\"}'; exit 1");
+
+    await expect(claudeAdapter.loggedIn({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBe(false);
+  });
+
+  it.each([
+    ["output that is not JSON", "echo 'Not logged in'"],
+    ["JSON with no boolean loggedIn", "echo '{\"loggedIn\":\"yes\"}'"],
+    ["JSON that is not an object", "echo null"],
+    ["no output", "exit 2"],
+    ["a process that a signal ends", "echo '{\"loggedIn\":true}'; kill -9 $$"],
+  ])("gives undefined for %s", async (_name, script) => {
+    const dir = await claudeRunning(script);
+
+    await expect(claudeAdapter.loggedIn({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBeUndefined();
+  });
+
+  it("gives undefined for a claude that the system cannot start", async () => {
+    const dir = await target();
+    // No `#!` line: the exec fails with ENOEXEC.
+    await writeFile(join(dir, "claude"), "echo '{\"loggedIn\":true}'\n", { mode: 0o755 });
+
+    await expect(claudeAdapter.loggedIn({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBeUndefined();
+  });
+
+  it("gives undefined with no claude on PATH", async () => {
+    await expect(claudeAdapter.loggedIn({ PATH: await target() }, liveSignal())).resolves.toBeUndefined();
+    await expect(claudeAdapter.loggedIn({}, liveSignal())).resolves.toBeUndefined();
+  });
+
+  it("skips a claude in a directory inside node_modules", async () => {
+    const packageBin = join(await target(), "node_modules", ".bin");
+    await mkdir(packageBin, { recursive: true });
+    await writeFile(join(packageBin, "claude"), "#!/bin/sh\necho '{\"loggedIn\":true}'\n", { mode: 0o755 });
+
+    await expect(claudeAdapter.loggedIn({ PATH: packageBin }, liveSignal())).resolves.toBeUndefined();
+  });
+
+  it("runs auth status --json in HOME, with stdin closed and the environment of a chat", async () => {
+    const out = await target();
+    const home = await target();
+    // `read` waits for the end of stdin.
+    const dir = await claudeRunning(
+      `read -r line; printf '%s\\n' "$@" > '${out}/args'; pwd > '${out}/cwd'; /usr/bin/env > '${out}/env'; echo '{"loggedIn":true}'`,
+    );
+    const packageBin = join(await target(), "node_modules", ".bin");
+    const session = Object.fromEntries(CLAUDE_SESSION_VARIABLES.map((name) => [name, "1"]));
+    const path = ["node_modules/.bin", packageBin, dir].join(delimiter);
+
+    await expect(claudeAdapter.loggedIn({ ...session, PATH: path, HOME: home, ANTHROPIC_MODEL: "opus" }, liveSignal())).resolves.toBe(true);
+
+    expect(await readFile(join(out, "args"), "utf8")).toBe("auth\nstatus\n--json\n");
+    expect((await readFile(join(out, "cwd"), "utf8")).trim()).toBe(await realpath(home));
+    const env = (await readFile(join(out, "env"), "utf8")).split("\n");
+    expect(env).toContain("ANTHROPIC_MODEL=opus");
+    expect(env).toContain(`PATH=${dir}`);
+    for (const name of CLAUDE_SESSION_VARIABLES) expect(env.some((line) => line.startsWith(`${name}=`))).toBe(false);
+  });
+
+  it("runs in the home directory of this user when the environment has no HOME", async () => {
+    const out = await target();
+    const dir = await claudeRunning(`pwd > '${out}/cwd'; echo '{"loggedIn":true}'`);
+
+    await expect(claudeAdapter.loggedIn({ PATH: dir }, liveSignal())).resolves.toBe(true);
+
+    expect((await readFile(join(out, "cwd"), "utf8")).trim()).toBe(await realpath(homedir()));
+  });
+
+  /**
+   * A `claude` that ignores SIGTERM, runs `print`, and then waits in a process
+   * that it does not `exec`. It writes its own process id into `out/claude`,
+   * and the id of the process that waits into `out/inner`.
+   */
+  function lingeringClaude(out: string, print: string): Promise<string> {
+    // Absolute programs: PATH holds the temporary directory alone. A child keeps the ignored SIGTERM.
+    return claudeRunning([
+      "trap '' TERM",
+      `echo $$ > '${out}/claude'`,
+      print,
+      `/bin/sh -c "echo \\$\\$ > '${out}/inner'; exec /bin/sleep 10"`,
+    ].join("\n"));
+  }
+
+  function alive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Waits until each process whose id is in a file of `out` is gone. */
+  async function gone(out: string, ...names: string[]): Promise<void> {
+    const pids = await Promise.all(names.map(async (name) => Number(await readFile(join(out, name), "utf8"))));
+    await until(() => !pids.some(alive), `processes ${pids.join(", ")} are gone`);
+  }
+
+  it("gives undefined for output over 64 KiB, and ends claude", async () => {
+    const out = await target();
+    const dir = await lingeringClaude(
+      out,
+      "printf '{\"loggedIn\":true,\"pad\":\"'; /usr/bin/head -c 70000 /dev/zero | /usr/bin/tr '\\0' x; printf '\"}'",
+    );
+    const adapter = createClaudeAdapter({ authTimeoutMs: 60_000 });
+
+    await expect(adapter.loggedIn({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBeUndefined();
+
+    await gone(out, "claude");
+  });
+
+  it("gives undefined when claude runs longer than the time limit, and ends claude and the processes it started", async () => {
+    const out = await target();
+    const dir = await lingeringClaude(out, "echo '{\"loggedIn\":true}'");
+    // Long enough for claude to start its child, as the first run of a new executable is slow on macOS.
+    const adapter = createClaudeAdapter({ authTimeoutMs: 2000 });
+
+    await expect(adapter.loggedIn({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBeUndefined();
+
+    await gone(out, "claude", "inner");
+  });
+
+  it("gives undefined when the signal is cancelled while claude runs, and ends claude and the processes it started", async () => {
+    const out = await target();
+    const dir = await lingeringClaude(out, "echo '{\"loggedIn\":true}'");
+    const adapter = createClaudeAdapter({ authTimeoutMs: 60_000 });
+    const controller = new AbortController();
+
+    const answer = adapter.loggedIn({ PATH: dir, HOME: dir }, controller.signal);
+    await until(() => existsSync(join(out, "inner")), "claude started its child");
+    controller.abort();
+
+    await expect(answer).resolves.toBeUndefined();
+    await gone(out, "claude", "inner");
+  });
+
+  it("starts no claude for a signal cancelled before the call", async () => {
+    const out = await target();
+    const dir = await claudeRunning(`: > '${out}/started'; echo '{"loggedIn":true}'`);
+
+    await expect(claudeAdapter.loggedIn({ PATH: dir, HOME: dir }, AbortSignal.abort())).resolves.toBeUndefined();
+
+    expect(existsSync(join(out, "started"))).toBe(false);
+  });
+
+  it("leaves no listener on the signal after an answer, a start that fails and a time limit", async () => {
+    const dir = await claudeRunning("echo '{\"loggedIn\":true}'");
+    const slow = await claudeRunning("exec /bin/sleep 10");
+    const short = createClaudeAdapter({ authTimeoutMs: 200 });
+    const controller = new AbortController();
+
+    await expect(claudeAdapter.loggedIn({ PATH: dir, HOME: dir }, controller.signal)).resolves.toBe(true);
+    // A working directory that does not exist fails the start after the call.
+    await expect(claudeAdapter.loggedIn({ PATH: dir, HOME: join(dir, "missing") }, controller.signal)).resolves.toBeUndefined();
+    await expect(short.loggedIn({ PATH: slow, HOME: slow }, controller.signal)).resolves.toBeUndefined();
+
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+  });
+
+  it("gives undefined for an error that a started claude emits", async () => {
+    const dir = await claudeRunning("echo '{\"loggedIn\":true}'");
+    const child = Object.assign(new EventEmitter(), {
+      // Above the largest process id, so that a kill reaches no real process.
+      pid: 99_999_999,
+      stdout: new PassThrough(),
+      kill: vi.fn(),
+    }) as unknown as ChildProcess;
+    spawning.next = child;
+    const controller = new AbortController();
+
+    const answer = claudeAdapter.loggedIn({ PATH: dir, HOME: dir }, controller.signal);
+    child.emit("error", new Error("kill EPERM"));
+
+    await expect(answer).resolves.toBeUndefined();
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
   });
 });

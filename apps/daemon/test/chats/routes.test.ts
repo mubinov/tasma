@@ -66,6 +66,7 @@ const LONG_CLIENT = "c".repeat(101);
 const ADAPTER: AgentAdapter = {
   agent: "claude",
   launch: () => ({ command: "fake-agent", args: [], env: {} }),
+  loggedIn: async () => true,
   notLoggedIn: "Log in to the agent first",
   sessionGone: "The agent lost the chat",
   filterUpdate: (update) => update,

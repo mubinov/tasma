@@ -62,10 +62,12 @@ export type {
   PathQuery,
   ProjectQuery,
   Route,
+  SetupQuery,
   TaskFilter,
   TaskReadOptions,
   TaskTextOptions,
 } from "./routes.js";
+export type { AgentSetup, SetupCheck, SetupStatus } from "./setup.js";
 export type {
   Comment,
   CommentFields,

@@ -21,6 +21,8 @@ export type AgentAdapter = {
   agent: ChatAgent;
   /** Gives a result rather than throwing when the agent cannot run here. */
   launch(env: AgentEnv): LaunchResult;
+  /** Whether the agent is logged in: `undefined` when it cannot tell. */
+  loggedIn(env: AgentEnv, signal: AbortSignal): Promise<boolean | undefined>;
   /**
    * Runs the ACP server of the agent in this process, over its stdin and
    * stdout. Only an agent whose ACP server is code of the daemon has it.

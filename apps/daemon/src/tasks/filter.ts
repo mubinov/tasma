@@ -3,9 +3,9 @@
 // filter, the read of one task its options, the read of a task's text its
 // selection, the resolution of a project the directory it asks about, the read of
 // the feed and the read of a chat log their cursors, the list of the chats of all
-// projects its filter and its cursor, and every route over the
-// store that takes no query the assertion that none was sent — so one set of
-// rules covers them all. The liveness route stands outside them: the server
+// projects its filter and its cursor, the setup read its mode and its skip flag,
+// and every route over the store that takes no query the assertion that none was
+// sent — so one set of rules covers them all. The liveness route stands outside them: the server
 // answers it ahead of every table and reads no request to answer it.
 //
 // A route declares the query keys it takes, and a key it does not declare is
@@ -20,6 +20,7 @@ import type {
   ChatListQuery,
   EventsQuery,
   ProjectQuery,
+  SetupQuery,
   TaskFilter,
   TaskReadOptions,
   TaskTextOptions,
@@ -54,6 +55,8 @@ const EVENTS_KEYS = Object.keys({ after: true } satisfies Record<keyof EventsQue
 const CHAT_EVENTS_KEYS = Object.keys({ after: true } satisfies Record<keyof ChatEventsQuery, true>);
 
 const CHAT_LIST_KEYS = Object.keys({ project: true, q: true, after: true } satisfies Record<keyof ChatListQuery, true>);
+
+const SETUP_KEYS = Object.keys({ mode: true, skipSkill: true } satisfies Record<keyof SetupQuery, true>);
 
 const UNSIGNED_DECIMAL = /^\d+$/;
 
@@ -184,6 +187,16 @@ export function readChatEventsQuery(query: URLSearchParams): Required<ChatEvents
 export function readChatListQuery(query: URLSearchParams): ChatListQuery {
   assertDeclared(query, CHAT_LIST_KEYS);
   return { project: text(query, "project"), q: text(query, "q"), after: text(query, "after") };
+}
+
+/** Which checks a setup read runs. An empty value reads as none, so `?mode=` is start mode. */
+export function readSetupQuery(query: URLSearchParams): Required<SetupQuery> {
+  assertDeclared(query, SETUP_KEYS);
+  const mode = text(query, "mode") ?? "start";
+  if (mode !== "start" && mode !== "full") {
+    throw new DaemonError("malformed-request", 'the query key "mode" takes exactly "start" or "full"');
+  }
+  return { mode, skipSkill: flag(query, "skipSkill") ?? false };
 }
 
 /**

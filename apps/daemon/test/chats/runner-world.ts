@@ -36,6 +36,7 @@ export function fakeAdapter(launch: AgentLaunch | { failed: string } = LAUNCH) {
       envs.push(env);
       return launch;
     },
+    loggedIn: async () => true,
     notLoggedIn: "Log in to the agent first",
     sessionGone: "The agent lost the chat",
     filterUpdate: (update) => ({ ...update, filtered: true }),

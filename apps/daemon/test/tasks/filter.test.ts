@@ -7,6 +7,7 @@ import {
   readChatListQuery,
   readEventsQuery,
   readProjectQuery,
+  readSetupQuery,
   readTaskFilter,
   readTaskOptions,
   readTextSelection,
@@ -321,6 +322,32 @@ describe("readChatListQuery", () => {
 
   it.each(["project", "q", "after"])("refuses %s stated twice", (key) => {
     expect(refused(() => readChatListQuery(query(`${key}=a&${key}=b`))).code).toBe("malformed-request");
+  });
+});
+
+describe("readSetupQuery", () => {
+  it("reads both keys", () => {
+    expect(readSetupQuery(query("mode=full&skipSkill=true"))).toEqual({ mode: "full", skipSkill: true });
+    expect(readSetupQuery(query("mode=start&skipSkill=false"))).toEqual({ mode: "start", skipSkill: false });
+  });
+
+  it.each([
+    ["states nothing", ""],
+    ["states every key empty", "mode=&skipSkill="],
+  ])("reads a query that %s as start mode with the skill check", (_name, search) => {
+    expect(readSetupQuery(query(search))).toEqual({ mode: "start", skipSkill: false });
+  });
+
+  it.each([
+    ["an undeclared key", "full=true", "full"],
+    ["a mode it does not know", "mode=other", "mode"],
+    ["a skipSkill that is not true or false", "skipSkill=yes", "skipSkill"],
+    ["a mode stated twice", "mode=start&mode=full", "mode"],
+  ])("refuses %s, and names the key", (_name, search, key) => {
+    const error = refused(() => readSetupQuery(query(search)));
+
+    expect(error.code).toBe("malformed-request");
+    expect(error.message).toContain(key);
   });
 });
 

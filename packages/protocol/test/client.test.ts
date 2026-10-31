@@ -327,6 +327,18 @@ const invocations: Invocation[] = [
     body: { statuses: ["New", "Done"], workflows_path: null },
   },
   {
+    name: "readSetup",
+    send: (client) => client.readSetup({ mode: "full", skipSkill: true }),
+    method: "GET",
+    path: "/setup?mode=full&skipSkill=true",
+  },
+  {
+    name: "readSetup with no query",
+    send: (client) => client.readSetup(),
+    method: "GET",
+    path: "/setup",
+  },
+  {
     name: "readEvents",
     send: (client) => client.readEvents("4f0c9a1b2e3d-41"),
     method: "GET",

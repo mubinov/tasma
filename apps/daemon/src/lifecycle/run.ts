@@ -32,6 +32,8 @@ import { createDaemonServer } from "../http/server.js";
 import { createProjectHost } from "../projects/host.js";
 import type { ProjectHost } from "../projects/host.js";
 import { projectRoutes } from "../projects/routes.js";
+import { createSetupChecks } from "../setup/checks.js";
+import { setupRoutes } from "../setup/routes.js";
 import { taskRoutes } from "../tasks/routes.js";
 import { WriteQueue } from "../tasks/serialize.js";
 import { workflowRoutes } from "../workflows/routes.js";
@@ -211,6 +213,7 @@ export async function startDaemon(options: {
     defaults: openAgentDefaults(root),
   });
   const starts = createStepChats({ root, host, chats, runner });
+  const setup = createSetupChecks({ root, host, adapters: AGENT_ADAPTERS, env });
   const server = createDaemonServer(
     [
       ...projectRoutes(host, writes, chats),
@@ -219,6 +222,7 @@ export async function startDaemon(options: {
       ...chatListRoutes({ root, host, chats }),
       ...workflowRoutes({ root, writes, publish }),
       ...configRoutes({ root, writes, publish }),
+      ...setupRoutes(setup),
       ...eventRoutes(feed),
     ],
     { token },
@@ -232,8 +236,9 @@ export async function startDaemon(options: {
     connections.closeAfterEachReply();
     feed.close();
     chats.close();
-    // Before the drain, so that a start that waits for the login shell does not hold it.
+    // Before the drain, so that a start or a setup read that waits for the login shell does not hold it.
     runner.stopStarts();
+    setup.stop();
     await drain(server, drainMs);
     // The daemon never calls process.exit, so an agent process or an index left
     // open would hold its pipes or its watch handle and the process would never

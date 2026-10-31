@@ -48,6 +48,7 @@ export const routes = {
   deleteWorkflow: { method: "DELETE", template: "/workflows/{workflow}" },
   readUserConfig: { method: "GET", template: "/config" },
   updateUserConfig: { method: "PATCH", template: "/config" },
+  readSetup: { method: "GET", template: "/setup" },
   readEvents: { method: "GET", template: "/events" },
 } as const satisfies Record<string, Route>;
 
@@ -83,6 +84,13 @@ export type ChatEventsQuery = { after?: number };
  * page before, passed back unchanged.
  */
 export type ChatListQuery = { project?: string; q?: string; after?: string };
+
+/**
+ * Which checks a setup read runs. `start`, the default, reads the tree alone
+ * and runs no process. `full` also reads the login shell and asks each agent.
+ * `skipSkill` leaves the skill check out. An empty value is no value.
+ */
+export type SetupQuery = { mode?: "start" | "full"; skipSkill?: boolean };
 
 /**
  * Which tasks a listing returns. The daemon applies the filter, so a caller
@@ -137,9 +145,10 @@ export type TaskTextOptions = { collapsed?: boolean; comment?: never } | { comme
  * What `buildPath` appends to a path, and what a client method may pass as one.
  *
  * Every type written to be passed as one — `ProjectQuery`, `EventsQuery`,
- * `ChatEventsQuery`, `ChatListQuery`, `TaskFilter`, `TaskReadOptions`,
- * `TaskTextOptions` — is a type alias rather than an interface, because only an
- * alias carries the implicit index signature a record of this shape requires.
+ * `ChatEventsQuery`, `ChatListQuery`, `SetupQuery`, `TaskFilter`,
+ * `TaskReadOptions`, `TaskTextOptions` — is a type alias rather than an
+ * interface, because only an alias carries the implicit index signature a
+ * record of this shape requires.
  */
 export type PathQuery = Record<string, string | string[] | boolean | number | undefined>;
 
