@@ -105,14 +105,15 @@
 
   /*
    * Widths of the task page's top bar line below which the step action drops
-   * a part of its text: the step name, and then the verb. Below the floor the
-   * line padding and the gaps of the controls shrink (task-screen.tsx). Edit
-   * and the task menu stay on the line beside the open chat panel and at the
-   * 256 px line of a 320 CSS px window.
+   * a part of its text: the step name, and then the verb. They hold the menu
+   * part of "Open <step>" (27 px with its overlap). Below the floor the line
+   * padding and the gaps of the line and of the controls shrink
+   * (task-screen.tsx). Edit and the task menu stay on the line beside the open
+   * chat panel and at the 256 px line of a 320 CSS px window.
    */
-  --container-step-text: 44rem;
-  --container-step-verb: 30rem;
-  --container-step-floor: 18.5rem;
+  --container-step-text: 45.6875rem;
+  --container-step-verb: 31.6875rem;
+  --container-step-floor: 20.1875rem;
 
   /*
    * Stacking, bottom to top, in the order the values list them. Used as

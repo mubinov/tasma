@@ -64,6 +64,7 @@ async function renderColumn(column: Partial<ColumnData>, props: Partial<ColumnPr
       onMoveBy={() => {}}
       onOpen={() => {}}
       onDelete={() => {}}
+      onRestart={() => {}}
       focusCard={null}
       onCardFocused={() => {}}
       onCardFocusLost={() => {}}

@@ -50,21 +50,35 @@ function stub(chats: Chat[], replies: Record<string, TransportReply | Promise<Tr
 }
 
 /** The task page at `path`, with the feed subscriber that main.tsx mounts beside it. */
-async function openPage(daemon: TaskChatsStub, path = PAGE): Promise<Router> {
-  const router = await renderWithRouter(path, daemon.transport);
+async function openPage(daemon: TaskChatsStub, path = PAGE, strict = false): Promise<Router> {
+  const router = await renderWithRouter(path, daemon.transport, { strict });
   await screen.findByRole("heading", { level: 1 });
   await daemon.mount(router);
   return router;
 }
 
+/** "Start <step>", or the action part of "Open <step>", which the mark holds with its menu part. */
 function action(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(STEP_ACTION_SELECTOR);
+  const mark = document.querySelector<HTMLElement>(STEP_ACTION_SELECTOR);
+  return mark === null || mark.matches("button") ? mark : mark.querySelector("button");
 }
 
 function shownAction(): HTMLElement {
   const button = action();
   expect(button).not.toBeNull();
   return button!;
+}
+
+function menuPart(step = "research"): HTMLElement {
+  return screen.getByRole("button", { name: new RegExp(`^More ${step} actions`) });
+}
+
+/** The action part of "Open research" while the panel shows its chat. */
+function expectOpenChatShown(): void {
+  const button = shownAction();
+  expect(button.getAttribute("aria-label")).toBe("Open research");
+  expect(button.hasAttribute("disabled")).toBe(true);
+  expect(menuPart().hasAttribute("disabled")).toBe(false);
 }
 
 function spoken(): string[] {
@@ -122,7 +136,7 @@ async function taskChanged(daemon: TaskChatsStub, reply: TransportReply): Promis
 }
 
 describe("the button", () => {
-  it("starts the chat of a task with none, opens it in the panel by a push, and hides", async () => {
+  it("starts the chat of a task with none, opens it in the panel by a push, and shows Open with its action part disabled", async () => {
     const user = userEvent.setup();
     const daemon = stub([]);
     const router = await openPage(daemon);
@@ -145,7 +159,7 @@ describe("the button", () => {
     await waitFor(() => {
       expect(document.activeElement).toBe(heading);
     });
-    expect(action()).toBeNull();
+    expectOpenChatShown();
     expect(daemon.requests.find(({ method }) => method === "POST")).toEqual(
       expect.objectContaining({ path: CHATS_PATH, body: { client: CHAT_CLIENT } }),
     );
@@ -177,7 +191,7 @@ describe("the button", () => {
     await frame();
     expect(h1Focused).not.toHaveBeenCalled();
     expect(spoken()).not.toContain("Open research");
-    expect(action()).toBeNull();
+    expectOpenChatShown();
   });
 
   it("opens the chat of the step by a push and sends no start", async () => {
@@ -197,7 +211,7 @@ describe("the button", () => {
     await waitFor(() => {
       expect(document.activeElement).toBe(heading);
     });
-    expect(action()).toBeNull();
+    expectOpenChatShown();
     expect(daemon.starts()).toBe(0);
     expect(h1Focused).not.toHaveBeenCalled();
   });
@@ -395,16 +409,39 @@ describe("the button", () => {
     expect(shownAction()).toBe(screen.getByRole("button", { name }));
   });
 
-  it("shows Open beside the panel of an older chat, and nothing beside the panel of its own chat", async () => {
+  it("shows Open beside the panel of an older chat, and Open with its action part disabled beside the panel of its own chat", async () => {
     await openPage(stub([chat(1), chat(2)]), `${PAGE}?chat=1`);
 
     expect(shownAction()).toBe(screen.getByRole("button", { name: "Open research" }));
+    expect(shownAction().hasAttribute("disabled")).toBe(false);
 
     cleanup();
     await openPage(stub([chat(1), chat(2)]), `${PAGE}?chat=2`);
 
     expect(screen.getByRole("heading", { level: 2, name: "Claude · research" })).toBeTruthy();
-    expect(action()).toBeNull();
+    expectOpenChatShown();
+  });
+
+  it("is a filled Start with no menu, and an outline Open with Restart in its menu", async () => {
+    const user = userEvent.setup();
+    await openPage(stub([]));
+
+    expect(shownAction().className).toContain(BUTTON_FILLED_CLASS);
+    expect(screen.queryByRole("button", { name: /^More research actions/ })).toBeNull();
+
+    cleanup();
+    await openPage(stub([chat(2)]));
+    const mark = document.querySelector<HTMLElement>(STEP_ACTION_SELECTOR)!;
+
+    expect(mark.dataset.variant).toBe("outline");
+    expect(shownAction().className).not.toContain(BUTTON_FILLED_CLASS);
+    expect(shownAction().textContent).toBe("Openresearch");
+    expect(mark.lastElementChild).toBe(menuPart());
+
+    await user.click(menuPart());
+    const menu = await screen.findByRole("menu");
+
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Restart research"]);
   });
 });
 
@@ -413,9 +450,13 @@ describe("the line of the top bar", () => {
     return backLink().parentElement!;
   }
 
-  it("is marked while the button shows, so a narrow bar gives the button its floor", async () => {
+  it.each([
+    ["Start", [], PAGE],
+    ["Open", [chat(2)], PAGE],
+    ["Open beside the panel of its chat", [chat(2)], `${PAGE}?chat=2`],
+  ])("is marked while %s shows, so a narrow bar gives the button its floor", async (_case, chats, path) => {
     const user = userEvent.setup();
-    await openPage(stub([]));
+    await openPage(stub(chats), path);
 
     expect(line().hasAttribute("data-step-action-shown")).toBe(true);
 
@@ -469,25 +510,55 @@ describe("a change while the button holds focus", () => {
     expect(spoken()).toEqual(["Start approve"]);
   });
 
-  it("changes Open to Start with no reload when the chat fails, keeps focus, and says Start", async () => {
+  it.each([
+    ["the action part", () => shownAction()],
+    ["the menu part", () => menuPart()],
+  ])("changes Open to Start with no reload when the chat fails, and moves focus from %s to Start", async (_part, part) => {
     const daemon = stub([chat(1)]);
     await openPage(daemon);
     const taskReads = countReads(daemon, TASK_PATH);
-    const button = shownAction();
-    button.focus();
+    part().focus();
 
     await daemon.change([chat(1, "failed")]);
 
     await waitFor(() => {
-      expect(button.getAttribute("aria-label")).toBe("Start research");
+      expect(shownAction().getAttribute("aria-label")).toBe("Start research");
     });
-    expect(document.activeElement).toBe(button);
+    expect(document.activeElement).toBe(shownAction());
     await frame();
-    // The list and the button speak in one frame, in no fixed order.
-    expect(spoken().toSorted()).toEqual(["Start research", "The research chat failed."]);
+    // The reader speaks the name of the control that takes focus.
+    expect(spoken()).toEqual(["The research chat failed."]);
     expect(taskReads()).toBe(0);
   });
 
+  it("moves focus from Start to the action part of Open when a chat of the step starts elsewhere", async () => {
+    const daemon = stub([]);
+    await openPage(daemon);
+    shownAction().focus();
+
+    await daemon.change([chat(1)]);
+
+    await waitFor(() => {
+      expect(shownAction().getAttribute("aria-label")).toBe("Open research");
+    });
+    expect(document.activeElement).toBe(shownAction());
+    await frame();
+    expect(spoken()).not.toContain("Open research");
+  });
+
+  it("moves focus to Start from the open menu of Open when the chat fails", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(1)]);
+    await openPage(daemon);
+    await user.click(menuPart());
+    await screen.findByRole("menu");
+
+    await daemon.change([chat(1, "failed")]);
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Start research" }));
+    });
+  });
   it("moves focus to the h1 when the task loses its workflow", async () => {
     const daemon = stub([]);
     await openPage(daemon);
@@ -521,6 +592,20 @@ describe("a change while the button holds focus", () => {
     });
     expect(document.activeElement).toBe(findField);
     expect(h1Focused).not.toHaveBeenCalled();
+  });
+
+  it("keeps focus in the find field when Cmd+F hides Open while its menu part holds focus beside the panel of its chat", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(1)]);
+    const router = await openPage(daemon, `${PAGE}?chat=1`);
+    render(<FindShortcut router={router} />);
+    menuPart().focus();
+
+    await user.keyboard("{Meta>}f{/Meta}");
+
+    const findField = within(screen.getByRole("search", { name: "Find" })).getByRole("searchbox");
+    await frame();
+    expect(document.activeElement).toBe(findField);
   });
 
   it("leaves focus where it is when Edit hides the button, the editor closes, and the task then loses its workflow", async () => {
@@ -560,10 +645,96 @@ describe("a change while the button holds focus", () => {
     await daemon.change([chat(1), chat(2)]);
 
     await waitFor(() => {
-      expect(action()).toBeNull();
+      expectOpenChatShown();
     });
     expect(document.activeElement).toBe(screen.getByRole("heading", { level: 2, name: "Claude · research" }));
     expect(h1Focused).not.toHaveBeenCalled();
+  });
+
+  it("moves focus to the panel heading when the action part becomes disabled while it holds focus", async () => {
+    const daemon = stub([chat(1), chat(2)]);
+    daemon.records([chat(3)]);
+    await openPage(daemon, `${PAGE}?chat=3`);
+    const button = shownAction();
+    button.focus();
+    const h1Focused = headingFocusWatch();
+
+    await daemon.change([chat(1), chat(2), chat(3)]);
+
+    await waitFor(() => {
+      expect(button.hasAttribute("disabled")).toBe(true);
+    });
+    expect(shownAction()).toBe(button);
+    expect(document.activeElement).toBe(screen.getByRole("heading", { level: 2, name: "Claude · research" }));
+    expect(h1Focused).not.toHaveBeenCalled();
+  });
+
+  it("moves focus to the panel heading also when the engine blurred the action part as it became disabled", async () => {
+    const daemon = stub([chat(1), chat(2)]);
+    daemon.records([chat(3)]);
+    await openPage(daemon, `${PAGE}?chat=3`);
+    const button = shownAction();
+    button.focus();
+    // As an engine that blurs the part in the commit that disables it, and does not focus a disabled part.
+    const setAttribute = button.setAttribute.bind(button);
+    const focus = button.focus.bind(button);
+    vi.spyOn(button, "setAttribute").mockImplementation((name, value) => {
+      setAttribute(name, value);
+      if (name === "disabled") {
+        button.blur();
+      }
+    });
+    vi.spyOn(button, "focus").mockImplementation((options) => {
+      if (!button.hasAttribute("disabled")) {
+        focus(options);
+      }
+    });
+
+    await daemon.change([chat(1), chat(2), chat(3)]);
+
+    await waitFor(() => {
+      expect(button.hasAttribute("disabled")).toBe(true);
+    });
+    expect(document.activeElement).toBe(screen.getByRole("heading", { level: 2, name: "Claude · research" }));
+  });
+
+  describe("after a change of the control under StrictMode", () => {
+    /** Under StrictMode, Start changes to Open while it holds focus; then Edit takes focus. */
+    async function changedUnderFocus(): Promise<{ daemon: TaskChatsStub; edit: HTMLElement }> {
+      const daemon = stub([]);
+      await openPage(daemon, PAGE, true);
+      shownAction().focus();
+      await daemon.change([chat(1)]);
+      await waitFor(() => {
+        expect(shownAction().getAttribute("aria-label")).toBe("Open research");
+      });
+      expect(document.activeElement).toBe(shownAction());
+      const edit = within(screen.getByRole("main")).getByRole("button", { name: "Edit" });
+      edit.focus();
+      return { daemon, edit };
+    }
+
+    it("leaves focus where it is when the control changes again", async () => {
+      const { daemon, edit } = await changedUnderFocus();
+
+      await daemon.change([chat(1, "failed")]);
+
+      await waitFor(() => {
+        expect(shownAction().getAttribute("aria-label")).toBe("Start research");
+      });
+      expect(document.activeElement).toBe(edit);
+    });
+
+    it("leaves focus where it is when the task then loses its workflow", async () => {
+      const { daemon, edit } = await changedUnderFocus();
+
+      await taskChanged(daemon, task());
+
+      await waitFor(() => {
+        expect(action()).toBeNull();
+      });
+      expect(document.activeElement).toBe(edit);
+    });
   });
 
   it("moves focus to the panel heading and says the chat is in its chats when the start answers the open chat", async () => {
@@ -579,7 +750,7 @@ describe("a change while the button holds focus", () => {
     await answer(send, answerWith(daemon, chat(2), false, [chat(1), chat(2)]));
 
     await waitFor(() => {
-      expect(action()).toBeNull();
+      expectOpenChatShown();
     });
     expect(document.activeElement).toBe(screen.getByRole("heading", { level: 2, name: "Claude · research" }));
     expect(router.state.location.search).toEqual({ chat: "2" });
@@ -675,7 +846,283 @@ describe("a chat that fails at once", () => {
   });
 });
 
+describe("a restart", () => {
+  function dialog(): HTMLElement {
+    return screen.getByRole("alertdialog");
+  }
+
+  async function chooseRestart(user: User): Promise<HTMLElement> {
+    await user.click(menuPart());
+    const menu = await screen.findByRole("menu");
+    await user.click(within(menu).getByRole("menuitem", { name: "Restart research" }));
+    return screen.findByRole("alertdialog");
+  }
+
+  /** Chooses Restart, confirms it with the answer held, and waits for the busy control. */
+  async function restartHeld(user: User, daemon: TaskChatsStub, confirm = "Stop and restart") {
+    const send = holdStart(daemon);
+    await chooseRestart(user);
+    await user.click(within(dialog()).getByRole("button", { name: confirm }));
+    await waitFor(() => {
+      expect(shownAction().getAttribute("aria-label")).toBe("Restarting research");
+    });
+    return send;
+  }
+
+  it("asks first, and Cancel sends nothing and returns focus to the menu part", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(1), chat(2)]);
+    await openPage(daemon);
+
+    await chooseRestart(user);
+
+    expect(dialog()).toBe(screen.getByRole("alertdialog", { name: "Stop the agent in chat 2 of SAGA-3?" }));
+
+    await user.click(within(dialog()).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    });
+    expect(document.activeElement).toBe(menuPart());
+    expect(daemon.starts()).toBe(0);
+  });
+
+  it("sends one restart, waits on the busy control with focus on the menu part, and opens the new chat by a push", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(1), chat(2)]);
+    const router = await openPage(daemon);
+    const entries = router.history.length;
+
+    const send = await restartHeld(user, daemon);
+
+    const button = shownAction();
+    expect(button.textContent).toBe("Restartingresearch");
+    expect(spinning(button)).toBe(true);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(menuPart().getAttribute("aria-label")).toBe("More research actions, restarting");
+    expect(menuPart().getAttribute("aria-disabled")).toBe("true");
+    await waitFor(() => {
+      expect(document.activeElement).toBe(menuPart());
+    });
+    expect(daemon.requests.filter(({ method }) => method === "POST")).toEqual([
+      expect.objectContaining({ path: CHATS_PATH, body: { client: CHAT_CLIENT, restart: true } }),
+    ]);
+
+    // The list can hold the new chat before the answer.
+    await daemon.change([chat(1), chat(2), chat(3)]);
+    expect(shownAction().getAttribute("aria-label")).toBe("Restarting research");
+
+    await answer(send, answerWith(daemon, chat(3), true, [chat(1), chat(2), chat(3)]));
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ chat: "3" });
+    });
+    expect(router.history.length).toBe(entries + 1);
+    const heading = await screen.findByRole("heading", { level: 2, name: "Claude · research" });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(heading);
+    });
+    expectOpenChatShown();
+    await frame();
+    expect(spoken()).toContain("Restarting the research chat of SAGA-3");
+    expect(spoken()).toContain("The research chat of SAGA-3 restarted.");
+    expect(daemon.restarts()).toBe(1);
+  });
+
+  it("replaces the chat that the panel shows, from the menu part of the disabled action part", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(1), chat(2, "needs-you")]);
+    const router = await openPage(daemon, `${PAGE}?chat=2`);
+    expectOpenChatShown();
+
+    const send = await restartHeld(user, daemon, "Restart");
+
+    expect(shownAction().hasAttribute("disabled")).toBe(false);
+    await answer(send, answerWith(daemon, chat(3), true, [chat(1), chat(2, "needs-you"), chat(3)]));
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ chat: "3" });
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("heading", { level: 2, name: "Claude · research" }));
+    });
+    await frame();
+    expect(spoken()).toContain("The research chat of SAGA-3 restarted.");
+  });
+
+  it("opens the new chat when focus waits on the heading of the panel that shows the old chat", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(1), chat(2)]);
+    const router = await openPage(daemon, `${PAGE}?chat=2`);
+    const send = await restartHeld(user, daemon);
+    screen.getByRole("heading", { level: 2, name: "Claude · research" }).focus();
+
+    await answer(send, answerWith(daemon, chat(3), true, [chat(1), chat(2), chat(3)]));
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ chat: "3" });
+    });
+  });
+
+  it("says the restart and opens no panel when the editor took focus during the wait", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(1), chat(2)]);
+    const router = await openPage(daemon);
+    const send = await restartHeld(user, daemon);
+    await openEditor(user);
+
+    await answer(send, answerWith(daemon, chat(3), true, [chat(1), chat(2), chat(3)]));
+
+    await waitFor(() => {
+      expect(spoken()).toContain("The research chat of SAGA-3 restarted.");
+    });
+    expect(router.state.location.search).toEqual({});
+  });
+
+  it("says that the new chat failed", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(1), chat(2)]);
+    await openPage(daemon);
+    const send = await restartHeld(user, daemon);
+
+    await answer(send, answerWith(daemon, chat(3, "failed"), true, [chat(1), chat(2), chat(3, "failed")]));
+
+    await waitFor(() => {
+      expect(spoken()).toContain("The research chat of SAGA-3 failed.");
+    });
+    expect(spoken()).not.toContain("The research chat of SAGA-3 restarted.");
+  });
+
+  it("shows the failure notice of a refused restart, and Open again", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(1), chat(2)]);
+    await openPage(daemon);
+    const send = await restartHeld(user, daemon);
+
+    await answer(send, refusalReply(409, { kind: "daemon", code: "step-stale", message: "research is not a step of dev" }));
+
+    await waitFor(() => {
+      expect(useNoticeStore.getState().notices).toEqual([
+        expect.objectContaining({
+          key: "chat-start-failure:SAGA-3",
+          form: "failure",
+          title: "The research chat of SAGA-3 did not restart",
+          line: "The daemon refused the restart. Its own words are below.",
+          words: ["daemon/step-stale · research is not a step of dev"],
+        }),
+      ]);
+    });
+    await waitFor(() => {
+      expect(shownAction().getAttribute("aria-label")).toBe("Open research");
+    });
+    expect(spinning(shownAction())).toBe(false);
+    expect(document.activeElement).toBe(menuPart());
+  });
+
+  it("shows Start of the new step with focus on it after a refusal with chat-not-current", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(1), chat(2)]);
+    await openPage(daemon);
+    const send = await restartHeld(user, daemon);
+    await taskChanged(daemon, onStep({ step: "approve" }));
+    await frame();
+    expect(shownAction().getAttribute("aria-label")).toBe("Restarting research");
+
+    await answer(send, refusalReply(409, {
+      kind: "daemon",
+      code: "chat-not-current",
+      message: "SAGA-3 moved to the step \"approve\" while the agent of chat 2 stopped, so no chat started",
+    }));
+
+    await waitFor(() => {
+      expect(shownAction().getAttribute("aria-label")).toBe("Start approve");
+    });
+    expect(document.activeElement).toBe(shownAction());
+    expect(useNoticeStore.getState().notices).toEqual([
+      expect.objectContaining({
+        line: "The task moved to another step while the agent of chat 2 stopped. Chat 2 stopped, and no new chat started.",
+      }),
+    ]);
+  });
+
+  it("closes the dialog with Nothing restarted when chat 2 is no longer the chat of its step, and focuses the h1 in place of the gone menu part", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(1), chat(2)]);
+    await openPage(daemon);
+    await chooseRestart(user);
+
+    await daemon.change([chat(1), chat(2, "failed")]);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    });
+    expect(useNoticeStore.getState().notices).toEqual([
+      expect.objectContaining({
+        key: "chat-restart-skipped:SAGA-3",
+        form: "warning",
+        title: "Nothing restarted",
+        line: "Chat 2 of SAGA-3 is no longer the chat of its step.",
+      }),
+    ]);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1 }));
+    });
+    expect(shownAction().getAttribute("aria-label")).toBe("Start research");
+    expect(daemon.starts()).toBe(0);
+  });
+
+  it("returns focus to the h1 when the step action left during the dialog", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(1), chat(2)]);
+    await openPage(daemon);
+    await chooseRestart(user);
+
+    await taskChanged(daemon, task());
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1 }));
+    });
+  });
+
+  it("closes the notice of a skipped restart when a later restart starts", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(1), chat(2)]);
+    await openPage(daemon);
+    await chooseRestart(user);
+    await daemon.change([chat(1), chat(2, "failed"), chat(3)]);
+    await waitFor(() => {
+      expect(useNoticeStore.getState().notices).toHaveLength(1);
+    });
+
+    await restartHeld(user, daemon, "Stop and restart");
+
+    expect(useNoticeStore.getState().notices).toEqual([]);
+  });
+});
+
 describe("a pending write of the task", () => {
+  it("names both parts of Open with the wait", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(2)]);
+    const { reply } = heldBack();
+    daemon.replies[`PATCH ${TASK_PATH}`] = reply;
+    await openPage(daemon);
+
+    await user.click(within(field("Priority")).getByRole("button"));
+    const menu = await screen.findByRole("menu", { name: "Priority" });
+    await user.click(within(menu).getByRole("menuitemradio", { name: "high" }));
+
+    await waitFor(() => {
+      expect(shownAction().getAttribute("aria-label")).toBe("Open research, waiting");
+    });
+    expect(menuPart().getAttribute("aria-label")).toBe("More research actions, waiting");
+    expect(menuPart().getAttribute("aria-disabled")).toBe("true");
+    expect(spinning(shownAction())).toBe(true);
+  });
+
   it("follows a step change in the sidebar at once, and waits for its write before a start", async () => {
     const user = userEvent.setup();
     const daemon = stub([]);
@@ -725,6 +1172,10 @@ describe("the tooltip", () => {
     }
   }
 
+  function hideStepText(element = stepText()): void {
+    Object.defineProperty(element, "checkVisibility", { configurable: true, value: () => false });
+  }
+
   it("does not open while the whole text shows", async () => {
     const user = userEvent.setup();
     await openPage(stub([]));
@@ -736,9 +1187,7 @@ describe("the tooltip", () => {
   });
 
   it.each([
-    ["hidden", (element: HTMLElement) => {
-      Object.defineProperty(element, "checkVisibility", { configurable: true, value: () => false });
-    }],
+    ["hidden", hideStepText],
     ["cut", (element: HTMLElement) => {
       Object.defineProperty(element, "checkVisibility", { configurable: true, value: () => true });
       Object.defineProperty(element, "scrollWidth", { configurable: true, value: 200 });
@@ -752,5 +1201,26 @@ describe("the tooltip", () => {
     await tabToAction(user);
 
     expect(await screen.findByText("Start research", { selector: "[data-side], [data-side] *" })).toBeTruthy();
+  });
+
+  it("shows the full text of Open on keyboard focus of the action part", async () => {
+    const user = userEvent.setup();
+    await openPage(stub([chat(2)]));
+    hideStepText();
+
+    await tabToAction(user);
+
+    expect(await screen.findByText("Open research", { selector: "[data-side], [data-side] *" })).toBeTruthy();
+  });
+
+  it("shows the full text of Open on hover while the action part is disabled", async () => {
+    const user = userEvent.setup();
+    await openPage(stub([chat(2)]), `${PAGE}?chat=2`);
+    hideStepText();
+
+    await user.hover(shownAction().parentElement!);
+
+    expect(await screen.findByText("Open research", { selector: "[data-side], [data-side] *" }, { timeout: 1500 }))
+      .toBeTruthy();
   });
 });

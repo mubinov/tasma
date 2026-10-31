@@ -42,6 +42,8 @@ type BoardColumnProps = {
   onOpen: (id: string) => void;
   /** Asks to delete the task. */
   onDelete: (id: string) => void;
+  /** Asks to restart the chat of the step of the task, which replaces `chat`. */
+  onRestart: (id: string, step: string, chat: number) => void;
   /** The card that takes focus once it renders. */
   focusCard: CardFocus | null;
   onCardFocused: () => void;
@@ -122,6 +124,7 @@ export function BoardColumn({
   onMoveBy,
   onOpen,
   onDelete,
+  onRestart,
   focusCard,
   onCardFocused,
   onCardFocusLost,
@@ -233,6 +236,7 @@ export function BoardColumn({
           onOpen(entry.id);
         }}
         onDelete={onDelete}
+        onRestart={onRestart}
         onPress={(event) => {
           onPress(event, entry.id);
         }}

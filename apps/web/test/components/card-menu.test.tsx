@@ -12,7 +12,18 @@ const STATUSES = ["Backlog", "In Progress", "Done"];
 type CardProps = Pick<CardMenuItemsProps, "status" | "onMove" | "onMoveUp" | "onMoveDown" | "onOpen" | "onDelete">;
 
 function Card({ status, onMove, onMoveUp, onMoveDown, onOpen, onDelete }: CardProps): ReactNode {
-  const menu = { tag: "SAGA", id: "SAGA-7", status, statuses: STATUSES, onMove, onMoveUp, onMoveDown, onOpen, onDelete };
+  const menu = {
+    tag: "SAGA",
+    id: "SAGA-7",
+    status,
+    statuses: STATUSES,
+    onMove,
+    onMoveUp,
+    onMoveDown,
+    onOpen,
+    onDelete,
+    onRestart: () => {},
+  };
 
   return (
     <CardContextMenu menu={menu} data-testid="card">

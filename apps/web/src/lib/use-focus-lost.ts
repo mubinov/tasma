@@ -1,8 +1,16 @@
 import { useEffectEvent, useLayoutEffect, type RefObject } from "react";
 
+/** Focus is on no element, as after the focused element left the page. */
+export function focusDropped(): boolean {
+  const active = document.activeElement;
+
+  return active === null || active === document.body;
+}
+
 /**
  * Calls `onFocusLost` with the element when it leaves the page while focus is
- * inside it.
+ * inside it. StrictMode also calls it when it runs the effects of a new
+ * element again, so a caller that moves focus later checks `focusDropped()`.
  *
  * @param holdsFocus Counts the element as holding focus while nothing focused
  *   is inside it, for a control whose open popup renders through a portal: the

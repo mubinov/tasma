@@ -41,9 +41,14 @@ export function stubTaskChats(
     records,
     mount: feed.mount,
     send: feed.send,
-    /** The number of starts that the daemon was sent. */
+    /** The number of starts that the daemon was sent, restarts included. */
     starts(): number {
       return log.requests.filter(({ method, path }) => method === "POST" && path === CHATS_PATH).length;
+    },
+    /** The number of starts with `restart: true` in the body. */
+    restarts(): number {
+      return log.requests.filter(({ method, path, body }) =>
+        method === "POST" && path === CHATS_PATH && (body as { restart?: boolean } | undefined)?.restart === true).length;
     },
     /** The daemon now has these chats, and the feed sends the event of the last one. */
     async change(next: Chat[]): Promise<void> {

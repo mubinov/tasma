@@ -5,7 +5,13 @@ import { chatRefusalCode, chatWriteOptions, type ChatWrite } from "../api/mutati
 import type { ChatPlace } from "../api/queries";
 import { useChatDraftStore } from "../store/chat-drafts";
 import { permissionAnswer, questionAnswer, type ChatRequest } from "./chat-approval";
-import { chatClosedNotice, chatFailure, chatOptionFailure, chatOptionSavedNotice } from "./write-failure";
+import {
+  chatClosedNotice,
+  chatFailure,
+  chatOptionFailure,
+  chatOptionSavedNotice,
+  chatRestartingLine,
+} from "./write-failure";
 
 export type ChatWrites = {
   /**
@@ -32,11 +38,11 @@ const NOT_SENT = "Not sent. The notice gives the reason.";
 
 export function useChatWrites(place: ChatPlace): ChatWrites {
   const { client, queryClient } = useRouter().options.context;
-  const { mutateAsync: write } = useMutation(chatWriteOptions(client, place), queryClient);
+  const { mutateAsync: write } = useMutation(chatWriteOptions(queryClient, client, place), queryClient);
 
   async function send(text: string): Promise<void> {
     try {
-      await write({ kind: "message", text, failure: chatFailure(place, "message") });
+      await write({ kind: "message", text, failure: chatFailure(place, "message"), restartingLine: chatRestartingLine(place) });
     } catch (error) {
       useChatDraftStore.getState().returnToDraft(place, text);
       // Not a `MessageNotSentError`, with which the kit would put the text back a second time.

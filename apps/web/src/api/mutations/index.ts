@@ -2,17 +2,27 @@ export {
   CHAT_CLIENT,
   chatFailureKey,
   chatRefusalCode,
+  chatRestartFailureTitle,
   chatSeenOptions,
   chatStartFailureTitle,
   chatStartKey,
   chatStartOptions,
   chatWriteKey,
   chatWriteOptions,
+  openRestartSkipped,
   useFailedChatStart,
   usePendingChatOptions,
   usePendingChatStart,
 } from "./chats";
-export type { ChatOptionWrite, ChatQuestionReply, ChatWrite, ClosedNotice, SavedNotice, StartChat } from "./chats";
+export type {
+  ChatOptionWrite,
+  ChatQuestionReply,
+  ChatWrite,
+  ClosedNotice,
+  SavedNotice,
+  SkippedNotice,
+  StartChat,
+} from "./chats";
 export {
   commentFailureKey,
   commentFailureTitle,

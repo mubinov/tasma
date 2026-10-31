@@ -1,6 +1,7 @@
 import {
   bodyCorrection,
   chatRefusalCode,
+  chatRestartFailureTitle,
   chatStartFailureTitle,
   failureKind,
   titleCorrection,
@@ -8,6 +9,7 @@ import {
   type ClosedNotice,
   type FailureKind,
   type SavedNotice,
+  type SkippedNotice,
   type TaskWriteError,
   type WriteError,
   type WriteFailure,
@@ -55,6 +57,13 @@ const CHAT_START_FAILURE_LINES: Record<FailureKind, string> = {
   unanswered: "No daemon answered. If the chat started, it shows in the chats of the task.",
   address: "The daemon did not answer through the address below. Start the daemon there if it is not running.",
   unsent: "The request did not start, so no chat started.",
+};
+
+const CHAT_RESTART_FAILURE_LINES: Record<FailureKind, string> = {
+  refused: "The daemon refused the restart. Its own words are below.",
+  unanswered: "No daemon answered. If the restart ran, the new chat shows in the chats of the task.",
+  address: "The daemon did not answer through the address below. Start the daemon there if it is not running.",
+  unsent: "The request did not start, so nothing changed.",
 };
 
 const TURN_RUNNING_LINE = "The agent is working on a turn. Send the message when the turn ends.";
@@ -119,11 +128,32 @@ export function chatClosedNotice(place: ChatPlace): ClosedNotice {
   };
 }
 
+/** The line of a message refused with `turn-running` while this window restarts the task from the chat. */
+export function chatRestartingLine({ chat }: ChatPlace): string {
+  return `Chat ${String(chat)} stops for a restart. Write to the new chat when it opens.`;
+}
+
 export function chatStartFailure(step: string, id: string): WriteFailure {
   return {
     title: chatStartFailureTitle(step, id),
     line: (error) => CHAT_START_FAILURE_LINES[failureKind(error.cause)],
   };
+}
+
+/** `chat` is the chat that the restart replaces. */
+export function chatRestartFailure(step: string, id: string, chat: number): WriteFailure {
+  return {
+    title: chatRestartFailureTitle(step, id),
+    line: (error) => chatRefusalCode(error) === "chat-not-current"
+      ? `The task moved to another step while the agent of chat ${String(chat)} stopped. `
+      + `Chat ${String(chat)} stopped, and no new chat started.`
+      : CHAT_RESTART_FAILURE_LINES[failureKind(error.cause)],
+  };
+}
+
+/** The warning of a restart that the dialog did not send. */
+export function chatRestartSkippedNotice(id: string, chat: number): SkippedNotice {
+  return { title: "Nothing restarted", line: `Chat ${String(chat)} of ${id} is no longer the chat of its step.` };
 }
 
 export function boardFailureLine(error: TaskWriteError): string {

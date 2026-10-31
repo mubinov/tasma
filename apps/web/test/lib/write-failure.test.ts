@@ -7,6 +7,9 @@ import {
   chatFailure,
   chatOptionFailure,
   chatOptionSavedNotice,
+  chatRestartFailure,
+  chatRestartingLine,
+  chatRestartSkippedNotice,
   chatStartFailure,
   pageFailureLine,
 } from "../../src/lib/write-failure";
@@ -190,5 +193,43 @@ describe("chatStartFailure", () => {
 
   it.each(CASES)("says whether a chat started for $label", ({ cause, line }) => {
     expect(chatStartFailure("research", "SAGA-3").line(new WriteError(cause))).toBe(line);
+  });
+});
+
+describe("chatRestartFailure", () => {
+  const LINES: Record<FailureKind, string> = {
+    refused: "The daemon refused the restart. Its own words are below.",
+    unanswered: "No daemon answered. If the restart ran, the new chat shows in the chats of the task.",
+    address: "The daemon did not answer through the address below. Start the daemon there if it is not running.",
+    unsent: "The request did not start, so nothing changed.",
+  };
+  const CASES = KINDS.map((kind) => ({ ...CAUSES[kind], line: LINES[kind] }));
+
+  it("titles the failure with the step and the task", () => {
+    expect(chatRestartFailure("research", "SAGA-3", 2).title).toBe("The research chat of SAGA-3 did not restart");
+  });
+
+  it.each(CASES)("says whether the restart ran for $label", ({ cause, line }) => {
+    expect(chatRestartFailure("research", "SAGA-3", 2).line(new WriteError(cause))).toBe(line);
+  });
+
+  it("says that the old chat stopped and no new chat started when the task moved to another step", () => {
+    const moved = new ProtocolError({ kind: "daemon", code: "chat-not-current", message: "SAGA-3 moved" }, 409);
+
+    expect(chatRestartFailure("research", "SAGA-3", 2).line(new WriteError(moved))).toBe(
+      "The task moved to another step while the agent of chat 2 stopped. Chat 2 stopped, and no new chat started.",
+    );
+  });
+
+  it("gives the texts of a restart that was not sent", () => {
+    expect(chatRestartSkippedNotice("SAGA-3", 2)).toEqual({
+      title: "Nothing restarted",
+      line: "Chat 2 of SAGA-3 is no longer the chat of its step.",
+    });
+  });
+
+  it("tells to write to the new chat after a message to the chat that a restart replaces", () => {
+    expect(chatRestartingLine({ tag: "SAGA", task: "SAGA-3", chat: 2 }))
+      .toBe("Chat 2 stops for a restart. Write to the new chat when it opens.");
   });
 });

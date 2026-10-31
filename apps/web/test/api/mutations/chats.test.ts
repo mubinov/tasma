@@ -1,4 +1,4 @@
-import { MutationObserver, QueryClientProvider } from "@tanstack/react-query";
+import { MutationObserver, QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import {
   createClient,
   TransportError,
@@ -14,12 +14,14 @@ import {
   CHAT_CLIENT,
   chatFailureKey,
   chatRefusalCode,
+  chatStartKey,
   chatWriteKey,
   chatWriteOptions,
   failureKind,
   usePendingChatOptions,
   WriteError,
   type ChatWrite,
+  type StartChat,
 } from "../../../src/api/mutations";
 import { useNoticeStore } from "../../../src/store/notices";
 import { heldBack, refusalReply, stubTransport, successReply } from "../../helpers";
@@ -34,7 +36,7 @@ const FAILURE = { title: "The write failed.", line: (error: WriteError) => `line
 
 const CLOSED = { title: "The answer was not used.", line: "The request was already closed." };
 
-const MESSAGE: ChatWrite = { kind: "message", text: "Build the app.", failure: FAILURE };
+const MESSAGE: ChatWrite = { kind: "message", text: "Build the app.", failure: FAILURE, restartingLine: "line of a restart" };
 
 const CANCEL: ChatWrite = { kind: "cancel", failure: FAILURE };
 
@@ -67,7 +69,7 @@ function setup(replies: Record<string, TransportReply | Promise<TransportReply>>
   const stub = stubTransport(replies);
   const queryClient = createAppQueryClient();
   const client = createClient(stub.transport);
-  const observer = new MutationObserver(queryClient, chatWriteOptions(client, PLACE));
+  const observer = new MutationObserver(queryClient, chatWriteOptions(queryClient, client, PLACE));
 
   return { ...stub, queryClient, client, observer };
 }
@@ -116,9 +118,9 @@ describe("chatWriteOptions", () => {
   });
 
   it("keys the writes under the chat", () => {
-    expect(chatWriteOptions(createClient(stubTransport().transport), PLACE).mutationKey).toEqual(
-      chatWriteKey(PLACE),
-    );
+    const options = chatWriteOptions(createAppQueryClient(), createClient(stubTransport().transport), PLACE);
+
+    expect(options.mutationKey).toEqual(chatWriteKey(PLACE));
     expect(chatWriteKey(PLACE)).toEqual(["daemon", "projects", "SAGA", "tasks", "SAGA-3", "chats", 2, "write"]);
   });
 
@@ -136,6 +138,54 @@ describe("chatWriteOptions", () => {
         words: ["daemon/turn-running · refused: turn-running"],
       }),
     ]);
+  });
+
+  describe("a message refused with turn-running", () => {
+    function pendingStart(queryClient: QueryClient, variables: Partial<StartChat>, status: "pending" | "success" = "pending"): void {
+      queryClient.getMutationCache().build(queryClient, { mutationKey: chatStartKey() }, {
+        context: undefined,
+        data: undefined,
+        error: null,
+        failureCount: 0,
+        failureReason: null,
+        isPaused: false,
+        status,
+        variables: { tag: "SAGA", id: "SAGA-3", step: "build", from: "task", failure: FAILURE, ...variables },
+        submittedAt: 1,
+      });
+    }
+
+    async function lineOf(observer: ReturnType<typeof setup>["observer"]): Promise<string | undefined> {
+      await expect(observer.mutate(MESSAGE)).rejects.toBeInstanceOf(WriteError);
+      return notices()[0]?.line;
+    }
+
+    it("gets the line of a restart while this window restarts the task from the chat", async () => {
+      const { observer, queryClient } = setup({ [`POST ${CHAT_PATH}/messages`]: refused("turn-running") });
+      pendingStart(queryClient, { restart: 2 });
+
+      expect(await lineOf(observer)).toBe("line of a restart");
+    });
+
+    it.each<[string, Partial<StartChat>, "pending" | "success"]>([
+      ["a start", {}, "pending"],
+      ["a restart from another chat", { restart: 1 }, "pending"],
+      ["a restart of another task", { id: "SAGA-4", restart: 2 }, "pending"],
+      ["a restart of a task of another project", { tag: "NOTE", restart: 2 }, "pending"],
+      ["a restart that ended", { restart: 2 }, "success"],
+    ])("gets the line of its failure during %s", async (_case, variables, status) => {
+      const { observer, queryClient } = setup({ [`POST ${CHAT_PATH}/messages`]: refused("turn-running") });
+      pendingStart(queryClient, variables, status);
+
+      expect(await lineOf(observer)).toBe("line of refused");
+    });
+
+    it("is the only refusal that gets the line of a restart", async () => {
+      const { observer, queryClient } = setup({ [`POST ${CHAT_PATH}/messages`]: refused("malformed-request") });
+      pendingStart(queryClient, { restart: 2 });
+
+      expect(await lineOf(observer)).toBe("line of refused");
+    });
   });
 
   it("closes the failure notice of the same kind when a later write succeeds, and leaves the notice of another kind", async () => {
@@ -256,10 +306,10 @@ describe("usePendingChatOptions", () => {
 
     await act(async () => {
       done = [
-        new MutationObserver(queryClient, chatWriteOptions(client, PLACE)).mutate(OPTION),
-        new MutationObserver(queryClient, chatWriteOptions(client, PLACE)).mutate(MESSAGE),
-        new MutationObserver(queryClient, chatWriteOptions(client, { ...PLACE, chat: 3 })).mutate(OPTION),
-        new MutationObserver(queryClient, chatWriteOptions(client, PLACE)).mutate(other),
+        new MutationObserver(queryClient, chatWriteOptions(queryClient, client, PLACE)).mutate(OPTION),
+        new MutationObserver(queryClient, chatWriteOptions(queryClient, client, PLACE)).mutate(MESSAGE),
+        new MutationObserver(queryClient, chatWriteOptions(queryClient, client, { ...PLACE, chat: 3 })).mutate(OPTION),
+        new MutationObserver(queryClient, chatWriteOptions(queryClient, client, PLACE)).mutate(other),
       ];
       await new Promise((resolve) => setTimeout(resolve, 10));
     });

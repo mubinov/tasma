@@ -122,6 +122,19 @@ describe("the parts", () => {
     expect(root.dataset.variant).toBe("filled");
   });
 
+  it("passes data attributes to the root, and keeps its own variant", () => {
+    render(
+      <SplitButton.Root data-place="top-bar" data-variant="filled">
+        <SplitButton.Action>Open draft</SplitButton.Action>
+        <SplitButton.Menu label="More draft actions">{null}</SplitButton.Menu>
+      </SplitButton.Root>,
+    );
+    const root = action().parentElement!;
+
+    expect(root.dataset.place).toBe("top-bar");
+    expect(root.dataset.variant).toBe("outline");
+  });
+
   it("makes the action a button of type button, named by its text or by its aria-label", () => {
     const { rerender } = render(
       <SplitButton.Root>
@@ -391,6 +404,35 @@ describe("disabled", () => {
     await user.click(menuPart());
 
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("takes the action alone out of the tab order, and the menu part still opens", async () => {
+    const user = userEvent.setup();
+    const onAction = vi.fn();
+    render(
+      <>
+        <button type="button">Before</button>
+        <SplitButton.Root>
+          <SplitButton.Action disabled onClick={onAction}>Open draft</SplitButton.Action>
+          <SplitButton.Menu label="More draft actions">
+            <Menu.Item className={MENU_ITEM_CLASS}>Archive draft</Menu.Item>
+          </SplitButton.Menu>
+        </SplitButton.Root>
+      </>,
+    );
+    focusOn(screen.getByRole("button", { name: "Before" }));
+
+    await user.tab();
+
+    expect(document.activeElement).toBe(menuPart());
+    expect(action().hasAttribute("disabled")).toBe(true);
+
+    await user.click(action());
+    focusOn(menuPart());
+    await user.keyboard("{Enter}");
+
+    expect(onAction).not.toHaveBeenCalled();
+    expect(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Archive draft" })).toBeTruthy();
   });
 });
 

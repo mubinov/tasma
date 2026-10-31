@@ -22,7 +22,7 @@ import { formatClock } from "../lib/clock";
 import { deleteTaskWords } from "../lib/delete-words";
 import { useDocumentTitle } from "../lib/document-title";
 import type { FinalFocus } from "../lib/final-focus";
-import { focusChatHeading, focusInView } from "../lib/focus-in-view";
+import { focusInView } from "../lib/focus-in-view";
 import {
   ArrowLeftIcon,
   DotsThreeVerticalIcon,
@@ -37,7 +37,9 @@ import { HIDDEN_TEXT } from "../lib/page-find";
 import { actionStep, stepAction, type StepAction } from "../lib/step-action";
 import { blockingRows, relationRows, type RelationRow } from "../lib/task-page";
 import { useChatAnnouncements } from "../lib/use-chat-announcements";
+import { useChatStart } from "../lib/use-chat-start";
 import { useCommentList } from "../lib/use-comment-list";
+import { focusDropped } from "../lib/use-focus-lost";
 import { useHiddenFocus } from "../lib/use-hidden-focus";
 import { useScrolledPast } from "../lib/use-scrolled-past";
 import { useTaskEditing } from "../lib/use-task-editing";
@@ -63,6 +65,7 @@ import {
   POSITIONER_CLASS,
 } from "./control-classes";
 import { Markdown } from "./markdown";
+import { RestartDialog } from "./restart-dialog";
 import { ScreenHeading } from "./screen-heading";
 import { ScrollToTop, type PageColumn } from "./scroll-to-top";
 import { StepActionButton } from "./step-action-button";
@@ -98,10 +101,11 @@ const COLUMN_LAYOUT: Record<PageColumn, { frame: string; content: string; conten
 
 /**
  * Below the `--container-step-floor` width of the bar, while the step action shows, the line padding and the gaps of
- * the controls shrink, so Edit and the task menu stay on a 256 px line beside the icon of the action.
+ * the line and of the controls shrink, so Edit and the task menu stay on a 256 px line beside the icon of the action
+ * and its menu part.
  */
 const STEP_ACTION_FLOOR = {
-  line: "@max-step-floor:data-step-action-shown:px-2",
+  line: "@max-step-floor:data-step-action-shown:gap-1 @max-step-floor:data-step-action-shown:px-2",
   controls: "@max-step-floor:group-data-step-action-shown/top-bar:gap-1",
 } as const;
 
@@ -188,42 +192,39 @@ function useTaskChat(headingRef: RefObject<HTMLElement | null>): TaskChat {
 }
 
 /**
- * Moves focus after the step action button left the page with it, and returns
- * the callback the button calls then. The panel takes focus only when `?chat`
- * changes, and the find field and the editor take it themselves.
+ * Moves focus to the h1 after the step action left the page with it because
+ * the task has no step to act on, and returns the callback the step action
+ * calls then. The find field and the editor take focus themselves, and the
+ * step action moves it when one of its controls replaces the other.
  *
  * `shows` is a dependency only so that the effect clears the flag in the
- * render where the button leaves, also when nothing else changes.
+ * render where the step action leaves, also when nothing else changes.
  */
 function useStepActionFocus(
   action: StepAction | null,
   shows: boolean,
-  chat: number | undefined,
   headingRef: RefObject<HTMLElement | null>,
 ): () => void {
   const focusLostRef = useRef(false);
-  const lastChatRef = useRef(chat);
   const kind = action?.kind ?? null;
-  const actionChat = action?.kind === "open" ? action.chat : null;
 
   useLayoutEffect(() => {
-    const chatChanged = lastChatRef.current !== chat;
-    lastChatRef.current = chat;
     if (!focusLostRef.current) {
       return;
     }
     focusLostRef.current = false;
-    if (kind === null) {
+    if (kind === null && focusDropped()) {
       focusInView(headingRef.current);
-    } else if (!chatChanged && actionChat === chat) {
-      focusChatHeading();
     }
-  }, [shows, kind, actionChat, chat, headingRef]);
+  }, [shows, kind, headingRef]);
 
   return () => {
     focusLostRef.current = true;
   };
 }
+
+/** The restart the dialog asks about, kept after the close so the closing dialog keeps its words. */
+type RestartAsk = { step: string; chat: number; open: boolean };
 
 type CommentsProps = {
   /** The comments the file holds, which a card detached from the list is not one of. */
@@ -553,12 +554,18 @@ export function TaskScreen(): ReactNode {
     seen: failedStart,
   });
   const step = actionStep(live, workflow);
-  // A pending start keeps the text of its press: the list can hold the new chat before the answer.
+  // A pending start or restart keeps the control of its press: the list can hold the new chat before the answer.
   const action: StepAction | null = pendingStart !== undefined
-    ? { kind: "start", step: pendingStart.step }
+    ? pendingStart.restart === undefined
+      ? { kind: "start", step: pendingStart.step }
+      : { kind: "open", step: pendingStart.step, chat: pendingStart.restart }
     : step === null ? null : stepAction(step, chats);
-  const actionShows = action !== null && draft === null && !find.open && !(action.kind === "open" && action.chat === chat);
-  const actionFocusLost = useStepActionFocus(action, actionShows, chat, headingRef);
+  const actionShows = action !== null && draft === null && !find.open;
+  const actionFocusLost = useStepActionFocus(action, actionShows, headingRef);
+  const startChat = useChatStart(tag, id);
+  const [restartAsk, setRestartAsk] = useState<RestartAsk | null>(null);
+  const restartOpenerRef = useRef<HTMLButtonElement>(null);
+  const restartFocusRef = useRef<FinalFocus>(null);
   const column: PageColumn = chat === undefined ? "sidebar" : "chat";
   const newestChat = chats.at(-1);
   const chatMarked = !final
@@ -580,6 +587,13 @@ export function TaskScreen(): ReactNode {
     setDeleteAsked(false);
     void navigate({ to: "/tasks", search: boardSearch, replace: true, ignoreBlocker: true });
     sendDelete({ id });
+  }
+
+  /** Focus goes back to the menu part of the step action, or to the h1 when the step action has left. */
+  function closeRestart(ask: RestartAsk): void {
+    const opener = restartOpenerRef.current;
+    restartFocusRef.current = opener?.isConnected === true ? opener : headingRef.current;
+    setRestartAsk({ ...ask, open: false });
   }
 
   useDocumentTitle(`${id} ${title}`);
@@ -658,7 +672,17 @@ export function TaskScreen(): ReactNode {
                 ? (
                     <ReadingControls
                       stepActionButton={actionShows && (
-                        <StepActionButton tag={tag} id={id} action={action} onFocusLost={actionFocusLost} />
+                        <StepActionButton
+                          tag={tag}
+                          id={id}
+                          action={action}
+                          chatShown={action.kind === "open" && action.chat === chat}
+                          menuRef={restartOpenerRef}
+                          onRestart={(restartStep, restartChat) => {
+                            setRestartAsk({ step: restartStep, chat: restartChat, open: true });
+                          }}
+                          onFocusLost={actionFocusLost}
+                        />
                       )}
                       editButtonRef={editing.editRef}
                       findButtonRef={findButtonRef}
@@ -859,6 +883,23 @@ export function TaskScreen(): ReactNode {
         onConfirm={confirmDelete}
         finalFocus={deleteFocusRef}
       />
+      {restartAsk !== null && (
+        <RestartDialog
+          open={restartAsk.open}
+          tag={tag}
+          id={id}
+          step={restartAsk.step}
+          chat={restartAsk.chat}
+          onCancel={() => {
+            closeRestart(restartAsk);
+          }}
+          onConfirm={() => {
+            closeRestart(restartAsk);
+            startChat(restartAsk.step, "task", restartAsk.chat);
+          }}
+          finalFocus={restartFocusRef}
+        />
+      )}
       {/* A sent delete leaves the page, which stays until the board commits: the task read can refuse until then. */}
       {deleteUnsent && <TaskRefusalNotice tag={tag} id={taskId} />}
     </div>

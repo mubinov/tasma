@@ -38,7 +38,7 @@ type RootProps = {
   className?: string;
   /** One `Action`, then one `Menu`. */
   children: ReactNode;
-};
+} & Record<`data-${string}`, string | undefined>;
 
 /**
  * A main action, and a part that opens a menu of related actions. Use it as
@@ -47,9 +47,9 @@ type RootProps = {
  * The two parts have no group role: a group of controls needs a visible label,
  * so the names of the parts carry the relation.
  */
-export function Root({ variant = "outline", className = "", children }: RootProps): ReactNode {
+export function Root({ variant = "outline", className = "", children, ...data }: RootProps): ReactNode {
   return (
-    <div data-variant={variant} className={`group/split isolate inline-flex shrink-0 ${className}`}>
+    <div {...data} data-variant={variant} className={`group/split isolate inline-flex shrink-0 ${className}`}>
       {children}
     </div>
   );
@@ -68,9 +68,10 @@ type ActionProps = Omit<ComponentProps<typeof Button>, "className" | "disabled" 
    */
   busy?: boolean;
   /**
-   * Takes the part out of the tab order. Give the same value to `Menu`. After
-   * a press or a chosen item, use `busy`: focus on a part that becomes
-   * disabled is lost.
+   * Takes the part out of the tab order. `Menu` can stay enabled, so its
+   * actions stay in reach while this one has nothing to do. After a press or a
+   * chosen item, use `busy`: focus on a part that becomes disabled is lost,
+   * and the caller moves it.
    */
   disabled?: boolean;
   /**

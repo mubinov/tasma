@@ -284,7 +284,7 @@ function NoticePanel({ toast, onFocusLost }: NoticePanelProps): ReactNode {
         </Toast.Title>
         <Toast.Description render={<div />}>
           {notice.line !== undefined && <p className="mt-0.5 text-sm text-subtle">{notice.line}</p>}
-          {notice.form === "failure"
+          {notice.words.length > 0 && (notice.form === "failure"
             ? (
                 <div className={NOTICE_WORDS_CLASS}>
                   {notice.words.map((word, index) => (
@@ -302,7 +302,7 @@ function NoticePanel({ toast, onFocusLost }: NoticePanelProps): ReactNode {
                     <li key={index}>{word}</li>
                   ))}
                 </ul>
-              )}
+              ))}
         </Toast.Description>
       </div>
       <Toast.Close

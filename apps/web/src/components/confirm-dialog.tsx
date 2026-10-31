@@ -47,6 +47,9 @@ export type ConfirmDialogProps = {
    * entered. The dialog announces nothing: the caller announces.
    */
   status?: string;
+  /** For a caller that moves focus between the two buttons while the dialog is open. */
+  cancelRef?: RefObject<HTMLButtonElement | null>;
+  confirmRef?: RefObject<HTMLButtonElement | null>;
 };
 
 /**
@@ -64,8 +67,11 @@ export function ConfirmDialog({
   onConfirm,
   finalFocus,
   status,
+  cancelRef: callerCancelRef,
+  confirmRef,
 }: ConfirmDialogProps): ReactNode {
-  const cancelRef = useRef<HTMLButtonElement>(null);
+  const ownCancelRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = callerCancelRef ?? ownCancelRef;
   const actionsRef = useRef<AlertDialog.Root.Actions>(null);
   const descriptionId = useId();
   const statusId = useId();
@@ -136,7 +142,7 @@ export function ConfirmDialog({
               <AlertDialog.Close ref={cancelRef} className={BUTTON_CLASS}>
                 {cancelLabel}
               </AlertDialog.Close>
-              <Button type="button" onClick={onConfirm} className={BUTTON_FILLED_CLASS}>
+              <Button ref={confirmRef} type="button" onClick={onConfirm} className={BUTTON_FILLED_CLASS}>
                 {confirmLabel}
               </Button>
             </div>

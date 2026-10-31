@@ -46,6 +46,7 @@ async function renderCard(
       onMove={() => {}}
       onOpen={onOpen}
       onDelete={onDelete}
+      onRestart={() => {}}
       focusPart={focusPart}
       onFocused={onFocused}
       onPress={onPress}

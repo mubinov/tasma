@@ -257,8 +257,11 @@ export async function renderBesideTaskRoute(ui: ReactNode) {
  * The tree is mounted before the loaders have answered, the order main.tsx
  * runs: a test that awaited the load first would never render what the
  * application shows while a loader is still on its way.
+ *
+ * `strict` renders in `StrictMode`, as main.tsx does, for a test of what the
+ * development build runs twice.
  */
-export async function renderWithRouter(initialPath = "/", transport?: Transport) {
+export async function renderWithRouter(initialPath = "/", transport?: Transport, { strict = false } = {}) {
   // The router scrolls on mount, which jsdom does not implement. A test that
   // watches the scrolls stubs it beforehand, and that stub stands.
   // eslint-disable-next-line @typescript-eslint/unbound-method -- the value is read, never called
@@ -274,6 +277,7 @@ export async function renderWithRouter(initialPath = "/", transport?: Transport)
       <QueryClientProvider client={context.queryClient}>
         <RouterProvider router={router} />
       </QueryClientProvider>,
+      { reactStrictMode: strict },
     );
   });
 

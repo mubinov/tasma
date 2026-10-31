@@ -216,6 +216,24 @@ describe("the stack", () => {
     expect(openKeys()).toEqual([]);
   });
 
+  it.each(["warning", "failure"] as const)("shows no words block in the %s form when the notice has no words", (form) => {
+    const notice: Notice = {
+      key: "chat-restart-skipped:SAGA-55",
+      form,
+      title: "Nothing restarted",
+      line: "Chat 2 of SAGA-55 is no longer the chat of its step.",
+      words: [],
+    };
+    renderStack();
+
+    show(notice);
+
+    const panel = stack().firstElementChild as HTMLElement;
+    const description = document.getElementById(panel.getAttribute("aria-describedby")!)!;
+    expect([...description.children].map((child) => child.textContent)).toEqual([notice.line]);
+    expect(panel.querySelector(".font-mono")).toBeNull();
+  });
+
   it("describes each Dismiss control by the title of its notice", () => {
     renderStack();
 

@@ -15,6 +15,21 @@ export function latestOnTask(router: RegisteredRouter, tag: string, id: string):
 }
 
 /**
+ * Opens the task view from the board, and then `chat` in its panel by a
+ * replace. The task view opens first, so the panel takes focus as there: a
+ * change of the path moves focus to <main>, and the panel takes it only when
+ * `?chat` changes on the task view. A navigation away during its load stays.
+ */
+export async function openFromBoard(router: RegisteredRouter, tag: string, id: string, chat?: number): Promise<void> {
+  const params = { project: tag, task: id };
+
+  await router.navigate({ to: "/tasks/$project/$task", params });
+  if (chat !== undefined && latestOnTask(router, tag, id)) {
+    await router.navigate({ to: "/tasks/$project/$task", params, search: { chat: String(chat) }, replace: true });
+  }
+}
+
+/**
  * The step that the start route runs for the task, or null when the task has
  * no workflow, its workflow is not read, or its step is not in the workflow.
  */

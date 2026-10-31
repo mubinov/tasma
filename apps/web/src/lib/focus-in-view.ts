@@ -15,8 +15,10 @@ const CHAT_HEADING = "data-chat-heading";
 /** The attribute of the heading of the chat panel, which `focusChatHeading` finds. */
 export const CHAT_HEADING_MARK = { [CHAT_HEADING]: "" };
 
+export const CHAT_HEADING_SELECTOR = `[${CHAT_HEADING}]`;
+
 export function focusChatHeading(): void {
-  focusInView(document.querySelector<HTMLElement>(`[${CHAT_HEADING}]`));
+  focusInView(document.querySelector<HTMLElement>(CHAT_HEADING_SELECTOR));
 }
 
 /** Inside the window, with no other element, such as a sticky bar, over its corners. */

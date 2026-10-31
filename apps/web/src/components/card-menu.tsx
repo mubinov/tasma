@@ -5,8 +5,8 @@ import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState, type ComponentProps, type ReactNode, type Ref } from "react";
 import { usePendingChatStart } from "../api/mutations";
 import { taskChatsQuery, workflowQuery } from "../api/queries";
-import { ChatCircleIcon, CircleNotchIcon, DotsThreeVerticalIcon, PlayIcon } from "../lib/icons";
-import { actionStep, latestOnTask, stepAction, stepActionVerb, type StepAction } from "../lib/step-action";
+import { ArrowClockwiseIcon, ChatCircleIcon, CircleNotchIcon, DotsThreeVerticalIcon, PlayIcon } from "../lib/icons";
+import { actionStep, openFromBoard, stepAction, stepActionVerb, type StepAction } from "../lib/step-action";
 import { useChatStart } from "../lib/use-chat-start";
 import { useNoticeStore } from "../store/notices";
 import { useUiStore } from "../store/ui";
@@ -31,24 +31,25 @@ export type CardMenuItemsProps = {
   onOpen: () => void;
   /** Asks to delete the task. */
   onDelete: (id: string) => void;
+  /** Asks to restart the chat of the step, which replaces `chat`. */
+  onRestart: (id: string, step: string, chat: number) => void;
   /** As the task file holds them. */
   workflow?: string;
   step?: string;
 };
 
-type StepMenuItemProps = Pick<CardMenuItemsProps, "tag" | "id" | "step" | "onOpen"> & { workflow: string };
+type StepMenuItemProps = Pick<CardMenuItemsProps, "tag" | "id" | "step" | "onOpen" | "onRestart"> & { workflow: string };
 
 /**
- * "Start <step>" or "Open <step>", with a separator under it. It mounts with
- * its menu, reads the chats at each open, and keeps the kind of its first read
- * until the menu closes, so the name of a highlighted item does not change.
- * Disabled until that read lands, so a menu opened by the keyboard highlights
- * the next item.
+ * "Start <step>", or "Open <step>" and "Restart <step>", with a separator
+ * under them. It mounts with its menu, reads the chats at each open, and keeps
+ * the kind of its first read until the menu closes, so the name of a
+ * highlighted item does not change. Disabled until that read lands, so a menu
+ * opened by the keyboard highlights the next item.
  */
-function StepMenuItem({ tag, id, workflow, step: taskStep, onOpen }: StepMenuItemProps): ReactNode {
+function StepMenuItem({ tag, id, workflow, step: taskStep, onOpen, onRestart }: StepMenuItemProps): ReactNode {
   const router = useRouter();
   const { client, queryClient } = router.options.context;
-  const navigate = useNavigate();
   const workflowRead = useQuery(workflowQuery(client, workflow), queryClient);
   const chatsRead = useQuery({ ...taskChatsQuery(client, tag, id), refetchOnMount: "always" }, queryClient);
   const start = useChatStart(tag, id);
@@ -68,8 +69,12 @@ function StepMenuItem({ tag, id, workflow, step: taskStep, onOpen }: StepMenuIte
   let text: string;
   let name: string;
 
-  if (pendingStart !== undefined) {
-    // A pending start of the task allows no second one.
+  // A pending start or restart of the task allows no second one.
+  if (pendingStart?.restart !== undefined) {
+    phase = "starting";
+    text = `Restarting ${pendingStart.step}`;
+    name = `${text}, ${id}`;
+  } else if (pendingStart !== undefined) {
     phase = "starting";
     text = `Start ${pendingStart.step}`;
     name = `${text}, ${id}, starting`;
@@ -103,22 +108,14 @@ function StepMenuItem({ tag, id, workflow, step: taskStep, onOpen }: StepMenuIte
     return null;
   }
 
-  /**
-   * The task view opens first, so the panel takes focus as there: a change of
-   * the path moves focus to <main>, and the panel takes it only when `?chat`
-   * changes on the task view. A navigation away during its load stays.
-   */
+  const restart = ready?.kind === "open" ? ready : null;
+
   async function press(action: StepAction): Promise<void> {
-    const params = { project: tag, task: id };
     onOpen();
-    await navigate({ to: "/tasks/$project/$task", params });
-    if (action.kind === "open") {
-      if (latestOnTask(router, tag, id)) {
-        await navigate({ to: "/tasks/$project/$task", params, search: { chat: String(action.chat) }, replace: true });
-      }
-      return;
+    await openFromBoard(router, tag, id, action.kind === "open" ? action.chat : undefined);
+    if (action.kind === "start") {
+      start(action.step, "card");
     }
-    start(action.step, "card");
   }
 
   return (
@@ -141,15 +138,44 @@ function StepMenuItem({ tag, id, workflow, step: taskStep, onOpen }: StepMenuIte
             : <PlayIcon size={14} aria-hidden="true" className="shrink-0" />}
         {text}
       </Menu.Item>
+      {/* Hidden, not unmounted: Base UI keeps the highlight on an index, which an item mounted above shifts. */}
+      <Menu.Item
+        hidden={restart === null}
+        aria-label={restart === null ? undefined : `Restart ${restart.step}, ${id}`}
+        onClick={restart === null
+          ? undefined
+          : () => {
+              onRestart(id, restart.step, restart.chat);
+            }}
+        className={MENU_ITEM_CLASS}
+      >
+        {restart !== null && (
+          <>
+            <ArrowClockwiseIcon size={14} aria-hidden="true" className="shrink-0" />
+            {`Restart ${restart.step}`}
+          </>
+        )}
+      </Menu.Item>
       <Menu.Separator className="my-1.5 h-px bg-line" />
     </>
   );
 }
 
 /** The items of both card menus. */
-function CardMenuItems(
-  { tag, id, status, statuses, onMove, onMoveUp, onMoveDown, onOpen, onDelete, workflow, step }: CardMenuItemsProps,
-): ReactNode {
+function CardMenuItems({
+  tag,
+  id,
+  status,
+  statuses,
+  onMove,
+  onMoveUp,
+  onMoveDown,
+  onOpen,
+  onDelete,
+  onRestart,
+  workflow,
+  step,
+}: CardMenuItemsProps): ReactNode {
   const navigate = useNavigate();
   const requestEdit = useUiStore((state) => state.requestEdit);
   const key = status.toLowerCase();
@@ -162,7 +188,9 @@ function CardMenuItems(
 
   return (
     <>
-      {workflow !== undefined && <StepMenuItem tag={tag} id={id} workflow={workflow} step={step} onOpen={onOpen} />}
+      {workflow !== undefined && (
+        <StepMenuItem tag={tag} id={id} workflow={workflow} step={step} onOpen={onOpen} onRestart={onRestart} />
+      )}
       <Menu.Item onClick={openTask} className={MENU_ITEM_CLASS}>
         <span className="w-3.5 shrink-0" />
         Open task

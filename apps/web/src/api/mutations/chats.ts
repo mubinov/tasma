@@ -9,7 +9,7 @@ import {
   type QuestionValue,
   type Success,
 } from "@tasma/protocol";
-import { focusChatHeading } from "../../lib/focus-in-view";
+import { CHAT_HEADING_SELECTOR, focusChatHeading } from "../../lib/focus-in-view";
 import { latestOnTask, STEP_ACTION_SELECTOR } from "../../lib/step-action";
 import { useNoticeStore } from "../../store/notices";
 import { daemonKeys, type ChatPlace } from "../queries";
@@ -21,13 +21,17 @@ export type ClosedNotice = { title: string; line: string };
 /** The texts of the warning notice of an option write that the daemon did not save. */
 export type SavedNotice = { title: string; line: string };
 
+/** The texts of the warning notice of a restart that was not sent. */
+export type SkippedNotice = { title: string; line: string };
+
 export type ChatQuestionReply
   = | { action: "accept"; content: Readonly<Record<string, QuestionValue>> }
     | { action: "decline" };
 
 /** One write into a chat. The variables carry the texts of the notices. */
 export type ChatWrite = { failure: WriteFailure } & (
-  | { kind: "message"; text: string }
+  /** `restartingLine`: the line of a refusal with `turn-running` while this window restarts the task from the chat. */
+  | { kind: "message"; text: string; restartingLine: string }
   | { kind: "cancel" }
   | { kind: "permission"; request: string; optionId: string; closed: ClosedNotice }
   | { kind: "question"; request: string; answer: ChatQuestionReply; closed: ClosedNotice }
@@ -91,12 +95,22 @@ function savedWords(diagnostics: readonly Diagnostic[]): string[] {
   return diagnostics.map(({ path, message }) => (path === undefined ? message : `${path}: ${message}`));
 }
 
+/** A restart of the task that replaces the chat is pending in this window. */
+function restartPending(queryClient: QueryClient, { tag, task, chat }: ChatPlace): boolean {
+  return queryClient.getMutationCache()
+    .findAll({ mutationKey: chatStartKey(), exact: true, status: "pending" })
+    .some(({ state }) => {
+      const start = state.variables as StartChat | undefined;
+      return start?.tag === tag && start.id === task && start.restart === chat;
+    });
+}
+
 /**
  * The writes into one chat. The log shows their result, so a write changes no
  * cache. No scope: a Stop does not wait for a write in flight, and the daemon
  * puts the commands of one chat in order.
  */
-export function chatWriteOptions(client: Client, place: ChatPlace) {
+export function chatWriteOptions(queryClient: QueryClient, client: Client, place: ChatPlace) {
   return mutationOptions<Success<Chat> | undefined, WriteError, ChatWrite>({
     mutationKey: chatWriteKey(place),
     mutationFn: async (write) => {
@@ -127,7 +141,10 @@ export function chatWriteOptions(client: Client, place: ChatPlace) {
         openWriteNotice({ key, form: "warning", title: write.closed.title, line: write.closed.line, words });
         return;
       }
-      openWriteNotice({ key, form: "failure", title: write.failure.title, line: write.failure.line(error), words });
+      const line = write.kind === "message" && chatRefusalCode(error) === "turn-running" && restartPending(queryClient, place)
+        ? write.restartingLine
+        : write.failure.line(error);
+      openWriteNotice({ key, form: "failure", title: write.failure.title, line, words });
     },
   });
 }
@@ -152,6 +169,8 @@ export type StartChat = {
   /** The step that the action shows. The daemon runs the step that it holds. */
   step: string;
   from: "task" | "card";
+  /** The chat that a restart replaces. Without it, the start gives back the chat that the step has. */
+  restart?: number;
   failure: WriteFailure;
 };
 
@@ -164,15 +183,37 @@ export function chatStartFailureTitle(step: string, id: string): string {
   return `The ${step} chat of ${id} did not start`;
 }
 
+export function chatRestartFailureTitle(step: string, id: string): string {
+  return `The ${step} chat of ${id} did not restart`;
+}
+
 function chatStartFailureKey(id: string): string {
   return `chat-start-failure:${id}`;
 }
 
-/** Focus is where a start leaves it: on the step action button, on `<main>` or on `<body>`. */
-function focusWaits(): boolean {
+function chatRestartSkippedKey(id: string): string {
+  return `chat-restart-skipped:${id}`;
+}
+
+/** The warning of a restart that was not sent, because its chat is no longer the chat of its step. */
+export function openRestartSkipped(id: string, { title, line }: SkippedNotice): void {
+  openWriteNotice({ key: chatRestartSkippedKey(id), form: "warning", title, line, words: [] });
+}
+
+/**
+ * Focus is where a start leaves it: on a part of the step action, on `<main>`
+ * itself or on `<body>`. A restart also leaves it on the heading of the panel
+ * that shows the chat it replaces.
+ */
+function focusWaits(router: RegisteredRouter, { restart }: StartChat): boolean {
   const active = document.activeElement;
 
-  return active === null || active === document.body || active.matches(`main, ${STEP_ACTION_SELECTOR}`);
+  if (active === null || active === document.body || active.matches("main") || active.closest(STEP_ACTION_SELECTOR) !== null) {
+    return true;
+  }
+  return restart !== undefined
+    && router.latestLocation.search.chat === String(restart)
+    && active.matches(CHAT_HEADING_SELECTOR);
 }
 
 type Panel = "opened" | "shown" | null;
@@ -181,10 +222,11 @@ type Panel = "opened" | "shown" | null;
  * Opens the chat in the panel when the task view of the start shows and focus
  * waits: "opened" by a navigation, "shown" when the panel shows it already.
  */
-async function openPanel(router: RegisteredRouter, { tag, id, from }: StartChat, chat: number): Promise<Panel> {
+async function openPanel(router: RegisteredRouter, start: StartChat, chat: number): Promise<Panel> {
+  const { tag, id, from } = start;
   const params = { project: tag, task: id };
 
-  if (!latestOnTask(router, tag, id) || !focusWaits()) {
+  if (!latestOnTask(router, tag, id) || !focusWaits(router, start)) {
     return null;
   }
   if (router.latestLocation.search.chat === String(chat)) {
@@ -196,9 +238,13 @@ async function openPanel(router: RegisteredRouter, { tag, id, from }: StartChat,
   return "opened";
 }
 
-function startWords(name: string, { chat, started }: ChatStart, panel: Panel): string | null {
+function startWords(name: string, { chat, started }: ChatStart, panel: Panel, restart: boolean): string | null {
   if (chat.state === "failed") {
     return `${name} failed.`;
+  }
+  // The heading of the panel is the same for the old chat and the new one.
+  if (restart) {
+    return `${name} restarted.`;
   }
   if (panel === null) {
     return started ? `${name} started.` : `${name} is in its chats.`;
@@ -215,17 +261,20 @@ function startWords(name: string, { chat, started }: ChatStart, panel: Panel): s
 export function chatStartOptions(queryClient: QueryClient, client: Client, router: RegisteredRouter) {
   return mutationOptions<ChatStart, WriteError, StartChat>({
     mutationKey: chatStartKey(),
-    mutationFn: async ({ tag, id }) => {
+    mutationFn: async ({ tag, id, restart }) => {
+      const input = restart === undefined ? { client: CHAT_CLIENT } : { client: CHAT_CLIENT, restart: true };
+
       try {
-        return (await client.startChat(tag, id, { client: CHAT_CLIENT })).data;
+        return (await client.startChat(tag, id, input)).data;
       } catch (cause) {
         throw new WriteError(cause);
       }
     },
-    // A start whose answer is lost may have started a chat.
+    // A start whose answer is lost may have started a chat, and a restart sent again stops it.
     retry: 0,
-    onMutate: ({ id, step }) => {
-      useNoticeStore.getState().announce(`Starting the ${step} chat of ${id}`);
+    onMutate: ({ id, step, restart }) => {
+      useNoticeStore.getState().closeNotice(chatRestartSkippedKey(id));
+      useNoticeStore.getState().announce(`${restart === undefined ? "Starting" : "Restarting"} the ${step} chat of ${id}`);
     },
     onSuccess: async (answer, start) => {
       const { tag, id } = start;
@@ -233,7 +282,7 @@ export function chatStartOptions(queryClient: QueryClient, client: Client, route
       // Awaited, so the list holds the chat before the panel opens.
       await queryClient.invalidateQueries({ queryKey: daemonKeys.taskChats(tag, id), exact: true });
       const panel = await openPanel(router, start, answer.chat.chat);
-      const words = startWords(`The ${answer.chat.step} chat of ${id}`, answer, panel);
+      const words = startWords(`The ${answer.chat.step} chat of ${id}`, answer, panel, start.restart !== undefined);
 
       if (words !== null) {
         useNoticeStore.getState().announce(words);

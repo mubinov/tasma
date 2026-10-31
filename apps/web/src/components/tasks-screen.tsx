@@ -1,7 +1,7 @@
 import { useMutation, useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi, Link, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import type { ExcludedFile, Workflow } from "@tasma/protocol";
-import { useDeferredValue, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal, flushSync } from "react-dom";
 import {
   openCreateWarnings,
@@ -43,10 +43,12 @@ import type { DropPlace } from "../lib/drag-place";
 import type { FinalFocus } from "../lib/final-focus";
 import { fullIndex, placeWrites } from "../lib/order";
 import { PlusIcon } from "../lib/icons";
+import { openFromBoard } from "../lib/step-action";
 import { cachedShownTags, useBoardProjects, type FailedProject } from "../lib/use-board-projects";
 import { useBoardReturn } from "../lib/use-board-return";
 import { cachedSearchIds, useBoardSearch } from "../lib/use-board-search";
 import { useCardDrag, type BoardSnapshot } from "../lib/use-card-drag";
+import { useChatStart } from "../lib/use-chat-start";
 import { useFocusLost } from "../lib/use-focus-lost";
 import { warningCount } from "../lib/warning-count";
 import { boardFailureLine } from "../lib/write-failure";
@@ -65,6 +67,7 @@ import { LabelFilter } from "./label-filter";
 import { LiveNotice } from "./live-notice";
 import { ProjectFailureNote } from "./project-failure-note";
 import { ProjectSelect } from "./project-select";
+import { RestartDialog } from "./restart-dialog";
 import { ScreenHeading } from "./screen-heading";
 import { SearchField } from "./search-field";
 import type { CardFocus } from "./task-card";
@@ -192,6 +195,50 @@ function spotColumn(keys: readonly string[], spot: ColumnSpot): number | null {
  */
 type DeleteAsk = { id: string; title: string; column: ColumnSpot; open: boolean };
 
+/** The restart the dialog asks about, kept after the close so the closing dialog keeps its words. */
+type RestartAsk = { tag: string; id: string; step: string; chat: number; open: boolean };
+
+type BoardRestartProps = {
+  ask: RestartAsk;
+  finalFocus: RefObject<FinalFocus>;
+  onCancel: () => void;
+  /** Closes the dialog and records the board return, before the task view opens. */
+  onConfirmed: () => void;
+};
+
+/**
+ * The restart dialog of the board, apart from the board because a start is
+ * bound to one task. A confirm opens the task view with the old chat in the
+ * panel, and the new chat replaces it there when it starts. The restart runs
+ * also when the reader leaves the task view during its load.
+ */
+function BoardRestart({ ask, finalFocus, onCancel, onConfirmed }: BoardRestartProps): ReactNode {
+  const router = useRouter();
+  const { tag, id, step, chat } = ask;
+  const start = useChatStart(tag, id);
+
+  async function confirm(): Promise<void> {
+    onConfirmed();
+    await openFromBoard(router, tag, id, chat);
+    start(step, "card", chat);
+  }
+
+  return (
+    <RestartDialog
+      open={ask.open}
+      tag={tag}
+      id={id}
+      step={step}
+      chat={chat}
+      onCancel={onCancel}
+      onConfirm={() => {
+        void confirm();
+      }}
+      finalFocus={finalFocus}
+    />
+  );
+}
+
 /** Focus that left the page with a column or a card: `id` names the card, `null` for focus elsewhere in the column. */
 type LostFocus = { id: string | null; column: ColumnSpot };
 
@@ -233,6 +280,9 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
   const deletingIds = usePendingTaskDeletes(shown);
   const [deleteAsk, setDeleteAsk] = useState<DeleteAsk | null>(null);
   const deleteFocusRef = useRef<FinalFocus>(null);
+  const [restartAsk, setRestartAsk] = useState<RestartAsk | null>(null);
+  const restartFocusRef = useRef<FinalFocus>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [focusCard, setFocusCard] = useState<CardFocus | null>(null);
   const [focusColumn, setFocusColumn] = useState<number | null>(null);
   // A count, so each request moves the focus once and none has to be cleared.
@@ -267,7 +317,7 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
   // An open dialog renders outside the board, so it counts as focus inside.
   useFocusLost(rootRef, (root) => {
     root.closest("main")?.focus();
-  }, creating !== null || deleteAsk?.open === true);
+  }, creating !== null || deleteAsk?.open === true || restartAsk?.open === true);
 
   useBoardReturn(board, labels, q, settled);
 
@@ -485,6 +535,17 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
     sendDelete({ id });
   }
 
+  /** Focus goes back to the menu button of the card, or to the h1 when the board no longer shows the card. */
+  function cancelRestart(ask: RestartAsk): void {
+    if (cardPlace(columns, ask.id) === null) {
+      restartFocusRef.current = headingRef.current;
+    } else {
+      restartFocusRef.current = "keep";
+      setFocusCard({ id: ask.id, part: "menu" });
+    }
+    setRestartAsk({ ...ask, open: false });
+  }
+
   /**
    * A drop reads the board the drag started on, never the live one: a read can
    * have moved the card since. It moves no focus.
@@ -512,7 +573,7 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
   return (
     <div ref={rootRef} className="contents">
       <div className={HEADING_LINE_CLASS}>
-        <ScreenHeading>{TITLE}</ScreenHeading>
+        <ScreenHeading ref={headingRef} tabIndex={-1}>{TITLE}</ScreenHeading>
         <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-x-5 gap-y-3">
           <ProjectSelect projects={projects} board={board} labels={labels} q={q} />
           <SearchField board={board} q={q} busy={busy} describedBy={failed ? failureId : undefined} />
@@ -614,6 +675,9 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
             }}
             onOpen={recordReturn}
             onDelete={askDelete}
+            onRestart={(id, step, chat) => {
+              setRestartAsk({ tag: tagOf(id), id, step, chat, open: true });
+            }}
             focusCard={focusCard}
             onCardFocused={() => {
               setFocusCard(null);
@@ -695,6 +759,21 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
             confirmDelete(deleteAsk);
           }}
           finalFocus={deleteFocusRef}
+        />
+      )}
+      {restartAsk !== null && (
+        <BoardRestart
+          ask={restartAsk}
+          finalFocus={restartFocusRef}
+          onCancel={() => {
+            cancelRestart(restartAsk);
+          }}
+          onConfirmed={() => {
+            // The route change removes the card menu button.
+            restartFocusRef.current = "keep";
+            setRestartAsk({ ...restartAsk, open: false });
+            recordReturn(restartAsk.id);
+          }}
         />
       )}
     </div>

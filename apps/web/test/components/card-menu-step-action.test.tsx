@@ -3,11 +3,12 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chatStartKey } from "../../src/api/mutations";
+import { taskQuery } from "../../src/api/queries";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
 import { daemon as boardDaemon, entry, listing } from "../board-fixtures";
 import { chatRecord } from "../chat-daemon";
-import { heldBack, refusalReply, renderWithRouter, stubThreadDom, successReply } from "../helpers";
+import { heldBack, refusalReply, renderWithRouter, stubScrollIntoView, stubThreadDom, successReply } from "../helpers";
 import { CHATS_PATH, stubTaskChats, type TaskChatsStub } from "../task-chats-daemon";
 import { LISTING_PATH, TASK_PATH, task } from "../task-screen-fixtures";
 import { frame } from "../setup/notice-store";
@@ -110,8 +111,9 @@ describe("the item", () => {
     expect(item.getAttribute("role")).toBe("menuitem");
     expect(item.textContent).toBe("Start research");
     expect(item.getAttribute("aria-label")).toBe("Start research, SAGA-3");
-    expect(item.nextElementSibling?.getAttribute("role")).toBe("separator");
-    expect(item.nextElementSibling?.nextElementSibling).toBe(openTask(menu));
+    expect(item.nextElementSibling?.hasAttribute("hidden")).toBe(true);
+    expect(item.nextElementSibling?.nextElementSibling?.getAttribute("role")).toBe("separator");
+    expect(item.nextElementSibling?.nextElementSibling?.nextElementSibling).toBe(openTask(menu));
   });
 
   it("is the first item of the right-click menu too", async () => {
@@ -318,6 +320,273 @@ describe("a press", () => {
     await user.click(item);
 
     expect(daemon.starts()).toBe(1);
+  });
+});
+
+describe("Restart", () => {
+  function restartItem(menu: HTMLElement): HTMLElement | null {
+    return within(menu).queryByRole("menuitem", { name: "Restart research, SAGA-3" });
+  }
+
+  function spoken(): string[] {
+    return useNoticeStore.getState().announced.map(({ words }) => words);
+  }
+
+  async function chooseRestart(user: User): Promise<HTMLElement> {
+    const menu = await openMenu(user);
+    await readyItem(menu);
+    await user.click(restartItem(menu)!);
+    return screen.findByRole("alertdialog");
+  }
+
+  it("follows Open, before the separator, in both menus", async () => {
+    const user = userEvent.setup();
+    await openBoard(stub([chat(2)]));
+
+    const menu = await openMenu(user);
+    const item = await readyItem(menu);
+
+    expect(item.nextElementSibling).toBe(restartItem(menu));
+    expect(restartItem(menu)!.textContent).toBe("Restart research");
+    expect(restartItem(menu)!.nextElementSibling?.getAttribute("role")).toBe("separator");
+    await closeMenu(user);
+
+    fireEvent.contextMenu(screen.getByText("Task 3"));
+    const contextMenu = await screen.findByRole("menu");
+    await readyItem(contextMenu);
+
+    expect(restartItem(contextMenu)).not.toBeNull();
+  });
+
+  it("is not there beside Start, nor while the chats are read", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([]);
+    await openBoard(daemon);
+
+    const menu = await openMenu(user);
+    await readyItem(menu);
+
+    expect(restartItem(menu)).toBeNull();
+    await closeMenu(user);
+    daemon.replies[CHATS_PATH] = heldBack().reply;
+
+    const reading = await openMenu(user);
+
+    expect(stepItem(reading).textContent).toBe("Reading the chats");
+    expect(restartItem(reading)).toBeNull();
+  });
+
+  /** The highlighted item is the focused one, and ArrowUp from Open task reaches Restart. */
+  async function expectHighlightOnFocus(user: User, menu: HTMLElement): Promise<void> {
+    await readyItem(menu);
+    await frame();
+
+    expect(restartItem(menu)).not.toBeNull();
+    expect(document.activeElement).toBe(openTask(menu));
+    expect(menu.querySelector("[data-highlighted]")).toBe(openTask(menu));
+
+    await user.keyboard("{ArrowUp}");
+
+    expect(document.activeElement).toBe(restartItem(menu));
+    expect(highlighted(restartItem(menu)!)).toBe(true);
+  }
+
+  it("keeps the highlight on the focused item when it shows after the read of a menu opened by the keyboard", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(2)]);
+    await openBoard(daemon);
+    const { reply, answer } = heldBack();
+    daemon.replies[CHATS_PATH] = reply;
+    const menu = await openMenuByKey(user);
+    await waitFor(() => {
+      expect(highlighted(openTask(menu))).toBe(true);
+    });
+
+    await act(async () => {
+      answer(successReply([chat(2)]));
+    });
+
+    await expectHighlightOnFocus(user, menu);
+  });
+
+  it("keeps the highlight on the focused item when it shows at the end of a restart while the menu is open", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(2)]);
+    const router = await openBoard(daemon);
+    const { reply, answer } = heldBack();
+    daemon.replies[`POST ${CHATS_PATH}`] = reply;
+    const dialog = await chooseRestart(user);
+    await user.click(within(dialog).getByRole("button", { name: "Stop and restart" }));
+    await waitFor(() => {
+      expect(daemon.restarts()).toBe(1);
+    });
+    await act(async () => {
+      router.history.back();
+    });
+    await screen.findByRole("button", { name: "Task menu SAGA-3" });
+    const menu = await openMenuByKey(user);
+    await waitFor(() => {
+      expect(highlighted(openTask(menu))).toBe(true);
+    });
+    expect(stepItem(menu).textContent).toBe("Restarting research");
+
+    daemon.records([chat(3)]);
+    daemon.replies[CHATS_PATH] = successReply([chat(2), chat(3)]);
+    await act(async () => {
+      answer(successReply({ chat: chat(3), started: true }));
+    });
+
+    await expectHighlightOnFocus(user, menu);
+  });
+
+  it("asks on the board before the task is read, and Cancel stays on the board with focus on the menu button", async () => {
+    stubScrollIntoView();
+    const user = userEvent.setup();
+    const daemon = stub([chat(2)]);
+    const { reply } = heldBack();
+    daemon.replies[TASK_PATH] = reply;
+    const router = await openBoard(daemon);
+
+    const dialog = await chooseRestart(user);
+
+    expect(dialog).toBe(screen.getByRole("alertdialog", { name: "Stop the agent in chat 2 of SAGA-3?" }));
+    await frame();
+    expect(screen.queryByRole("alertdialog")).not.toBeNull();
+
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(menuButton());
+    });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(router.state.location.pathname).toBe("/tasks");
+    expect(daemon.starts()).toBe(0);
+  });
+
+  it("asks on the read of this open, with an older read of the task in the cache", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(2)]);
+    const router = await openBoard(daemon);
+    const { client, queryClient } = router.options.context;
+    daemon.replies[TASK_PATH] = task({ fields: { workflow: "dev", step: "approve" } });
+    await queryClient.query(taskQuery(client, "SAGA", "SAGA-3"));
+    daemon.replies[TASK_PATH] = task({ fields: { workflow: "dev", step: "research" } });
+    await daemon.send([{ kind: "task", tag: "SAGA", id: "SAGA-3", change: "changed" }]);
+
+    const dialog = await chooseRestart(user);
+    await frame();
+    await frame();
+
+    expect(screen.queryByRole("alertdialog")).toBe(dialog);
+    expect(useNoticeStore.getState().notices).toEqual([]);
+
+    await user.click(within(dialog).getByRole("button", { name: "Stop and restart" }));
+
+    await waitFor(() => {
+      expect(daemon.restarts()).toBe(1);
+    });
+  });
+
+  it("opens the task view with the old chat, then the new chat by a replace, and Back returns to the board", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(2)]);
+    const router = await openBoard(daemon);
+    const entries = router.history.length;
+    const { reply, answer } = heldBack();
+    daemon.replies[`POST ${CHATS_PATH}`] = reply;
+    const dialog = await chooseRestart(user);
+
+    await user.click(within(dialog).getByRole("button", { name: "Stop and restart" }));
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ chat: "2" });
+    });
+    expect(router.state.location.pathname).toBe(TASK_PAGE);
+    expect(router.history.length).toBe(entries + 1);
+    expect(useUiStore.getState().boardReturn).toEqual(expect.objectContaining({ taskId: "SAGA-3", projects: "SAGA" }));
+    await waitFor(() => {
+      expect(daemon.restarts()).toBe(1);
+    });
+    expect(await screen.findByRole("button", { name: "Restarting research" })).toBeTruthy();
+
+    daemon.records([chat(3)]);
+    daemon.replies[CHATS_PATH] = successReply([chat(2), chat(3)]);
+    await act(async () => {
+      answer(successReply({ chat: chat(3), started: true }));
+    });
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ chat: "3" });
+    });
+    expect(router.history.length).toBe(entries + 1);
+    await frame();
+    expect(spoken()).toContain("The research chat of SAGA-3 restarted.");
+
+    await act(async () => {
+      router.history.back();
+    });
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/tasks");
+    });
+  });
+
+  it("restarts with no navigation after Back to the board during the wait, and says it", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(2)]);
+    const router = await openBoard(daemon);
+    const { reply, answer } = heldBack();
+    daemon.replies[`POST ${CHATS_PATH}`] = reply;
+    const dialog = await chooseRestart(user);
+    await user.click(within(dialog).getByRole("button", { name: "Stop and restart" }));
+    await waitFor(() => {
+      expect(daemon.restarts()).toBe(1);
+    });
+
+    await act(async () => {
+      router.history.back();
+    });
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/tasks");
+    });
+    const menu = await openMenu(user);
+    await frame();
+
+    expect(stepItem(menu).textContent).toBe("Restarting research");
+    expect(stepItem(menu).getAttribute("aria-label")).toBe("Restarting research, SAGA-3");
+    expect(stepItem(menu).getAttribute("aria-disabled")).toBe("true");
+    expect(restartItem(menu)).toBeNull();
+    await closeMenu(user);
+
+    daemon.records([chat(3)]);
+    daemon.replies[CHATS_PATH] = successReply([chat(2), chat(3)]);
+    await act(async () => {
+      answer(successReply({ chat: chat(3), started: true }));
+    });
+
+    await waitFor(() => {
+      expect(spoken()).toContain("The research chat of SAGA-3 restarted.");
+    });
+    expect(router.state.location.pathname).toBe("/tasks");
+    expect(daemon.restarts()).toBe(1);
+  });
+
+  it("returns focus to the h1 when the card left the board during the dialog", async () => {
+    const user = userEvent.setup();
+    const daemon = stub([chat(2)]);
+    await openBoard(daemon);
+    const dialog = await chooseRestart(user);
+    daemon.replies[LISTING_PATH] = listing([]);
+    await daemon.send([{ kind: "task", tag: "SAGA", id: "SAGA-3", change: "deleted" }]);
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Task menu SAGA-3" })).toBeNull();
+    });
+
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1 }));
+    });
   });
 });
 
