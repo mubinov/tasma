@@ -1,0 +1,11 @@
+title: Engineering flow
+instructions:
+  - instructions.md
+steps:
+  - {name: "dev:research", file: steps/research.md, owner: human}
+  - {name: "dev:setup", file: steps/setup.md, owner: agent}
+  - {name: "dev:implement", file: steps/implement.md, owner: agent}
+  - {name: "dev:review", file: steps/review.md, owner: agent}
+  - {name: "dev:test", file: steps/test.md, owner: agent}
+  - {name: "user:review", file: steps/user-review.md, owner: human}
+  - {name: "dev:integrate", file: steps/integrate.md, owner: agent}
