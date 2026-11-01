@@ -1,5 +1,6 @@
 import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AgentSetup, ChatAgent, SetupStatus } from "@tasma/protocol";
 import type { AgentAdapter, AgentEnv, AgentLaunch, LaunchResult } from "../../src/agents/adapter.js";
@@ -28,25 +29,34 @@ const DAEMON_ENV: AgentEnv = { PATH: "/usr/bin", HOME: "/home/alice" };
 
 const LAUNCH: AgentLaunch = { command: "fake-agent", args: [], env: {} };
 
-const NOT_RUN: Omit<AgentSetup, "agent"> = { installed: "not-run", loggedIn: "not-run", skill: "not-run" };
+const NOT_RUN: Omit<AgentSetup, "agent" | "skill"> = { installed: "not-run", loggedIn: "not-run" };
 
-/** By default, an adapter whose binary is only on `AGENT_PATH` and that is logged in. */
+/**
+ * By default, an adapter whose binary is only on `AGENT_PATH`, that is logged
+ * in, and whose skill path holds a file: this test file.
+ */
 function fakeAdapter(options: {
   agent?: ChatAgent;
   launch?: (env: AgentEnv) => LaunchResult;
   loggedIn?: (env: AgentEnv, signal: AbortSignal) => Promise<boolean | undefined>;
+  skillFiles?: (env: AgentEnv) => string[];
+  skillListed?: (env: AgentEnv, signal: AbortSignal) => Promise<boolean | undefined>;
 } = {}) {
   const launch = vi.fn(options.launch ?? ((env: AgentEnv) => (env.PATH === AGENT_PATH ? LAUNCH : { missing: "No agent binary" })));
   const loggedIn = vi.fn(options.loggedIn ?? (async () => true));
+  const skillFiles = vi.fn(options.skillFiles ?? (() => [fileURLToPath(import.meta.url)]));
+  const skillListed = vi.fn(options.skillListed ?? (async () => false));
   const adapter: AgentAdapter = {
     agent: options.agent ?? "claude",
     launch,
     loggedIn,
+    skillFiles,
+    skillListed,
     notLoggedIn: "Log in to the agent first",
     sessionGone: "The agent lost the chat",
     filterUpdate: (update) => update,
   };
-  return { adapter, launch, loggedIn };
+  return { adapter, launch, loggedIn, skillFiles, skillListed };
 }
 
 /** A shell read that gives `result`, and counts its calls. */
@@ -99,7 +109,7 @@ async function cliDir(): Promise<string> {
 }
 
 describe("GET /setup in start mode", () => {
-  it("gives fail for the project and the workflow of an empty tree, and runs no other check", async () => {
+  it("gives fail for the project and the workflow of an empty tree, and checks only the skill of the agent", async () => {
     const { adapter, launch, loggedIn } = fakeAdapter();
     const shellEnv = shellGiving({ env: { PATH: AGENT_PATH } });
     const { server } = await serving(await projectsRoot(), { adapters: [adapter], shellEnv });
@@ -108,7 +118,7 @@ describe("GET /setup in start mode", () => {
       project: "fail",
       workflow: "fail",
       cli: "not-run",
-      agents: [{ agent: "claude", ...NOT_RUN }],
+      agents: [{ agent: "claude", ...NOT_RUN, skill: "pass" }],
     });
     expect(shellEnv).not.toHaveBeenCalled();
     expect(launch).not.toHaveBeenCalled();
@@ -181,10 +191,16 @@ describe("GET /setup in start mode", () => {
     expect(await statusOf(server, "/setup")).toMatchObject({ workflow: "pass" });
   });
 
-  it.each(["true", "false", ""])("accepts skipSkill=%s and gives skill not-run", async (value) => {
+  it("accepts skipSkill=true and gives skill not-run", async () => {
     const { server } = await serving(await readyRoot());
 
-    expect((await statusOf(server, `/setup?skipSkill=${value}`)).agents).toEqual([{ agent: "claude", ...NOT_RUN }]);
+    expect((await statusOf(server, "/setup?skipSkill=true")).agents).toEqual([{ agent: "claude", ...NOT_RUN, skill: "not-run" }]);
+  });
+
+  it.each(["false", ""])("accepts skipSkill=%s and runs the skill check", async (value) => {
+    const { server } = await serving(await readyRoot());
+
+    expect((await statusOf(server, `/setup?skipSkill=${value}`)).agents).toEqual([{ agent: "claude", ...NOT_RUN, skill: "pass" }]);
   });
 
   it("gives one entry for each adapter, in the order of the adapters", async () => {
@@ -277,7 +293,7 @@ describe("GET /setup in full mode", () => {
       const { server } = await serving(await readyRoot(), { adapters: [adapter], env });
 
       expect((await statusOf(server, "/setup?mode=full")).agents).toEqual([
-        { agent: "claude", installed: "pass", loggedIn: "pass", skill: "not-run" },
+        { agent: "claude", installed: "pass", loggedIn: "pass", skill: "pass" },
       ]);
       expect(loggedIn).toHaveBeenCalledWith(env, expect.any(AbortSignal));
     });
@@ -289,7 +305,7 @@ describe("GET /setup in full mode", () => {
       const { server } = await serving(await readyRoot(), { adapters: [adapter], shellEnv });
 
       expect((await statusOf(server, "/setup?mode=full")).agents).toEqual([
-        { agent: "claude", installed: "pass", loggedIn: "pass", skill: "not-run" },
+        { agent: "claude", installed: "pass", loggedIn: "pass", skill: "pass" },
       ]);
       expect(launch.mock.calls).toEqual([[DAEMON_ENV], [shell]]);
       expect(loggedIn).toHaveBeenCalledWith(shell, expect.any(AbortSignal));
@@ -308,7 +324,7 @@ describe("GET /setup in full mode", () => {
       const { server } = await serving(await readyRoot(), { adapters: [adapter], shellEnv });
 
       expect((await statusOf(server, "/setup?mode=full")).agents).toEqual([
-        { agent: "claude", installed: "fail", loggedIn: "not-run", skill: "not-run" },
+        { agent: "claude", installed: "fail", loggedIn: "not-run", skill: "pass" },
       ]);
       expect(loggedIn).not.toHaveBeenCalled();
     });
@@ -319,7 +335,7 @@ describe("GET /setup in full mode", () => {
       const { server } = await serving(await readyRoot(), { adapters: [adapter], shellEnv });
 
       expect((await statusOf(server, "/setup?mode=full")).agents).toEqual([
-        { agent: "claude", installed: "unknown", loggedIn: "not-run", skill: "not-run" },
+        { agent: "claude", installed: "unknown", loggedIn: "not-run", skill: "pass" },
       ]);
       expect(loggedIn).not.toHaveBeenCalled();
     });
@@ -333,7 +349,7 @@ describe("GET /setup in full mode", () => {
       const { server } = await serving(await readyRoot(), { adapters: [adapter] });
 
       expect((await statusOf(server, "/setup?mode=full")).agents).toEqual([
-        { agent: "claude", installed: "unknown", loggedIn: "not-run", skill: "not-run" },
+        { agent: "claude", installed: "unknown", loggedIn: "not-run", skill: "pass" },
       ]);
       expect(loggedIn).not.toHaveBeenCalled();
     });
@@ -375,8 +391,8 @@ describe("GET /setup in full mode", () => {
       waiting[0]?.(true);
 
       expect((await reply).agents).toEqual([
-        { agent: "codex", installed: "pass", loggedIn: "pass", skill: "not-run" },
-        { agent: "claude", installed: "pass", loggedIn: "fail", skill: "not-run" },
+        { agent: "codex", installed: "pass", loggedIn: "pass", skill: "pass" },
+        { agent: "claude", installed: "pass", loggedIn: "fail", skill: "pass" },
       ]);
     });
   });
@@ -423,7 +439,7 @@ describe("GET /setup in full mode", () => {
         project: "pass",
         workflow: "pass",
         cli: "unknown",
-        agents: [{ agent: "claude", installed: "unknown", loggedIn: "not-run", skill: "not-run" }],
+        agents: [{ agent: "claude", installed: "unknown", loggedIn: "not-run", skill: "pass" }],
       });
       expect(loggedIn).not.toHaveBeenCalled();
     });
@@ -442,5 +458,306 @@ describe("GET /setup in full mode", () => {
 
       expect((await reply).agents[0]?.loggedIn).toBe("unknown");
     });
+  });
+});
+
+describe("the skill check of GET /setup", () => {
+  const SHELL_ENV: AgentEnv = { PATH: "/usr/local/bin", HOME: "/home/alice", CLAUDE_CONFIG_DIR: "/srv/agent" };
+
+  /** A path in a new folder, with nothing at it. */
+  async function freePath(): Promise<string> {
+    return join(await target(), "SKILL.md");
+  }
+
+  async function plantedSkill(): Promise<string> {
+    const path = await freePath();
+    await writeFile(path, "");
+    return path;
+  }
+
+  /** A link to itself: its `stat` gives `ELOOP`. */
+  async function loopingLink(): Promise<string> {
+    const path = await freePath();
+    await symlink(path, path);
+    return path;
+  }
+
+  /** An adapter whose one path differs in the environment of the login shell. */
+  function placedAdapter(
+    paths: { daemon: string; shell: string },
+    skillListed?: (env: AgentEnv, signal: AbortSignal) => Promise<boolean | undefined>,
+  ) {
+    return fakeAdapter({ skillFiles: (env) => [env === SHELL_ENV ? paths.shell : paths.daemon], skillListed });
+  }
+
+  async function skillOf(
+    adapter: AgentAdapter,
+    options: { path?: string; shellEnv?: (signal: AbortSignal) => Promise<ShellEnv> } = {},
+  ): Promise<AgentSetup["skill"] | undefined> {
+    const shellEnv = options.shellEnv ?? shellGiving({ env: SHELL_ENV });
+    const { server } = await serving(await readyRoot(), { adapters: [adapter], shellEnv });
+    return (await statusOf(server, options.path ?? "/setup")).agents[0]?.skill;
+  }
+
+  it("gives pass in start mode for a file at a path of the daemon environment, with no shell read and no skillListed", async () => {
+    const skill = await plantedSkill();
+    const { adapter, skillFiles, skillListed } = fakeAdapter({ skillFiles: () => [skill] });
+    const shellEnv = shellGiving({ env: SHELL_ENV });
+
+    expect(await skillOf(adapter, { shellEnv })).toBe("pass");
+
+    expect(skillFiles.mock.calls).toEqual([[DAEMON_ENV]]);
+    expect(shellEnv).not.toHaveBeenCalled();
+    expect(skillListed).not.toHaveBeenCalled();
+  });
+
+  it("gives pass in full mode for a file at a path of the daemon environment, and asks only for the paths of that environment", async () => {
+    const skill = await plantedSkill();
+    const { adapter, skillFiles, skillListed } = fakeAdapter({ skillFiles: () => [skill] });
+    const shellEnv = shellGiving({ env: SHELL_ENV });
+
+    expect(await skillOf(adapter, { path: "/setup?mode=full", shellEnv })).toBe("pass");
+
+    expect(skillFiles.mock.calls).toEqual([[DAEMON_ENV]]);
+    expect(skillListed).not.toHaveBeenCalled();
+    expect(shellEnv).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives pass for a link to a file", async () => {
+    const link = await freePath();
+    await symlink(await plantedSkill(), link);
+    const { adapter, skillListed } = fakeAdapter({ skillFiles: () => [link] });
+
+    expect(await skillOf(adapter)).toBe("pass");
+    expect(skillListed).not.toHaveBeenCalled();
+  });
+
+  it("gives pass for a file at a later path of the same environment", async () => {
+    const paths = [await loopingLink(), await freePath(), await plantedSkill()];
+    const { adapter, skillListed } = fakeAdapter({ skillFiles: () => paths });
+    const shellEnv = shellGiving({ env: SHELL_ENV });
+
+    expect(await skillOf(adapter, { shellEnv })).toBe("pass");
+
+    expect(shellEnv).not.toHaveBeenCalled();
+    expect(skillListed).not.toHaveBeenCalled();
+  });
+
+  it("gives not-run with skipSkill=true, and runs no part of the check", async () => {
+    const { adapter, skillFiles, skillListed } = fakeAdapter();
+    const shellEnv = shellGiving({ env: SHELL_ENV });
+
+    expect(await skillOf(adapter, { path: "/setup?skipSkill=true", shellEnv })).toBe("not-run");
+
+    expect(skillFiles).not.toHaveBeenCalled();
+    expect(shellEnv).not.toHaveBeenCalled();
+    expect(skillListed).not.toHaveBeenCalled();
+  });
+
+  it("runs on an empty tree too", async () => {
+    const missing = await freePath();
+    const { adapter } = fakeAdapter({ skillFiles: () => [missing] });
+    const shellEnv = shellGiving({ env: SHELL_ENV });
+    const { server } = await serving(await projectsRoot(), { adapters: [adapter], shellEnv });
+
+    expect(await statusOf(server, "/setup")).toEqual({
+      project: "fail",
+      workflow: "fail",
+      cli: "not-run",
+      agents: [{ agent: "claude", ...NOT_RUN, skill: "fail" }],
+    });
+  });
+
+  it("gives pass for a file only at a path of the login shell, with no skillListed", async () => {
+    const { adapter, skillListed } = placedAdapter({ daemon: await freePath(), shell: await plantedSkill() });
+
+    expect(await skillOf(adapter)).toBe("pass");
+    expect(skillListed).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [true, "pass"],
+    [false, "fail"],
+    [undefined, "unknown"],
+  ] as const)("gives %s from skillListed as %s, and asks in the environment of the login shell", async (answer, check) => {
+    const paths = { daemon: await freePath(), shell: await freePath() };
+    const { adapter, skillListed } = placedAdapter(paths, async () => answer);
+
+    expect(await skillOf(adapter)).toBe(check);
+    expect(skillListed).toHaveBeenCalledWith(SHELL_ENV, expect.any(AbortSignal));
+  });
+
+  it.each([
+    ["a link with no target", async () => {
+      const link = await freePath();
+      await symlink(await freePath(), link);
+      return link;
+    }],
+    ["a directory named SKILL.md", async () => {
+      const path = await freePath();
+      await mkdir(path);
+      return path;
+    }],
+    ["a file where a folder of the path must be", async () => join(await plantedSkill(), "SKILL.md")],
+  ])("gives fail for %s", async (_name, pathOf: () => Promise<string>) => {
+    const path = await pathOf();
+    const { adapter } = fakeAdapter({ skillFiles: () => [path] });
+
+    expect(await skillOf(adapter)).toBe("fail");
+  });
+
+  describe.each(["daemon", "shell"] as const)("with another stat error at the path of the %s environment", (place) => {
+    async function pathsWithLoop(): Promise<{ daemon: string; shell: string }> {
+      return { daemon: await freePath(), shell: await freePath(), [place]: await loopingLink() };
+    }
+
+    it("gives unknown when skillListed gives false", async () => {
+      const { adapter } = placedAdapter(await pathsWithLoop());
+
+      expect(await skillOf(adapter)).toBe("unknown");
+    });
+
+    it("gives pass when skillListed gives true", async () => {
+      const { adapter } = placedAdapter(await pathsWithLoop(), async () => true);
+
+      expect(await skillOf(adapter)).toBe("pass");
+    });
+  });
+
+  it("gives pass for a file at a path of the login shell after another stat error at the path of the daemon", async () => {
+    const { adapter, skillListed } = placedAdapter({ daemon: await loopingLink(), shell: await plantedSkill() });
+
+    expect(await skillOf(adapter)).toBe("pass");
+    expect(skillListed).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, () => Promise<ShellEnv>]>([
+    ["fails", async () => ({ failed: "the shell printed no environment" })],
+    ["rejects", async () => {
+      throw new Error("spawn E2BIG");
+    }],
+  ])("gives unknown when the shell read %s, does not call skillListed, and the request succeeds", async (_name, shellEnv) => {
+    const missing = await freePath();
+    const { adapter, skillListed } = fakeAdapter({ skillFiles: () => [missing] });
+
+    expect(await skillOf(adapter, { shellEnv })).toBe("unknown");
+    expect(skillListed).not.toHaveBeenCalled();
+  });
+
+  it("gives unknown when skillFiles throws, and the request succeeds", async () => {
+    const { adapter } = fakeAdapter({
+      skillFiles: () => {
+        throw new Error("no home directory");
+      },
+    });
+
+    expect(await skillOf(adapter)).toBe("unknown");
+  });
+
+  it("gives unknown when skillListed rejects, and the request succeeds", async () => {
+    const paths = { daemon: await freePath(), shell: await freePath() };
+    const { adapter } = placedAdapter(paths, async () => {
+      throw new Error("spawn EAGAIN");
+    });
+
+    expect(await skillOf(adapter)).toBe("unknown");
+  });
+
+  it("runs when installed is fail", async () => {
+    const skill = await plantedSkill();
+    const { adapter } = fakeAdapter({ skillFiles: () => [skill] });
+    const shellEnv = shellGiving({ env: SHELL_ENV });
+    const { server } = await serving(await readyRoot(), { adapters: [adapter], shellEnv });
+
+    expect((await statusOf(server, "/setup?mode=full")).agents).toEqual([
+      { agent: "claude", installed: "fail", loggedIn: "not-run", skill: "pass" },
+    ]);
+  });
+
+  it("runs at the same time as the login check", async () => {
+    const missing = await freePath();
+    let release: ((answer: boolean) => void) | undefined;
+    const { adapter, skillListed } = fakeAdapter({
+      loggedIn: () => new Promise((resolve) => (release = resolve)),
+      skillFiles: () => [missing],
+    });
+    const env = { ...DAEMON_ENV, PATH: AGENT_PATH };
+    const shellEnv = shellGiving({ env: SHELL_ENV });
+    const { server } = await serving(await readyRoot(), { adapters: [adapter], env, shellEnv });
+
+    const reply = statusOf(server, "/setup?mode=full");
+    await vi.waitFor(() => expect(skillListed).toHaveBeenCalledTimes(1));
+    release?.(true);
+
+    expect((await reply).agents[0]).toMatchObject({ loggedIn: "pass", skill: "fail" });
+  });
+
+  it("reads the shell once for one full request with a skill miss and a missing binary, also when the read ends before the stat", async () => {
+    const missing = await freePath();
+    const { adapter } = fakeAdapter({ skillFiles: () => [missing] });
+    const shellEnv = shellGiving({ env: SHELL_ENV });
+
+    expect(await skillOf(adapter, { path: "/setup?mode=full", shellEnv })).toBe("fail");
+
+    expect(shellEnv).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the shell again for the next request, so that nothing is kept", async () => {
+    const missing = await freePath();
+    const { adapter } = fakeAdapter({ skillFiles: () => [missing] });
+    const shellEnv = shellGiving({ env: SHELL_ENV });
+    const { server } = await serving(await readyRoot(), { adapters: [adapter], shellEnv });
+
+    await statusOf(server, "/setup");
+    await statusOf(server, "/setup");
+
+    expect(shellEnv).toHaveBeenCalledTimes(2);
+  });
+
+  it("ends with stop() during the shell read, and gives unknown", async () => {
+    const missing = await freePath();
+    const { adapter, skillListed } = fakeAdapter({ skillFiles: () => [missing] });
+    const shellEnv = vi.fn((signal: AbortSignal) => new Promise<ShellEnv>((resolve) => {
+      signal.addEventListener("abort", () => resolve({ failed: "the daemon is stopping" }), { once: true });
+    }));
+    const { server, checks } = await serving(await readyRoot(), { adapters: [adapter], shellEnv });
+
+    const reply = statusOf(server, "/setup");
+    await vi.waitFor(() => expect(shellEnv).toHaveBeenCalledTimes(1));
+    checks.stop();
+
+    expect((await reply).agents[0]?.skill).toBe("unknown");
+    expect(skillListed).not.toHaveBeenCalled();
+  });
+
+  it("gives the signal of stop() to skillListed", async () => {
+    const missing = await freePath();
+    const { adapter, skillListed } = fakeAdapter({
+      skillFiles: () => [missing],
+      skillListed: (_env, signal) => new Promise((resolve) => {
+        signal.addEventListener("abort", () => resolve(undefined), { once: true });
+      }),
+    });
+    const shellEnv = shellGiving({ env: SHELL_ENV });
+    const { server, checks } = await serving(await readyRoot(), { adapters: [adapter], shellEnv });
+
+    const reply = statusOf(server, "/setup");
+    await vi.waitFor(() => expect(skillListed).toHaveBeenCalledTimes(1));
+    checks.stop();
+
+    expect((await reply).agents[0]?.skill).toBe("unknown");
+  });
+
+  it("gives each adapter its own result, in the order of the adapters", async () => {
+    const missing = await freePath();
+    const codex = fakeAdapter({ agent: "codex", skillFiles: () => [missing] });
+    const claude = fakeAdapter();
+    const shellEnv = shellGiving({ env: SHELL_ENV });
+    const { server } = await serving(await readyRoot(), { adapters: [codex.adapter, claude.adapter], shellEnv });
+
+    expect((await statusOf(server, "/setup")).agents).toEqual([
+      { agent: "codex", ...NOT_RUN, skill: "fail" },
+      { agent: "claude", ...NOT_RUN, skill: "pass" },
+    ]);
   });
 });

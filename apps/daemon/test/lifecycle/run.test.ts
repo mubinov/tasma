@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { Chat, ChatEntry, DaemonRecord, EventsReply, FeedEvent, SetupStatus } from "@tasma/protocol";
+import type { AgentEnv } from "../../src/agents/adapter.js";
 import { daemonAnswers } from "../../src/lifecycle/probe.js";
 import { readRecord, recordPath } from "../../src/lifecycle/record.js";
 import { runDaemon, startDaemon } from "../../src/lifecycle/run.js";
@@ -112,8 +113,11 @@ function capture(): { io: DaemonIo; out: string[]; err: string[] } {
 }
 
 /** A real daemon over a temp tree, stopped when the test ends. */
-async function daemonOn(root: string, options: { port?: number; drainMs?: number } = {}): Promise<Serving> {
-  const start = await startDaemon({ port: options.port ?? 0, root, drainMs: options.drainMs });
+async function daemonOn(
+  root: string,
+  options: { port?: number; drainMs?: number; env?: AgentEnv } = {},
+): Promise<Serving> {
+  const start = await startDaemon({ port: options.port ?? 0, root, drainMs: options.drainMs, env: options.env });
   if (!start.started) throw new Error(start.message);
   onTestFinished(() => start.stop());
 
@@ -607,7 +611,9 @@ describe("the daemon as a process", () => {
 describe("the setup route", () => {
   it("answers with the checks of the tree and of every agent", async () => {
     const root = await projectsRoot();
-    const start = await daemonOn(root);
+    const home = await target();
+    await plant(join(home, ".claude", "skills", "tasma", "SKILL.md"), "");
+    const start = await daemonOn(root, { env: { HOME: home, PATH: "" } });
 
     const response = await fetch(`${start.url}/setup`, { headers: bearer(await tokenOf(root)) });
 
@@ -616,7 +622,7 @@ describe("the setup route", () => {
       project: "fail",
       workflow: "fail",
       cli: "not-run",
-      agents: [{ agent: "claude", installed: "not-run", loggedIn: "not-run", skill: "not-run" }],
+      agents: [{ agent: "claude", installed: "not-run", loggedIn: "not-run", skill: "pass" }],
     });
   });
 

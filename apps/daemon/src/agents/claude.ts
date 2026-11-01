@@ -42,9 +42,11 @@ export const CLAUDE_SESSION_VARIABLES = [
 /** The largest `_meta.claudeCode.toolResponse` an update keeps, in bytes of JSON. */
 const TOOL_RESPONSE_LIMIT = 8 * 1024;
 
-const AUTH_TIMEOUT_MS = 5000;
+const COMMAND_TIMEOUT_MS = 5000;
 
-const AUTH_OUTPUT_LIMIT = 64 * 1024;
+const COMMAND_OUTPUT_LIMIT = 64 * 1024;
+
+const SKILL_PLUGIN = "tasma@tasma";
 
 /** `compiled` is a binary that `bun build --compile` made, which holds the adapter in its own file system. */
 export type ClaudeHost = { runtime: "node" | "bun" | "compiled"; resolve(specifier: string): string };
@@ -77,7 +79,7 @@ function findClaude(dirs: string[]): string | undefined {
   return dirs.map((dir) => join(dir, "claude")).find(isExecutableFile);
 }
 
-/** The environment of each process that runs Claude Code: the agent of a chat and the login check. */
+/** The environment of each process that runs Claude Code: the agent of a chat, the login check and the plugin list. */
 function claudeEnv(env: AgentEnv, path: string[]): AgentEnv {
   const kept: AgentEnv = { ...env, PATH: path.join(delimiter) };
   for (const name of CLAUDE_SESSION_VARIABLES) delete kept[name];
@@ -100,29 +102,39 @@ function filterUpdate(update: AcpObject): AcpObject {
   return { ...update, _meta: { ...meta, claudeCode: kept } };
 }
 
-function loginOf(stdout: string): boolean | undefined {
-  let status: unknown;
+function jsonOf(stdout: string): unknown {
   try {
-    status = JSON.parse(stdout);
+    return JSON.parse(stdout);
   } catch {
     return undefined;
   }
+}
+
+function loginOf(stdout: string): boolean | undefined {
+  const status = jsonOf(stdout);
   return isRecord(status) && typeof status.loggedIn === "boolean" ? status.loggedIn : undefined;
 }
 
-/**
- * Runs `claude auth status --json`. The variables of an API key or a token
- * count as a login there, as they do for a chat in the same environment.
- */
-function loggedIn(env: AgentEnv, signal: AbortSignal, timeoutMs: number): Promise<boolean | undefined> {
-  const path = agentPath(env.PATH);
-  const claude = findClaude(path);
-  if (claude === undefined || signal.aborted) return Promise.resolve(undefined);
+function skillPluginOf(stdout: string): boolean | undefined {
+  const plugins = jsonOf(stdout);
+  if (!Array.isArray(plugins)) return undefined;
+  return plugins.some((plugin: unknown) => isRecord(plugin) && plugin.id === SKILL_PLUGIN && plugin.enabled === true);
+}
+
+/** The stdout of a `claude` command, or `undefined` when no answer can come from it. */
+function claudeOutput(
+  claude: string,
+  args: string[],
+  env: AgentEnv,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<string | undefined> {
+  if (signal.aborted) return Promise.resolve(undefined);
   let child: ChildProcess;
   try {
-    child = spawn(claude, ["auth", "status", "--json"], {
+    child = spawn(claude, args, {
       cwd: env.HOME ?? homedir(),
-      env: claudeEnv(env, path),
+      env,
       stdio: ["ignore", "pipe", "ignore"],
       // A group of its own, so that the kill also ends the processes that claude starts.
       detached: true,
@@ -139,10 +151,10 @@ function loggedIn(env: AgentEnv, signal: AbortSignal, timeoutMs: number): Promis
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;
-    const finish = (answer: boolean | undefined): void => {
+    const finish = (output: string | undefined): void => {
       clearTimeout(timer);
       signal.removeEventListener("abort", stop);
-      resolve(answer);
+      resolve(output);
     };
     const stop = (): void => {
       killGroup(child, pid);
@@ -154,21 +166,51 @@ function loggedIn(env: AgentEnv, signal: AbortSignal, timeoutMs: number): Promis
 
     stdout.on("data", (chunk: Buffer) => {
       size += chunk.length;
-      if (size > AUTH_OUTPUT_LIMIT) stop();
+      if (size > COMMAND_OUTPUT_LIMIT) stop();
       else chunks.push(chunk);
     });
     // A kill that fails emits `error`.
     child.on("error", () => finish(undefined));
-    // A number is an exit code: exit code 1 with JSON is the answer for a user who is not logged in.
-    child.on("close", (code) => finish(code === null ? undefined : loginOf(Buffer.concat(chunks).toString("utf8"))));
+    // A number is an exit code, and the caller reads the output of each exit code:
+    // `auth status` gives JSON with exit code 1 for a user who is not logged in.
+    child.on("close", (code) => finish(code === null ? undefined : Buffer.concat(chunks).toString("utf8")));
   });
 }
 
+/**
+ * Runs `claude auth status --json`. The variables of an API key or a token
+ * count as a login there, as they do for a chat in the same environment.
+ */
+async function loggedIn(env: AgentEnv, signal: AbortSignal, timeoutMs: number): Promise<boolean | undefined> {
+  const path = agentPath(env.PATH);
+  const claude = findClaude(path);
+  if (claude === undefined) return undefined;
+  const stdout = await claudeOutput(claude, ["auth", "status", "--json"], claudeEnv(env, path), signal, timeoutMs);
+  return stdout === undefined ? undefined : loginOf(stdout);
+}
+
+/** A relative `CLAUDE_CONFIG_DIR` resolves in the folder of each chat, which is not a fixed path. */
+function skillFiles(env: AgentEnv): string[] {
+  const config = env.CLAUDE_CONFIG_DIR;
+  const folder = config !== undefined && isAbsolute(config) ? config : join(env.HOME ?? homedir(), ".claude");
+  return [join(folder, "skills", "tasma", "SKILL.md")];
+}
+
+/** Checks the signal first, so that a cancelled check does not read as a machine with no `claude`. */
+async function skillListed(env: AgentEnv, signal: AbortSignal, timeoutMs: number): Promise<boolean | undefined> {
+  if (signal.aborted) return undefined;
+  const path = agentPath(env.PATH);
+  const claude = findClaude(path);
+  if (claude === undefined) return false;
+  const stdout = await claudeOutput(claude, ["plugin", "list", "--json"], claudeEnv(env, path), signal, timeoutMs);
+  return stdout === undefined ? undefined : skillPluginOf(stdout);
+}
+
 /** The options are for the tests alone. */
-export function createClaudeAdapter(options: { host?: ClaudeHost; authTimeoutMs?: number } = {}): AgentAdapter {
+export function createClaudeAdapter(options: { host?: ClaudeHost; commandTimeoutMs?: number } = {}): AgentAdapter {
   const {
     host = { runtime: runtimeOf(), resolve: (specifier) => import.meta.resolve(specifier) },
-    authTimeoutMs = AUTH_TIMEOUT_MS,
+    commandTimeoutMs = COMMAND_TIMEOUT_MS,
   } = options;
   return {
     agent: "claude",
@@ -191,7 +233,9 @@ export function createClaudeAdapter(options: { host?: ClaudeHost; authTimeoutMs?
       const flags = host.runtime === "bun" ? ["--no-env-file", "--config=/dev/null"] : [];
       return { command: process.execPath, args: [...flags, entry], env: agentEnv };
     },
-    loggedIn: (env, signal) => loggedIn(env, signal, authTimeoutMs),
+    loggedIn: (env, signal) => loggedIn(env, signal, commandTimeoutMs),
+    skillFiles,
+    skillListed: (env, signal) => skillListed(env, signal, commandTimeoutMs),
     async serve() {
       // A literal, so that the build keeps it as an external import and
       // `bun build --compile` puts the adapter into the binary.

@@ -50,6 +50,48 @@ function launched(env: Record<string, string | undefined>, adapter = claudeAdapt
   return launch;
 }
 
+/** A directory holding an executable `claude` that runs `script`. */
+async function claudeRunning(script: string): Promise<string> {
+  const dir = await target();
+  await writeFile(join(dir, "claude"), `#!/bin/sh\n${script}\n`);
+  await chmod(join(dir, "claude"), 0o755);
+  return dir;
+}
+
+function liveSignal(): AbortSignal {
+  return new AbortController().signal;
+}
+
+/**
+ * A `claude` that ignores SIGTERM, runs `print`, and then waits in a process
+ * that it does not `exec`. It writes its own process id into `out/claude`,
+ * and the id of the process that waits into `out/inner`.
+ */
+function lingeringClaude(out: string, print: string): Promise<string> {
+  // Absolute programs: PATH holds the temporary directory alone. A child keeps the ignored SIGTERM.
+  return claudeRunning([
+    "trap '' TERM",
+    `echo $$ > '${out}/claude'`,
+    print,
+    `/bin/sh -c "echo \\$\\$ > '${out}/inner'; exec /bin/sleep 10"`,
+  ].join("\n"));
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Waits until each process whose id is in a file of `out` is gone. */
+async function gone(out: string, ...names: string[]): Promise<void> {
+  const pids = await Promise.all(names.map((name) => untilPid(join(out, name), `${name} wrote its process id`)));
+  await until(() => !pids.some(alive), `processes ${pids.join(", ")} are gone`);
+}
+
 describe("claudeAdapter.launch", () => {
   it("finds the first claude on PATH that this user can run", async () => {
     const first = await binWith(0o755);
@@ -258,18 +300,6 @@ describe("claudeAdapter.filterUpdate", () => {
 });
 
 describe("claudeAdapter.loggedIn", () => {
-  /** A directory holding an executable `claude` that runs `script`. */
-  async function claudeRunning(script: string): Promise<string> {
-    const dir = await target();
-    await writeFile(join(dir, "claude"), `#!/bin/sh\n${script}\n`);
-    await chmod(join(dir, "claude"), 0o755);
-    return dir;
-  }
-
-  function liveSignal(): AbortSignal {
-    return new AbortController().signal;
-  }
-
   it("gives true for loggedIn true with exit code 0", async () => {
     const dir = await claudeRunning("echo '{\"loggedIn\":true,\"authMethod\":\"claude.ai\"}'");
 
@@ -345,43 +375,13 @@ describe("claudeAdapter.loggedIn", () => {
     expect((await readFile(join(out, "cwd"), "utf8")).trim()).toBe(await realpath(homedir()));
   });
 
-  /**
-   * A `claude` that ignores SIGTERM, runs `print`, and then waits in a process
-   * that it does not `exec`. It writes its own process id into `out/claude`,
-   * and the id of the process that waits into `out/inner`.
-   */
-  function lingeringClaude(out: string, print: string): Promise<string> {
-    // Absolute programs: PATH holds the temporary directory alone. A child keeps the ignored SIGTERM.
-    return claudeRunning([
-      "trap '' TERM",
-      `echo $$ > '${out}/claude'`,
-      print,
-      `/bin/sh -c "echo \\$\\$ > '${out}/inner'; exec /bin/sleep 10"`,
-    ].join("\n"));
-  }
-
-  function alive(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /** Waits until each process whose id is in a file of `out` is gone. */
-  async function gone(out: string, ...names: string[]): Promise<void> {
-    const pids = await Promise.all(names.map((name) => untilPid(join(out, name), `${name} wrote its process id`)));
-    await until(() => !pids.some(alive), `processes ${pids.join(", ")} are gone`);
-  }
-
   it("gives undefined for output over 64 KiB, and ends claude", async () => {
     const out = await target();
     const dir = await lingeringClaude(
       out,
       "printf '{\"loggedIn\":true,\"pad\":\"'; /usr/bin/head -c 70000 /dev/zero | /usr/bin/tr '\\0' x; printf '\"}'",
     );
-    const adapter = createClaudeAdapter({ authTimeoutMs: 60_000 });
+    const adapter = createClaudeAdapter({ commandTimeoutMs: 60_000 });
 
     await expect(adapter.loggedIn({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBeUndefined();
 
@@ -392,7 +392,7 @@ describe("claudeAdapter.loggedIn", () => {
     const out = await target();
     const dir = await lingeringClaude(out, "echo '{\"loggedIn\":true}'");
     // Long enough for claude to start its child, as the first run of a new executable is slow on macOS.
-    const adapter = createClaudeAdapter({ authTimeoutMs: 2000 });
+    const adapter = createClaudeAdapter({ commandTimeoutMs: 2000 });
 
     await expect(adapter.loggedIn({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBeUndefined();
 
@@ -402,7 +402,7 @@ describe("claudeAdapter.loggedIn", () => {
   it("gives undefined when the signal is cancelled while claude runs, and ends claude and the processes it started", async () => {
     const out = await target();
     const dir = await lingeringClaude(out, "echo '{\"loggedIn\":true}'");
-    const adapter = createClaudeAdapter({ authTimeoutMs: 60_000 });
+    const adapter = createClaudeAdapter({ commandTimeoutMs: 60_000 });
     const controller = new AbortController();
 
     const answer = adapter.loggedIn({ PATH: dir, HOME: dir }, controller.signal);
@@ -425,7 +425,7 @@ describe("claudeAdapter.loggedIn", () => {
   it("leaves no listener on the signal after an answer, a start that fails and a time limit", async () => {
     const dir = await claudeRunning("echo '{\"loggedIn\":true}'");
     const slow = await claudeRunning("exec /bin/sleep 10");
-    const short = createClaudeAdapter({ authTimeoutMs: 200 });
+    const short = createClaudeAdapter({ commandTimeoutMs: 200 });
     const controller = new AbortController();
 
     await expect(claudeAdapter.loggedIn({ PATH: dir, HOME: dir }, controller.signal)).resolves.toBe(true);
@@ -452,5 +452,132 @@ describe("claudeAdapter.loggedIn", () => {
 
     await expect(answer).resolves.toBeUndefined();
     expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+  });
+});
+
+describe("claudeAdapter.skillFiles", () => {
+  it("gives the path in HOME with no CLAUDE_CONFIG_DIR", () => {
+    expect(claudeAdapter.skillFiles({ HOME: "/home/alice" })).toEqual(["/home/alice/.claude/skills/tasma/SKILL.md"]);
+  });
+
+  it("gives only the path in an absolute CLAUDE_CONFIG_DIR", () => {
+    expect(claudeAdapter.skillFiles({ HOME: "/home/alice", CLAUDE_CONFIG_DIR: "/srv/agent" })).toEqual(["/srv/agent/skills/tasma/SKILL.md"]);
+  });
+
+  it.each(["", "agent/config"])("gives the path in HOME with a CLAUDE_CONFIG_DIR of '%s'", (value) => {
+    expect(claudeAdapter.skillFiles({ HOME: "/home/alice", CLAUDE_CONFIG_DIR: value })).toEqual(["/home/alice/.claude/skills/tasma/SKILL.md"]);
+  });
+
+  it("gives the path in the home directory of this user with no HOME", () => {
+    expect(claudeAdapter.skillFiles({})).toEqual([join(homedir(), ".claude", "skills", "tasma", "SKILL.md")]);
+  });
+});
+
+describe("claudeAdapter.skillListed", () => {
+  const LISTED = '[{"id":"other@other","enabled":true},{"id":"tasma@tasma","enabled":true}]';
+
+  it("gives true for an entry tasma@tasma with enabled true, among other entries", async () => {
+    const dir = await claudeRunning(`echo '${LISTED}'`);
+
+    await expect(claudeAdapter.skillListed({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBe(true);
+  });
+
+  it("reads the output of exit code 1", async () => {
+    const dir = await claudeRunning(`echo '${LISTED}'; exit 1`);
+
+    await expect(claudeAdapter.skillListed({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBe(true);
+  });
+
+  it.each([
+    ["enabled false", "echo '[{\"id\":\"tasma@tasma\",\"enabled\":false}]'"],
+    ["no such entry", "echo '[{\"id\":\"other@other\",\"enabled\":true}]'"],
+    ["entries that are not objects", "echo '[null,1]'"],
+    ["an empty array", "echo '[]'"],
+  ])("gives false for %s", async (_name, script) => {
+    const dir = await claudeRunning(script);
+
+    await expect(claudeAdapter.skillListed({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBe(false);
+  });
+
+  it("gives false with no claude on PATH", async () => {
+    await expect(claudeAdapter.skillListed({ PATH: await target() }, liveSignal())).resolves.toBe(false);
+    await expect(claudeAdapter.skillListed({}, liveSignal())).resolves.toBe(false);
+  });
+
+  it.each([
+    ["output that is not JSON", "echo 'No plugins installed'"],
+    ["JSON that is not an array", "echo '{\"id\":\"tasma@tasma\",\"enabled\":true}'"],
+    ["no output", "exit 2"],
+    ["a process that a signal ends", `echo '${LISTED}'; kill -9 $$`],
+  ])("gives undefined for %s", async (_name, script) => {
+    const dir = await claudeRunning(script);
+
+    await expect(claudeAdapter.skillListed({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBeUndefined();
+  });
+
+  it("gives undefined for output over 64 KiB, and ends claude", async () => {
+    const out = await target();
+    const dir = await lingeringClaude(out, "printf '['; /usr/bin/head -c 70000 /dev/zero | /usr/bin/tr '\\0' ' '; printf ']'");
+    const adapter = createClaudeAdapter({ commandTimeoutMs: 60_000 });
+
+    await expect(adapter.skillListed({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBeUndefined();
+
+    await gone(out, "claude");
+  });
+
+  it("runs plugin list --json in HOME, with stdin closed, CLAUDE_CONFIG_DIR and no Claude session variables", async () => {
+    const out = await target();
+    const home = await target();
+    // `read` waits for the end of stdin.
+    const dir = await claudeRunning(
+      `read -r line; printf '%s\\n' "$@" > '${out}/args'; pwd > '${out}/cwd'; /usr/bin/env > '${out}/env'; echo '${LISTED}'`,
+    );
+    const session = Object.fromEntries(CLAUDE_SESSION_VARIABLES.map((name) => [name, "1"]));
+
+    await expect(claudeAdapter.skillListed({ ...session, PATH: dir, HOME: home, CLAUDE_CONFIG_DIR: "/srv/agent" }, liveSignal())).resolves.toBe(true);
+
+    expect(await readFile(join(out, "args"), "utf8")).toBe("plugin\nlist\n--json\n");
+    expect((await readFile(join(out, "cwd"), "utf8")).trim()).toBe(await realpath(home));
+    const env = (await readFile(join(out, "env"), "utf8")).split("\n");
+    expect(env).toContain("CLAUDE_CONFIG_DIR=/srv/agent");
+    for (const name of CLAUDE_SESSION_VARIABLES) expect(env.some((line) => line.startsWith(`${name}=`))).toBe(false);
+  });
+
+  it("gives undefined when claude runs longer than the time limit, and ends claude and the processes it started", async () => {
+    const out = await target();
+    const dir = await lingeringClaude(out, `echo '${LISTED}'`);
+    // Long enough for claude to start its child, as the first run of a new executable is slow on macOS.
+    const adapter = createClaudeAdapter({ commandTimeoutMs: 2000 });
+
+    await expect(adapter.skillListed({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBeUndefined();
+
+    await gone(out, "claude", "inner");
+  });
+
+  it("gives undefined when the signal is cancelled while claude runs, and ends claude and the processes it started", async () => {
+    const out = await target();
+    const dir = await lingeringClaude(out, `echo '${LISTED}'`);
+    const adapter = createClaudeAdapter({ commandTimeoutMs: 60_000 });
+    const controller = new AbortController();
+
+    const answer = adapter.skillListed({ PATH: dir, HOME: dir }, controller.signal);
+    await untilPid(join(out, "inner"), "claude started its child");
+    controller.abort();
+
+    await expect(answer).resolves.toBeUndefined();
+    await gone(out, "claude", "inner");
+  });
+
+  it("gives undefined for a signal cancelled before the call, and starts no claude", async () => {
+    const out = await target();
+    const dir = await claudeRunning(`: > '${out}/started'; echo '${LISTED}'`);
+
+    await expect(claudeAdapter.skillListed({ PATH: dir, HOME: dir }, AbortSignal.abort())).resolves.toBeUndefined();
+
+    expect(existsSync(join(out, "started"))).toBe(false);
+  });
+
+  it("gives undefined for a signal cancelled before the call with no claude on PATH", async () => {
+    await expect(claudeAdapter.skillListed({ PATH: await target() }, AbortSignal.abort())).resolves.toBeUndefined();
   });
 });

@@ -86,9 +86,10 @@ export type ChatEventsQuery = { after?: number };
 export type ChatListQuery = { project?: string; q?: string; after?: string };
 
 /**
- * Which checks a setup read runs. `start`, the default, reads the tree alone
- * and runs no process. `full` also reads the login shell and asks each agent.
- * `skipSkill` leaves the skill check out. An empty value is no value.
+ * Which checks a setup read runs. `start`, the default, reads the tree and
+ * looks for the skill, and runs a process only when the skill is not in a fixed
+ * path. `full` also reads the login shell and asks each agent. `skipSkill`
+ * leaves the skill check out. An empty value is no value.
  */
 export type SetupQuery = { mode?: "start" | "full"; skipSkill?: boolean };
 

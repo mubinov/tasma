@@ -67,6 +67,8 @@ const ADAPTER: AgentAdapter = {
   agent: "claude",
   launch: () => ({ command: "fake-agent", args: [], env: {} }),
   loggedIn: async () => true,
+  skillFiles: () => [],
+  skillListed: async () => false,
   notLoggedIn: "Log in to the agent first",
   sessionGone: "The agent lost the chat",
   filterUpdate: (update) => update,

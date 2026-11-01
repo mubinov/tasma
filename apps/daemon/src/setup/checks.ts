@@ -1,6 +1,8 @@
 // Whether the setup of Tasma on this machine is complete. Start mode reads the
-// tree alone; full mode also reads the login shell and asks each agent.
+// tree and looks for the skill, and runs a process only when the skill is not
+// in a fixed path; full mode also reads the login shell and asks each agent.
 
+import { stat } from "node:fs/promises";
 import { delimiter, isAbsolute, join } from "node:path";
 import { openProject } from "@tasma/engine";
 import type { AgentSetup, SetupCheck, SetupStatus } from "@tasma/protocol";
@@ -21,6 +23,8 @@ export type SetupChecks = {
 };
 
 type Installed = { check: "pass"; env: AgentEnv } | { check: "fail" | "unknown" | "not-run" };
+
+type SkillFile = "found" | "missing" | "unread";
 
 /** The tags of the tree, or `undefined` when the tree cannot be read. */
 async function readTags(host: ProjectHost): Promise<string[] | undefined> {
@@ -89,6 +93,42 @@ async function loggedInCheck(adapter: AgentAdapter, installed: Installed, signal
   }
 }
 
+async function skillFileIn(paths: string[]): Promise<SkillFile> {
+  let unread = false;
+  for (const path of paths) {
+    try {
+      if ((await stat(path)).isFile()) return "found";
+    } catch (error) {
+      const { code } = error as NodeJS.ErrnoException;
+      if (code !== "ENOENT" && code !== "ENOTDIR") unread = true;
+    }
+  }
+  return unread ? "unread" : "missing";
+}
+
+/** A path that could not be read makes a miss `unknown`, not `fail`. */
+async function skillCheck(
+  adapter: AgentAdapter,
+  env: AgentEnv,
+  shell: () => Promise<ShellEnv>,
+  signal: AbortSignal,
+): Promise<SetupCheck> {
+  try {
+    const inDaemon = await skillFileIn(adapter.skillFiles(env));
+    if (inDaemon === "found") return "pass";
+    const read = await shell();
+    if ("failed" in read) return "unknown";
+    const inShell = await skillFileIn(adapter.skillFiles(read.env));
+    if (inShell === "found") return "pass";
+    const listed = await adapter.skillListed(read.env, signal);
+    if (listed === undefined) return "unknown";
+    if (listed) return "pass";
+    return inDaemon === "unread" || inShell === "unread" ? "unknown" : "fail";
+  } catch {
+    return "unknown";
+  }
+}
+
 export function createSetupChecks(options: {
   root?: string;
   host: ProjectHost;
@@ -121,18 +161,36 @@ export function createSetupChecks(options: {
     return { project: projectCheck(tags), workflow: await workflowCheck(root, tags) };
   }
 
-  async function agentCheck(adapter: AgentAdapter, asked: SetupOptions): Promise<AgentSetup> {
-    const installed: Installed = asked.full ? await installedCheck(adapter, env, shell) : { check: "not-run" };
-    const loggedIn = await loggedInCheck(adapter, installed, stopping.signal);
-    return { agent: adapter.agent, installed: installed.check, loggedIn, skill: "not-run" };
+  async function installAndLoginChecks(
+    adapter: AgentAdapter,
+    full: boolean,
+    requestShell: () => Promise<ShellEnv>,
+  ): Promise<Pick<AgentSetup, "installed" | "loggedIn">> {
+    const installed: Installed = full ? await installedCheck(adapter, env, requestShell) : { check: "not-run" };
+    return { installed: installed.check, loggedIn: await loggedInCheck(adapter, installed, stopping.signal) };
+  }
+
+  async function agentCheck(
+    adapter: AgentAdapter,
+    asked: SetupOptions,
+    requestShell: () => Promise<ShellEnv>,
+  ): Promise<AgentSetup> {
+    const [installAndLogin, skill] = await Promise.all([
+      installAndLoginChecks(adapter, asked.full, requestShell),
+      asked.skipSkill ? ("not-run" as const) : skillCheck(adapter, env, requestShell, stopping.signal),
+    ]);
+    return { agent: adapter.agent, ...installAndLogin, skill };
   }
 
   return {
     async status(asked) {
+      // A slow `stat` can ask for the shell after the read of `cli` ended: one request reads it once.
+      let requestRead: Promise<ShellEnv> | undefined;
+      const requestShell = () => (requestRead ??= shell());
       const [start, cli, agents] = await Promise.all([
         startChecks(),
-        asked.full ? shell().then(cliCheck) : ("not-run" as const),
-        Promise.all(adapters.map((adapter) => agentCheck(adapter, asked))),
+        asked.full ? requestShell().then(cliCheck) : ("not-run" as const),
+        Promise.all(adapters.map((adapter) => agentCheck(adapter, asked, requestShell))),
       ]);
       return { ...start, cli, agents };
     },

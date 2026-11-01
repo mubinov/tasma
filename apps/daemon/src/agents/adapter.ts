@@ -23,6 +23,10 @@ export type AgentAdapter = {
   launch(env: AgentEnv): LaunchResult;
   /** Whether the agent is logged in: `undefined` when it cannot tell. */
   loggedIn(env: AgentEnv, signal: AbortSignal): Promise<boolean | undefined>;
+  /** The fixed paths that hold the tasma skill of this agent in `env`. Never a wide search. */
+  skillFiles(env: AgentEnv): string[];
+  /** Whether the agent itself lists the tasma skill: `false` with no binary, `undefined` when it cannot tell. */
+  skillListed(env: AgentEnv, signal: AbortSignal): Promise<boolean | undefined>;
   /**
    * Runs the ACP server of the agent in this process, over its stdin and
    * stdout. Only an agent whose ACP server is code of the daemon has it.
