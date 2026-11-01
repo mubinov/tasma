@@ -11,8 +11,6 @@ const NOT_WRITTEN_YET = [
   "steps/implement.md",
   "steps/review.md",
   "steps/test.md",
-  "steps/user-review.md",
-  "steps/integrate.md",
 ];
 
 describe("the base workflow dev", () => {
