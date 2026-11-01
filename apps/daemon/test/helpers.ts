@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -324,6 +325,16 @@ export async function until(holds: () => boolean, what: string, change?: () => P
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
+}
+
+/** Waits until the file holds a process id, and gives the id. A shell creates the file before it writes to it. */
+export async function untilPid(path: string, what: string): Promise<number> {
+  let pid = 0;
+  await until(() => {
+    pid = existsSync(path) ? Number(readFileSync(path, "utf8")) : 0;
+    return Number.isInteger(pid) && pid > 0;
+  }, what);
+  return pid;
 }
 
 export async function logOf(live: LiveChat): Promise<ChatEvent[]> {

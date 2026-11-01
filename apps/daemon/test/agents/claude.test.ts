@@ -9,7 +9,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AcpObject } from "@tasma/protocol";
 import type { AgentLaunch } from "../../src/agents/adapter.js";
 import { CLAUDE_SESSION_VARIABLES, claudeAdapter, createClaudeAdapter } from "../../src/agents/claude.js";
-import { target, until } from "../helpers.js";
+import { target, until, untilPid } from "../helpers.js";
 
 /** Counts the evaluations of the adapter entry. The real entry would serve ACP over the stdio of the test worker. */
 const entry = vi.hoisted(() => ({ evaluated: 0 }));
@@ -371,7 +371,7 @@ describe("claudeAdapter.loggedIn", () => {
 
   /** Waits until each process whose id is in a file of `out` is gone. */
   async function gone(out: string, ...names: string[]): Promise<void> {
-    const pids = await Promise.all(names.map(async (name) => Number(await readFile(join(out, name), "utf8"))));
+    const pids = await Promise.all(names.map((name) => untilPid(join(out, name), `${name} wrote its process id`)));
     await until(() => !pids.some(alive), `processes ${pids.join(", ")} are gone`);
   }
 
@@ -406,7 +406,7 @@ describe("claudeAdapter.loggedIn", () => {
     const controller = new AbortController();
 
     const answer = adapter.loggedIn({ PATH: dir, HOME: dir }, controller.signal);
-    await until(() => existsSync(join(out, "inner")), "claude started its child");
+    await untilPid(join(out, "inner"), "claude started its child");
     controller.abort();
 
     await expect(answer).resolves.toBeUndefined();

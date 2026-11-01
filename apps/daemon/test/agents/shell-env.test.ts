@@ -10,7 +10,7 @@ import type { AgentEnv } from "../../src/agents/adapter.js";
 import { isExecutableFile } from "../../src/agents/process.js";
 import { readShellEnv } from "../../src/agents/shell-env.js";
 import type { ShellEnv } from "../../src/agents/shell-env.js";
-import { target, until } from "../helpers.js";
+import { target, until, untilPid } from "../helpers.js";
 
 /** A child that the next spawn gives in place of a real one. */
 const spawning = vi.hoisted(() => ({ next: undefined as ChildProcess | undefined }));
@@ -67,7 +67,7 @@ async function fakeShell(
   return {
     shell,
     out,
-    pid: async () => Number(await readFile(join(out, "pid"), "utf8")),
+    pid: () => untilPid(join(out, "pid"), "the shell wrote its process id"),
     args: async () => (await readFile(join(out, "args"), "utf8")).split("\0").slice(0, -1),
   };
 }
@@ -97,9 +97,7 @@ async function gone(...pids: number[]): Promise<void> {
 
 /** The process id of the program that `BACKGROUND` started, which the test kills at its end. */
 async function childOf(fake: FakeShell): Promise<number> {
-  const path = join(fake.out, "child");
-  await until(() => existsSync(path), "the shell started its child");
-  const pid = Number(await readFile(path, "utf8"));
+  const pid = await untilPid(join(fake.out, "child"), "the shell started its child");
   onTestFinished(() => {
     if (alive(pid)) process.kill(pid, "SIGKILL");
   });

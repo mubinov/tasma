@@ -58,6 +58,16 @@ async function openBoard(daemon: TaskChatsStub): Promise<Router> {
   return router;
 }
 
+/** Goes back to the board and waits for its focus restore, which moves the focus one frame after the render. */
+async function backToBoard(router: Router): Promise<void> {
+  await act(async () => {
+    router.history.back();
+  });
+  await waitFor(() => {
+    expect(useUiStore.getState().boardRestorePending).toBe(false);
+  });
+}
+
 function menuButton(): HTMLElement {
   return screen.getByRole("button", { name: "Task menu SAGA-3" });
 }
@@ -302,9 +312,7 @@ describe("a press", () => {
       expect(daemon.starts()).toBe(1);
     });
 
-    await act(async () => {
-      router.history.back();
-    });
+    await backToBoard(router);
     await waitFor(() => {
       expect(router.state.location.pathname).toBe("/tasks");
     });
@@ -420,9 +428,7 @@ describe("Restart", () => {
     await waitFor(() => {
       expect(daemon.restarts()).toBe(1);
     });
-    await act(async () => {
-      router.history.back();
-    });
+    await backToBoard(router);
     await screen.findByRole("button", { name: "Task menu SAGA-3" });
     const menu = await openMenuByKey(user);
     await waitFor(() => {
@@ -543,9 +549,7 @@ describe("Restart", () => {
       expect(daemon.restarts()).toBe(1);
     });
 
-    await act(async () => {
-      router.history.back();
-    });
+    await backToBoard(router);
     await waitFor(() => {
       expect(router.state.location.pathname).toBe("/tasks");
     });
