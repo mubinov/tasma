@@ -1,11 +1,14 @@
-import type { ChatListItem, FeedEvent } from "@tasma/protocol";
+import type { Chat, ChatListItem, FeedEvent, TransportReply } from "@tasma/protocol";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { CHAT_CLIENT } from "../../src/api/mutations";
 import { daemonKeys } from "../../src/api/queries";
 import { BAND_HEIGHT, BANDED_ROW_CLASS } from "../../src/components/chat-list-item";
+import { ICON_BUTTON_CLASS } from "../../src/components/control-classes";
 import { FindShortcut } from "../../src/components/find-shortcut";
+import { STEP_ACTION_SELECTOR } from "../../src/lib/step-action";
+import { useNoticeStore } from "../../src/store/notices";
 import { chatPath, chatRecord } from "../chat-daemon";
 import { chatEntries, modeOption, optionsUpdate, TEXT_LOG } from "../chat-fixtures";
 import {
@@ -38,6 +41,8 @@ import {
 } from "../helpers";
 import { stubWindowWidth } from "../setup/match-media";
 import { frame } from "../setup/notice-store";
+import { CHATS_PATH } from "../task-chats-daemon";
+import { TASK_PATH, task } from "../task-screen-fixtures";
 import { spoken } from "../update-fixtures";
 
 type Router = Awaited<ReturnType<typeof renderDashboard>>;
@@ -1744,5 +1749,476 @@ describe("the chat", () => {
         { method: "POST", path: `${chatPath()}/options`, body: { configId: "mode", value: "auto", client: CHAT_CLIENT } },
       ]);
     });
+  });
+});
+
+describe("the Chat menu", () => {
+  type User = ReturnType<typeof userEvent.setup>;
+
+  const START = `POST ${CHATS_PATH}`;
+  const ON_RESEARCH = task({ fields: { workflow: "dev", step: "research" } });
+  const ON_APPROVE = task({ fields: { workflow: "dev", step: "approve" } });
+  const TASK_EVENT: FeedEvent = { kind: "task", tag: "SAGA", id: "SAGA-3", change: "changed" };
+  const NEW_CHAT_EVENT: FeedEvent = { kind: "chat", tag: "SAGA", task: "SAGA-3", chat: 3, step: "research", state: "working" };
+  const TOOLTIP = { selector: "[data-side], [data-side] *" };
+  const RESTARTED = "The research chat of SAGA-3 restarted.";
+  // Above the 600 ms open delay of a hover.
+  const PAST_HOVER_MS = 1000;
+
+  /** A chat of SAGA-3 that holds its first message. */
+  function stepChat(number: number, step = "research"): Chat {
+    return chatRecord({ chat: number, step, seq: 3 });
+  }
+
+  /** The daemon of SAGA-3 on the step `research`, with chats 1 and 2. */
+  function stepDaemon(replies: Record<string, TransportReply | Promise<TransportReply>> = {}): DashboardStub {
+    const stub = stubDashboard({
+      "/chats": pageReply([
+        listItem("SAGA-3", 2, 5, { title: "Build the parser", step: "research", status: { state: "needs-you" } }),
+        listItem("SAGA-3", 1, 90, { title: "Build the parser", step: "research" }),
+        listItem("ACME-7", 1, 120, { title: "Ship the release", step: "dev:test" }),
+      ]),
+      [TASK_PATH]: ON_RESEARCH,
+      [CHATS_PATH]: successReply([stepChat(1), stepChat(2)]),
+      [chatPath()]: successReply(stepChat(2)),
+      [chatPath(1)]: successReply(stepChat(1)),
+      ...replies,
+    });
+    stub.hold(0, 1);
+    return stub;
+  }
+
+  function chatMenu(): Promise<HTMLElement> {
+    return screen.findByRole("button", { name: /^Chat menu/ });
+  }
+
+  function queryChatMenu(): HTMLElement | null {
+    return screen.queryByRole("button", { name: /^Chat menu/ });
+  }
+
+  async function chooseRestart(user: User): Promise<HTMLElement> {
+    await user.click(await chatMenu());
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Restart research" }));
+    return screen.findByRole("alertdialog");
+  }
+
+  /** Confirms a restart with its answer held, and gives what sends the answer. */
+  async function restartHeld(user: User, stub: DashboardStub): Promise<(reply: TransportReply) => Promise<void>> {
+    const { reply, answer } = heldBack();
+    stub.replies[START] = reply;
+    await user.click(within(await chooseRestart(user)).getByRole("button", { name: "Restart" }));
+    await screen.findByRole("button", { name: "Chat menu, restarting" });
+    return async (sent) => {
+      await act(async () => {
+        answer(sent);
+      });
+      await frame();
+    };
+  }
+
+  /** Makes the daemon list chat 3, and gives its answer to the restart. */
+  function addChat3(stub: DashboardStub): TransportReply {
+    stub.replies[CHATS_PATH] = successReply([stepChat(1), stepChat(2), stepChat(3)]);
+    stub.replies[chatPath(3)] = successReply(stepChat(3));
+    stub.replies["/chats/SAGA-3/3"] = successReply(listItem("SAGA-3", 3, 0, { title: "Build the parser", step: "research" }));
+    stub.hold(0, 3);
+    return successReply({ chat: stepChat(3), started: true });
+  }
+
+  async function sendUntilMenuGone(stub: DashboardStub, event: FeedEvent): Promise<void> {
+    await stub.send([event]);
+    await waitFor(() => {
+      expect(queryChatMenu()).toBeNull();
+    });
+  }
+
+  function startRequests(stub: DashboardStub): DashboardStub["requests"] {
+    return stub.requests.filter(({ method, path }) => method === "POST" && path === CHATS_PATH);
+  }
+
+  it("shows after Open task on the chat that Open research opens, as the step action", async () => {
+    await renderDashboard(stepDaemon(), OPEN_PATH);
+
+    const button = await chatMenu();
+
+    expect(button.getAttribute("aria-label")).toBe("Chat menu");
+    expect(screen.getByRole("link", { name: "Open task" }).nextElementSibling).toBe(button);
+    expect(button.matches(STEP_ACTION_SELECTOR)).toBe(true);
+    expect(button.className).toContain(ICON_BUTTON_CLASS);
+    expect(button.hasAttribute("aria-disabled")).toBe(false);
+  });
+
+  it.each<[string, Record<string, TransportReply | Promise<TransportReply>>, string]>([
+    ["an older chat", {}, "/?task=SAGA-3&chat=1"],
+    ["a chat of a past step", { [CHATS_PATH]: successReply([stepChat(1, "plan"), stepChat(2, "plan")]) }, OPEN_PATH],
+    ["a task with no workflow", { [TASK_PATH]: task() }, OPEN_PATH],
+    ["a task whose workflow is refused", { "/workflows/dev": BROKEN }, OPEN_PATH],
+    ["a task read that loads", { [TASK_PATH]: heldBack().reply }, OPEN_PATH],
+    ["a workflow read that loads", { "/workflows/dev": heldBack().reply }, OPEN_PATH],
+    ["a chats read that loads", { [CHATS_PATH]: heldBack().reply }, OPEN_PATH],
+    ["a task read that fails", { [TASK_PATH]: BROKEN }, OPEN_PATH],
+    ["a chats read that fails", { [CHATS_PATH]: BROKEN }, OPEN_PATH],
+  ])("does not show on %s", async (_name, replies, path) => {
+    const stub = stepDaemon(replies);
+    await renderDashboard(stub, path);
+
+    await waitFor(() => {
+      expect(stub.paths).toContain(TASK_PATH);
+      expect(stub.paths).toContain(CHATS_PATH);
+    });
+    await frame();
+
+    expect(queryChatMenu()).toBeNull();
+    expect(screen.getByRole("link", { name: "Open task" })).toBeTruthy();
+  });
+
+  it("wraps the step name in its menu, and the menu keeps to the width of the window", async () => {
+    const user = userEvent.setup();
+    await renderDashboard(stepDaemon(), OPEN_PATH);
+
+    await user.click(await chatMenu());
+
+    const menu = await screen.findByRole("menu");
+
+    expect([...within(menu).getByText("Restart research").classList]).toEqual(expect.arrayContaining(["min-w-0", "wrap-anywhere"]));
+    expect([...menu.classList]).toContain("max-w-(--available-width)");
+  });
+
+  it("asks before a restart, and Cancel sends nothing and returns the focus to the button", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    await renderDashboard(stub, OPEN_PATH);
+
+    const dialog = await chooseRestart(user);
+
+    expect(dialog).toBe(screen.getByRole("alertdialog", { name: "Restart the step of SAGA-3?" }));
+
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    });
+    expect(document.activeElement).toBe(await chatMenu());
+    expect(startRequests(stub)).toEqual([]);
+  });
+
+  it("sends the restart and waits on the button, which keeps the focus and stays when the list holds chat 3 before the answer", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    const router = await renderDashboard(stub, OPEN_PATH);
+
+    await restartHeld(user, stub);
+
+    const button = await chatMenu();
+    expect(startRequests(stub)).toEqual([
+      expect.objectContaining({ body: { client: CHAT_CLIENT, restart: true } }),
+    ]);
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute("aria-label")).toBe("Chat menu, restarting");
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.querySelector("svg")!.getAttribute("class")).toContain("animate-spin motion-reduce:animate-none");
+
+    await user.click(button);
+    await user.keyboard("{Enter}");
+    expect(screen.queryByRole("menu")).toBeNull();
+
+    stub.replies[CHATS_PATH] = successReply([stepChat(1), stepChat(2), stepChat(3)]);
+    await stub.send([NEW_CHAT_EVENT]);
+    await waitFor(() => {
+      expect(stub.paths.filter((path) => path === CHATS_PATH).length).toBeGreaterThan(1);
+    });
+    await frame();
+
+    expect(await chatMenu()).toBe(button);
+    expect(button.getAttribute("aria-label")).toBe("Chat menu, restarting");
+    expect(document.activeElement).toBe(button);
+    expect(router.latestLocation.search.chat).toBe("2");
+  });
+
+  it("gives a tooltip during the wait and none at rest", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    await renderDashboard(stub, OPEN_PATH);
+    await user.hover(await chatMenu());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, PAST_HOVER_MS));
+    });
+    expect(screen.queryByText("Chat menu", TOOLTIP)).toBeNull();
+    await user.unhover(await chatMenu());
+
+    await restartHeld(user, stub);
+    await user.hover(await chatMenu());
+
+    expect(await screen.findByText("Restarting research", TOOLTIP, { timeout: 1.5 * PAST_HOVER_MS })).toBeTruthy();
+  });
+
+  it("selects the new chat by a replace after the answer, and the heading takes the focus", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    const router = await renderDashboard(stub, OPEN_PATH);
+    const entries = router.history.length;
+    const scrollTo = vi.fn();
+    vi.stubGlobal("scrollTo", scrollTo);
+    const send = await restartHeld(user, stub);
+
+    await send(addChat3(stub));
+
+    await waitFor(() => {
+      expect(router.latestLocation.search).toEqual({ task: "SAGA-3", chat: "3" });
+    });
+    expect(router.history.length).toBe(entries);
+    await waitFor(() => {
+      expect(chatHeading().nextElementSibling?.textContent).toBe("Claude · research · Chat 3");
+    });
+    expect(document.activeElement).toBe(chatHeading());
+    await waitFor(() => {
+      expect(spoken()).toContain(RESTARTED);
+    });
+    expect((await chatMenu()).getAttribute("aria-label")).toBe("Chat menu");
+    expect(document.activeElement).toBe(chatHeading());
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("keeps the search and the project of the address when it selects the new chat", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    const router = await renderDashboard(stub, "/?project=SAGA&q=parser&task=SAGA-3&chat=2");
+    const send = await restartHeld(user, stub);
+
+    await send(addChat3(stub));
+
+    await waitFor(() => {
+      expect(router.latestLocation.search).toEqual({ project: "SAGA", q: "parser", task: "SAGA-3", chat: "3" });
+    });
+  });
+
+  it.each<[string, () => void]>([
+    ["the heading", () => {
+      chatHeading().focus();
+    }],
+    ["<main>", () => {
+      const main = screen.getByRole("main");
+      main.tabIndex = -1;
+      main.focus();
+    }],
+    ["<body>", () => {
+      (document.activeElement as HTMLElement).blur();
+    }],
+  ])("selects the new chat with the focus on %s", async (_name, focus) => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    const router = await renderDashboard(stub, OPEN_PATH);
+    const send = await restartHeld(user, stub);
+    act(focus);
+
+    await send(addChat3(stub));
+
+    await waitFor(() => {
+      expect(router.latestLocation.search.chat).toBe("3");
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(chatHeading());
+    });
+  });
+
+  it("moves nothing with the focus in the composer of chat 2", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    const router = await renderDashboard(stub, OPEN_PATH);
+    stub.answer(0, { cursor: TEXT_LOG.length, entries: [...TEXT_LOG] });
+    const composer = await screen.findByRole("textbox", { name: "Message input" });
+    const send = await restartHeld(user, stub);
+    act(() => {
+      composer.focus();
+    });
+
+    await send(addChat3(stub));
+
+    await waitFor(() => {
+      expect(spoken()).toContain(RESTARTED);
+    });
+    expect(router.latestLocation.search.chat).toBe("2");
+    expect(document.activeElement).toBe(composer);
+    await waitFor(() => {
+      expect(queryChatMenu()).toBeNull();
+    });
+  });
+
+  it("moves nothing when another chat is selected during the wait", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    const router = await renderDashboard(stub, OPEN_PATH);
+    const send = await restartHeld(user, stub);
+
+    await user.click(itemLink("SAGA-3", 1));
+    await waitFor(() => {
+      expect(router.latestLocation.search.chat).toBe("1");
+    });
+    expect(queryChatMenu()).toBeNull();
+
+    await send(addChat3(stub));
+
+    await waitFor(() => {
+      expect(spoken()).toContain(RESTARTED);
+    });
+    expect(router.latestLocation.search.chat).toBe("1");
+  });
+
+  it("moves nothing when the screen left the dashboard during the wait", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    const router = await renderDashboard(stub, OPEN_PATH);
+    const send = await restartHeld(user, stub);
+
+    await act(async () => {
+      await router.navigate({ to: "/tasks/$project/$task", params: { project: "SAGA", task: "SAGA-3" } });
+    });
+    await send(addChat3(stub));
+
+    await waitFor(() => {
+      expect(spoken()).toContain(RESTARTED);
+    });
+    expect(router.latestLocation.pathname).toBe("/tasks/SAGA/SAGA-3");
+    expect(router.latestLocation.search.chat).toBeUndefined();
+  });
+
+  it("shows no Chat menu on the new chat until the answer", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    const router = await renderDashboard(stub, OPEN_PATH);
+    const send = await restartHeld(user, stub);
+    const reply = addChat3(stub);
+    await stub.send([NEW_CHAT_EVENT]);
+
+    await act(async () => {
+      await router.navigate({ to: "/", search: { task: "SAGA-3", chat: "3" } });
+    });
+    await waitFor(() => {
+      expect(stub.paths.filter((path) => path === CHATS_PATH).length).toBeGreaterThan(1);
+    });
+    await frame();
+    expect(queryChatMenu()).toBeNull();
+
+    await send(reply);
+
+    expect((await chatMenu()).getAttribute("aria-label")).toBe("Chat menu");
+    expect(router.latestLocation.search.chat).toBe("3");
+  });
+
+  it("shows the notice of a refused restart, and the dots again with the focus on the button", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    await renderDashboard(stub, OPEN_PATH);
+    const send = await restartHeld(user, stub);
+    const button = await chatMenu();
+
+    await send(refusalReply(409, { kind: "daemon", code: "step-stale", message: "research is not a step of dev" }));
+
+    await waitFor(() => {
+      expect(button.getAttribute("aria-label")).toBe("Chat menu");
+    });
+    expect(button.hasAttribute("aria-disabled")).toBe(false);
+    expect(button.querySelector("svg")!.getAttribute("class") ?? "").not.toContain("animate-spin");
+    expect(document.activeElement).toBe(button);
+    expect(useNoticeStore.getState().notices).toEqual([
+      expect.objectContaining({ key: "chat-start-failure:SAGA-3", title: "The research chat of SAGA-3 did not restart" }),
+    ]);
+  });
+
+  it("goes away after chat-not-current, and the focus goes to the heading", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    await renderDashboard(stub, OPEN_PATH);
+    const send = await restartHeld(user, stub);
+    stub.replies[TASK_PATH] = ON_APPROVE;
+    await stub.send([TASK_EVENT]);
+    await frame();
+    expect(await chatMenu()).toBe(document.activeElement);
+
+    await send(refusalReply(409, { kind: "daemon", code: "chat-not-current", message: "SAGA-3 moved to the step \"approve\"" }));
+
+    await waitFor(() => {
+      expect(queryChatMenu()).toBeNull();
+    });
+    expect(document.activeElement).toBe(chatHeading());
+    expect(useNoticeStore.getState().notices).toEqual([
+      expect.objectContaining({
+        line: "The task moved to another step while the agent of chat 2 stopped. Chat 2 stopped, and no new chat started.",
+      }),
+    ]);
+  });
+
+  it("closes its menu when it goes away with the menu open, and the focus goes to the heading", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    await renderDashboard(stub, OPEN_PATH);
+    await user.click(await chatMenu());
+    await screen.findByRole("menu");
+    stub.replies[TASK_PATH] = ON_APPROVE;
+
+    await sendUntilMenuGone(stub, TASK_EVENT);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+    expect(document.activeElement).toBe(chatHeading());
+  });
+
+  it("sends the focus to the heading when a read fails with the focus on the button", async () => {
+    const stub = stepDaemon();
+    await renderDashboard(stub, OPEN_PATH);
+    const button = await chatMenu();
+    act(() => {
+      button.focus();
+    });
+    stub.replies[CHATS_PATH] = BROKEN;
+
+    await sendUntilMenuGone(stub, NEW_CHAT_EVENT);
+
+    expect(document.activeElement).toBe(chatHeading());
+  });
+
+  it("closes the dialog with Nothing restarted when chat 2 is no longer the chat of its step, and focuses the heading", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    await renderDashboard(stub, OPEN_PATH);
+    stub.replies[TASK_PATH] = ON_APPROVE;
+
+    await user.click(await chatMenu());
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Restart research" }));
+
+    await waitFor(() => {
+      expect(useNoticeStore.getState().notices).toHaveLength(1);
+    });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(useNoticeStore.getState().notices).toEqual([
+      expect.objectContaining({ key: "chat-restart-skipped:SAGA-3", title: "Nothing restarted" }),
+    ]);
+    await waitFor(() => {
+      expect(queryChatMenu()).toBeNull();
+    });
+    expect(document.activeElement).toBe(chatHeading());
+    expect(startRequests(stub)).toEqual([]);
+  });
+
+  it("keeps the dialog of its chat when another chat opens under it, and restarts that chat", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon({ "/projects/ACME/tasks/ACME-7": task({ fields: { id: "ACME-7" } }) });
+    const router = await renderDashboard(stub, OPEN_PATH);
+    const dialog = await chooseRestart(user);
+
+    await act(async () => {
+      await router.navigate({ to: "/", search: { task: "ACME-7", chat: "1" } });
+    });
+    expect(within(dialog).getByText("Restart the step of SAGA-3?")).toBeTruthy();
+    stub.replies[START] = addChat3(stub);
+    await user.click(within(dialog).getByRole("button", { name: "Restart" }));
+
+    await waitFor(() => {
+      expect(spoken()).toContain(RESTARTED);
+    });
+    expect(startRequests(stub)).toHaveLength(1);
+    expect(router.latestLocation.search).toEqual({ task: "ACME-7", chat: "1" });
+    expect(document.activeElement).toBe(chatHeading());
   });
 });

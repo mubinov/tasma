@@ -168,7 +168,7 @@ export type StartChat = {
   id: string;
   /** The step that the action shows. The daemon runs the step that it holds. */
   step: string;
-  from: "task" | "card";
+  from: "task" | "card" | "dashboard";
   /** The chat that a restart replaces. Without it, the start gives back the chat that the step has. */
   restart?: number;
   failure: WriteFailure;
@@ -202,8 +202,8 @@ export function openRestartSkipped(id: string, { title, line }: SkippedNotice): 
 
 /**
  * Focus is where a start leaves it: on a part of the step action, on `<main>`
- * itself or on `<body>`. A restart also leaves it on the heading of the panel
- * that shows the chat it replaces.
+ * itself or on `<body>`. A restart also leaves it on the heading that shows the
+ * chat it replaces.
  */
 function focusWaits(router: RegisteredRouter, { restart }: StartChat): boolean {
   const active = document.activeElement;
@@ -217,6 +217,17 @@ function focusWaits(router: RegisteredRouter, { restart }: StartChat): boolean {
 }
 
 type Panel = "opened" | "shown" | null;
+
+async function openOnDashboard(router: RegisteredRouter, start: StartChat, chat: number): Promise<Panel> {
+  const { task, chat: shown } = router.latestLocation.search;
+
+  if (task !== start.id || shown !== String(start.restart) || !focusWaits(router, start)) {
+    return null;
+  }
+  await router.navigate({ to: "/", search: (previous) => ({ ...previous, chat: String(chat) }), replace: true, resetScroll: false });
+  focusChatHeading();
+  return "opened";
+}
 
 /**
  * Opens the chat in the panel when the task view of the start shows and focus
@@ -242,7 +253,7 @@ function startWords(name: string, { chat, started }: ChatStart, panel: Panel, re
   if (chat.state === "failed") {
     return `${name} failed.`;
   }
-  // The heading of the panel is the same for the old chat and the new one.
+  // The heading is the same for the old chat and the new one.
   if (restart) {
     return `${name} restarted.`;
   }
@@ -279,9 +290,10 @@ export function chatStartOptions(queryClient: QueryClient, client: Client, route
     onSuccess: async (answer, start) => {
       const { tag, id } = start;
       useNoticeStore.getState().closeNotice(chatStartFailureKey(id));
-      // Awaited, so the list holds the chat before the panel opens.
+      // Awaited, so the list holds the chat before it opens.
       await queryClient.invalidateQueries({ queryKey: daemonKeys.taskChats(tag, id), exact: true });
-      const panel = await openPanel(router, start, answer.chat.chat);
+      const open = start.from === "dashboard" ? openOnDashboard : openPanel;
+      const panel = await open(router, start, answer.chat.chat);
       const words = startWords(`The ${answer.chat.step} chat of ${id}`, answer, panel, start.restart !== undefined);
 
       if (words !== null) {
