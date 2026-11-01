@@ -15,5 +15,11 @@ export const DAEMON_PATH_PREFIX = "/daemon";
  */
 export const APP_PATH_PREFIX = "/app";
 
+/** The scheme of the origin the macOS app serves the board from. */
+export const APP_SCHEME = "tasma-app";
+
+/** The folder dialog's route under `APP_PATH_PREFIX`. */
+export const FOLDER_ROUTE = "/folder";
+
 /** The event the macOS app dispatches on the window when the update changes. */
 export const UPDATE_EVENT = "tasma:update";

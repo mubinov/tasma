@@ -9,7 +9,13 @@ import { PROBE_BODY_LIMIT, PROBE_TIMEOUT_MS } from "../apps/cli/src/daemon/recor
 import { DAEMON_BIN, START_BUDGET_MS, TICK_MS } from "../apps/cli/src/daemon/start.js";
 import { HOLD_MS } from "../apps/daemon/src/events/hold.js";
 import { TASK_LINK_PREFIX } from "../apps/daemon/src/http/task-link.js";
-import { APP_PATH_PREFIX, DAEMON_PATH_PREFIX, UPDATE_EVENT } from "../apps/web/src/api/paths.js";
+import {
+  APP_PATH_PREFIX,
+  APP_SCHEME,
+  DAEMON_PATH_PREFIX,
+  FOLDER_ROUTE,
+  UPDATE_EVENT,
+} from "../apps/web/src/api/paths.js";
 import { readManifest, workspaceRoot } from "../workspace.js";
 
 /** The crate's location, as the root scripts have to spell it. */
@@ -138,6 +144,14 @@ describe("the macOS shell", () => {
 
   it("dispatches the update event the board listens for", () => {
     expect(rustConstant("update.rs", "EVENT")).toBe(UPDATE_EVENT);
+  });
+
+  it("serves the board on the scheme the board takes as the app's", () => {
+    expect(rustConstant("main.rs", "SCHEME")).toBe(APP_SCHEME);
+  });
+
+  it("answers the folder route the board asks", () => {
+    expect(rustConstant("folder.rs", "PATH")).toBe(FOLDER_ROUTE);
   });
 
   it("installs an update only of its own bundle identifier", () => {

@@ -3463,6 +3463,7 @@ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 name = "tasma-macos"
 version = "0.0.0"
 dependencies = [
+ "block2",
  "libc",
  "objc2",
  "objc2-app-kit",

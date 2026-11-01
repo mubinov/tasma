@@ -793,7 +793,7 @@ impl Updater {
     }
 }
 
-fn plain(status: StatusCode) -> Response<Vec<u8>> {
+pub(crate) fn plain(status: StatusCode) -> Response<Vec<u8>> {
     Response::builder()
         .status(status)
         .header(CONTENT_TYPE, "text/plain")
@@ -802,17 +802,19 @@ fn plain(status: StatusCode) -> Response<Vec<u8>> {
         .expect("a status and two headers are a response")
 }
 
-/// The routes under `/app`, with the prefix removed.
+pub(crate) fn json(body: &serde_json::Value) -> Response<Vec<u8>> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/json")
+        .header(CACHE_CONTROL, "no-store")
+        .body(body.to_string().into_bytes())
+        .expect("a status and two headers are a response")
+}
+
+/// The update routes under `/app`, with the prefix removed.
 pub(crate) fn serve(updater: &Arc<Updater>, method: &Method, path: &str) -> Response<Vec<u8>> {
     let accepted = match (path, method) {
-        ("/update", &Method::GET) => {
-            return Response::builder()
-                .status(StatusCode::OK)
-                .header(CONTENT_TYPE, "application/json")
-                .header(CACHE_CONTROL, "no-store")
-                .body(updater.answer().to_string().into_bytes())
-                .expect("a status and two headers are a response");
-        }
+        ("/update", &Method::GET) => return json(&updater.answer()),
         ("/update/install", &Method::POST) => updater.install(),
         ("/update/restart", &Method::POST) => updater.restart(),
         ("/update/wait", &Method::POST) => updater.wait(),

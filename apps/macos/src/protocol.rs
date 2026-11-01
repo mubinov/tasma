@@ -13,6 +13,7 @@ use tauri::http::{Request, Response, StatusCode, Uri};
 use tauri::{AppHandle, Runtime};
 
 use crate::daemon::Daemon;
+use crate::folder;
 use crate::update::{self, Updater};
 
 /// Where the renderer writes every daemon call, and where the Vite dev and
@@ -142,6 +143,7 @@ pub async fn serve<R: Runtime>(
 ) -> Response<Vec<u8>> {
     match route(request.uri()) {
         Target::Daemon(target) => daemon.forward(&target, &request).await,
+        Target::App(path) if path == folder::PATH => folder::serve(app, request.method()).await,
         Target::App(path) => update::serve(updater, request.method(), &path),
         Target::Asset(path) => asset(app, &path),
     }
@@ -435,5 +437,22 @@ mod tests {
         let answer = served("tasma-app://localhost/daemon/projects");
 
         assert_eq!(answer.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[test]
+    fn the_folder_route_is_served_by_the_folder_panel() {
+        let app = app_holding(&[("index.html", b"<!doctype html>")]);
+        let daemon = crate::daemon::fixtures::daemon_on_a_dead_port("the-folder-route");
+        let updater = Arc::new(crate::update::fixtures::updater("the-folder-route"));
+        let request = Request::builder()
+            .uri("tasma-app://localhost/app/folder")
+            .body(Vec::new())
+            .unwrap();
+
+        let answer =
+            tauri::async_runtime::block_on(serve(app.handle(), &daemon, &updater, request));
+
+        // The update routes would answer a path they do not know with 404.
+        assert_eq!(answer.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 }

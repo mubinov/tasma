@@ -16,6 +16,7 @@ mod daemon_stop;
 mod deeplink;
 mod elevate;
 mod external;
+mod folder;
 mod geometry;
 mod install;
 mod log;
@@ -47,6 +48,8 @@ use tauri::{
 /// A webview resolves its own scheme before macOS does, so a scheme registered
 /// system-wide must not be spelled the same as this one: a link to it inside the
 /// document would land in this handler, which serves no such host.
+///
+/// Held to `APP_SCHEME` in `apps/web` by a repo test.
 const SCHEME: &str = "tasma-app";
 const HOST: &str = "localhost";
 
