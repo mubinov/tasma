@@ -138,6 +138,10 @@ const taskAwareGroupBy = (
 export type ThreadProps = {
   components?: ThreadComponents | undefined;
   autoFocus?: boolean | undefined;
+  // tasma-edit: the host sets when the viewport follows new content
+  /** Passed to the viewport. Omitted, the viewport keeps the kit default. */
+  autoScroll?: boolean | undefined;
+  // tasma-edit end
 };
 
 const EMPTY_COMPONENTS: ThreadComponents = {};
@@ -182,20 +186,28 @@ const ThreadHistorySkeleton: FC = () => (
 export const Thread: FC<ThreadProps> = ({
   components = EMPTY_COMPONENTS,
   autoFocus = true,
+  // tasma-edit: the host sets when the viewport follows new content
+  autoScroll,
+  // tasma-edit end
 }) => {
   const isEmpty = useAuiState(isNewChatView);
 
   return (
     <ThreadComponentsContext.Provider value={components}>
-      <ThreadRoot isEmpty={isEmpty} autoFocus={autoFocus} />
+      {/* tasma-edit: the host sets when the viewport follows new content */}
+      <ThreadRoot isEmpty={isEmpty} autoFocus={autoFocus} autoScroll={autoScroll} />
+      {/* tasma-edit end */}
     </ThreadComponentsContext.Provider>
   );
 };
 
-const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
+// tasma-edit: the host sets when the viewport follows new content
+const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean; autoScroll: boolean | undefined }> = ({
   isEmpty,
   autoFocus,
+  autoScroll,
 }) => {
+// tasma-edit end
   const { Welcome = ThreadWelcome } = useContext(ThreadComponentsContext);
 
   return (
@@ -210,9 +222,13 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
       }}
     >
       <ThreadPrimitive.Viewport
-        turnAnchor="top"
+        // tasma-edit: the view follows the end, the app does the open scroll, and reduced motion gets no smooth scroll
+        turnAnchor="bottom"
+        scrollToBottomOnInitialize={false}
+        autoScroll={autoScroll}
         data-slot="aui_thread-viewport"
-        className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth"
+        className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth motion-reduce:scroll-auto"
+        // tasma-edit end
       >
         <div
           className={cn(
@@ -566,7 +582,9 @@ const AssistantMessage: FC = () => {
     <MessagePrimitive.Root
       data-slot="aui_assistant-message-root"
       data-role="assistant"
-      className="fade-in slide-in-from-bottom-1 animate-in relative -mb-7.5 pb-7.5 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto]"
+      // tasma-edit: a message out of view keeps its real height, so a scroll position in the chat is exact
+      className="fade-in slide-in-from-bottom-1 animate-in relative -mb-7.5 pb-7.5 duration-150"
+      // tasma-edit end
     >
       <div
         data-slot="aui_assistant-message-content"
@@ -726,7 +744,9 @@ const UserMessage: FC = () => {
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
-      className="fade-in slide-in-from-bottom-1 animate-in grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] [&:where(>*)]:col-start-2"
+      // tasma-edit: a message out of view keeps its real height, so a scroll position in the chat is exact
+      className="fade-in slide-in-from-bottom-1 animate-in grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [&:where(>*)]:col-start-2"
+      // tasma-edit end
       data-role="user"
     >
       <UserMessageAttachments />

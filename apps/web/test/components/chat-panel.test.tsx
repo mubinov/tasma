@@ -46,7 +46,7 @@ import {
   turnEnd,
   userMessage,
 } from "../chat-fixtures";
-import { heldBack, refusalReply, stubHitTest, stubThreadDom, successReply, testContext } from "../helpers";
+import { heldBack, refusalReply, stubFocusVisible, stubHitTest, stubResizeObservers, stubThreadDom, successReply, testContext } from "../helpers";
 import { bareBorders, KIT_BORDER_SELECTOR } from "../kit/borders";
 import { colouredTokens, SHIKI_LOAD } from "../kit/shiki";
 import { frame } from "../setup/notice-store";
@@ -116,8 +116,8 @@ function cacheRecord(context: RouterContext, record: Chat): void {
 }
 
 /** A daemon with the record of a chat whose log holds the entries, served at once. */
-function logOf(entries: readonly ChatEntry[]): ChatLogStub {
-  const log = stubChatLog({ [chatPath()]: successReply(chatRecord({ seq: entries.length })) });
+function logOf(entries: readonly ChatEntry[], fields: Partial<Chat> = {}): ChatLogStub {
+  const log = stubChatLog({ [chatPath()]: successReply(chatRecord({ seq: entries.length, ...fields })) });
   log.serve(0, { cursor: entries.length, entries: [...entries] });
   return log;
 }
@@ -435,7 +435,7 @@ it("shows a failed chat as Failed, with the whole reason", async () => {
   await renderPanel(logOf(chatEntries([userMessage("Build."), { kind: "failed", reason }])));
 
   expect(await screen.findByText("Failed")).toBeTruthy();
-  expect(screen.getByText(`The chat failed: ${reason}`)).toBeTruthy();
+  expect(await screen.findByText(`The chat failed: ${reason}`)).toBeTruthy();
 });
 
 const REQUESTS_LOG = chatEntries([
@@ -2203,4 +2203,269 @@ it("keeps the newer of two picks whose answers come in the wrong order", async (
   });
   await frame();
   expect(modeWords()).toEqual(["Mode: Manual"]);
+});
+
+/** A finished chat of two turns. */
+const TWO_TURNS = chatEntries([
+  userMessage("Rename the parser."),
+  textChunk("I renamed it."),
+  turnEnd(),
+  userMessage("Update the imports."),
+  textChunk("I updated them."),
+  turnEnd(),
+]);
+
+const RUNNING_TURN = TWO_TURNS.slice(0, -1);
+
+/** The first unread message is `u4`. */
+const SEEN_FIRST_TURN = 3;
+
+const CONTENT_HEIGHT = 5000;
+
+const UNREAD_TOP = 1200;
+
+function threadViewport(): HTMLElement {
+  return document.querySelector<HTMLElement>('[data-slot="aui_thread-viewport"]')!;
+}
+
+/**
+ * Gives the thread a layout, since jsdom has none: `u4` sits at `UNREAD_TOP`,
+ * the content is `box.scrollHeight` high, and `scrollTo` moves `scrollTop` as
+ * far as the content lets it.
+ */
+function stubThreadLayout() {
+  const resize = stubResizeObservers();
+  const scrolls: ScrollToOptions[] = [];
+  const scrollTexts: string[] = [];
+  const box = { scrollTop: 0, scrollHeight: CONTENT_HEIGHT, clientHeight: 600 };
+
+  vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (this: HTMLElement) {
+    return this.dataset.messageId === "u4" ? UNREAD_TOP : 0;
+  });
+  vi.spyOn(HTMLElement.prototype, "offsetParent", "get").mockImplementation(function (this: HTMLElement) {
+    return this.closest('[data-slot="aui_thread-viewport"]');
+  });
+  vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(() => box.scrollHeight);
+  vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(() => box.clientHeight);
+  vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(() => box.scrollTop);
+  Object.defineProperty(Element.prototype, "scrollTo", {
+    configurable: true,
+    value(this: Element, options: ScrollToOptions) {
+      scrolls.push(options);
+      scrollTexts.push(this.textContent);
+      box.scrollTop = Math.min(options.top ?? box.scrollTop, box.scrollHeight - box.clientHeight);
+    },
+  });
+
+  return {
+    scrolls,
+    scrollTexts,
+    box,
+    growContent: (): void => {
+      box.scrollHeight += 100;
+      resize.report(threadViewport());
+    },
+  };
+}
+
+/** Reports a scroll of the viewport to the end of its content. */
+function scrollToContentEnd(box: ReturnType<typeof stubThreadLayout>["box"]): void {
+  box.scrollTop = box.scrollHeight - box.clientHeight;
+  act(() => {
+    threadViewport().dispatchEvent(new Event("scroll"));
+  });
+}
+
+async function waitForOpenScroll(scrolls: readonly ScrollToOptions[], top: number): Promise<void> {
+  await waitFor(() => {
+    expect(scrolls).toContainEqual({ top, behavior: "instant" });
+  });
+}
+
+it("opens a chat that is not busy at the first message after seen", async () => {
+  const { scrolls } = stubThreadLayout();
+
+  await renderPanel(logOf(TWO_TURNS, { seen: SEEN_FIRST_TURN }));
+
+  await waitForOpenScroll(scrolls, UNREAD_TOP);
+  expect(scrolls).not.toContainEqual({ top: CONTENT_HEIGHT, behavior: "instant" });
+});
+
+it.each<[string, readonly ChatEntry[], Partial<Chat>]>([
+  ["a busy chat, also with messages after seen,", RUNNING_TURN, { seen: SEEN_FIRST_TURN }],
+  ["a chat with no seen", TWO_TURNS, {}],
+  ["a chat seen to its last entry", TWO_TURNS, { seen: TWO_TURNS.length }],
+])("opens %s at its end", async (_chat, entries, fields) => {
+  const { scrolls } = stubThreadLayout();
+
+  await renderPanel(logOf(entries, fields));
+
+  await waitForOpenScroll(scrolls, CONTENT_HEIGHT);
+  expect(scrolls).not.toContainEqual({ top: UNREAD_TOP, behavior: "instant" });
+});
+
+/**
+ * Serves a log in two reads, split after `first` entries. The kit store takes
+ * the first read before the second read arrives.
+ */
+async function renderInTwoReads(
+  entries: readonly ChatEntry[],
+  first: number,
+  fields: Partial<Chat> = {},
+): Promise<void> {
+  const log = stubChatLog({ [chatPath()]: successReply(chatRecord({ seq: entries.length, ...fields })) });
+
+  await renderPanel(log);
+  await settle();
+  log.answer(0, { cursor: first, entries: entries.slice(0, first) });
+  await settle();
+  log.answer(first, { cursor: entries.length, entries: entries.slice(first) });
+}
+
+it("has the text of a reply that crossed a read in the page when a chat opens at its end", async () => {
+  const { scrolls, scrollTexts } = stubThreadLayout();
+
+  await renderInTwoReads(TWO_TURNS, TWO_TURNS.length - 1, { seen: TWO_TURNS.length });
+
+  await waitForOpenScroll(scrolls, CONTENT_HEIGHT);
+  expect(scrollTexts[scrolls.findIndex(({ behavior }) => behavior === "instant")]).toContain("I updated them.");
+});
+
+it("has the text of a reply that crossed a read in the page when a chat opens at a message below it", async () => {
+  const { scrolls, scrollTexts } = stubThreadLayout();
+
+  await renderInTwoReads(TWO_TURNS, 2, { seen: SEEN_FIRST_TURN });
+
+  await waitForOpenScroll(scrolls, UNREAD_TOP);
+  expect(scrollTexts[scrolls.findIndex(({ top }) => top === UNREAD_TOP)]).toContain("I renamed it.");
+});
+
+it("shows only messages of the log when a finished chat comes in two reads", async () => {
+  stubThreadLayout();
+  const shown = new Set<string>();
+  const observer = new MutationObserver(() => {
+    for (const message of document.querySelectorAll<HTMLElement>("[data-message-id]")) {
+      shown.add(message.dataset.messageId!);
+    }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  onTestFinished(() => {
+    observer.disconnect();
+  });
+
+  await renderInTwoReads(TWO_TURNS, 2);
+
+  await waitFor(() => {
+    expect(shown).toContain("a5");
+  });
+  expect([...shown].sort()).toEqual(["a2", "a5", "u1", "u4"]);
+});
+
+it("takes no run start from the open of a busy chat, so new content follows with no smooth scroll", async () => {
+  const { scrolls, box, growContent } = stubThreadLayout();
+
+  await renderPanel(logOf(RUNNING_TURN));
+  await waitForOpenScroll(scrolls, CONTENT_HEIGHT);
+  await frame();
+  expect(scrolls.filter(({ behavior }) => behavior !== "instant")).toEqual([]);
+
+  scrolls.length = 0;
+  growContent();
+
+  expect(scrolls).toEqual([{ top: box.scrollHeight, behavior: "instant" }]);
+});
+
+it("takes no run start from the open of a busy chat that comes in two reads", async () => {
+  const { scrolls } = stubThreadLayout();
+
+  await renderInTwoReads(RUNNING_TURN, 2);
+
+  await waitForOpenScroll(scrolls, CONTENT_HEIGHT);
+  await frame();
+  expect(scrolls.filter(({ behavior }) => behavior !== "instant")).toEqual([]);
+});
+
+it("follows a chat that opened at a message only after the reader reached its end", async () => {
+  const { scrolls, box, growContent } = stubThreadLayout();
+
+  await renderPanel(logOf(TWO_TURNS, { seen: SEEN_FIRST_TURN }));
+  await waitForOpenScroll(scrolls, UNREAD_TOP);
+
+  scrolls.length = 0;
+  growContent();
+  expect(scrolls).toEqual([]);
+
+  scrollToContentEnd(box);
+  growContent();
+  expect(scrolls).toEqual([{ top: box.scrollHeight, behavior: "instant" }]);
+});
+
+it("scrolls a chat that opened at a message to the end at a run start, and follows after that", async () => {
+  const { scrolls, box, growContent } = stubThreadLayout();
+  const log = logOf(TWO_TURNS, { seen: SEEN_FIRST_TURN });
+
+  await renderPanel(log);
+  await waitForOpenScroll(scrolls, UNREAD_TOP);
+
+  scrolls.length = 0;
+  log.answer(TWO_TURNS.length, {
+    cursor: TWO_TURNS.length + 1,
+    entries: chatEntries([userMessage("Run the tests.")], TWO_TURNS.length + 1),
+  });
+  await waitFor(() => {
+    expect(scrolls).toContainEqual({ top: box.scrollHeight, behavior: "auto" });
+  });
+
+  scrolls.length = 0;
+  scrollToContentEnd(box);
+  growContent();
+  expect(scrolls).toEqual([{ top: box.scrollHeight, behavior: "instant" }]);
+});
+
+it("stops the follow while keyboard focus is in a message, and starts it again only at the end", async () => {
+  const { scrolls, box, growContent } = stubThreadLayout();
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  stubFocusVisible(true);
+
+  await renderPanel(logOf(RUNNING_TURN));
+  await waitForOpenScroll(scrolls, CONTENT_HEIGHT);
+  const control = document.createElement("button");
+  threadViewport().querySelector("[data-message-id]")!.append(control);
+
+  act(() => {
+    control.focus();
+  });
+  scrolls.length = 0;
+  growContent();
+  expect(scrolls).toEqual([]);
+
+  act(() => {
+    composer().focus();
+  });
+  growContent();
+  expect(scrolls).toEqual([]);
+
+  scrollToContentEnd(box);
+  growContent();
+  expect(scrolls).toEqual([{ top: box.scrollHeight, behavior: "instant" }]);
+});
+
+it("marks no message of the thread with a placeholder height", async () => {
+  await renderPanel(logOf(TEXT_LOG));
+
+  const messages = await waitFor(() => {
+    const found = [...document.querySelectorAll("[data-message-id]")];
+    expect(found).not.toEqual([]);
+    return found;
+  });
+  for (const message of messages) {
+    expect(message.className).not.toMatch(/content-visibility|contain-intrinsic-size/);
+  }
+});
+
+it("takes the smooth scroll off the viewport under reduced motion", async () => {
+  await renderPanel(logOf(TEXT_LOG));
+
+  await findComposer();
+  expect(threadViewport().className).toContain("motion-reduce:scroll-auto");
 });

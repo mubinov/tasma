@@ -24,11 +24,13 @@ export type ChatOptionValue = { value: string; name: string; description?: strin
 
 export type ChatMessage = ChatUserMessage | ChatAgentMessage;
 
-export type ChatUserMessage = { role: "user"; id: string; at: string; text: string };
+export type ChatUserMessage = { role: "user"; id: string; seq: number; at: string; text: string };
 
 export type ChatAgentMessage = {
   role: "assistant";
   id: string;
+  /** The `seq` of the entry that started the message. */
+  seq: number;
   at: string;
   parts: readonly ChatPart[];
   /** The message takes new parts: until its turn ends, the chat stops, or a user message comes. */
@@ -241,7 +243,7 @@ function applyEvent(step: Step): void {
   switch (event.kind) {
     case "user":
       closeOpen(messages);
-      messages.push({ role: "user", id: `u${entry.seq}`, at: entry.at, text: event.text });
+      messages.push({ role: "user", id: `u${entry.seq}`, seq: entry.seq, at: entry.at, text: event.text });
       break;
     case "update":
       if (isRecord(event.update)) {
@@ -322,6 +324,7 @@ function changeOpen(step: Step, change: (parts: readonly ChatPart[]) => readonly
   messages.push({
     role: "assistant",
     id: `a${entry.seq}`,
+    seq: entry.seq,
     at: entry.at,
     parts: change([]),
     open,

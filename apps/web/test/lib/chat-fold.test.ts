@@ -116,21 +116,27 @@ describe("foldChatEntries: user", () => {
   it("adds a user message with the id u<seq>", () => {
     const view = foldEvents([userMessage("Rename the parser.")]);
 
-    expect(view.messages).toEqual([{ role: "user", id: "u1", at: atSeq(1), text: "Rename the parser." }]);
+    expect(view.messages).toEqual([{ role: "user", id: "u1", seq: 1, at: atSeq(1), text: "Rename the parser." }]);
   });
 
   it("closes the open message before it adds the user message", () => {
     const view = foldEvents([textChunk("Ready."), userMessage("Go on."), textChunk("Working.")]);
 
     expect(view.messages).toEqual([
-      { role: "assistant", id: "a1", at: atSeq(1), parts: [{ type: "text", text: "Ready." }], open: false, running: false },
-      { role: "user", id: "u2", at: atSeq(2), text: "Go on." },
-      { role: "assistant", id: "a3", at: atSeq(3), parts: [{ type: "text", text: "Working." }], open: true, running: true },
+      { role: "assistant", id: "a1", seq: 1, at: atSeq(1), parts: [{ type: "text", text: "Ready." }], open: false, running: false },
+      { role: "user", id: "u2", seq: 2, at: atSeq(2), text: "Go on." },
+      { role: "assistant", id: "a3", seq: 3, at: atSeq(3), parts: [{ type: "text", text: "Working." }], open: true, running: true },
     ]);
   });
 });
 
 describe("foldChatEntries: text and thought chunks", () => {
+  it("keeps the seq of the entry that started a message when later entries add parts to it", () => {
+    const view = foldEvents([userMessage("Hi."), textChunk("Hello, ", "m1"), textChunk("there.", "m1"), turnEnd()]);
+
+    expect(view.messages.map(({ seq }) => seq)).toEqual([1, 2]);
+  });
+
   it("joins chunks with the same message id into one text part", () => {
     const view = foldEvents([userMessage("Hi."), textChunk("Hello, ", "m1"), textChunk("there.", "m1")]);
 
@@ -965,6 +971,7 @@ describe("foldChatEntries: the end of a turn and the notices", () => {
     expect(view.messages[2]).toEqual({
       role: "assistant",
       id: "a4",
+      seq: 4,
       at: atSeq(4),
       parts: [{ type: "notice", notice: { kind: "failed", reason: "The agent exited." } }],
       open: false,
@@ -1026,6 +1033,7 @@ describe("foldChatEntries: the end of a turn and the notices", () => {
     expect(agentAt(view, 1)).toEqual({
       role: "assistant",
       id: "a2",
+      seq: 2,
       at: atSeq(2),
       parts: [
         { type: "text", text: "Hello." },

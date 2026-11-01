@@ -60,7 +60,7 @@ function tool(fields: Partial<ChatTool> = {}): ChatTool {
 }
 
 function agentMessage(parts: readonly ChatPart[], fields: Partial<ChatAgentMessage> = {}): ChatAgentMessage {
-  return { role: "assistant", id: "a2", at: AT, parts, open: false, running: false, ...fields };
+  return { role: "assistant", id: "a2", seq: 2, at: AT, parts, open: false, running: false, ...fields };
 }
 
 function fold(entries: readonly ChatEntry[], view: ChatView = CHAT_VIEW_START): ChatView {
@@ -82,7 +82,7 @@ describe("chatThreadMessage", () => {
   };
 
   it("gives a user message its id, its time and its text", () => {
-    expect(chatThreadMessage({ role: "user", id: "u1", at: AT, text: "Run the tests." }, FOLDER)).toEqual({
+    expect(chatThreadMessage({ role: "user", id: "u1", seq: 1, at: AT, text: "Run the tests." }, FOLDER)).toEqual({
       role: "user",
       id: "u1",
       createdAt: new Date(AT),
