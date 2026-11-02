@@ -76,6 +76,8 @@ export type WorldOptions = {
   idleLimit?: IdleLimit;
   /** Without it, the runner uses its default wait of `end`. */
   endGraceMs?: number;
+  /** Without it, the runner uses its default hold of a running job. */
+  jobHoldMs?: number;
 };
 
 /** A daemon over project ALPHA, whose folder is a directory, with the task ALPHA-1. */
@@ -116,6 +118,7 @@ export async function world(options: WorldOptions = {}): Promise<World> {
     shellEnv: options.shellEnv === null ? undefined : (options.shellEnv ?? unexpected),
     idleLimit: options.idleLimit,
     endGraceMs: options.endGraceMs,
+    jobHoldMs: options.jobHoldMs,
     stderr: { write: (line: string) => errors.push(line) },
     defaults: openAgentDefaults(root),
   });

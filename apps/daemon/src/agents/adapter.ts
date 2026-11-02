@@ -17,6 +17,19 @@ export type AgentLaunch = { command: string; args: string[]; env: AgentEnv };
  */
 export type LaunchResult = AgentLaunch | { missing: string } | { failed: string };
 
+/** A command that the agent started in the background and that still runs. */
+export type RunningCommand = { mark: "job" | "service" | undefined; name: string };
+
+/** `jobsEnded`: the `job` commands that this check found ended. A later check does not count them again. */
+export type BackgroundState = { running: RunningCommand[]; jobsEnded: number };
+
+export type BackgroundCommands = {
+  /** Reads one session update of the agent, before `filterUpdate` drops a part of it. */
+  note(update: AcpObject): void;
+  /** A command that it cannot check counts as not running. */
+  running(): Promise<BackgroundState>;
+};
+
 export type AgentAdapter = {
   agent: ChatAgent;
   /** Gives a result rather than throwing when the agent cannot run here. */
@@ -38,4 +51,8 @@ export type AgentAdapter = {
   sessionGone: string;
   /** Gives the update as the log keeps it: a new object when it changes anything. */
   filterUpdate(update: AcpObject): AcpObject;
+  /** The `_meta` of `session/new` and `session/resume`. */
+  sessionMeta?: AcpObject;
+  /** The background commands of one agent process. `log` takes each line for the log of the daemon. */
+  backgroundCommands?(log: (cause: string) => void): BackgroundCommands;
 };

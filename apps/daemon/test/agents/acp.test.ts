@@ -100,6 +100,19 @@ describe("connectAgent", () => {
     expect(fake.prompts).toEqual([{ sessionId: "session-7", prompt: [{ type: "text", text: "Go on" }] }]);
   });
 
+  it("sends the meta of a new and of a resumed session as _meta", async () => {
+    const fake = fakeAgent().spawn(LAUNCH, FOLDER);
+    const connection = connectAgent(fake.stream, recorder().handlers);
+    await connection.initialize();
+    const meta = { systemPrompt: { append: "Mark each command." } };
+
+    await connection.create(FOLDER, meta);
+    await connection.resume(FOLDER, "session-7", meta);
+
+    expect(fake.newSession).toEqual({ cwd: FOLDER, mcpServers: [], _meta: meta });
+    expect(fake.resumes).toEqual([{ sessionId: "session-7", cwd: FOLDER, mcpServers: [], _meta: meta }]);
+  });
+
   it("rejects a resume with SessionNotFound when the agent has no such session, and then creates one", async () => {
     const fake = fakeAgent({
       async resume() {

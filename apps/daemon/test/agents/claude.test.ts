@@ -581,3 +581,37 @@ describe("claudeAdapter.skillListed", () => {
     await expect(claudeAdapter.skillListed({ PATH: await target() }, AbortSignal.abort())).resolves.toBeUndefined();
   });
 });
+
+describe("claudeAdapter background commands", () => {
+  it("appends the rule of the two marks to the system prompt of each session", () => {
+    expect(claudeAdapter.sessionMeta).toEqual({
+      systemPrompt: {
+        append: "Rule of this application: every time you start a command in the background (the Bash tool with "
+          + "run_in_background, or the Monitor tool), give it a description that begins with one of two marks. Use [job] "
+          + "when the command ends by itself, for example tests or a build. Use [service] when the command runs until "
+          + "something stops it, for example a dev server or a watcher.",
+      },
+    });
+  });
+
+  it("checks the commands with the lsof and the time limit of its options, and logs through the function it gets", async () => {
+    const dir = await target();
+    const lsof = join(dir, "lsof");
+    await writeFile(lsof, "#!/bin/sh\nexec /bin/sleep 10\n");
+    await chmod(lsof, 0o755);
+    await writeFile(join(dir, "a.output"), "");
+    const logged: string[] = [];
+    const adapter = createClaudeAdapter({ lsof, lsofTimeoutMs: 100 });
+    const background = adapter.backgroundCommands?.((cause) => logged.push(cause));
+    const meta = { claudeCode: { toolName: "Bash", toolResponse: { backgroundTaskId: "task-1" } } };
+    background?.note({ sessionUpdate: "tool_call", toolCallId: "call-1", rawInput: { description: "[job] Build" }, _meta: meta });
+    background?.note({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call-1",
+      _meta: { terminal_output: { terminal_id: "call-1", data: `Output is being written to: ${join(dir, "a.output")}` } },
+    });
+
+    expect(await background?.running()).toEqual({ running: [], jobsEnded: 0 });
+    expect(logged).toEqual(["lsof did not end in 100 ms, so Tasma cannot tell whether the background commands run"]);
+  });
+});

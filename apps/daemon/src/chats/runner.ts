@@ -26,11 +26,11 @@ import type {
 } from "@tasma/protocol";
 import { AgentClosed, connectAgent, SessionNotFound, spawnAgent } from "../agents/acp.js";
 import type { AgentConnection, AgentEnd, AgentHandlers, AgentProcess, AgentSession } from "../agents/acp.js";
-import type { AgentAdapter, AgentEnv, AgentLaunch } from "../agents/adapter.js";
+import type { AgentAdapter, AgentEnv, AgentLaunch, BackgroundCommands, BackgroundState } from "../agents/adapter.js";
 import { readShellEnv } from "../agents/shell-env.js";
 import type { ShellEnv } from "../agents/shell-env.js";
 import { causeOf, DaemonError } from "../http/failure.js";
-import { AGENT_STEP_IDLE_MS, idleTimer } from "./idle.js";
+import { AGENT_STEP_IDLE_MS, holdReason, idleTimer, JOB_HOLD_MS, stopNote } from "./idle.js";
 import type { IdleLimit, IdleTimer } from "./idle.js";
 import { applyPlan, foldOptions, isHidden, offering, optionFiles, optionsEvent, wanted } from "./options.js";
 import { CANCELLED, faultLine, resolution } from "./registry.js";
@@ -195,6 +195,10 @@ type Run = RunningChat & {
   adapter: AgentAdapter | undefined;
   /** Set with the process. */
   idle: IdleTimer | undefined;
+  /** Set with the process, when its adapter reports background commands. */
+  background: BackgroundCommands | undefined;
+  /** The `job` commands that the checks of `background` found ended since the last idle check. */
+  jobsEnded: number;
   /** The texts of the chat that no prompt has taken to the agent, in log order. A new session takes every text. */
   unsent: string[];
   /** Set when the run writes no more events: at a failure, once the chat is gone, and at a stop. */
@@ -310,6 +314,8 @@ function newRun(live: LiveChat): Run {
     earlierPicks: undefined,
     adapter: undefined,
     idle: undefined,
+    background: undefined,
+    jobsEnded: 0,
     unsent: [],
     quiet: false,
     halted: false,
@@ -337,9 +343,12 @@ export function createChatRunner(options: {
   defaults: AgentDefaultsStore;
   /** How long `end` waits for a cancelled turn to end. */
   endGraceMs?: number;
+  /** How long after the last activity a running `job` command keeps the agent. */
+  jobHoldMs?: number;
 }): ChatRunner {
   const { root, chats, adapters, env, defaults } = options;
   const endGraceMs = options.endGraceMs ?? END_GRACE_MS;
+  const jobHoldMs = options.jobHoldMs ?? JOB_HOLD_MS;
   const spawn = options.spawn ?? spawnAgent;
   const shellEnv = options.shellEnv ?? ((signal) => readShellEnv(env, { signal }));
   const idleLimit = options.idleLimit ?? (() => Promise.resolve(AGENT_STEP_IDLE_MS));
@@ -356,6 +365,8 @@ export function createChatRunner(options: {
   const picks = new WeakMap<LiveChat, Promise<void>>();
   /** The chats whose `end` has not settled. */
   const ending = new WeakSet<LiveChat>();
+  /** The text that the next prompt of each chat begins with, after an idle stop ended background commands. */
+  const notes = new WeakMap<LiveChat, string>();
   const stopping = new AbortController();
   /** The last shell environment in which an agent binary was found. */
   let kept: AgentEnv | undefined;
@@ -500,7 +511,9 @@ export function createChatRunner(options: {
   async function runTurn(run: Run, session: AgentSession): Promise<void> {
     const text = run.unsent.join("\n\n");
     run.unsent = [];
-    const result = await send(run, () => session.prompt(text));
+    const note = notes.get(run.live);
+    notes.delete(run.live);
+    const result = await send(run, () => session.prompt(note === undefined ? text : `${note}\n\n${text}`));
     if (result !== undefined) await endTurn(run, result.stopReason);
   }
 
@@ -526,6 +539,7 @@ export function createChatRunner(options: {
       update(update) {
         if (run.quiet) return;
         run.idle?.touch();
+        run.background?.note(update);
         run.options = foldOptions(run.options, update);
         void append(run, { kind: "update", update: adapter.filterUpdate(update) });
       },
@@ -545,8 +559,9 @@ export function createChatRunner(options: {
   ): Promise<{ session: AgentSession; created: boolean } | undefined> {
     const { live } = run;
     const { folder, session: stored } = live.chat;
+    const meta = run.adapter!.sessionMeta;
     if (stored !== undefined) {
-      const resumed = await send(run, () => connection.resume(folder, stored).catch((error: unknown) => {
+      const resumed = await send(run, () => connection.resume(folder, stored, meta).catch((error: unknown) => {
         if (error instanceof SessionNotFound) return "lost" as const;
         throw error;
       }));
@@ -558,7 +573,7 @@ export function createChatRunner(options: {
       }
     }
     run.unsent = [...live.unanswered];
-    const session = await send(run, () => connection.create(folder));
+    const session = await send(run, () => connection.create(folder, meta));
     if (session === undefined) return undefined;
     try {
       await live.setSession(session.sessionId);
@@ -710,6 +725,43 @@ export function createChatRunner(options: {
     forget(run);
   }
 
+  /**
+   * The background commands of the run that still run, or undefined when its
+   * adapter does not track background commands. Every call of `running()`
+   * goes through here, so that no caller hides an ended job from the next
+   * idle check. A failed check counts as no command running.
+   */
+  async function backgroundState(run: Run): Promise<BackgroundState | undefined> {
+    if (run.background === undefined) return undefined;
+    const state = await run.background.running().catch((error: unknown) => {
+      report(run.live, error);
+      return { running: [], jobsEnded: 0 };
+    });
+    run.jobsEnded += state.jobsEnded;
+    return state;
+  }
+
+  /**
+   * The idle stop. A running job, or a job that ended since the last check,
+   * gives one more limit, until `jobHoldMs` after the last activity.
+   */
+  async function idleCheck(run: Run, idle: IdleTimer): Promise<void> {
+    const touches = idle.touches();
+    const state = await backgroundState(run);
+    if (state === undefined) return quit(run);
+    if (run.quiet || runs.get(run.live) !== run || stopping.signal.aborted) return;
+    if (run.turning || run.open.size > 0 || idle.touches() !== touches) return;
+    const ended = run.jobsEnded;
+    run.jobsEnded = 0;
+    const jobs = state.running.filter((command) => command.mark === "job");
+    const others = state.running.filter((command) => command.mark !== "job");
+    const held = jobs.length > 0 && idle.idleMs() < jobHoldMs;
+    if (held || (jobs.length === 0 && ended > 0)) return idle.rearm();
+    if (state.running.length > 0) notes.set(run.live, stopNote([...jobs, ...others]));
+    if (jobs.length > 0) return fail(run, holdReason(jobs, others, jobHoldMs));
+    await quit(run);
+  }
+
   /** Registered in the same step as the spawn, so `close()` sees every process. */
   function spawnRun(
     run: Run,
@@ -721,7 +773,13 @@ export function createChatRunner(options: {
     const agentProcess = spawn(launch, folder);
     run.process = agentProcess;
     run.adapter = adapter;
-    run.idle = idleTimer({ limitMs, busy: () => run.turning || run.open.size > 0, expire: () => void quit(run) });
+    run.background = adapter.backgroundCommands?.((cause) => stderr.write(faultLine(run.live.chat, cause)));
+    const idle = idleTimer({
+      limitMs,
+      busy: () => run.turning || run.open.size > 0,
+      expire: () => void idleCheck(run, idle),
+    });
+    run.idle = idle;
     alive.add(agentProcess);
     void agentProcess.ended.then(() => alive.delete(agentProcess));
     const connection = connectAgent(agentProcess.stream, handlersOf(run, adapter));

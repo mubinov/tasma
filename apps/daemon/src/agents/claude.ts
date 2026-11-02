@@ -10,6 +10,7 @@ import type { AcpObject } from "@tasma/protocol";
 import { causeOf } from "../http/failure.js";
 import { AGENT_MODE } from "./adapter.js";
 import type { AgentAdapter, AgentEnv, LaunchResult } from "./adapter.js";
+import { BACKGROUND_RULE, claudeBackground } from "./claude-background.js";
 import { isExecutableFile, killGroup } from "./process.js";
 
 const ADAPTER_ENTRY = "@agentclientprotocol/claude-agent-acp/dist/index.js";
@@ -207,13 +208,19 @@ async function skillListed(env: AgentEnv, signal: AbortSignal, timeoutMs: number
 }
 
 /** The options are for the tests alone. */
-export function createClaudeAdapter(options: { host?: ClaudeHost; commandTimeoutMs?: number } = {}): AgentAdapter {
+export function createClaudeAdapter(
+  options: { host?: ClaudeHost; commandTimeoutMs?: number; lsof?: string; lsofTimeoutMs?: number } = {},
+): AgentAdapter {
   const {
     host = { runtime: runtimeOf(), resolve: (specifier) => import.meta.resolve(specifier) },
     commandTimeoutMs = COMMAND_TIMEOUT_MS,
+    lsof,
+    lsofTimeoutMs,
   } = options;
   return {
     agent: "claude",
+    sessionMeta: { systemPrompt: { append: BACKGROUND_RULE } },
+    backgroundCommands: (log) => claudeBackground({ log, lsof, timeoutMs: lsofTimeoutMs }),
     notLoggedIn: 'Claude is not logged in. Run "claude /login" in a terminal.',
     sessionGone: "Claude no longer has the conversation of this chat. Start a new chat for this step.",
     launch(env): LaunchResult {

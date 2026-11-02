@@ -51,10 +51,13 @@ export type AgentConnection = {
   closed: Promise<void>;
   /** The first request on a connection. */
   initialize(): Promise<void>;
-  /** Opens a new session in `folder`. */
-  create(folder: string): Promise<AgentSession>;
-  /** Opens a session of an earlier process again. Rejects with `SessionNotFound` when the agent no longer has it. */
-  resume(folder: string, sessionId: string): Promise<AgentSession>;
+  /** Opens a new session in `folder`. `meta` goes as the `_meta` of the request. */
+  create(folder: string, meta?: AcpObject): Promise<AgentSession>;
+  /**
+   * Opens a session of an earlier process again, with `meta` as `create` has
+   * it. Rejects with `SessionNotFound` when the agent no longer has it.
+   */
+  resume(folder: string, sessionId: string, meta?: AcpObject): Promise<AgentSession>;
 };
 
 /**
@@ -239,13 +242,22 @@ export function connectAgent(stream: Stream, handlers: AgentHandlers): AgentConn
         },
       }));
     },
-    async create(folder) {
-      const { sessionId, configOptions } = await call(connection.agent.request("session/new", { cwd: folder, mcpServers: [] }));
+    async create(folder, meta) {
+      const { sessionId, configOptions } = await call(connection.agent.request("session/new", {
+        cwd: folder,
+        mcpServers: [],
+        ...(meta === undefined ? {} : { _meta: meta }),
+      }));
       return sessionOf(sessionId, configOptions);
     },
-    async resume(folder, sessionId) {
+    async resume(folder, sessionId, meta) {
       try {
-        const { configOptions } = await call(connection.agent.request("session/resume", { sessionId, cwd: folder, mcpServers: [] }));
+        const { configOptions } = await call(connection.agent.request("session/resume", {
+          sessionId,
+          cwd: folder,
+          mcpServers: [],
+          ...(meta === undefined ? {} : { _meta: meta }),
+        }));
         return sessionOf(sessionId, configOptions);
       } catch (error) {
         if (error instanceof RequestError && error.code === RESOURCE_NOT_FOUND) throw new SessionNotFound(sessionId);
