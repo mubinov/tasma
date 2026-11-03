@@ -48,7 +48,7 @@ const WORKFLOW_NAME_LIMIT = 255;
 const STEP_NAME = /^[a-z0-9](?:[a-z0-9:_-]*[a-z0-9])?$/;
 
 /** The top-level keys of a workflow file. A key outside the set is reported and not read. */
-const WORKFLOW_KEYS = new Set(["title", "steps", "instructions", "transitions"]);
+const WORKFLOW_KEYS = new Set(["title", "steps", "instructions"]);
 
 /**
  * The keys of a step entry this format defines. A key outside the set is kept
@@ -258,8 +258,8 @@ export function shapeWorkflow(text: string, paths: WorkflowPaths, name: string):
   // A plain mapping, not merely an object: a YAML tag resolves to a `Set`, a
   // `Map` or a `Date`, none of which reports its content as entries.
   if (!isPlainMapping(content)) fail("workflow-invalid", "the file must hold a YAML mapping", file);
-  // `transitions` is handed to another component exactly as `custom` is, so the
-  // whole file takes the same walk a task region takes.
+  // The extra keys of a step are handed to another component exactly as the
+  // `custom` of a task is, so the whole file takes the same walk a task region takes.
   if (!WRITABLE.holds(content)) fail("workflow-invalid", `the file ${WRITABLE.expectation}`, file);
 
   const diagnostics: StoreDiagnostic[] = [];
@@ -282,7 +282,6 @@ export function shapeWorkflow(text: string, paths: WorkflowPaths, name: string):
     title: typeof title === "string" ? title : undefined,
     steps: readSteps(content, directory, file),
     instructions: readInstructionPaths(content.instructions, directory, file),
-    transitions: content.transitions,
   };
   return { workflow, diagnostics };
 }

@@ -13,8 +13,8 @@ created: "2024-05-06T09:15:00+02:00"
 updated: "2024-05-08T16:30:00+02:00"
 next_comment_id: 3
 custom:
-  workflow:
-    attempts: 2
+  importer:
+    batches: 2
 ---
 
 # Goal
@@ -35,7 +35,7 @@ updated: "2024-05-08T14:52:00+02:00"
 author: alex
 collapsed: true
 custom:
-  workflow: {attempt: 1, outcome: retry}
+  importer: {batch: 1, rows: 40}
 -->
 
 Body of comment 2. The last comment runs to the end of the file.

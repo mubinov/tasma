@@ -1,0 +1,6 @@
+steps:
+  - name: research
+    file: research.md
+    owner: agent
+owners:
+  __proto__: {polluted: true}

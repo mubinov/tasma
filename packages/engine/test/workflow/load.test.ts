@@ -50,31 +50,13 @@ describe("read", () => {
     expect(steps[2]?.custom).toBeUndefined();
   });
 
-  it("returns transitions exactly as read and consults nothing in them", async () => {
-    const root = await bareRoot();
-    await plantFixture(root, "dev", "valid", "full.yml");
-
-    expect((await workflows(root).read("dev")).workflow.transitions).toEqual({
-      "dev:research": [{ to: "dev:implement" }],
-      "dev:implement": [{ to: "user:review" }],
-    });
-  });
-
-  it("accepts an edge that names a step the workflow does not declare", async () => {
-    const root = await bareRoot();
-    await plantWorkflow(root, "dev", `${stepsOnly("research")}transitions:\n  research: [{to: gone}]\n`);
-
-    expect((await workflows(root).read("dev")).workflow.transitions).toEqual({ research: [{ to: "gone" }] });
-  });
-
-  it("leaves title, instructions and transitions out of a file that declares steps alone", async () => {
+  it("leaves title and instructions out of a file that declares steps alone", async () => {
     const root = await bareRoot();
     await plantFixture(root, "dev", "valid", "minimal.yml");
 
     const { workflow } = await workflows(root).read("dev");
 
     expect(workflow.title).toBeUndefined();
-    expect(workflow.transitions).toBeUndefined();
     expect(workflow.instructions).toEqual([]);
   });
 
@@ -101,6 +83,18 @@ describe("the unknown-key diagnostic", () => {
     expect(diagnostics[0]?.path).toBe(workflowFile(root, "dev"));
     expect(diagnostics[0]?.message).toContain("stpes");
   });
+
+  it("loads a file with a top-level transitions key, names the key and leaves its value out", async () => {
+    const root = await bareRoot();
+    await plantWorkflow(root, "dev", `${stepsOnly("research")}transitions:\n  research: [{to: gone}]\n`);
+
+    const { workflow, diagnostics } = await workflows(root).read("dev");
+
+    expect(workflow.steps.map((step) => step.name)).toEqual(["research"]);
+    expect(codes(diagnostics)).toEqual(["workflow-key-unknown"]);
+    expect(diagnostics[0]?.message).toContain("transitions");
+    expect(workflow).not.toHaveProperty("transitions");
+  });
 });
 
 describe("a file the loader refuses", () => {
@@ -126,6 +120,8 @@ describe("a file the loader refuses", () => {
     ["a title that is not a string", "title-type.yml", '"title"'],
     ["a key that addresses the object model", "unwritable-key.yml", "__proto__"],
     ["a value that contains itself", "unwritable-self.yml", "contain itself"],
+    ["a key that addresses the object model under an unknown key", "unwritable-key-unknown.yml", "__proto__"],
+    ["a value that contains itself under an unknown key", "unwritable-self-unknown.yml", "contain itself"],
   ])("reports workflow-invalid for %s, naming the file", async (_name, file, expected) => {
     const root = await bareRoot();
     await plantFixture(root, "dev", "invalid", file);

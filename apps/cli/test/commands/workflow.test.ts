@@ -190,11 +190,10 @@ describe("workflow show", () => {
     expect(out).toContain("user:review   human  /rules/dev/user-review.md\ndev:research  agent  /rules/dev/dev-research.md\n");
   });
 
-  it("prints neither the transitions nor a step's extra keys", async () => {
+  it("does not print the extra keys of a step", async () => {
     const { code, out } = await runWorkflow(["show", "dev"], {
       [READ]: ok({
         ...DEV,
-        transitions: { "dev:research": "dev:setup" },
         steps: [{ name: "dev:setup", file: "/s.md", owner: "agent", custom: { model: "opus" } }],
       }),
     });

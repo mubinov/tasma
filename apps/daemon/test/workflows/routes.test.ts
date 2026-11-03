@@ -132,12 +132,12 @@ describe("GET /workflows", () => {
 });
 
 describe("GET /workflows/{workflow}", () => {
-  it("answers with the definition, carrying transitions exactly as read", async () => {
+  it("answers with the definition", async () => {
     const root = await projectsRoot();
     await plantWorkflow(
       root,
       "dev",
-      `title: Development\ninstructions: [shared.md]\ntransitions: {research: [implement]}\n${stepsOnly("research")}`,
+      `title: Development\ninstructions: [shared.md]\n${stepsOnly("research")}`,
     );
     const server = await serving(root);
 
@@ -152,7 +152,6 @@ describe("GET /workflows/{workflow}", () => {
         title: "Development",
         steps: [{ name: "research", file: stepFile(root, "dev", "research"), owner: "agent" }],
         instructions: [join(workflowDir(root, "dev"), "shared.md")],
-        transitions: { research: ["implement"] },
       },
       diagnostics: [],
     });

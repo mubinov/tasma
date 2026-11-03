@@ -6,7 +6,7 @@ describes the files on disk. It does not describe how any program is built.
 
 A workflow says which steps a task can be on, which document a reader must read
 for each of them, and who performs each of them. It says nothing about when a
-task moves from one step to the next. That is the subject of a later document.
+task moves from one step to the next.
 
 ## 1. Overview
 
@@ -78,9 +78,6 @@ steps:
   - {name: "dev:research", file: steps/research.md, owner: agent}
   - {name: "dev:implement", file: steps/implement.md, owner: agent, retries: 2}
   - {name: "user:review", file: /srv/flows/shared/user-review.md, owner: human}
-transitions:
-  "dev:research": [{to: "dev:implement"}]
-  "dev:implement": [{to: "user:review"}]
 ```
 
 | Key | Required | Type | Read |
@@ -88,11 +85,9 @@ transitions:
 | `title` | no | string | Yes, for display. |
 | `steps` | yes | list of mappings | Yes. The ordered list of steps, and the set a task's `step` is checked against. |
 | `instructions` | no | list of strings | Yes, as paths. |
-| `transitions` | no | any | No. The value is stored and handed on unchanged. |
 
 `title` and `instructions` written with no value are read as absent: `title:` on
-its own is a file with no title. `transitions` is not read at all, so a reader
-hands on whatever the file held, including nothing.
+its own is a file with no title.
 
 ### `steps`
 
@@ -114,13 +109,6 @@ The order of the list is the order of the steps.
 A key an entry states that this format does not define is kept. The entry is the
 one reserved place for a per-step property another component needs.
 
-### `transitions`
-
-`transitions` is reserved. A reader stores the value exactly as it read it and
-checks nothing inside it: not that an entry is a mapping, and not that a step
-name it holds resolves. The value in the example above is an illustration of a
-possible shape, not part of this contract.
-
 ### Value limits
 
 Every value in the file passes the same walk a task file's values pass:
@@ -135,9 +123,6 @@ reader sets its own bound on how deep a value may nest and on how many values on
 key expands to, and rejects a file that goes past the bound instead of failing in
 an uncontrolled way. This document fixes no number. The bound belongs to the
 reader, as it does in [Task file format](task-file-format.md).
-
-`transitions` is handed to another component, so it takes the same walk as the
-rest of the file.
 
 ## 4. Step names
 
@@ -428,8 +413,7 @@ written, and a change that fails a rule writes nothing.
 
 A write:
 
-- keeps the comments, the key order, `transitions` and the unknown top-level
-  keys of the file;
+- keeps the comments, the key order and the unknown top-level keys of the file;
 - replaces the whole `steps` list, and loses a comment inside it;
 - keeps the other keys of a step entry whose name stays the same, and drops them
   when the name changes;

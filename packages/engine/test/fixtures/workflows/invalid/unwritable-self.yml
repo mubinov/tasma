@@ -1,4 +1,6 @@
 steps:
-  - {name: research, file: research.md}
-transitions: &loop
-  research: *loop
+  - name: research
+    file: research.md
+    owner: agent
+    settings: &loop
+      research: *loop

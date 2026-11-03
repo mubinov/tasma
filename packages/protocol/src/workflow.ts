@@ -22,8 +22,6 @@ export type Workflow = {
   steps: WorkflowStep[];
   /** The documents that apply to every step, as resolved absolute paths. */
   instructions: string[];
-  /** Stored exactly as read and never consulted. */
-  transitions?: unknown;
 };
 
 /**

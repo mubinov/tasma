@@ -33,12 +33,6 @@ export type Workflow = {
   steps: WorkflowStep[];
   /** The documents that apply to every step, as resolved absolute paths. */
   instructions: string[];
-  /**
-   * Stored exactly as read and never consulted. It is typed `unknown` on
-   * purpose: a caller that wants to act on it must narrow it, so no component
-   * that reads a workflow today decides what the transition model will be.
-   */
-  transitions?: unknown;
 };
 
 /** One instruction document: the whole file, with the path it was read from. */

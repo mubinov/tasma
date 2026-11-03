@@ -197,8 +197,8 @@ title: Flow A # the display name
 steps:
   - {name: "a:one", file: ${one}, owner: agent, retries: 2}
   - {name: "a:two", file: ${two}, owner: human}
-transitions:
-  "a:one": [{to: "a:two"}]
+owners:
+  "a:one": [{team: saga}]
 colour: red
 `;
 
@@ -209,7 +209,7 @@ async function handWritten(root: string): Promise<{ one: StepInput; two: StepInp
 }
 
 describe("editing a workflow", () => {
-  it("sets the title and keeps comments, key order, transitions and unknown keys", async () => {
+  it("sets the title and keeps comments, key order and unknown keys", async () => {
     const root = await tempRoot();
     await handWritten(root);
 
@@ -218,7 +218,7 @@ describe("editing a workflow", () => {
     const text = await readFile(workflowFile(root, "flow-a"), "utf8");
     expect(workflow.title).toBe("Flow B");
     expect(text).toContain("# The flow of the saga team.\ntitle: Flow B # the display name\nsteps:");
-    expect(text).toContain('transitions:\n  "a:one": [ { to: "a:two" } ]\ncolour: red\n');
+    expect(text).toContain('owners:\n  "a:one": [ { team: saga } ]\ncolour: red\n');
   });
 
   it("keeps the custom keys of a kept step and drops those of a renamed step", async () => {

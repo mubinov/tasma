@@ -1,5 +1,6 @@
 steps:
-  - {name: research, file: research.md}
-transitions:
-  research:
-    __proto__: {polluted: true}
+  - name: research
+    file: research.md
+    owner: agent
+    settings:
+      __proto__: {polluted: true}

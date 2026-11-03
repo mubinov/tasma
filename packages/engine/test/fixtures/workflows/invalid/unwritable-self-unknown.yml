@@ -1,0 +1,6 @@
+steps:
+  - name: research
+    file: research.md
+    owner: agent
+owners: &loop
+  research: *loop

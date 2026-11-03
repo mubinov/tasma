@@ -126,7 +126,7 @@ describe("updateTask", () => {
     expect(afterFrontmatter(written)).toBe(afterFrontmatter(source));
     expect(parseTask(written).task.frontmatter).toMatchObject({
       title: "Renamed",
-      custom: { workflow: { attempts: 2 } },
+      custom: { importer: { batches: 2 } },
       labels: ["import"],
     });
   });

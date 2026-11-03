@@ -28,7 +28,7 @@ describe("parseTask", () => {
       created: "2024-05-06T09:15:00+02:00",
       updated: "2024-05-08T16:30:00+02:00",
       next_comment_id: 3,
-      custom: { workflow: { attempts: 2 } },
+      custom: { importer: { batches: 2 } },
     });
     expect(task.body).toBe(
       "\n# Goal\n\nThis is the body: free markdown. It runs from the end of the\n"
@@ -50,7 +50,7 @@ describe("parseTask", () => {
         updated: "2024-05-08T14:52:00+02:00",
         author: "alex",
         collapsed: true,
-        custom: { workflow: { attempt: 1, outcome: "retry" } },
+        custom: { importer: { batch: 1, rows: 40 } },
         body: "\nBody of comment 2. The last comment runs to the end of the file.\n",
         lines: { start: 30, end: 41 },
       },
