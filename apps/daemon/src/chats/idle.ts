@@ -63,6 +63,11 @@ export function holdReason(jobs: RunningCommand[], others: RunningCommand[], hol
   return `${held} ${quoted(jobs)} ran for ${hours} hours with no update from the agent, so Tasma stopped the agent.${stopped} Send a message to continue.`;
 }
 
+/** The reason of the failure of a chat whose agent still ran an own turn `holdMs` after the last activity. */
+export function ownTurnReason(holdMs: number): string {
+  return `The agent ran a turn by itself with no update for ${String(holdMs / HOUR_MS)} hours, so Tasma stopped the agent. Send a message to continue.`;
+}
+
 /** The text that the next prompt of a chat begins with, after an idle stop ended `commands`. */
 export function stopNote(commands: RunningCommand[]): string {
   return `Tasma stopped this agent while it was idle. These background commands ended and did not finish their work: ${quoted(commands)}. Start them again if you still need them.`;

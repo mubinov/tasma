@@ -10,12 +10,12 @@ import {
 import { Thread, type ThreadComponents } from "@kit/components/assistant-ui/elements/thread.aui";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import type { Chat, ChatStatus, Client } from "@tasma/protocol";
-import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { chatBusy, turnRuns, type Chat, type ChatStatus, type Client } from "@tasma/protocol";
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type DOMAttributes, type ReactNode, type RefObject } from "react";
 import { useChatLog } from "../api/chat-log";
 import { chatQuery, type ChatPlace } from "../api/queries";
 import { chatRequestOf } from "../lib/chat-approval";
-import { chatBusy, type ChatMessage } from "../lib/chat-fold";
+import type { ChatMessage } from "../lib/chat-fold";
 import { chatAgentName, chatStateText, chatThreadMessage, isChatMissing } from "../lib/chat-messages";
 import { WarningIcon, XIcon } from "../lib/icons";
 import { CHAT_HEADING_MARK, focusInView } from "../lib/focus-in-view";
@@ -23,7 +23,7 @@ import { useChatModePick, type ChatModePick } from "../lib/use-chat-mode-pick";
 import { chatOpenMessageId, useChatScroll, type ChatScrollInput } from "../lib/use-chat-scroll";
 import { useChatSeen, type SeenWatch } from "../lib/use-chat-seen";
 import { useChatWrites } from "../lib/use-chat-writes";
-import { useFocusLost } from "../lib/use-focus-lost";
+import { focusDropped, useFocusLost } from "../lib/use-focus-lost";
 import { chatDraft, subscribeChatDraft, useChatDraftStore } from "../store/chat-drafts";
 import { ChatOptionMenu } from "./chat-option-menu";
 import { ChatDataViews, ChatEmpty, ChatToolGroup, ChatToolView } from "./chat-tool";
@@ -57,7 +57,7 @@ type SeenInput = Omit<SeenWatch, "viewport">;
 type ChatOpening = Pick<ChatScrollInput, "openId" | "lastId">;
 
 /** What the transcript knows of `ChatScrollInput`. The scroll component reads the rest from the kit. */
-type ScrollInput = ChatOpening & Pick<ChatScrollInput, "onFollow">;
+type ScrollInput = ChatOpening & Pick<ChatScrollInput, "turn" | "ownTurn" | "onFollow">;
 
 /** What `ChatTranscript` gives the composer slot through `extras` of the runtime, from the ready view on. */
 type ComposerExtras = ChatModePick & {
@@ -83,15 +83,66 @@ function ChatScroll(input: ScrollInput): null {
   const viewport = useThreadViewport((s) => s.element.viewport);
   const scrollToBottom = useThreadViewport((s) => s.scrollToBottom);
   const messages = useAuiState((s) => s.thread.messages);
+  const atEnd = useThreadViewport((s) => s.isAtBottom);
 
-  useChatScroll({ ...input, viewport, scrollToBottom, messages });
+  useChatScroll({ ...input, viewport, scrollToBottom, messages, atEnd });
   return null;
 }
 
+const KIT_SEND = '[aria-label="Send message"]';
+
+const KIT_INPUT = 'textarea[aria-label="Message input"]';
+
 /**
- * The seen tracker, the scroll and the mode picker in the composer. Their data comes
- * through the runtime extras, so `THREAD_COMPONENTS` stays one object: a new
- * one would change the context that every message of the thread reads.
+ * An own turn changes Send to Stop, or Stop to Send, and removes the action bars
+ * of the messages, with no action of the user, and a sent draft disables Send. A
+ * key press meant for one button must not operate the other. The move is in a
+ * layout effect body, because React gives the focus back to an element that stays
+ * in the page at the end of its mutations. The last element with focus comes from
+ * React events: they also come from a portal, such as a menu of a message, and
+ * React sends none for an element that leaves in its commit.
+ */
+function useChatThreadFocus(
+  threadRef: RefObject<HTMLElement | null>,
+  onFocusLost: () => void,
+): Pick<DOMAttributes<HTMLElement>, "onFocusCapture" | "onBlurCapture"> {
+  const canCancel = useAuiState((s) => s.composer.canCancel);
+  const canSend = useAuiState((s) => s.composer.canSend);
+  const lastFocusedRef = useRef<Element | null>(null);
+  const settleFocus = useEffectEvent(() => {
+    const held = focusDropped() ? lastFocusedRef.current : document.activeElement;
+    if (held === null || (held.isConnected && !held.matches(":disabled"))) {
+      return;
+    }
+    lastFocusedRef.current = null;
+    if (held.matches(KIT_SEND)) {
+      focusInView(threadRef.current!.querySelector<HTMLElement>(KIT_INPUT));
+    } else {
+      onFocusLost();
+    }
+  });
+
+  useLayoutEffect(() => {
+    settleFocus();
+  }, [canCancel, canSend]);
+
+  return {
+    onFocusCapture: ({ target }) => {
+      lastFocusedRef.current = target;
+    },
+    onBlurCapture: ({ target }) => {
+      // A window that loses focus keeps `activeElement`, and the element can still leave.
+      if (document.activeElement !== target) {
+        lastFocusedRef.current = null;
+      }
+    },
+  };
+}
+
+/**
+ * The seen tracker, the scroll and the mode picker in the composer. Their data
+ * comes through the runtime extras, so `THREAD_COMPONENTS` stays one object: a
+ * new one would change the context that every message of the thread reads.
  */
 function ChatComposerStart(): ReactNode {
   const extras = useAuiState((s) => s.thread.extras);
@@ -342,7 +393,8 @@ function ChatTranscript(
 ): ReactNode {
   const { view, ready: caughtUp, failures, resets } = useChatLog(client, tag, task, chat, record.seq);
   const ready = caughtUp && resets === 0;
-  const { status, turn } = view.fold;
+  const { status, turn, ownTurn } = view.fold;
+  const running = turnRuns(view.fold);
   const statusKey = JSON.stringify(status);
   const busy = chatBusy(view.fold);
   const { agent, folder } = record;
@@ -365,7 +417,7 @@ function ChatTranscript(
     : {
         ...modePick,
         seenWatch: { tag, task, chat, seq: view.seq, seen: record.seen, busy },
-        scroll: { ...opening, onFollow: setAutoScroll },
+        scroll: { ...opening, turn, ownTurn, onFollow: setAutoScroll },
         onFocusLost: () => {
           focusInView(headingRef.current);
         },
@@ -375,10 +427,10 @@ function ChatTranscript(
     // message that the thread first sees as running shows its text only after the open scroll.
     messages: ready ? view.messages : NO_MESSAGES,
     convertMessage: (message: ChatMessage) => chatThreadMessage(message, folder),
-    // The whole turn, also while it waits at a request: the kit shows Stop and no Send.
-    isRunning: ready && turn,
+    // The whole turn, also while it waits at a request: the kit shows Stop and no Send. A job wait keeps Send.
+    isRunning: ready && running,
     // The kit `canSend` does not read `isRunning`, and the daemon refuses a message during a turn.
-    isSendDisabled: turn,
+    isSendDisabled: running,
     onNew: (message) => writes.send(messageText(message)),
     onCancel: () => writes.cancel(),
     onRespondToToolApproval: (options) => writes.answer(chatRequestOf(view, options.approvalId), options),
@@ -389,9 +441,9 @@ function ChatTranscript(
   });
   const endRound = useEffectEvent(onReset);
 
-  // A viewport that listens when the runtime takes the ready view gets the first `isRunning` of a
-  // busy chat as a run start, and scrolls smoothly as the running text appears. The kit delivers an
-  // event in a microtask, to the listeners at that time. This microtask comes after that delivery.
+  // The thread mounts after the runtime took the ready view, so the first `isRunning` of a busy chat
+  // is no run start for its listeners. The kit delivers an event in a microtask, to the listeners at
+  // that time. This microtask comes after that delivery.
   useEffect(() => {
     if (ready) {
       queueMicrotask(() => {
@@ -450,13 +502,15 @@ function ChatThread(
   { headingRef, autoScroll }: { headingRef: RefObject<HTMLHeadingElement | null>; autoScroll: boolean },
 ): ReactNode {
   const ref = useRef<HTMLDivElement>(null);
-
-  useFocusLost(ref, () => {
+  const focusHeading = (): void => {
     focusInView(headingRef.current);
-  });
+  };
+  const focusEvents = useChatThreadFocus(ref, focusHeading);
+
+  useFocusLost(ref, focusHeading);
 
   return (
-    <div ref={ref} className="min-h-0 flex-1">
+    <div ref={ref} {...focusEvents} className="min-h-0 flex-1">
       <Thread autoFocus={false} components={THREAD_COMPONENTS} autoScroll={autoScroll} />
     </div>
   );

@@ -376,3 +376,17 @@ describe("claudeBackground.running", () => {
     expect(logged).toEqual([]);
   });
 });
+
+describe("claudeBackground.ownTurnEnded", () => {
+  const COST = { amount: 0.01, currency: "USD" };
+
+  it.each<[string, AcpObject, boolean]>([
+    ["a usage update with a cost and no meta", { sessionUpdate: "usage_update", cost: COST }, true],
+    ["a usage update with a cost and an origin", { sessionUpdate: "usage_update", cost: COST, _meta: { "_claude/origin": { kind: "task-notification" } } }, true],
+    ["a usage update with no cost", { sessionUpdate: "usage_update", _meta: { "_claude/rateLimit": {} } }, false],
+    ["a usage update whose cost is no object", { sessionUpdate: "usage_update", cost: 1 }, false],
+    ["another update with a cost", { sessionUpdate: "agent_message_chunk", cost: COST }, false],
+  ])("reads %s", (_case, update, ended) => {
+    expect(tracker().background.ownTurnEnded(update)).toBe(ended);
+  });
+});

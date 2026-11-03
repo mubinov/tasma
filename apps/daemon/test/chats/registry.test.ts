@@ -177,7 +177,7 @@ describe("creating a chat", () => {
       stateSeq: 1,
       state: "working",
     });
-    expect(live.fold).toEqual({ turn: true, open: [], status: { state: "working" } });
+    expect(live.fold).toEqual({ turn: true, job: false, ownTurn: false, open: [], status: { state: "working" } });
     expect(live.diagnostics).toEqual([]);
     await expect(live.read(0)).resolves.toMatchObject([{ seq: 1, event: { kind: "user", ...MESSAGE } }]);
     expect(events).toEqual([chatEvent(1, "working")]);
@@ -770,12 +770,35 @@ describe("recovering a chat that an earlier daemon left in a turn or with an ope
     expect(await logOfChat(root)).toHaveLength(3);
   });
 
+  it.each<[string, ChatEvent]>([
+    ["a job", { kind: "background", job: true, ownTurn: false }],
+    ["an own turn", { kind: "background", job: false, ownTurn: true }],
+  ])("interrupts a log that ends with %s, and publishes the change of state", async (_case, background) => {
+    const { chats, events, root } = await planted([background, TURN_END]);
+
+    const live = await chats.get("ALPHA", "ALPHA-1", 1);
+
+    expect(live.chat.state).toBe("needs-you");
+    expect(live.fold.job).toBe(false);
+    expect(live.fold.ownTurn).toBe(false);
+    expect((await logOfChat(root)).at(-1)).toEqual(INTERRUPTED);
+    expect(events).toEqual([chatEvent(1, "needs-you")]);
+  });
+
+  it("writes nothing for a log whose background event cleared both values", async () => {
+    const { chats, root } = await planted([{ kind: "background", job: true, ownTurn: false }, TURN_END, { kind: "background", job: false, ownTurn: false }]);
+
+    await chats.get("ALPHA", "ALPHA-1", 1);
+
+    expect((await logOfChat(root)).at(-1)).toEqual({ kind: "background", job: false, ownTurn: false });
+  });
+
   it("resolves each open request as cancelled with no client, then interrupts, through list", async () => {
     const { chats, root } = await planted([PERMISSION, QUESTION, TURN_END, { kind: "user", ...MESSAGE }, PERMISSION]);
 
     const { chats: listed } = await chats.list("ALPHA", "ALPHA-1");
 
-    expect(listed[0]?.fold).toEqual({ turn: false, open: [], status: { state: "needs-you" } });
+    expect(listed[0]?.fold).toEqual({ turn: false, job: false, ownTurn: false, open: [], status: { state: "needs-you" } });
     expect((await logOfChat(root)).slice(-3)).toEqual([
       PERMISSION,
       { kind: "permission-resolved", request: "r-1", outcome: { outcome: "cancelled" } },

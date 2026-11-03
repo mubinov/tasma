@@ -19,7 +19,7 @@ import {
   updateChat,
 } from "@tasma/engine";
 import type { ChatChange, ChatInput, ChatLog, ChatRecord, TaskStoreErrorCode } from "@tasma/engine";
-import { CHAT_START, DAEMON_NAME, foldChat, printable } from "@tasma/protocol";
+import { CHAT_START, chatBusy, DAEMON_NAME, foldChat, printable } from "@tasma/protocol";
 import type { AcpObject, Chat, ChatEntry, ChatEvent, ChatFold, ChatStatus, Diagnostic } from "@tasma/protocol";
 import type { Publish } from "../events/feed.js";
 import { createHold, HOLD_MS } from "../events/hold.js";
@@ -72,9 +72,10 @@ export type LiveChat = {
   /** Calls on one handle write in call order. */
   append(event: ChatEvent): Promise<ChatEntry>;
   /**
-   * When the fold has a turn or an open request, writes a cancelled resolution
-   * of the daemon for each open request, and then `interrupted`. It reads the
-   * fold in its turn of the write order, so it sees every write called before it.
+   * When the fold has a turn, a job, an own turn or an open request, writes a
+   * cancelled resolution of the daemon for each open request, and then
+   * `interrupted`. It reads the fold in its turn of the write order, so it sees
+   * every write called before it.
    */
   interrupt(): Promise<void>;
   setSession(session: string): Promise<void>;
@@ -359,7 +360,7 @@ class Live implements LiveChat {
   /** As `interrupt`; the caller holds the turns of the handle. */
   async interruptInHeldTurns(): Promise<void> {
     if (this.#stale) await this.#reopen();
-    if (!this.#fold.turn && this.#fold.open.length === 0) return;
+    if (!chatBusy(this.#fold)) return;
     for (const [request, kind] of [...this.#asked]) {
       await this.appendInHeldTurns(resolution(kind, request, CANCELLED[kind]));
     }
@@ -519,8 +520,8 @@ export function createChatRegistry(options: {
 
   /**
    * A chat loaded from disk has no agent process in this daemon: the runner
-   * runs only the chats it created or got from here. So a turn or a request
-   * that its log leaves open ended with an earlier daemon.
+   * runs only the chats it created or got from here. So a turn, a job or a
+   * request that its log leaves open ended with an earlier daemon.
    */
   async function recover(live: Live): Promise<void> {
     try {

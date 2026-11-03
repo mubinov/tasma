@@ -24,7 +24,8 @@ export type AcpObject = Readonly<Record<string, unknown>>;
  * One event of a chat log. `request` is the id the daemon gives to a
  * permission request or a question, so that its resolution names it. `client`
  * names the client that sent a message or an answer; a resolution without it
- * was made by the daemon.
+ * was made by the daemon. In `background`, `job` and `ownTurn` are as in
+ * `ChatFold`, and `stopReason` is present only when the user stopped the own turn.
  */
 export type ChatEvent
   = | { kind: "user"; text: string; client: string }
@@ -34,6 +35,7 @@ export type ChatEvent
     | { kind: "question"; request: string; question: AcpObject }
     | { kind: "question-resolved"; request: string; answer: AcpObject; client?: string }
     | { kind: "turn-end"; stopReason: string }
+    | { kind: "background"; job: boolean; ownTurn: boolean; stopReason?: string }
     | { kind: "failed"; reason: string }
     | { kind: "interrupted" }
     | { kind: "resumed" }
@@ -155,20 +157,47 @@ export type QuestionAnswer
     | { action: "decline"; client: string };
 
 /**
- * What a fold of a chat log keeps: whether a turn runs, the requests that wait
- * for an answer, and the stop that holds the chat until a message or `resumed`.
+ * What a fold of a chat log keeps: the requests that wait for an answer, the
+ * stop that holds the chat until a message or `resumed`, and what the agent runs.
  */
-export type ChatFold = { turn: boolean; open: readonly string[]; stopped?: ChatStatus; status: ChatStatus };
+export type ChatFold = {
+  /** A turn that a message of the user started. */
+  turn: boolean;
+  /** A command with the mark `[job]` still runs. */
+  job: boolean;
+  /** An own turn runs: a turn that the agent started by itself, with no prompt of Tasma. */
+  ownTurn: boolean;
+  open: readonly string[];
+  stopped?: ChatStatus;
+  status: ChatStatus;
+};
 
 const NEEDS_YOU: ChatStatus = { state: "needs-you" };
 
 const WORKING: ChatStatus = { state: "working" };
 
+const NOTHING_RUNS = { turn: false, job: false, ownTurn: false, open: [] };
+
 /** The fold of an empty log. */
-export const CHAT_START: ChatFold = { turn: false, open: [], status: NEEDS_YOU };
+export const CHAT_START: ChatFold = { ...NOTHING_RUNS, status: NEEDS_YOU };
+
+/** A turn of a message or an own turn runs. */
+export function turnRuns({ turn, ownTurn }: Pick<ChatFold, "turn" | "ownTurn">): boolean {
+  return turn || ownTurn;
+}
+
+/** A turn runs, or the agent waits for its own `[job]`. */
+export function agentActive(fold: Pick<ChatFold, "turn" | "job" | "ownTurn">): boolean {
+  return turnRuns(fold) || fold.job;
+}
+
+/** The agent is active or a request is open. The runner can open a request outside a turn. */
+export function chatBusy(fold: Pick<ChatFold, "turn" | "job" | "ownTurn" | "open">): boolean {
+  return agentActive(fold) || fold.open.length > 0;
+}
 
 function settle(parts: Omit<ChatFold, "status">): ChatFold {
-  const status = parts.stopped ?? (parts.turn && parts.open.length === 0 ? WORKING : NEEDS_YOU);
+  const status = parts.stopped ?? (agentActive(parts) && parts.open.length === 0 ? WORKING : NEEDS_YOU);
   return { ...parts, status };
 }
 
@@ -178,25 +207,34 @@ function settle(parts: Omit<ChatFold, "status">): ChatFold {
  * the open requests, because a request of an ended turn cannot be answered.
  */
 export function foldChat(fold: ChatFold, event: ChatEvent): ChatFold {
-  const { turn, open, stopped } = fold;
+  const { turn, job, ownTurn, open, stopped } = fold;
   switch (event.kind) {
     case "user":
-      return settle({ turn: true, open });
+      return settle({ turn: true, job: false, ownTurn: false, open });
     case "permission":
     case "question":
-      return settle({ turn, open: [...open.filter((id) => id !== event.request), event.request], stopped });
+      return settle({
+        turn,
+        job,
+        ownTurn,
+        open: [...open.filter((id) => id !== event.request), event.request],
+        stopped,
+      });
     case "permission-resolved":
     case "question-resolved":
-      return settle({ turn, open: open.filter((id) => id !== event.request), stopped });
+      return settle({ turn, job, ownTurn, open: open.filter((id) => id !== event.request), stopped });
+    case "background":
+      return settle({ turn, job: event.job, ownTurn: event.ownTurn, open, stopped });
     case "turn-end":
+      return settle({ turn: false, job, ownTurn, open: [], stopped });
     case "interrupted":
-      return settle({ turn: false, open: [], stopped });
+      return settle({ ...NOTHING_RUNS, stopped });
     case "failed":
-      return settle({ turn: false, open: [], stopped: { state: "failed" } });
+      return settle({ ...NOTHING_RUNS, stopped: { state: "failed" } });
     case "continued-outside":
-      return settle({ turn: false, open: [], stopped: { state: "continued-outside", where: event.where } });
+      return settle({ ...NOTHING_RUNS, stopped: { state: "continued-outside", where: event.where } });
     case "resumed":
-      return settle({ turn, open });
+      return settle({ turn, job, ownTurn, open });
     default:
       return fold;
   }

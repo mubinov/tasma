@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { CHAT_START, chatMark, currentStep, foldChat, isActiveChat } from "@tasma/protocol";
+import { agentActive, CHAT_START, chatBusy, chatMark, currentStep, foldChat, isActiveChat, turnRuns } from "@tasma/protocol";
 import type { Chat, ChatEvent, ChatFold, ChatStatus, Workflow } from "@tasma/protocol";
 
 const USER: ChatEvent = { kind: "user", text: "Start", client: "app" };
+
+const TURN_END: ChatEvent = { kind: "turn-end", stopReason: "end_turn" };
+
+const WAIT: ChatEvent = { kind: "background", job: true, ownTurn: false };
+
+const OWN_TURN: ChatEvent = { kind: "background", job: false, ownTurn: true };
+
+const OWN_TURN_WITH_JOB: ChatEvent = { kind: "background", job: true, ownTurn: true };
+
+const CLEAR: ChatEvent = { kind: "background", job: false, ownTurn: false };
 
 function fold(...events: ChatEvent[]): ChatFold {
   return events.reduce(foldChat, CHAT_START);
@@ -26,11 +36,11 @@ function questionResolved(request: string): ChatEvent {
 
 describe("foldChat", () => {
   it("starts in needs-you with no turn and no open request", () => {
-    expect(CHAT_START).toEqual({ turn: false, open: [], status: { state: "needs-you" } });
+    expect(CHAT_START).toEqual({ turn: false, job: false, ownTurn: false, open: [], status: { state: "needs-you" } });
   });
 
   it("starts a turn at a user message", () => {
-    expect(fold(USER)).toEqual({ turn: true, open: [], status: { state: "working" } });
+    expect(fold(USER)).toEqual({ turn: true, job: false, ownTurn: false, open: [], status: { state: "working" } });
   });
 
   it("changes nothing at an update", () => {
@@ -47,16 +57,18 @@ describe("foldChat", () => {
   });
 
   it("opens a permission request, which needs the user", () => {
-    expect(fold(USER, permission("r1"))).toEqual({ turn: true, open: ["r1"], status: { state: "needs-you" } });
+    expect(fold(USER, permission("r1"))).toEqual({ turn: true, job: false, ownTurn: false, open: ["r1"], status: { state: "needs-you" } });
   });
 
   it("opens a question, which needs the user", () => {
-    expect(fold(USER, question("r1"))).toEqual({ turn: true, open: ["r1"], status: { state: "needs-you" } });
+    expect(fold(USER, question("r1"))).toEqual({ turn: true, job: false, ownTurn: false, open: ["r1"], status: { state: "needs-you" } });
   });
 
   it("closes a resolved permission request, and the turn works again", () => {
     expect(fold(USER, permission("r1"), permissionResolved("r1"))).toEqual({
       turn: true,
+      job: false,
+      ownTurn: false,
       open: [],
       status: { state: "working" },
     });
@@ -65,6 +77,8 @@ describe("foldChat", () => {
   it("closes an answered question, and the turn works again", () => {
     expect(fold(USER, question("r1"), questionResolved("r1"))).toEqual({
       turn: true,
+      job: false,
+      ownTurn: false,
       open: [],
       status: { state: "working" },
     });
@@ -79,13 +93,15 @@ describe("foldChat", () => {
     const one = foldChat(both, permissionResolved("r1"));
 
     expect(both.status).toEqual({ state: "needs-you" });
-    expect(one).toEqual({ turn: true, open: ["r2"], status: { state: "needs-you" } });
+    expect(one).toEqual({ turn: true, job: false, ownTurn: false, open: ["r2"], status: { state: "needs-you" } });
     expect(foldChat(one, questionResolved("r2")).status).toEqual({ state: "working" });
   });
 
   it("ends the turn at turn-end, and clears an open request", () => {
     expect(fold(USER, permission("r1"), { kind: "turn-end", stopReason: "end_turn" })).toEqual({
       turn: false,
+      job: false,
+      ownTurn: false,
       open: [],
       status: { state: "needs-you" },
     });
@@ -94,6 +110,8 @@ describe("foldChat", () => {
   it("ends the turn at interrupted, and clears an open request", () => {
     expect(fold(USER, question("r1"), { kind: "interrupted" })).toEqual({
       turn: false,
+      job: false,
+      ownTurn: false,
       open: [],
       status: { state: "needs-you" },
     });
@@ -108,19 +126,21 @@ describe("foldChat", () => {
   it("stops in failed, which a resolution does not leave", () => {
     const failed = fold(USER, permission("r1"), { kind: "failed", reason: "the agent process ended" });
 
-    expect(failed).toEqual({ turn: false, open: [], stopped: { state: "failed" }, status: { state: "failed" } });
+    expect(failed).toEqual({ turn: false, job: false, ownTurn: false, open: [], stopped: { state: "failed" }, status: { state: "failed" } });
     expect(foldChat(failed, permissionResolved("r1")).status).toEqual({ state: "failed" });
   });
 
   it("works again at a user message after failed", () => {
     const failed = fold(USER, { kind: "failed", reason: "the agent process ended" });
 
-    expect(foldChat(failed, USER)).toEqual({ turn: true, open: [], status: { state: "working" } });
+    expect(foldChat(failed, USER)).toEqual({ turn: true, job: false, ownTurn: false, open: [], status: { state: "working" } });
   });
 
   it("needs the user at resumed after failed", () => {
     expect(fold(USER, { kind: "failed", reason: "the agent process ended" }, { kind: "resumed" })).toEqual({
       turn: false,
+      job: false,
+      ownTurn: false,
       open: [],
       status: { state: "needs-you" },
     });
@@ -131,6 +151,8 @@ describe("foldChat", () => {
 
     expect(outside).toEqual({
       turn: false,
+      job: false,
+      ownTurn: false,
       open: [],
       stopped: { state: "continued-outside", where: "terminal" },
       status: { state: "continued-outside", where: "terminal" },
@@ -144,7 +166,108 @@ describe("foldChat", () => {
   });
 
   it("keeps a running turn at resumed", () => {
-    expect(fold(USER, { kind: "resumed" })).toEqual({ turn: true, open: [], status: { state: "working" } });
+    expect(fold(USER, { kind: "resumed" })).toEqual({ turn: true, job: false, ownTurn: false, open: [], status: { state: "working" } });
+  });
+});
+
+describe("what the agent runs", () => {
+  it.each<[string, ChatEvent[], boolean, boolean, boolean]>([
+    ["a running turn", [USER], true, true, true],
+    ["a turn that waits at a question", [USER, question("r1")], true, true, true],
+    ["a request that is open outside a turn", [USER, TURN_END, question("r1")], false, false, true],
+    ["a job wait", [USER, WAIT, TURN_END], false, true, true],
+    ["an own turn", [USER, TURN_END, OWN_TURN], true, true, true],
+    ["an ended turn", [USER, TURN_END], false, false, false],
+    ["a job wait that ended", [USER, WAIT, TURN_END, CLEAR], false, false, false],
+  ])("for %s", (_case, events, runs, active, busy) => {
+    const state = fold(...events);
+
+    expect(turnRuns(state)).toBe(runs);
+    expect(agentActive(state)).toBe(active);
+    expect(chatBusy(state)).toBe(busy);
+  });
+});
+
+describe("foldChat with a background job and an own turn", () => {
+  const FAILED: ChatEvent = { kind: "failed", reason: "the agent process ended" };
+
+  it("starts with no job and no own turn", () => {
+    expect(CHAT_START.job).toBe(false);
+    expect(CHAT_START.ownTurn).toBe(false);
+  });
+
+  it("clears both values and starts a turn at a user message", () => {
+    expect(fold(OWN_TURN_WITH_JOB, USER)).toEqual({ turn: true, job: false, ownTurn: false, open: [], status: { state: "working" } });
+  });
+
+  it("takes both values from a background event, and keeps the turn", () => {
+    expect(fold(USER, WAIT)).toEqual({ turn: true, job: true, ownTurn: false, open: [], status: { state: "working" } });
+    expect(fold(OWN_TURN_WITH_JOB)).toEqual({ turn: false, job: true, ownTurn: true, open: [], status: { state: "working" } });
+    expect(fold(OWN_TURN_WITH_JOB, CLEAR)).toEqual({ turn: false, job: false, ownTurn: false, open: [], status: { state: "needs-you" } });
+  });
+
+  it("does not read the stop reason of a background event", () => {
+    const stopped: ChatEvent = { kind: "background", job: false, ownTurn: false, stopReason: "cancelled" };
+
+    expect(fold(OWN_TURN_WITH_JOB, stopped)).toEqual(fold(OWN_TURN_WITH_JOB, CLEAR));
+  });
+
+  it("keeps both values at turn-end, so the chat stays working while a job runs", () => {
+    expect(fold(USER, WAIT, TURN_END)).toEqual({ turn: false, job: true, ownTurn: false, open: [], status: { state: "working" } });
+    expect(fold(USER, OWN_TURN_WITH_JOB, TURN_END)).toEqual({ turn: false, job: true, ownTurn: true, open: [], status: { state: "working" } });
+  });
+
+  it.each<[string, ChatEvent, ChatFold["stopped"]]>([
+    ["interrupted", { kind: "interrupted" }, undefined],
+    ["failed", FAILED, { state: "failed" }],
+    ["continued-outside", { kind: "continued-outside", where: "terminal" }, { state: "continued-outside", where: "terminal" }],
+  ])("clears both values at %s", (_case, event, stopped) => {
+    const after = fold(USER, OWN_TURN_WITH_JOB, event);
+
+    expect(after.turn).toBe(false);
+    expect(after.job).toBe(false);
+    expect(after.ownTurn).toBe(false);
+    expect(after.stopped).toEqual(stopped);
+    expect(after.status).toEqual(stopped ?? { state: "needs-you" });
+  });
+
+  it.each<[string, ChatEvent]>([
+    ["permission", permission("r1")],
+    ["question", question("r1")],
+    ["permission-resolved", permissionResolved("r1")],
+    ["question-resolved", questionResolved("r1")],
+    ["resumed", { kind: "resumed" }],
+    ["update", { kind: "update", update: { sessionUpdate: "agent_message_chunk" } }],
+  ])("keeps both values at %s", (_case, event) => {
+    const after = fold(OWN_TURN_WITH_JOB, event);
+
+    expect(after.job).toBe(true);
+    expect(after.ownTurn).toBe(true);
+  });
+
+  it("needs the user at a request of an own turn, and works again at its answer", () => {
+    const asked = fold(OWN_TURN_WITH_JOB, permission("r1"));
+
+    expect(asked.status).toEqual({ state: "needs-you" });
+    expect(foldChat(asked, permissionResolved("r1")).status).toEqual({ state: "working" });
+  });
+
+  it("needs the user at a request during a job wait, and works again at its answer", () => {
+    const asked = fold(WAIT, question("r1"));
+
+    expect(asked.status).toEqual({ state: "needs-you" });
+    expect(foldChat(asked, questionResolved("r1")).status).toEqual({ state: "working" });
+  });
+
+  it("gives a stop priority over a job", () => {
+    const failed = fold(USER, FAILED, WAIT);
+
+    expect(failed.job).toBe(true);
+    expect(failed.status).toEqual({ state: "failed" });
+  });
+
+  it("works at resumed after a stop when a background event came after the stop", () => {
+    expect(fold(USER, FAILED, WAIT, { kind: "resumed" }).status).toEqual({ state: "working" });
   });
 });
 

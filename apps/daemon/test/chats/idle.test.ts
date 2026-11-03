@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { AGENT_STEP_IDLE_MS, holdReason, HUMAN_STEP_IDLE_MS, idleLimit, idleTimer, JOB_HOLD_MS, stopNote } from "../../src/chats/idle.js";
+import { AGENT_STEP_IDLE_MS, holdReason, HUMAN_STEP_IDLE_MS, idleLimit, idleTimer, JOB_HOLD_MS, ownTurnReason, stopNote } from "../../src/chats/idle.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import { onWorkflow, plant, plantWorkflow, projectsRoot, taskFile, taskText, workflowDir } from "../helpers.js";
 
@@ -174,6 +174,13 @@ describe("idleTimer", () => {
 describe("the texts of a stop that ends background commands", () => {
   const job = (name: string) => ({ mark: "job" as const, name });
   const service = (name: string) => ({ mark: "service" as const, name });
+
+  it("says that the agent ran an own turn, with the hours of the limit", () => {
+    expect(ownTurnReason(JOB_HOLD_MS)).toBe(
+      "The agent ran a turn by itself with no update for 2 hours, so Tasma stopped the agent. Send a message to continue.",
+    );
+    expect(ownTurnReason(90 * 60 * 1000)).toContain("for 1.5 hours");
+  });
 
   it("names one job, or several, and the other commands that stopped with them", () => {
     expect(holdReason([job("Test loop")], [], JOB_HOLD_MS)).toBe(

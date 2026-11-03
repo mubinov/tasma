@@ -258,6 +258,66 @@ describe.skipIf(process.env.TASMA_REAL_CLAUDE !== "1")("a chat with the real Cla
     expect(await within(5000, async () => !(await listens(port)))).toBe(true);
   }, 5 * TURN_MS);
 
+  it("writes the wait for a job, the own turn and its end, in that order", async () => {
+    const word = `finished-${String(Math.floor(Math.random() * 1_000_000))}`;
+    const { runner } = await world(claudeAdapter, { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token() });
+    const live = await runner.start({
+      tag: "ALPHA",
+      task: "ALPHA-1",
+      step: "dev:build",
+      agent: "claude",
+      text: `Start \`sleep 60; echo ${word}\` with the Bash tool in the background, and end your turn without waiting for it. When the command ends, report its output.`,
+      client: "test",
+    });
+
+    let log: ChatEvent[] = [];
+    expect(await within(3 * TURN_MS, async () => {
+      log = await allowOpen(runner, live);
+      return log.some((event) => event.kind === "background" && !event.job && !event.ownTurn);
+    })).toBe(true);
+
+    const waits = log.findIndex((event) => event.kind === "background" && event.job && !event.ownTurn);
+    const own = log.findIndex((event) => event.kind === "background" && event.ownTurn);
+    const background = claudeAdapter.backgroundCommands?.(() => {});
+    const marker = log.findIndex((event, index) => index > own && event.kind === "update" && background?.ownTurnEnded(event.update) === true);
+    const clear = log.findIndex((event) => event.kind === "background" && !event.job && !event.ownTurn);
+    expect(waits).toBeGreaterThanOrEqual(0);
+    expect(log[waits + 1]).toMatchObject({ kind: "turn-end" });
+    expect(own).toBeGreaterThan(waits);
+    expect(marker).toBeGreaterThan(own);
+    expect(clear).toBeGreaterThan(marker);
+    expect(answerText(log)).toContain(word);
+  }, 4 * TURN_MS);
+
+  it("stops an own turn, and a next message gets an answer", async () => {
+    const foreground = `ping -c 120 -W ${String(1000 + Math.floor(Math.random() * 9000))} 127.0.0.1`;
+    const { runner } = await world(claudeAdapter, { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token() });
+    const live = await runner.start({
+      tag: "ALPHA",
+      task: "ALPHA-1",
+      step: "dev:build",
+      agent: "claude",
+      text: `Start \`sleep 30; echo ready\` with the Bash tool in the background, and end your turn without waiting for it. When the command ends, report its output, and then run \`${foreground}\` with the Bash tool in the foreground.`,
+      client: "test",
+    });
+
+    expect(await within(3 * TURN_MS, async () => {
+      await allowOpen(runner, live);
+      return live.fold.ownTurn && await runs(foreground);
+    })).toBe(true);
+
+    await runner.cancel(live, { client: "test" });
+
+    expect(await within(5000, async () => !(await runs(foreground)))).toBe(true);
+    const stopped = await logOf(live);
+    expect(stopped.findLast((event) => event.kind === "background")).toMatchObject({ ownTurn: false, stopReason: "cancelled" });
+
+    await runner.message(live, { text: "Reply with the word pong.", client: "test" });
+    const second = (await turnsEndedAllowing(runner, live, 2)).slice(stopped.length);
+    expect(lastNonUpdate(second)).toMatchObject({ kind: "turn-end" });
+    expect(answerText(second).toLowerCase()).toContain("pong");
+  }, 5 * TURN_MS);
+
   it("starts a new chat in the mode that the defaults of the agent hold", async () => {
     const { runner, root } = await world(claudeAdapter, { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token() });
     await writeFile(join(root, "agent-defaults.json"), JSON.stringify({ claude: { mode: "acceptEdits" } }));

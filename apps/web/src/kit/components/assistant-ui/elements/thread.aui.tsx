@@ -222,9 +222,10 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean; autoScroll: boolean
       }}
     >
       <ThreadPrimitive.Viewport
-        // tasma-edit: the view follows the end, the app does the open scroll, and reduced motion gets no smooth scroll
+        // tasma-edit: the view follows the end, the app does the open scroll and the scroll at a message, and reduced motion gets no smooth scroll
         turnAnchor="bottom"
         scrollToBottomOnInitialize={false}
+        scrollToBottomOnRunStart={false}
         autoScroll={autoScroll}
         data-slot="aui_thread-viewport"
         className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth motion-reduce:scroll-auto"

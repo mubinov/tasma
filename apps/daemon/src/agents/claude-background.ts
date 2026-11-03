@@ -209,5 +209,10 @@ export function claudeBackground(options: Options): BackgroundCommands {
       }
       return state;
     },
+
+    // Of the usage updates of the adapter, only the one of a turn result has a cost.
+    ownTurnEnded(update: AcpObject) {
+      return update.sessionUpdate === "usage_update" && isRecord(update.cost);
+    },
   };
 }

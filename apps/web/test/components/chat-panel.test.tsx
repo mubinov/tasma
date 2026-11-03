@@ -11,7 +11,7 @@ import type { Chat, ChatEntry, ChatEvent, Diagnostic, TransportRequest } from "@
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactNode } from "react";
-import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { CHAT_CLIENT } from "../../src/api/mutations";
 import { daemonKeys } from "../../src/api/queries";
 import { ChatPanel } from "../../src/components/chat-panel";
@@ -21,6 +21,7 @@ import { useNoticeStore } from "../../src/store/notices";
 import { chatPath, chatRecord, eventsPath, stubChatLog, type ChatLogStub } from "../chat-daemon";
 import {
   agentUpdate,
+  background,
   BASH_OPTIONS,
   chatEntries,
   CONFIRM_LOG,
@@ -1288,6 +1289,244 @@ it.each<[string, readonly ChatEntry[]]>([
   });
 });
 
+function ownTurnStarts(log: ChatLogStub, after: number): void {
+  log.answer(after, { cursor: after + 1, entries: chatEntries([background({ ownTurn: true })], after + 1) });
+}
+
+describe("with a background job and an own turn", () => {
+  const ENDED = [userMessage("Build."), turnEnd()];
+
+  it.each<[string, readonly ChatEvent[], string, string, string]>([
+    ["a job wait", [userMessage("Build."), background({ job: true }), turnEnd()], "Agent works", "Send message", "Stop generating"],
+    ["an own turn", [...ENDED, background({ job: true, ownTurn: true })], "Agent works", "Stop generating", "Send message"],
+    ["the end of both", [...ENDED, background({ job: true, ownTurn: true }), background()], "Needs you", "Send message", "Stop generating"],
+  ])("shows the state and the button of %s", async (_case, events, state, shown, hidden) => {
+    await renderPanel(logOf(chatEntries(events)));
+
+    expect(await screen.findByRole("button", { name: shown })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: hidden })).toBeNull();
+    expect(within(header()).getByText(state)).toBeTruthy();
+  });
+
+  it("shows the state of a job wait in a chat that is not marked, because the chat is busy", async () => {
+    await renderPanel(logOf(chatEntries([userMessage("Build."), background({ job: true }), turnEnd()])), { marked: false });
+
+    await screen.findByRole("button", { name: "Send message" });
+    expect(within(header()).getByText("Agent works")).toBeTruthy();
+  });
+
+  it("sends a message during a job wait", async () => {
+    const user = userEvent.setup();
+    const entries = chatEntries([userMessage("Build."), background({ job: true }), turnEnd()]);
+    const log = writableLogOf(entries, MESSAGES_PATH);
+    await renderPanel(log);
+
+    await user.type(await findComposer(), "Then test it.{Enter}");
+
+    await waitFor(() => {
+      expect(posts(log)).toEqual([{ method: "POST", path: MESSAGES_PATH, body: { text: "Then test it.", client: CHAT_CLIENT } }]);
+    });
+  });
+
+  it("keeps the buttons of a request when its own turn ends, and posts the answer", async () => {
+    const user = userEvent.setup();
+    const log = writableLogOf(chatEntries([
+      ...ENDED,
+      background({ ownTurn: true }),
+      permissionRequest("r1", { toolCallId: "t1", title: "pnpm build", kind: "execute" }, BASH_OPTIONS),
+      background(),
+    ]), PERMISSION_PATH);
+    await renderPanel(log);
+
+    await user.click(await findPermissionOption("Yes"));
+
+    await waitFor(() => {
+      expect(posts(log)).toEqual([
+        { method: "POST", path: PERMISSION_PATH, body: { optionId: "allow-once", client: CHAT_CLIENT } },
+      ]);
+    });
+    expect(within(header()).getByText("Needs you")).toBeTruthy();
+  });
+
+  it("posts the cancel from Stop in an own turn", async () => {
+    const user = userEvent.setup();
+    const log = writableLogOf(chatEntries([...ENDED, background({ ownTurn: true })]), CANCEL_PATH);
+    await renderPanel(log);
+
+    await user.click(await screen.findByRole("button", { name: "Stop generating" }));
+
+    await waitFor(() => {
+      expect(posts(log)).toEqual([{ method: "POST", path: CANCEL_PATH, body: { client: CHAT_CLIENT } }]);
+    });
+  });
+
+  it("moves focus from Send to the message input when an own turn starts, and Enter there sends nothing", async () => {
+    const user = userEvent.setup();
+    const log = logOf(chatEntries(ENDED));
+    await renderPanel(log);
+    await user.type(await findComposer(), "Then test it.");
+    act(() => {
+      button("Send message").focus();
+    });
+
+    ownTurnStarts(log, 2);
+
+    await screen.findByRole("button", { name: "Stop generating" });
+    expect(document.activeElement).toBe(composer());
+    await user.keyboard("{Enter}");
+    expect(posts(log)).toEqual([]);
+  });
+
+  it("moves focus from Stop to the heading when an own turn ends, and keeps the draft", async () => {
+    const user = userEvent.setup();
+    const log = logOf(chatEntries([...ENDED, background({ ownTurn: true })]));
+    await renderPanel(log);
+    await user.type(await findComposer(), "Then test it.");
+    act(() => {
+      button("Stop generating").focus();
+    });
+
+    log.answer(3, { cursor: 4, entries: chatEntries([background()], 4) });
+
+    await screen.findByRole("button", { name: "Send message" });
+    expect(document.activeElement).toBe(heading());
+    expect(composer().value).toBe("Then test it.");
+  });
+
+  it("moves focus from a control of a message to the heading when an own turn removes it", async () => {
+    const log = logOf(TEXT_LOG);
+    await renderPanel(log);
+    const copy = await screen.findByRole("button", { name: "Copy" });
+    act(() => {
+      copy.focus();
+    });
+
+    ownTurnStarts(log, TEXT_LOG.length);
+
+    await screen.findByRole("button", { name: "Stop generating" });
+    expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
+    expect(document.activeElement).toBe(heading());
+  });
+
+  it("leaves the focus alone when an own turn removes a control that the focus already left", async () => {
+    const log = logOf(TEXT_LOG);
+    await renderPanel(log);
+    const copy = await screen.findByRole("button", { name: "Copy" });
+    act(() => {
+      copy.focus();
+      copy.blur();
+    });
+
+    ownTurnStarts(log, TEXT_LOG.length);
+
+    await screen.findByRole("button", { name: "Stop generating" });
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("moves focus from the item of an open menu of a message to the heading when an own turn removes it", async () => {
+    const user = userEvent.setup();
+    const log = logOf(TEXT_LOG);
+    await renderPanel(log);
+    const more = await screen.findByRole("button", { name: "More" });
+    act(() => {
+      more.focus();
+    });
+    await user.keyboard("{Enter}");
+    const item = await screen.findByRole("menuitem", { name: "Export as Markdown" });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(item);
+    });
+
+    ownTurnStarts(log, TEXT_LOG.length);
+
+    await waitFor(() => {
+      expect(item.isConnected).toBe(false);
+    });
+    expect(document.activeElement).toBe(heading());
+  });
+
+  it("moves focus to the heading when an own turn removes the control that an inactive window holds", async () => {
+    const log = logOf(TEXT_LOG);
+    await renderPanel(log);
+    const copy = await screen.findByRole("button", { name: "Copy" });
+    act(() => {
+      copy.focus();
+      copy.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+
+    ownTurnStarts(log, TEXT_LOG.length);
+
+    await screen.findByRole("button", { name: "Stop generating" });
+    expect(document.activeElement).toBe(heading());
+  });
+
+  it("moves focus to the heading from a control that sends `focusout` as it leaves, as Chrome does", async () => {
+    const log = logOf(TEXT_LOG);
+    await renderPanel(log);
+    const copy = await screen.findByRole("button", { name: "Copy" });
+    act(() => {
+      copy.focus();
+    });
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- the spy calls it with its own `this`
+    const remove = Node.prototype.removeChild;
+    vi.spyOn(Node.prototype, "removeChild").mockImplementation(function <T extends Node>(this: Node, child: T): T {
+      if (child.contains(copy) && document.activeElement === copy) {
+        copy.blur();
+      }
+      return remove.call(this, child) as T;
+    });
+
+    ownTurnStarts(log, TEXT_LOG.length);
+
+    await screen.findByRole("button", { name: "Stop generating" });
+    expect(document.activeElement).toBe(heading());
+  });
+
+  it("moves focus from Send to the message input when a key press sends the draft, before the message is in the log", async () => {
+    const user = userEvent.setup();
+    const log = logOf(chatEntries(ENDED));
+    const write = heldBack();
+    log.replies[`POST ${MESSAGES_PATH}`] = write.reply;
+    await renderPanel(log);
+    await user.type(await findComposer(), "Then test it.");
+    act(() => {
+      button("Send message").focus();
+    });
+
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(composer());
+    });
+    expect(posts(log)).toHaveLength(1);
+    write.answer(WRITTEN);
+  });
+
+  it("leaves focus in the message input when Send changes to Stop", async () => {
+    const user = userEvent.setup();
+    const log = logOf(chatEntries(ENDED));
+    await renderPanel(log);
+    await user.type(await findComposer(), "Then test it.");
+
+    ownTurnStarts(log, 2);
+
+    await screen.findByRole("button", { name: "Stop generating" });
+    expect(document.activeElement).toBe(composer());
+  });
+
+  it("leaves focus in the message input when Stop changes to Send", async () => {
+    const user = userEvent.setup();
+    const log = logOf(chatEntries([...ENDED, background({ ownTurn: true })]));
+    await renderPanel(log);
+    await user.type(await findComposer(), "Then test it.");
+
+    log.answer(3, { cursor: 4, entries: chatEntries([background()], 4) });
+
+    await screen.findByRole("button", { name: "Send message" });
+    expect(document.activeElement).toBe(composer());
+  });
+});
+
 it("opens a notice when the daemon refuses Stop", async () => {
   const user = userEvent.setup();
   const log = logOf(chatEntries([userMessage("Build.")]));
@@ -2419,6 +2658,87 @@ it("scrolls a chat that opened at a message to the end at a run start, and follo
   scrolls.length = 0;
   scrollToContentEnd(box);
   growContent();
+  expect(scrolls).toEqual([{ top: box.scrollHeight, behavior: "instant" }]);
+});
+
+it("keeps the place of the reader when an own turn starts", async () => {
+  const { scrolls, growContent } = stubThreadLayout();
+  const log = logOf(TWO_TURNS, { seen: SEEN_FIRST_TURN });
+
+  await renderPanel(log);
+  await waitForOpenScroll(scrolls, UNREAD_TOP);
+
+  scrolls.length = 0;
+  ownTurnStarts(log, TWO_TURNS.length);
+  await screen.findByRole("button", { name: "Stop generating" });
+  await frame();
+  growContent();
+
+  expect(scrolls).toEqual([]);
+});
+
+it("follows the output of an own turn when the reader is at the end", async () => {
+  const { scrolls, box, growContent } = stubThreadLayout();
+  const log = logOf(TWO_TURNS, { seen: SEEN_FIRST_TURN });
+
+  await renderPanel(log);
+  await waitForOpenScroll(scrolls, UNREAD_TOP);
+  scrollToContentEnd(box);
+
+  ownTurnStarts(log, TWO_TURNS.length);
+  await screen.findByRole("button", { name: "Stop generating" });
+  scrolls.length = 0;
+  growContent();
+
+  expect(scrolls).toEqual([{ top: box.scrollHeight, behavior: "instant" }]);
+});
+
+it("follows an own turn whose first output comes in the commit of its start, when the reader is at the end", async () => {
+  const { scrolls, box, growContent } = stubThreadLayout();
+  const log = logOf(TWO_TURNS, { seen: SEEN_FIRST_TURN });
+
+  await renderPanel(log);
+  await waitForOpenScroll(scrolls, UNREAD_TOP);
+  scrollToContentEnd(box);
+
+  box.scrollHeight += 100;
+  ownTurnStarts(log, TWO_TURNS.length);
+  await screen.findByRole("button", { name: "Stop generating" });
+  scrolls.length = 0;
+  growContent();
+
+  expect(scrolls).toEqual([{ top: box.scrollHeight, behavior: "instant" }]);
+});
+
+it("keeps the place of a pointer reader with an opened disclosure at the first output of an own turn", async () => {
+  const { scrolls, box, growContent } = stubThreadLayout();
+  const user = userEvent.setup();
+  stubFocusVisible(false);
+  const entries = chatEntries([
+    userMessage("Read the file."),
+    toolCall({ toolCallId: "t1", title: "Read src/a.ts", kind: "read", status: "completed" }),
+    turnEnd(),
+  ]);
+  const log = logOf(entries);
+
+  await renderPanel(log);
+  await waitForOpenScroll(scrolls, CONTENT_HEIGHT);
+  scrollToContentEnd(box);
+  await user.click(threadViewport().querySelector('[data-message-id] [aria-expanded="false"]')!);
+  scrolls.length = 0;
+  growContent();
+  expect(scrolls).toEqual([]);
+
+  ownTurnStarts(log, entries.length);
+  await screen.findByRole("button", { name: "Stop generating" });
+  await frame();
+  growContent();
+
+  expect(scrolls).toEqual([]);
+
+  scrollToContentEnd(box);
+  growContent();
+
   expect(scrolls).toEqual([{ top: box.scrollHeight, behavior: "instant" }]);
 });
 

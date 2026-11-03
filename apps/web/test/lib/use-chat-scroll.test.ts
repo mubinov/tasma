@@ -90,6 +90,9 @@ describe("useChatScroll", () => {
       openId: undefined,
       lastId: "a2",
       messages: [{ id: "u1" }, { id: "a2" }],
+      turn: false,
+      ownTurn: false,
+      atEnd: true,
       scrollToBottom,
       onFollow,
       ...input,
@@ -223,6 +226,74 @@ describe("useChatScroll", () => {
 
       expect(scrollTo).not.toHaveBeenCalled();
       expect(scrollToBottom.mock.calls).toEqual([[{ behavior: "instant" }]]);
+    });
+  });
+
+  describe("the scroll at a turn of a message", () => {
+    const AT_START = { behavior: "auto" };
+
+    it("scrolls to the end when the turn starts, one time", () => {
+      const { rerender } = mount();
+
+      rerender({ turn: true });
+      rerender({ turn: true, messages: [{ id: "u1" }, { id: "a2" }, { id: "u3" }] });
+
+      expect(scrollToBottom.mock.calls.filter(([config]) => config.behavior === "auto")).toHaveLength(1);
+    });
+
+    it("does not scroll for a turn that runs at the mount, or when a turn ends", () => {
+      const { rerender } = mount({ turn: true });
+
+      rerender({ turn: false });
+
+      expect(scrollToBottom).not.toHaveBeenCalledWith(AT_START);
+    });
+
+    it("scrolls again for a later turn", () => {
+      const { rerender } = mount({ turn: true });
+
+      rerender({ turn: false });
+      rerender({ turn: true });
+
+      expect(scrollToBottom).toHaveBeenCalledWith(AT_START);
+    });
+  });
+
+  describe("the follow at the start of an own turn", () => {
+    const AWAY = { atEnd: false };
+
+    it("stops for one commit when the reader is away from the end", () => {
+      const { rerender } = mount(AWAY);
+      onFollow.mockClear();
+
+      rerender({ ...AWAY, ownTurn: true });
+      rerender({ ...AWAY, ownTurn: true, messages: [{ id: "u1" }, { id: "a2" }, { id: "a3" }] });
+
+      expect(onFollow.mock.calls).toEqual([[false], [true]]);
+    });
+
+    it.each<[string, Partial<Input>, Partial<Input>]>([
+      ["the reader is at the end", {}, { ownTurn: true }],
+      ["the own turn runs at the mount", { ...AWAY, ownTurn: true }, { ...AWAY, ownTurn: true, messages: [] }],
+      ["the own turn ends", { ...AWAY, ownTurn: true }, AWAY],
+      ["the reader leaves the end during the own turn", { ownTurn: true }, { ...AWAY, ownTurn: true }],
+    ])("reports nothing when %s", (_case, first, next) => {
+      const { rerender } = mount(first);
+      onFollow.mockClear();
+
+      rerender(next);
+
+      expect(onFollow).not.toHaveBeenCalled();
+    });
+
+    it("reports nothing while the follow has not started", () => {
+      addMessage("a2");
+      const { rerender } = mount({ ...AWAY, openId: "a2", lastId: "a4", messages: [{ id: "a2" }] });
+      onFollow.mockClear();
+
+      rerender({ ...AWAY, openId: "a2", lastId: "a4", messages: [{ id: "a2" }], ownTurn: true });
+
+      expect(onFollow).not.toHaveBeenCalled();
     });
   });
 

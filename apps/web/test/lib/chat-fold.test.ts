@@ -2,7 +2,6 @@ import { CHAT_START, foldChat, type ChatEntry, type ChatEvent } from "@tasma/pro
 import { describe, expect, it } from "vitest";
 import {
   CHAT_VIEW_START,
-  chatBusy,
   foldChatEntries,
   type ChatAgentMessage,
   type ChatOption,
@@ -16,6 +15,7 @@ import {
 import {
   agentUpdate,
   atSeq,
+  background,
   BASH_OPTIONS,
   BOOLEAN_OPTION,
   CHAT_FIXTURES,
@@ -1268,16 +1268,118 @@ describe("foldChatEntries: options", () => {
   });
 });
 
-describe("chatBusy", () => {
-  const user = userMessage("Go");
-  const question = questionRequest("q1", { message: "Which one?" });
+describe("foldChatEntries with a background event", () => {
+  const ENDED = [userMessage("Go"), turnEnd()];
 
-  it.each<[string, ChatEvent[], boolean]>([
-    ["a running turn", [user], true],
-    ["a turn that waits at a question", [user, question], true],
-    ["a request that is open outside a turn", [user, turnEnd(), question], true],
-    ["an ended turn with no open request", [user, turnEnd()], false],
-  ])("is %s busy", (_case, events, busy) => {
-    expect(chatBusy(events.reduce(foldChat, CHAT_START))).toBe(busy);
+  it("shows a message of an own turn as running, and a background event with no turn closes it", () => {
+    const running = foldEvents([...ENDED, background({ ownTurn: true }), textChunk("The tests passed.")]);
+
+    expect(running.messages.at(-1)).toMatchObject({ role: "assistant", open: true, running: true });
+
+    const closed = foldEvents([background()], running);
+
+    expect(closed.messages.at(-1)).toMatchObject({ role: "assistant", open: false, running: false });
+  });
+
+  it("stops a running tool at the end of an own turn", () => {
+    const view = foldEvents([
+      ...ENDED,
+      background({ ownTurn: true }),
+      toolCall({ toolCallId: "t1", title: "Read", status: "in_progress" }),
+      background(),
+    ]);
+
+    expect(toolOf(view, "t1").stopped).toBe(true);
+  });
+
+  it("keeps a permission open at the end of an own turn, with its tool running, and the answer resolves it", () => {
+    const view = foldEvents([
+      ...ENDED,
+      background({ ownTurn: true }),
+      permissionRequest("r1", { toolCallId: "t1", title: "Fetch", status: "in_progress" }, BASH_OPTIONS),
+      background(),
+    ]);
+
+    expect(toolOf(view, "t1").permission?.state).toBe("open");
+    expect(toolOf(view, "t1").stopped).toBeFalsy();
+    expect(view.messages.at(-1)).toMatchObject({ open: false, running: false });
+    expect(view.fold.open).toEqual(["r1"]);
+    expect(view.fold.status).toEqual({ state: "needs-you" });
+
+    const answered = foldEvents([permissionResolved("r1", { outcome: "selected", optionId: "allow-once" })], view);
+
+    expect(toolOf(answered, "t1").permission).toMatchObject({ state: "selected", option: "allow-once" });
+    expect(answered.fold.open).toEqual([]);
+  });
+
+  it("keeps a question of a tool open at the end of an own turn, and the answer resolves it", () => {
+    const view = foldEvents([
+      ...ENDED,
+      background({ ownTurn: true }),
+      toolCall({ toolCallId: "t1", title: "Ask", status: "in_progress" }),
+      questionRequest("r1", { message: "Ready?", toolCallId: "t1", requestedSchema: { properties: {} } }),
+      background(),
+    ]);
+
+    expect(toolOf(view, "t1").question?.state).toBe("open");
+
+    const answered = foldEvents([questionResolved("r1", { action: "accept", content: {} })], view);
+
+    expect(toolOf(answered, "t1").question?.state).toBe("accepted");
+  });
+
+  it("keeps a question with no tool open at the end of an own turn, and the answer resolves it", () => {
+    const view = foldEvents([
+      ...ENDED,
+      background({ ownTurn: true }),
+      questionRequest("r1", { message: "Ready?", requestedSchema: { properties: {} } }),
+      background(),
+    ]);
+
+    expect(questionsOf(view).map((question) => question.state)).toEqual(["open"]);
+
+    const answered = foldEvents([questionResolved("r1", { action: "accept", content: {} })], view);
+
+    expect(questionsOf(answered).map((question) => question.state)).toEqual(["accepted"]);
+  });
+
+  it("adds the stopped notice of a stop, and closes the message", () => {
+    const view = foldEvents([...ENDED, background({ job: true, ownTurn: true }), textChunk("Reading."), background({ job: true, stopReason: "cancelled" })]);
+
+    expect(view.messages.at(-1)).toMatchObject({ open: false, running: false });
+    expect(partsAt(view, view.messages.length - 1).at(-1)).toEqual({ type: "notice", notice: { kind: "stopped", stopReason: "cancelled" } });
+    expect(view.fold.status).toEqual({ state: "working" });
+  });
+
+  it("adds no notice with no stop reason", () => {
+    const view = foldEvents([...ENDED, background({ ownTurn: true }), textChunk("Reading."), background()]);
+
+    expect(partsAt(view, view.messages.length - 1).map((part) => part.type)).toEqual(["text"]);
+  });
+
+  it("leaves the message of a turn of a message open at the event before its turn end", () => {
+    const view = foldEvents([userMessage("Go"), textChunk("Started."), background({ job: true })]);
+
+    expect(view.messages.at(-1)).toMatchObject({ open: true, running: true });
+  });
+
+  it("keeps the notice of a cancelled turn in the message of the turn, after the event before its turn end", () => {
+    const view = foldEvents([userMessage("Go"), textChunk("Started."), background({ job: true }), turnEnd("cancelled")]);
+
+    expect(view.messages).toHaveLength(2);
+    expect(partsAt(view, 1).map((part) => part.type)).toEqual(["text", "notice"]);
+  });
+
+  it("keeps a running message at a change of the job in an own turn", () => {
+    const view = foldEvents([...ENDED, background({ job: true, ownTurn: true }), textChunk("Reading."), background({ ownTurn: true })]);
+
+    expect(view.messages.at(-1)).toMatchObject({ open: true, running: true });
+  });
+
+  it("shows no message at a job wait", () => {
+    const view = foldEvents([...ENDED, background({ job: true })]);
+
+    expect(view.messages).toHaveLength(1);
+    expect(view.fold.status).toEqual({ state: "working" });
   });
 });

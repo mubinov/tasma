@@ -75,6 +75,10 @@ export function turnEnd(stopReason = "end_turn"): ChatEvent {
   return { kind: "turn-end", stopReason };
 }
 
+export function background(fields: { job?: boolean; ownTurn?: boolean; stopReason?: string } = {}): ChatEvent {
+  return { kind: "background", job: false, ownTurn: false, ...fields };
+}
+
 /** The `_meta` of a report of a tool, with more keys for `claudeCode` and for `_meta`. */
 function toolMeta(toolName: string, claudeCode: AcpObject = {}, meta: AcpObject = {}): AcpObject {
   return { claudeCode: { toolName, ...claudeCode }, ...meta };

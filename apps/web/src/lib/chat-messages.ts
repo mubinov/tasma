@@ -1,5 +1,5 @@
 import type { ThreadMessageLike, ToolCallMessagePartStatus } from "@assistant-ui/react";
-import { ProtocolError, type ChatAgent, type ChatOutside, type ChatStatus } from "@tasma/protocol";
+import { agentActive, ProtocolError, turnRuns, type ChatAgent, type ChatOutside, type ChatStatus } from "@tasma/protocol";
 import { diffLines } from "diff";
 import { permissionApproval, questionApproval, type ChatApproval } from "./chat-approval";
 import type {
@@ -304,7 +304,7 @@ export function chatAnnouncements(before: ChatView, after: ChatView, agent: Chat
   const was = before.fold.status.state;
   const status = after.fold.status;
   const failed = status.state === "failed" && was !== "failed"
-    ? lastNotice(after.messages, (notice) => notice.kind === "failed")
+    ? findNotice(agentParts(after.messages), (notice) => notice.kind === "failed")
     : undefined;
 
   if (failed !== undefined) {
@@ -313,9 +313,16 @@ export function chatAnnouncements(before: ChatView, after: ChatView, agent: Chat
   if (status.state === "continued-outside" && was !== "continued-outside") {
     words.push(`The chat continued in ${chatOutsideName(status.where)}`);
   }
-  if (before.fold.turn && !after.fold.turn && status.state === "needs-you") {
-    const ended = turnNotice(after.messages);
-    words.push(ended === undefined ? `${name} finished the turn` : noticeText(ended, spoken));
+  const notices = addedTurnNotices(before, after);
+  words.push(...notices.map((notice) => noticeText(notice, spoken)));
+  if (!before.fold.ownTurn && after.fold.ownTurn) {
+    words.push(`${name} continues by itself`);
+  }
+  if (turnRuns(before.fold) && !turnRuns(after.fold) && after.fold.job) {
+    words.push(`${name} waits for a background job`);
+  }
+  if (agentActive(before.fold) && !agentActive(after.fold) && status.state === "needs-you" && notices.length === 0) {
+    words.push(`${name} finished the turn`);
   }
   const modeBefore = chatModeOption(before);
   const modeAfter = chatModeOption(after);
@@ -343,14 +350,21 @@ function requestWords(messages: readonly ChatMessage[], request: string, name: s
   return [];
 }
 
-function lastNotice(messages: readonly ChatMessage[], select: (notice: ChatNotice) => boolean): ChatNotice | undefined {
-  return findNotice(agentParts(messages), select);
+function noticesOf(messages: readonly ChatMessage[]): ChatNotice[] {
+  return agentParts(messages).flatMap((part) => (part.type === "notice" ? [part.notice] : []));
 }
 
-/** The stopped or interrupted notice of the last turn: a turn starts with a user message. */
-function turnNotice(messages: readonly ChatMessage[]): ChatNotice | undefined {
-  const start = messages.findLastIndex((message) => message.role === "user");
-  return lastNotice(messages.slice(start + 1), (notice) => notice.kind === "stopped" || notice.kind === "interrupted");
+/**
+ * The stopped and interrupted notices that the change added. Compared by
+ * identity, because two `cancelled` notices have the same text. A change that
+ * keeps the fold adds no notice, so an update reads no parts.
+ */
+function addedTurnNotices(before: ChatView, after: ChatView): ChatNotice[] {
+  if (before.fold === after.fold) {
+    return [];
+  }
+  const known = new Set(noticesOf(before.messages));
+  return noticesOf(after.messages).filter((notice) => (notice.kind === "stopped" || notice.kind === "interrupted") && !known.has(notice));
 }
 
 /**

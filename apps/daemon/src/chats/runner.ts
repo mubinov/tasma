@@ -30,7 +30,7 @@ import type { AgentAdapter, AgentEnv, AgentLaunch, BackgroundCommands, Backgroun
 import { readShellEnv } from "../agents/shell-env.js";
 import type { ShellEnv } from "../agents/shell-env.js";
 import { causeOf, DaemonError } from "../http/failure.js";
-import { AGENT_STEP_IDLE_MS, holdReason, idleTimer, JOB_HOLD_MS, stopNote } from "./idle.js";
+import { AGENT_STEP_IDLE_MS, holdReason, idleTimer, JOB_HOLD_MS, ownTurnReason, stopNote } from "./idle.js";
 import type { IdleLimit, IdleTimer } from "./idle.js";
 import { applyPlan, foldOptions, isHidden, offering, optionFiles, optionsEvent, wanted } from "./options.js";
 import { CANCELLED, faultLine, resolution } from "./registry.js";
@@ -44,6 +44,9 @@ const GONE: ReadonlySet<TaskStoreErrorCode> = new Set(["chat-not-found", "task-n
 const KIND_NAME = { permission: "permission request", question: "question" } as const;
 
 const END_GRACE_MS = 10_000;
+
+/** The kinds of update that show an own turn. */
+const OWN_TURN_OUTPUT: ReadonlySet<unknown> = new Set(["agent_message_chunk", "agent_thought_chunk", "tool_call"]);
 
 export class ChatStartRefusal extends Error {
   readonly code: "agent-not-supported" | "project-has-no-folder";
@@ -109,9 +112,10 @@ export type ChatRunner = {
    */
   message(live: LiveChat, input: ChatMessageInput): Promise<void>;
   /**
-   * Cancels the turn that runs and resolves its open requests in the name of
-   * `client`. Does nothing when no turn runs, and while a pick starts the
-   * agent again and no message has joined that start.
+   * Cancels the turn that runs, also an own turn, and resolves its open requests
+   * in the name of `client`. Does nothing when no turn runs, during the check
+   * after the prompt of a turn returned, and while a pick starts the agent again
+   * and no message has joined that start.
    */
   cancel(live: LiveChat, input: ChatCancelInput): Promise<void>;
   answerPermission(live: LiveChat, request: string, answer: PermissionAnswer): Promise<void>;
@@ -129,9 +133,10 @@ export type ChatRunner = {
    */
   setOption(live: LiveChat, change: ChatOptionChange): Promise<Diagnostic[]>;
   /**
-   * Ends the agent of the chat with no event, and resolves when every process
-   * of the chat has ended. Refused with `turn-running` while a turn runs or a
-   * request of the agent is open.
+   * Ends the agent of the chat, and resolves when every process of the chat
+   * has ended. The only event is a `background` event that clears a job or an
+   * own turn. Refused with `turn-running` while a turn runs or a request of the
+   * agent is open.
    */
   stop(live: LiveChat): Promise<void>;
   /**
@@ -141,9 +146,10 @@ export type ChatRunner = {
    * message is interrupted at once, with no cancel and no wait, until its
    * prompt is sent. So is the turn of a pick that starts the agent again with
    * no message, until its session is open. Between turns, the open requests
-   * are cancelled in the name of `client`. The end of the process writes no
-   * event. Resolves when every process of the chat has ended. Until it
-   * settles, a message and a pick of the chat are refused with `turn-running`.
+   * are cancelled in the name of `client`, and a `background` event clears a
+   * job or an own turn. The end of the process writes no event.
+   * Resolves when every process of the chat has ended. Until it settles, a
+   * message and a pick of the chat are refused with `turn-running`.
    * Refused with `chat-not-running` when the daemon stops before it resolves.
    */
   end(live: LiveChat, input: ChatCancelInput): Promise<void>;
@@ -199,13 +205,27 @@ type Run = RunningChat & {
   background: BackgroundCommands | undefined;
   /** The `job` commands that the checks of `background` found ended since the last idle check. */
   jobsEnded: number;
+  /** The last `job` of a `background` event of this run. A `user` event clears it, as the fold does. */
+  job: boolean;
+  /** The last `ownTurn` of a `background` event of this run. A `user` event clears it, as the fold does. */
+  ownTurn: boolean;
+  /** The outputs of the agent with no turn of a message. A check of a marker that sees it change has an old result. */
+  outputs: number;
+  /** The messages that started a turn in this run. A check that sees it change has an old result. */
+  messages: number;
+  /** Set during the check after the prompt of a turn returned. */
+  endCheck: boolean;
+  /** Set during the check of a stop of an own turn. A check of a marker then writes nothing, so the notice stays. */
+  stopCheck: boolean;
+  /** Set by a stop of an own turn until the next marker or message. Output until then is late output of that turn. */
+  ownTurnStopped: boolean;
   /** The texts of the chat that no prompt has taken to the agent, in log order. A new session takes every text. */
   unsent: string[];
   /** Set when the run writes no more events: at a failure, once the chat is gone, and at a stop. */
   quiet: boolean;
   /** Set at the first refusal or fault of the log. */
   halted: boolean;
-  /** Set from the message that starts a turn to its prompt result. While it is clear, the session is open. */
+  /** Set from the message that starts a turn until the turn ends. While it is clear, the session is open. */
   turning: boolean;
   /**
    * Set when `begin` reads `cancelledEarly`, after the session id is written,
@@ -300,6 +320,10 @@ function answerAll(answers: PickAnswer[]): void {
   for (const answer of answers) answer();
 }
 
+function jobRuns(state: BackgroundState | undefined): boolean {
+  return state?.running.some((command) => command.mark === "job") === true;
+}
+
 function newRun(live: LiveChat): Run {
   return {
     live,
@@ -316,6 +340,13 @@ function newRun(live: LiveChat): Run {
     idle: undefined,
     background: undefined,
     jobsEnded: 0,
+    job: false,
+    ownTurn: false,
+    outputs: 0,
+    messages: 0,
+    endCheck: false,
+    stopCheck: false,
+    ownTurnStopped: false,
     unsent: [],
     quiet: false,
     halted: false,
@@ -514,7 +545,33 @@ export function createChatRunner(options: {
     const note = notes.get(run.live);
     notes.delete(run.live);
     const result = await send(run, () => session.prompt(note === undefined ? text : `${note}\n\n${text}`));
-    if (result !== undefined) await endTurn(run, result.stopReason);
+    if (result === undefined) return;
+    run.endCheck = true;
+    const state = await backgroundState(run);
+    run.endCheck = false;
+    // In the log before `turn-end`, so the state does not change to "Needs you" for a moment.
+    if (jobRuns(state)) void setBackground(run, true, false);
+    await endTurn(run, result.stopReason);
+  }
+
+  /** Writes a `background` event when a value changes. The write starts in this step, so the event keeps its place. */
+  function setBackground(run: Run, job: boolean, ownTurn: boolean, stopReason?: string): Promise<void> {
+    if (run.quiet || (run.job === job && run.ownTurn === ownTurn)) return Promise.resolve();
+    run.job = job;
+    run.ownTurn = ownTurn;
+    return append(run, { kind: "background", job, ownTurn, ...(stopReason === undefined ? {} : { stopReason }) });
+  }
+
+  /** Writes the state at the end of an own turn. A stop keeps its result after new output, and not after a message. */
+  async function settleBackground(run: Run, stopReason?: string): Promise<void> {
+    const { outputs, messages } = run;
+    const stops = stopReason !== undefined;
+    if (stops) run.stopCheck = true;
+    const state = await backgroundState(run);
+    if (stops) run.stopCheck = false;
+    if (state === undefined || run.quiet || runs.get(run.live) !== run || run.messages !== messages) return;
+    if (!stops && (run.outputs !== outputs || run.stopCheck)) return;
+    await setBackground(run, jobRuns(state), false, stopReason);
   }
 
   /** Each handler appends before its first await, so the log keeps the order in which the handlers run. */
@@ -541,7 +598,17 @@ export function createChatRunner(options: {
         run.idle?.touch();
         run.background?.note(update);
         run.options = foldOptions(run.options, update);
+        const ownTurnPossible = !run.turning && run.background !== undefined;
+        if (ownTurnPossible && OWN_TURN_OUTPUT.has(update.sessionUpdate)) {
+          run.outputs += 1;
+          if (!run.ownTurnStopped) void setBackground(run, run.job, true);
+        }
         void append(run, { kind: "update", update: adapter.filterUpdate(update) });
+        if (ownTurnPossible && run.background?.ownTurnEnded(update) === true) {
+          run.ownTurnStopped = false;
+          // Two jobs that end together give a marker with no output before the turn that reports them.
+          if (run.ownTurn) void settleBackground(run);
+        }
       },
       permission: ask("permission"),
       question: ask("question"),
@@ -722,6 +789,7 @@ export function createChatRunner(options: {
    */
   function onExit(run: Run, end: AgentEnd): void {
     if (run.turning || !cleanExit(end)) void fail(run, endReason(end));
+    else void setBackground(run, false, false);
     forget(run);
   }
 
@@ -742,8 +810,10 @@ export function createChatRunner(options: {
   }
 
   /**
-   * The idle stop. A running job, or a job that ended since the last check,
-   * gives one more limit, until `jobHoldMs` after the last activity.
+   * The idle stop. A running job, an own turn, or a job that ended since the
+   * last check gives one more limit, until `jobHoldMs` after the last activity.
+   * The write of `setBackground` is not awaited: a message can start a turn
+   * during an await, and `quit` then ends that turn with no event.
    */
   async function idleCheck(run: Run, idle: IdleTimer): Promise<void> {
     const touches = idle.touches();
@@ -755,10 +825,12 @@ export function createChatRunner(options: {
     run.jobsEnded = 0;
     const jobs = state.running.filter((command) => command.mark === "job");
     const others = state.running.filter((command) => command.mark !== "job");
-    const held = jobs.length > 0 && idle.idleMs() < jobHoldMs;
+    if (jobs.length === 0) void setBackground(run, false, run.ownTurn);
+    const held = (jobs.length > 0 || run.ownTurn) && idle.idleMs() < jobHoldMs;
     if (held || (jobs.length === 0 && ended > 0)) return idle.rearm();
     if (state.running.length > 0) notes.set(run.live, stopNote([...jobs, ...others]));
     if (jobs.length > 0) return fail(run, holdReason(jobs, others, jobHoldMs));
+    if (run.ownTurn) return fail(run, ownTurnReason(jobHoldMs));
     await quit(run);
   }
 
@@ -901,6 +973,10 @@ export function createChatRunner(options: {
       return run.held;
     }
     run.turning = true;
+    run.job = false;
+    run.ownTurn = false;
+    run.ownTurnStopped = false;
+    run.messages += 1;
     run.idle?.touch();
     run.unsent.push(text);
     const written = record(run, { kind: "user", text, client });
@@ -940,13 +1016,14 @@ export function createChatRunner(options: {
 
   /**
    * Ends the agent of the run, and gives the writes that this end calls: the
-   * interrupt of a turn that still runs, or the cancelled resolutions of the
-   * open requests of a run with no turn, in the name of `client`. The end of
-   * the process writes no event.
+   * interrupt of a turn that still runs, or for a run with no turn the
+   * cancelled resolutions of the open requests, in the name of `client`, and
+   * the `background` event that clears its values. The end of the process
+   * writes no event.
    */
   function endNow(run: Run, client: string): Promise<unknown>[] {
     const writes: Promise<unknown>[] = [];
-    if (!run.turning) writes.push(...cancelOpen(run, client));
+    if (!run.turning) writes.push(...cancelOpen(run, client), setBackground(run, false, false));
     else if (!run.quiet) {
       silence(run);
       writes.push(haltOnFault(run, () => run.live.interrupt()));
@@ -1027,6 +1104,15 @@ export function createChatRunner(options: {
 
     async cancel(live, { client }) {
       const run = runs.get(live);
+      // The prompt has returned, and a `session/cancel` with no prompt can lose the later report of a job.
+      if (run?.endCheck) return;
+      if (run?.ownTurn && !run.turning) {
+        run.ownTurnStopped = true;
+        // ACP wants `session/cancel` before the cancelled responses.
+        run.session!.cancel();
+        await Promise.all([...cancelOpen(run, client), settleBackground(run, "cancelled")]);
+        return;
+      }
       // A pick relaunch that no message joined has no turn of a message to cancel.
       if (!run?.turning || run.pickRelaunch) return;
       // ACP wants `session/cancel` before the cancelled responses.
@@ -1070,7 +1156,9 @@ export function createChatRunner(options: {
       if (run?.turning) throw turnRunning(live);
       if (run !== undefined) {
         if (run.open.size > 0) throw new DaemonError("turn-running", `${nameOf(live)} has a request open`);
+        const cleared = setBackground(run, false, false);
         void quit(run);
+        await cleared;
       }
       await ends.get(live);
     },

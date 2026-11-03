@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useLayoutEffect, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import type { ChatMessage } from "./chat-fold";
 
 export type ChatScrollInput = {
@@ -10,6 +10,11 @@ export type ChatScrollInput = {
   lastId: string | undefined;
   /** The messages that the kit thread holds now. */
   messages: readonly { id: string }[];
+  /** A turn that a message of the user started runs. */
+  turn: boolean;
+  ownTurn: boolean;
+  /** The kit last saw the reader at the end. A measure in an effect also holds the new content of its commit. */
+  atEnd: boolean;
   scrollToBottom: (config: { behavior: ScrollBehavior }) => void;
   onFollow: (follow: boolean) => void;
 };
@@ -74,15 +79,47 @@ function checkFocus(viewport: HTMLElement | null, setPaused: (paused: boolean) =
  * may follow new content. A chat that opens at a message may follow after its
  * open scroll, and a chat that opens at its end from the mount. Neither may
  * while keyboard focus is in a message. The kit then follows only from the end.
+ * A message of the user scrolls to the end. An own turn does not, because it
+ * starts with no action of the user, who can be reading older messages. The kit
+ * ends its pause for an opened disclosure at each run start, so an own turn that
+ * finds the reader away from the end stops the follow for one commit: the kit
+ * reads the place of the reader when the follow starts again.
  */
 export function useChatScroll(
-  { viewport, openId, lastId, messages, scrollToBottom, onFollow }: ChatScrollInput,
+  { viewport, openId, lastId, messages, turn, ownTurn, atEnd, scrollToBottom, onFollow }: ChatScrollInput,
 ): void {
   const [opened, setOpened] = useState(false);
   const [paused, setPaused] = useState(false);
+  const [refollow, setRefollow] = useState(false);
   const follow = (openId === undefined || opened) && !paused;
   const report = useEffectEvent(onFollow);
   const holdsLast = messages.some(({ id }) => id === lastId);
+  const lastTurnRef = useRef(turn);
+  const lastOwnTurnRef = useRef(ownTurn);
+
+  useEffect(() => {
+    if (turn && !lastTurnRef.current) {
+      scrollToBottom({ behavior: "auto" });
+    }
+    lastTurnRef.current = turn;
+  }, [turn, scrollToBottom]);
+
+  // Layout effects, so the follow stops before the kit reports the size of the new content.
+  useLayoutEffect(() => {
+    if (ownTurn && !lastOwnTurnRef.current && follow && !atEnd) {
+      report(false);
+      setRefollow(true);
+    }
+    lastOwnTurnRef.current = ownTurn;
+  }, [ownTurn, follow, atEnd]);
+
+  useLayoutEffect(() => {
+    if (refollow) {
+      report(follow);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- the follow starts again after one commit
+      setRefollow(false);
+    }
+  }, [refollow, follow]);
 
   useLayoutEffect(() => {
     if (opened || viewport === null || !holdsLast) {

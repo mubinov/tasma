@@ -1,4 +1,4 @@
-import { CHAT_START, foldChat, type AcpObject, type ChatEntry, type ChatFold, type ChatOutside } from "@tasma/protocol";
+import { CHAT_START, foldChat, turnRuns, type AcpObject, type ChatEntry, type ChatFold, type ChatOutside } from "@tasma/protocol";
 
 export type ChatView = {
   /** The `seq` of the last folded entry, 0 for none. */
@@ -138,13 +138,11 @@ export type ChatNotice
 
 export const CHAT_VIEW_START: ChatView = { seq: 0, fold: CHAT_START, messages: [], options: [] };
 
-/** A turn runs or a request is open. The runner can open a request outside a turn. */
-export function chatBusy({ turn, open }: ChatFold): boolean {
-  return turn || open.length > 0;
-}
-
-/** One entry as the fold applies it: the list it changes, and whether a turn ran before it. */
-type Step = { messages: ChatMessage[]; entry: ChatEntry; turn: boolean };
+/**
+ * One entry as the fold applies it: the list it changes, whether a turn ran
+ * before it, whether that turn was an own turn, and whether a request was open.
+ */
+type Step = { messages: ChatMessage[]; entry: ChatEntry; running: boolean; ownTurn: boolean; requestOpen: boolean };
 
 /** A part that a search found, with the value that the search took from it. */
 type Found<T> = { index: number; message: ChatAgentMessage; position: number; part: ChatPart; value: T };
@@ -175,7 +173,7 @@ export function foldChatEntries(view: ChatView, entries: readonly ChatEntry[]): 
       continue;
     }
     messages ??= [...view.messages];
-    applyEvent({ messages, entry, turn: fold.turn });
+    applyEvent({ messages, entry, running: turnRuns(fold), ownTurn: fold.ownTurn, requestOpen: fold.open.length > 0 });
     options = foldOptions(options, entry.event);
     fold = foldChat(fold, entry.event);
     seq = entry.seq;
@@ -268,6 +266,20 @@ function applyEvent(step: Step): void {
       }
       endTurn(messages);
       break;
+    case "background":
+      if (event.stopReason !== undefined) {
+        addNotice(step, { kind: "stopped", stopReason: event.stopReason });
+      }
+      // The event before the turn end of a turn of a message leaves the message for the notice of that turn end.
+      if (step.ownTurn && !event.ownTurn) {
+        // A background subagent outlives the own turn, and still waits for the answer to its request.
+        if (step.requestOpen) {
+          closeOpen(messages);
+        } else {
+          endTurn(messages);
+        }
+      }
+      break;
     case "failed":
       addNotice(step, { kind: "failed", reason: event.reason });
       endTurn(messages);
@@ -328,7 +340,7 @@ function changeOpen(step: Step, change: (parts: readonly ChatPart[]) => readonly
     at: entry.at,
     parts: change([]),
     open,
-    running: open && step.turn,
+    running: open && step.running,
   });
 }
 

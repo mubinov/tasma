@@ -28,6 +28,7 @@ import {
 } from "../../src/lib/chat-messages";
 import {
   atSeq,
+  background,
   chatEntries,
   modeOption,
   modeUpdate,
@@ -378,6 +379,83 @@ describe("chatAnnouncements", () => {
     );
 
     expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude finished the turn"]);
+  });
+
+  describe("with a background job and an own turn", () => {
+    const USER = userMessage("Build.");
+    const JOB_AND_OWN_TURN = background({ job: true, ownTurn: true });
+
+    it("says that the agent waits when its turn ends with a job, and not that it finished", () => {
+      const [before, after] = views([USER], [background({ job: true }), turnEnd()]);
+
+      expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude waits for a background job"]);
+    });
+
+    it("says that the agent continues when an own turn starts", () => {
+      const [before, after] = views([USER, background({ job: true }), turnEnd()], [JOB_AND_OWN_TURN]);
+
+      expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude continues by itself"]);
+    });
+
+    it("says that the agent waits when an own turn ends with a job", () => {
+      const [before, after] = views([USER, turnEnd(), JOB_AND_OWN_TURN], [background({ job: true })]);
+
+      expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude waits for a background job"]);
+    });
+
+    it("says that the agent finished when an own turn ends with no job", () => {
+      const [before, after] = views([USER, turnEnd(), background({ ownTurn: true })], [background()]);
+
+      expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude finished the turn"]);
+    });
+
+    it("says that the agent finished when a job wait ends", () => {
+      const [before, after] = views([USER, background({ job: true }), turnEnd()], [background()]);
+
+      expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude finished the turn"]);
+    });
+
+    it("says nothing at a change of the job in an own turn", () => {
+      const [before, after] = views([USER, turnEnd(), JOB_AND_OWN_TURN], [background({ ownTurn: true })]);
+
+      expect(chatAnnouncements(before, after, "claude")).toEqual([]);
+    });
+
+    it("says the notice and then that the agent waits, at a stop of a turn of a message with a job", () => {
+      const [before, after] = views([USER], [background({ job: true }), turnEnd("cancelled")]);
+
+      expect(chatAnnouncements(before, after, "claude")).toEqual(["The turn was cancelled.", "Claude waits for a background job"]);
+    });
+
+    it("says the notice alone at a stop of an own turn with no job", () => {
+      const [before, after] = views([USER, turnEnd(), background({ ownTurn: true })], [background({ stopReason: "cancelled" })]);
+
+      expect(chatAnnouncements(before, after, "claude")).toEqual(["The turn was cancelled."]);
+    });
+
+    it("says the notice of a later stop although its text is the same as the earlier one", () => {
+      const [before, after] = views([USER, turnEnd("cancelled"), background({ ownTurn: true })], [background({ stopReason: "cancelled" })]);
+
+      expect(chatAnnouncements(before, after, "claude")).toEqual(["The turn was cancelled."]);
+    });
+
+    it("does not say the notice of an earlier change again", () => {
+      const [before, after] = views([USER, background({ job: true }), turnEnd("cancelled")], [background()]);
+
+      expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude finished the turn"]);
+    });
+
+    it("gives the notice before the start of an own turn, when one change holds both", () => {
+      const [before, after] = views([USER], [turnEnd("cancelled"), background({ ownTurn: true })]);
+
+      expect(chatAnnouncements(before, after, "claude")).toEqual(["The turn was cancelled.", "Claude continues by itself"]);
+    });
+
+    it("says that the agent continues in one change with its start from a job wait", () => {
+      const [before, after] = views([USER], [background({ job: true }), turnEnd(), JOB_AND_OWN_TURN]);
+
+      expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude continues by itself"]);
+    });
   });
 
   it("announces a new request before the end of a turn", () => {

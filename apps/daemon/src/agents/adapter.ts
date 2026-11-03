@@ -28,6 +28,8 @@ export type BackgroundCommands = {
   note(update: AcpObject): void;
   /** A command that it cannot check counts as not running. */
   running(): Promise<BackgroundState>;
+  /** Whether the update marks the end of an own turn of the agent. */
+  ownTurnEnded(update: AcpObject): boolean;
 };
 
 export type AgentAdapter = {
