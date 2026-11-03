@@ -303,7 +303,7 @@ export function BoardColumn({
       className="group/column min-w-60 flex-1"
     >
       {/* The page's scroll padding keeps a focus scroll's target and its ring clear of the header. */}
-      <div className="sticky top-0 z-(--layer-column-header) -mt-3 flex items-baseline gap-2 bg-bg py-3 [html:has(&)]:scroll-pt-13">
+      <div className="sticky top-(--title-band) z-(--layer-column-header) -mt-3 flex items-baseline gap-2 bg-bg py-3 [html:has(&)]:scroll-pt-[calc(var(--title-band)+--spacing(13))]">
         <h2 ref={headingRef} id={headingId} tabIndex={-1} className="font-chrome text-sm font-medium">
           {status}
         </h2>

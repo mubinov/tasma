@@ -10,6 +10,11 @@ const LIST_CLASS = "flex flex-col gap-1 px-3 py-1";
 
 const SIDEBAR_ID = "sidebar";
 
+// Never narrower than the window buttons need. The width itself takes the maximum, so the fixed box inherits it.
+const RAIL_WIDTH_CLASS = "w-[max(--spacing(16),var(--title-controls))] [html:has(&)]:scroll-pl-[max(--spacing(16),var(--title-controls))]";
+
+const FULL_WIDTH_CLASS = "sm:w-[max(--spacing(60),var(--title-controls))] sm:[html:has(&)]:scroll-pl-[max(--spacing(60),var(--title-controls))]";
+
 function SidebarLink({ entry, collapsed }: { entry: NavigationEntry; collapsed: boolean }): ReactNode {
   const Icon = entry.icon;
 
@@ -56,55 +61,56 @@ export function Sidebar(): ReactNode {
     // target clear of the fixed content.
     <header
       id={SIDEBAR_ID}
-      className={`shrink-0 transition-[width] ${TIMING_CLASS} ${
-        collapsed ? "w-16 [html:has(&)]:scroll-pl-16" : "w-16 [html:has(&)]:scroll-pl-16 sm:w-60 sm:[html:has(&)]:scroll-pl-60"
-      }`}
+      className={`shrink-0 transition-[width] ${TIMING_CLASS} ${RAIL_WIDTH_CLASS} ${collapsed ? "" : FULL_WIDTH_CLASS}`}
     >
-      {/* The bottom padding below `sm` keeps the last link's focus ring inside
-          the scroll box, which clips it; above `sm` the collapse block does. */}
-      <div className="fixed inset-y-0 left-0 z-(--layer-sidebar) flex w-[inherit] flex-col overflow-y-auto border-r border-line bg-surface-2 pb-2 sm:pb-0">
-        <div className="px-3 py-4">
-          <div className={ROW_CLASS}>
-            <span className={ICON_BOX_CLASS}>
-              <span className="size-6 rounded-control bg-graphic" />
-            </span>
-            <CollapsingLabel collapsed={collapsed} className="font-chrome text-lg font-semibold">
-              tasma
-            </CollapsingLabel>
+      {/* A top padding in a scroll box scrolls away, so the band is on a box that does not scroll. */}
+      <div className="fixed inset-y-0 left-0 z-(--layer-sidebar) flex w-[inherit] flex-col border-r border-line bg-surface-2 pt-(--title-band)">
+        {/* The bottom padding below `sm` keeps the last link's focus ring inside
+            the scroll box, which clips it; above `sm` the collapse block does. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-2 sm:pb-0">
+          <div className="px-3 py-4">
+            <div className={ROW_CLASS}>
+              <span className={ICON_BOX_CLASS}>
+                <span className="size-6 rounded-control bg-graphic" />
+              </span>
+              <CollapsingLabel collapsed={collapsed} className="font-chrome text-lg font-semibold">
+                tasma
+              </CollapsingLabel>
+            </div>
           </div>
-        </div>
 
-        {/* The side padding sits on the lists, so the foot's border spans the
-            sidebar's full width. */}
-        <nav className="flex flex-1 flex-col">
-          <ul className={LIST_CLASS}>
-            {PRIMARY_NAVIGATION.map((entry) => (
-              <SidebarLink key={entry.path} entry={entry} collapsed={collapsed} />
-            ))}
-          </ul>
-          <ul className={`${LIST_CLASS} mt-auto border-t border-line`}>
-            <UpdateItem collapsed={collapsed} />
-            {FOOTER_NAVIGATION.map((entry) => (
-              <SidebarLink key={entry.path} entry={entry} collapsed={collapsed} />
-            ))}
-          </ul>
-        </nav>
+          {/* The side padding sits on the lists, so the foot's border spans the
+              sidebar's full width. */}
+          <nav className="flex flex-1 flex-col">
+            <ul className={LIST_CLASS}>
+              {PRIMARY_NAVIGATION.map((entry) => (
+                <SidebarLink key={entry.path} entry={entry} collapsed={collapsed} />
+              ))}
+            </ul>
+            <ul className={`${LIST_CLASS} mt-auto border-t border-line`}>
+              <UpdateItem collapsed={collapsed} />
+              {FOOTER_NAVIGATION.map((entry) => (
+                <SidebarLink key={entry.path} entry={entry} collapsed={collapsed} />
+              ))}
+            </ul>
+          </nav>
 
-        <div className="hidden px-3 py-2 sm:block">
-          {/* A disclosure, so a plain button with aria-expanded. Base UI's Toggle
-              is an aria-pressed control and would say the wrong thing. */}
-          <button
-            type="button"
-            aria-expanded={!collapsed}
-            aria-controls={SIDEBAR_ID}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            onClick={() => setCollapsed(!collapsed)}
-            className={`${ROW_CLASS} ${IDLE_TEXT_CLASS}`}
-          >
-            <span className={ICON_BOX_CLASS}>
-              <SidebarSimpleIcon size={20} aria-hidden="true" />
-            </span>
-          </button>
+          <div className="hidden px-3 py-2 sm:block">
+            {/* A disclosure, so a plain button with aria-expanded. Base UI's Toggle
+                is an aria-pressed control and would say the wrong thing. */}
+            <button
+              type="button"
+              aria-expanded={!collapsed}
+              aria-controls={SIDEBAR_ID}
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              onClick={() => setCollapsed(!collapsed)}
+              className={`${ROW_CLASS} ${IDLE_TEXT_CLASS}`}
+            >
+              <span className={ICON_BOX_CLASS}>
+                <SidebarSimpleIcon size={20} aria-hidden="true" />
+              </span>
+            </button>
+          </div>
         </div>
       </div>
     </header>

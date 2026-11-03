@@ -3464,6 +3464,7 @@ name = "tasma-macos"
 version = "0.0.0"
 dependencies = [
  "block2",
+ "dispatch2",
  "libc",
  "objc2",
  "objc2-app-kit",

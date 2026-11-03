@@ -116,13 +116,13 @@ it("carries the rail width always and the full width only above the breakpoint",
   await renderWithRouter();
 
   const sidebar = screen.getByRole("banner");
-  expect(sidebar.classList.contains("w-16")).toBe(true);
-  expect(sidebar.classList.contains("sm:w-60")).toBe(true);
+  expect(sidebar.classList.contains("w-[max(--spacing(16),var(--title-controls))]")).toBe(true);
+  expect(sidebar.classList.contains("sm:w-[max(--spacing(60),var(--title-controls))]")).toBe(true);
 
   await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
 
-  expect(sidebar.classList.contains("w-16")).toBe(true);
-  expect(sidebar.classList.contains("sm:w-60")).toBe(false);
+  expect(sidebar.classList.contains("w-[max(--spacing(16),var(--title-controls))]")).toBe(true);
+  expect(sidebar.classList.contains("sm:w-[max(--spacing(60),var(--title-controls))]")).toBe(false);
 });
 
 /*
@@ -149,11 +149,25 @@ it("holds the width on the header and the surface on one fixed child", async () 
     "border-r",
     "border-line",
     "bg-surface-2",
-    "pb-2",
-    "sm:pb-0",
+    "pt-(--title-band)",
   ]) {
     expect(content.classList.contains(name), name).toBe(true);
   }
+});
+
+it("scrolls in a box inside the fixed one, below the band", async () => {
+  await renderWithRouter();
+
+  const fixed = screen.getByRole("banner").firstElementChild!;
+  const scroller = fixed.firstElementChild!;
+
+  expect(fixed.children).toHaveLength(1);
+  expect(fixed.classList.contains("overflow-y-auto")).toBe(false);
+  for (const name of ["overflow-y-auto", "min-h-0", "flex-1", "pb-2", "sm:pb-0"]) {
+    expect(scroller.classList.contains(name), name).toBe(true);
+  }
+  expect(scroller.classList.contains("pt-(--title-band)")).toBe(false);
+  expect(scroller.contains(screen.getByRole("navigation"))).toBe(true);
 });
 
 // The fixed content covers the left of the page, so the page's scroll padding
@@ -163,13 +177,13 @@ it("sets the page's scroll padding to the sidebar width", async () => {
   await renderWithRouter();
 
   const header = screen.getByRole("banner");
-  expect(header.classList.contains("[html:has(&)]:scroll-pl-16")).toBe(true);
-  expect(header.classList.contains("sm:[html:has(&)]:scroll-pl-60")).toBe(true);
+  expect(header.classList.contains("[html:has(&)]:scroll-pl-[max(--spacing(16),var(--title-controls))]")).toBe(true);
+  expect(header.classList.contains("sm:[html:has(&)]:scroll-pl-[max(--spacing(60),var(--title-controls))]")).toBe(true);
 
   await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
 
-  expect(header.classList.contains("[html:has(&)]:scroll-pl-16")).toBe(true);
-  expect(header.classList.contains("sm:[html:has(&)]:scroll-pl-60")).toBe(false);
+  expect(header.classList.contains("[html:has(&)]:scroll-pl-[max(--spacing(16),var(--title-controls))]")).toBe(true);
+  expect(header.classList.contains("sm:[html:has(&)]:scroll-pl-[max(--spacing(60),var(--title-controls))]")).toBe(false);
 });
 
 // A disclosure, not a toggle: it expands and collapses a region. The button

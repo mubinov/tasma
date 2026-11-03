@@ -215,120 +215,124 @@ export function TaskSidebar(props: TaskSidebarProps): ReactNode {
   const stepValue = <StepValue view={view} step={step} />;
 
   return (
-    // A scroll container with no link inside is a tab stop only in some engines, so the aside is one while it
-    // scrolls. -1 keeps the focus on it when it stops scrolling. The aside meets the window's edges, so its focus
-    // ring is drawn inside.
-    <aside
-      ref={asideRef}
-      tabIndex={scrolls ? 0 : -1}
-      aria-label="Task details"
-      className="w-full border-t border-line bg-surface-2 px-6 pt-5 pb-[calc(--spacing(8)+var(--notice-stack-height,0px))] focus-visible:-outline-offset-2 lg:sticky lg:top-0 lg:h-screen lg:w-task-sidebar lg:shrink-0 lg:self-start lg:scroll-pb-(--notice-stack-height) lg:overflow-y-auto lg:border-t-0 lg:border-l"
-    >
-      <dl className={GROUP_CLASS}>
-        <Field label="Status" labelId={statusId}>
-          <PropertyMenu
-            labelId={statusId}
-            value={status}
-            row={properties.status}
-            clearable={false}
-            trigger={status}
-            onFocusLost={focusAside}
-          />
-        </Field>
-        <Field label="Priority" labelId={priorityId}>
-          <PropertyMenu
-            labelId={priorityId}
-            value={priority}
-            row={properties.priority}
-            clearable
-            trigger={priority ?? <None />}
-            onFocusLost={focusAside}
-          />
-        </Field>
-        <Field label="Labels" labelId={labelsId}>
-          <LabelPicker labelId={labelsId} entries={properties.entries} labels={labels} row={properties.labels} />
-        </Field>
-      </dl>
-      <dl className={NEXT_GROUP_CLASS}>
-        <Field label="Workflow">{workflow ?? <None />}</Field>
-        <Field label="Step" labelId={stepId}>
-          {properties.step === null
-            ? stepValue
-            : (
-                <div className="flex flex-col items-start">
-                  <PropertyMenu
-                    labelId={stepId}
-                    value={step}
-                    row={properties.step}
-                    clearable
-                    trigger={stepValue}
-                    onFocusLost={focusAside}
-                  />
-                  {view.kind === "step" && (
-                    <StepTrack owners={view.owners} current={view.current} className="mt-1.5" />
-                  )}
-                </div>
-              )}
-        </Field>
-      </dl>
-      <dl className={NEXT_GROUP_CLASS}>
-        <RelationField
-          label="Blocked by"
-          labelId={blockedById}
-          picker={(
-            <TaskPicker
-              multiple
-              labelId={blockedById}
-              className={REVEALED_PENCIL_CLASS}
-              entries={properties.entries}
-              id={id}
-              value={blockedBy}
-              row={properties.blockedBy}
+    // From lg a top padding in the scroll box would scroll away, so the band is on a box around it. A sticky box never
+    // moves up to its threshold, so the negative margin puts its top at the window's top.
+    <div className="w-full lg:sticky lg:top-0 lg:z-(--layer-sidebar) lg:-mt-(--title-band) lg:flex lg:h-screen lg:w-task-sidebar lg:shrink-0 lg:flex-col lg:self-start lg:border-l lg:border-line lg:bg-surface-2 lg:pt-(--title-band)">
+      {/* A scroll container with no link inside is a tab stop only in some engines, so the aside is one while it
+          scrolls. -1 keeps the focus on it when it stops scrolling. The aside meets the window's edges, so its focus
+          ring is drawn inside. */}
+      <aside
+        ref={asideRef}
+        tabIndex={scrolls ? 0 : -1}
+        aria-label="Task details"
+        className="w-full border-t border-line bg-surface-2 px-6 pt-5 pb-[calc(--spacing(8)+var(--notice-stack-height,0px))] focus-visible:-outline-offset-2 lg:min-h-0 lg:flex-1 lg:scroll-pb-(--notice-stack-height) lg:overflow-y-auto lg:border-t-0"
+      >
+        <dl className={GROUP_CLASS}>
+          <Field label="Status" labelId={statusId}>
+            <PropertyMenu
+              labelId={statusId}
+              value={status}
+              row={properties.status}
+              clearable={false}
+              trigger={status}
+              onFocusLost={focusAside}
             />
-          )}
-        >
-          <RelationList tag={tag} rows={relations.blockers} />
-        </RelationField>
-        <RelationField
-          label="Parent"
-          labelId={parentId}
-          picker={(
-            <TaskPicker
-              multiple={false}
-              labelId={parentId}
-              className={REVEALED_PENCIL_CLASS}
-              entries={properties.entries}
-              id={id}
-              value={parent}
-              row={properties.parent}
-            />
-          )}
-        >
-          <RelationList tag={tag} rows={relations.parent === null ? [] : [relations.parent]} />
-        </RelationField>
-      </dl>
-      <dl className={NEXT_GROUP_CLASS}>
-        <Field label="Created">
-          <Stamp value={created} />
-        </Field>
-        <Field label="Updated">
-          <Stamp value={updated} />
-        </Field>
-        {lines.length > 0 && (
-          <Field label="Custom">
-            {lines.map((line) => <div key={line} className="font-mono text-xs-plus">{line}</div>)}
           </Field>
-        )}
-      </dl>
-      {/* Present with no outline too: the overflow observer watches the children the aside has when it mounts. */}
-      <div>
-        <TaskOutline
-          headings={outline.headings}
-          comments={outline.comments}
-          sidebarRef={asideRef}
-          pageScrollPadding={pageScrollPadding}
-        />
-      </div>
-    </aside>
+          <Field label="Priority" labelId={priorityId}>
+            <PropertyMenu
+              labelId={priorityId}
+              value={priority}
+              row={properties.priority}
+              clearable
+              trigger={priority ?? <None />}
+              onFocusLost={focusAside}
+            />
+          </Field>
+          <Field label="Labels" labelId={labelsId}>
+            <LabelPicker labelId={labelsId} entries={properties.entries} labels={labels} row={properties.labels} />
+          </Field>
+        </dl>
+        <dl className={NEXT_GROUP_CLASS}>
+          <Field label="Workflow">{workflow ?? <None />}</Field>
+          <Field label="Step" labelId={stepId}>
+            {properties.step === null
+              ? stepValue
+              : (
+                  <div className="flex flex-col items-start">
+                    <PropertyMenu
+                      labelId={stepId}
+                      value={step}
+                      row={properties.step}
+                      clearable
+                      trigger={stepValue}
+                      onFocusLost={focusAside}
+                    />
+                    {view.kind === "step" && (
+                      <StepTrack owners={view.owners} current={view.current} className="mt-1.5" />
+                    )}
+                  </div>
+                )}
+          </Field>
+        </dl>
+        <dl className={NEXT_GROUP_CLASS}>
+          <RelationField
+            label="Blocked by"
+            labelId={blockedById}
+            picker={(
+              <TaskPicker
+                multiple
+                labelId={blockedById}
+                className={REVEALED_PENCIL_CLASS}
+                entries={properties.entries}
+                id={id}
+                value={blockedBy}
+                row={properties.blockedBy}
+              />
+            )}
+          >
+            <RelationList tag={tag} rows={relations.blockers} />
+          </RelationField>
+          <RelationField
+            label="Parent"
+            labelId={parentId}
+            picker={(
+              <TaskPicker
+                multiple={false}
+                labelId={parentId}
+                className={REVEALED_PENCIL_CLASS}
+                entries={properties.entries}
+                id={id}
+                value={parent}
+                row={properties.parent}
+              />
+            )}
+          >
+            <RelationList tag={tag} rows={relations.parent === null ? [] : [relations.parent]} />
+          </RelationField>
+        </dl>
+        <dl className={NEXT_GROUP_CLASS}>
+          <Field label="Created">
+            <Stamp value={created} />
+          </Field>
+          <Field label="Updated">
+            <Stamp value={updated} />
+          </Field>
+          {lines.length > 0 && (
+            <Field label="Custom">
+              {lines.map((line) => <div key={line} className="font-mono text-xs-plus">{line}</div>)}
+            </Field>
+          )}
+        </dl>
+        {/* Present with no outline too: the overflow observer watches the children the aside has when it mounts. */}
+        <div>
+          <TaskOutline
+            headings={outline.headings}
+            comments={outline.comments}
+            sidebarRef={asideRef}
+            pageScrollPadding={pageScrollPadding}
+          />
+        </div>
+      </aside>
+    </div>
   );
 }

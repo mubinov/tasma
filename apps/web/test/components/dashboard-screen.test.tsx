@@ -151,6 +151,20 @@ describe("the screen", () => {
     expect(screen.getByRole("heading", { level: 2, name: "Chats" }).classList.contains("sr-only")).toBe(true);
   });
 
+  it("starts at the window's top, with its columns below the band and no page scroll at a normal height", async () => {
+    await renderDashboard(stubDashboard());
+
+    const frame = screen.getByRole("heading", { level: 1 }).parentElement!;
+    for (const name of [
+      "-mt-[calc(--spacing(6)+var(--title-band))]",
+      "sm:-mt-[calc(--spacing(10)+var(--title-band))]",
+      "pt-(--title-band)",
+      "h-screen",
+    ]) {
+      expect(frame.classList.contains(name), name).toBe(true);
+    }
+  });
+
   it("shows the route failure when the first page cannot be read", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const stub = stubDashboard({ "/chats": refusalReply(500, { kind: "store", code: "chat-unreadable", message: "broken" }) });

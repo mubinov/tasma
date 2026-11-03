@@ -367,10 +367,13 @@ it("gives the panel the height of the window under the top bar, and at xl and wi
 
   const frame = (await screen.findByRole("region", { name: "Claude · build" })).parentElement!;
   for (const name of [
-    "h-[calc(100vh-var(--spacing-top-bar))]",
+    "h-[calc(100vh-var(--title-band)-var(--spacing-top-bar))]",
     "xl:h-screen",
     "xl:sticky",
     "xl:top-0",
+    "xl:z-(--layer-sidebar)",
+    "xl:-mt-(--title-band)",
+    "xl:pt-(--title-band)",
     "xl:w-chat-panel",
     "border-t",
     "xl:border-t-0",

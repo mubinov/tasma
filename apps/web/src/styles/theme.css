@@ -117,19 +117,21 @@
 
   /*
    * Stacking, bottom to top, in the order the values list them. Used as
-   * `z-(--layer-*)`. Two of the orders are load-bearing: a notice sits under
-   * the scrim rather than floating over a modal panel, and a menu opened
-   * inside a dialog still draws above it.
+   * `z-(--layer-*)`. Some of the orders are load-bearing: a notice sits under
+   * the scrim rather than floating over a modal panel, a menu opened inside a
+   * dialog still draws above it, and the title cover is above the pinned
+   * headers and below the sidebar.
    */
   --layer-comment-header: 1;
   --layer-column-header: 2;
   --layer-top-bar: 2;
   --layer-scroll-to-top: 2;
-  --layer-sidebar: 3;
-  --layer-notice: 4;
-  --layer-dialog: 5;
-  --layer-popup: 6;
-  --layer-drag: 7;
+  --layer-title-cover: 3;
+  --layer-sidebar: 4;
+  --layer-notice: 5;
+  --layer-dialog: 6;
+  --layer-popup: 7;
+  --layer-drag: 8;
 
   --duration-fast: 120ms;
   --duration-base: 180ms;
@@ -174,6 +176,14 @@
  */
 :root {
   color-scheme: light dark;
+
+  /*
+   * The macOS shell sets both on <html>: the height of the band at the top of
+   * the window, and the width that the window buttons take from the left edge.
+   * A browser has no band and no buttons.
+   */
+  --title-band: 0px;
+  --title-controls: 0px;
 
   --palette-bg: light-dark(#fafafb, #16181c);
   --palette-surface: light-dark(#ffffff, #1d2025);

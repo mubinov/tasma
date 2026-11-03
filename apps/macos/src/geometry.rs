@@ -42,7 +42,7 @@ pub(crate) struct Frame {
     pub(crate) width: f64,
     pub(crate) height: f64,
     /// How much taller the frame is than the content: a work area bounds the
-    /// frame, and the builder takes the content. Zero under the default title
+    /// frame, and the builder takes the content. Zero under the overlay title
     /// bar style, which draws the content under the title bar.
     pub(crate) chrome: f64,
 }
@@ -79,7 +79,7 @@ pub(crate) struct Rect {
 }
 
 /// The `chrome` a first launch places with, before a window exists to measure
-/// one. The window keeps the default title bar style, so its content fills the
+/// one. The window has the overlay title bar style, so its content fills the
 /// frame. A style that sets the title bar above the content needs that height
 /// here.
 pub(crate) const FIRST_RUN_CHROME: f64 = 0.0;

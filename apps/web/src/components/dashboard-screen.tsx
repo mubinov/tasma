@@ -94,7 +94,7 @@ export function DashboardScreen(): ReactNode {
   const showChat = wide || open !== undefined;
 
   return (
-    <div className="-m-6 -mb-[calc(--spacing(6)+var(--notice-stack-height,0px))] flex h-screen min-h-[30rem] sm:-m-10 sm:-mb-[calc(--spacing(10)+var(--notice-stack-height,0px))]">
+    <div className="-m-6 -mt-[calc(--spacing(6)+var(--title-band))] -mb-[calc(--spacing(6)+var(--notice-stack-height,0px))] flex h-screen min-h-[30rem] pt-(--title-band) sm:-m-10 sm:-mt-[calc(--spacing(10)+var(--title-band))] sm:-mb-[calc(--spacing(10)+var(--notice-stack-height,0px))]">
       <ScreenHeading className="sr-only">{TITLE}</ScreenHeading>
       {showList && (
         <ChatList

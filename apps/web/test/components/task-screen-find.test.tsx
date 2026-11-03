@@ -332,7 +332,7 @@ describe("the find group", () => {
     await openPage();
 
     const classes = [...topBar().classList];
-    expect(classes).toContain("[html:has(&)]:[--page-scroll-padding:--spacing(16)]");
+    expect(classes).toContain("[html:has(&)]:[--page-scroll-padding:calc(var(--title-band)+--spacing(16))]");
     expect(classes).toContain("[html:has(&:not(:focus-within))]:scroll-pt-(--page-scroll-padding)");
     expect(classes.filter((name) => name.includes("scroll-pt"))).toHaveLength(1);
   });

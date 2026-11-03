@@ -668,7 +668,7 @@ describe("the stack", () => {
       "w-[calc(100%+1rem)]",
       "max-w-[488px]",
       "sm:max-w-[504px]",
-      "max-h-screen",
+      "max-h-[calc(100vh-var(--title-band))]",
       "overflow-y-auto",
     ]) {
       expect(stack().classList.contains(name), name).toBe(true);

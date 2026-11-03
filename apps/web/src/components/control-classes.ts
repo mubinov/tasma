@@ -107,7 +107,7 @@ export const DIALOG_SCRIM_CLASS = "fixed inset-0 z-(--layer-dialog) bg-scrim";
  * the scroll origin, out of reach.
  */
 export const DIALOG_VIEWPORT_CLASS
-  = "fixed inset-0 z-(--layer-dialog) flex items-start justify-center overflow-y-auto p-4";
+  = "fixed inset-x-0 top-(--title-band) bottom-0 z-(--layer-dialog) flex items-start justify-center overflow-y-auto p-4";
 
 /*
  * A block container: `DIALOG_ACTIONS_CLASS` and `DIALOG_STATUS_CLASS` rely on

@@ -1,5 +1,6 @@
 import { act, cleanup, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { TITLE_COVER_ID } from "../../src/lib/use-top-bar-lengths";
 import { FOOTER_NAVIGATION, PRIMARY_NAVIGATION } from "../../src/navigation";
 import { useUiStore } from "../../src/store/ui";
 import { renderWithRouter } from "../helpers";
@@ -75,6 +76,25 @@ it("mounts the notice stack after the main content", async () => {
   const stack = screen.getByRole("main").nextElementSibling;
   expect(stack?.classList.contains("z-(--layer-notice)")).toBe(true);
   expect(stack?.getAttribute("aria-live")).toBe("off");
+});
+
+it("covers the band with a box that a screen reader skips and that takes pointer events", async () => {
+  await renderWithRouter();
+
+  const cover = document.getElementById(TITLE_COVER_ID)!;
+  expect(cover.getAttribute("aria-hidden")).toBe("true");
+  expect(cover.classList.contains("pointer-events-none")).toBe(false);
+  for (const name of ["fixed", "inset-x-0", "top-0", "h-(--title-band)", "bg-bg", "z-(--layer-title-cover)"]) {
+    expect(cover.classList.contains(name), name).toBe(true);
+  }
+});
+
+it("keeps the main content its distance below the band", async () => {
+  await renderWithRouter();
+
+  const main = screen.getByRole("main");
+  expect(main.classList.contains("pt-[calc(--spacing(6)+var(--title-band))]")).toBe(true);
+  expect(main.classList.contains("sm:pt-[calc(--spacing(10)+var(--title-band))]")).toBe(true);
 });
 
 // jsdom has no layout, so the classes that add the stack's height to the bottom

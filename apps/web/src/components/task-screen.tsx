@@ -526,7 +526,7 @@ export function TaskScreen(): ReactNode {
   const findRootRef = useRef<HTMLDivElement>(null);
   const findButtonRef = useRef<HTMLButtonElement>(null);
   const barLineRef = useRef<HTMLDivElement>(null);
-  const { barHeight, scrollPaddingTop } = useTopBarLengths(barRef);
+  const { barBottom, scrollPaddingTop } = useTopBarLengths(barRef);
   const find = useTaskFind({
     rootRef: findRootRef,
     buttonRef: findButtonRef,
@@ -535,7 +535,7 @@ export function TaskScreen(): ReactNode {
   });
   useFindRequest(find.request);
   useHiddenFocus({ active: find.open, lineRef: barLineRef, targetRef: findButtonRef });
-  const scrolled = useScrolledPast(scrolledRef, barHeight);
+  const scrolled = useScrolledPast(scrolledRef, barBottom);
   const outline = useOutline(bodyRef, list.listRef, task, draft !== null);
   const navigate = route.useNavigate();
   // In edit mode the h1 is clipped and takes no focus, so the title field takes it.
@@ -635,13 +635,14 @@ export function TaskScreen(): ReactNode {
       <div className={`contents ${layout.content}`}>
         {/*
           The page's scroll padding keeps a focus scroll's target and its ring clear of the bar. WebKit applies it to
-          the bar's own controls too, so each focus move and keystroke in them would scroll the page: the page has no
-          scroll padding while the bar holds focus. WebKit's scroll anchoring scrolls the page by each change of the
-          scroll padding; a change of the root's min-height, which never limits the root's height, suppresses it.
+          the bar's own controls too, so each focus move and keystroke in them would scroll the page: the page has the
+          band's scroll padding alone while the bar holds focus. WebKit's scroll anchoring scrolls the page by each
+          change of the scroll padding; a change of the root's min-height, which never limits the root's height,
+          suppresses it.
         */}
         <div
           ref={barRef}
-          className="@container sticky top-0 z-(--layer-top-bar) border-b border-line bg-bg [html:has(&)]:[--page-scroll-padding:--spacing(16)] [html:has(&:not(:focus-within))]:scroll-pt-(--page-scroll-padding) [html:has(&:focus-within)]:min-h-px"
+          className="@container sticky top-(--title-band) z-(--layer-top-bar) border-b border-line bg-bg [html:has(&)]:[--page-scroll-padding:calc(var(--title-band)+--spacing(16))] [html:has(&:not(:focus-within))]:scroll-pt-(--page-scroll-padding) [html:has(&:focus-within)]:min-h-px"
         >
           <div
             ref={barLineRef}
@@ -835,8 +836,10 @@ export function TaskScreen(): ReactNode {
             />
           )
         : (
-            // Under xl the top bar sticks over the panel too, so the panel is shorter than the window by the bar.
-            <div className="h-[calc(100vh-var(--spacing-top-bar))] w-full border-t border-line bg-bg pb-(--notice-stack-height) xl:sticky xl:top-0 xl:h-screen xl:w-chat-panel xl:shrink-0 xl:self-start xl:border-t-0 xl:border-l">
+            // Under xl the top bar sticks over the panel too, so the panel is shorter than the window by the band and
+            // the bar. From xl a sticky box never moves up to its threshold, so the negative margin puts its top at the
+            // window's top, and its colour and border reach that edge.
+            <div className="h-[calc(100vh-var(--title-band)-var(--spacing-top-bar))] w-full border-t border-line bg-bg pb-(--notice-stack-height) xl:sticky xl:top-0 xl:z-(--layer-sidebar) xl:-mt-(--title-band) xl:h-screen xl:w-chat-panel xl:shrink-0 xl:self-start xl:border-t-0 xl:border-l xl:pt-(--title-band)">
               <ChatPanel
                 tag={tag}
                 task={taskId}

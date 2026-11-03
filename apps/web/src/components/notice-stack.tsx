@@ -212,7 +212,7 @@ function NoticeViewport(): ReactNode {
       role={empty ? undefined : "region"}
       aria-live="off"
       aria-label={empty ? undefined : "Notices"}
-      className="pointer-events-none fixed right-4 bottom-8 z-(--layer-notice) -m-8 -mr-4 flex max-h-screen w-[calc(100%+1rem)] max-w-[488px] flex-col gap-2 overflow-y-auto p-8 pr-4 sm:right-10 sm:-mr-8 sm:max-w-[504px] sm:pr-8 [html:has(&)]:scroll-pb-(--notice-stack-height)"
+      className="pointer-events-none fixed right-4 bottom-8 z-(--layer-notice) -m-8 -mr-4 flex max-h-[calc(100vh-var(--title-band))] w-[calc(100%+1rem)] max-w-[488px] flex-col gap-2 overflow-y-auto p-8 pr-4 sm:right-10 sm:-mr-8 sm:max-w-[504px] sm:pr-8 [html:has(&)]:scroll-pb-(--notice-stack-height)"
     >
       {toasts.toReversed().map((toast) => (
         <NoticePanel

@@ -26,6 +26,7 @@ mod record;
 mod supervisor;
 #[cfg(test)]
 mod testing;
+mod titlebar;
 mod uninstall;
 mod update;
 mod version;
@@ -36,11 +37,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
+use objc2::MainThreadMarker;
 use tauri::utils::config::Color;
 use tauri::webview::{NewWindowResponse, PageLoadEvent};
 use tauri::{
-    AppHandle, LogicalSize, Manager as _, RunEvent, Runtime, Theme, Url, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder, WindowEvent,
+    AppHandle, LogicalSize, Manager as _, RunEvent, Runtime, Theme, TitleBarStyle, Url, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 
 /// The window's own origin.
@@ -115,8 +117,8 @@ fn window_url(_app: &tauri::App) -> WebviewUrl {
 /// Whether the window may navigate to a URL.
 ///
 /// Tauri allows every URL by default, and this window has no address bar and
-/// copies the document title into its title bar, so a document from anywhere
-/// else would present as the application.
+/// takes the document title as its own, so a document from anywhere else would
+/// present as the application.
 ///
 /// One hole: Tauri's glue allows a URL `url::Url::parse` rejects without
 /// calling this at all. What a document *loads* is held by the `default-src
@@ -345,9 +347,15 @@ fn main() {
 
             let builder = WebviewWindowBuilder::new(app, WINDOW, url)
                 .title("Tasma")
+                .title_bar_style(TitleBarStyle::Overlay)
+                .hidden_title(true)
                 .min_inner_size(MIN_WIDTH, MIN_HEIGHT)
-                // Tauri does not copy `document.title` into the native title
-                // bar, so every screen would otherwise sit under a fixed name.
+                .initialization_script(titlebar::first_script(zoom::scale(
+                    app.state::<zoom::Level>().get(),
+                )))
+                // Tauri does not copy `document.title` to the window, so the
+                // Window menu, Mission Control and VoiceOver would otherwise
+                // give every screen a fixed name.
                 .on_document_title_changed(|window, title| {
                     let _ = window.set_title(&title);
                 })
@@ -366,6 +374,7 @@ fn main() {
 
                     if payload.event() == PageLoadEvent::Finished {
                         zoom::restore(&window);
+                        titlebar::sync(&window);
                     }
 
                     if let Some(route) = route {
@@ -388,6 +397,10 @@ fn main() {
             .build()?;
 
             window.set_background_color(Some(background(window.theme().ok())))?;
+            titlebar::install(
+                MainThreadMarker::new().expect("setup runs on the main thread"),
+                &window,
+            );
             window.on_window_event({
                 let window = window.clone();
                 move |event| match event {
@@ -398,6 +411,10 @@ fn main() {
                         let _ = window.set_background_color(Some(background(Some(*theme))));
                     }
                     WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+                        if matches!(event, WindowEvent::Resized(_)) {
+                            titlebar::follow_full_screen(&window);
+                        }
+
                         tracked
                             .lock()
                             .unwrap_or_else(PoisonError::into_inner)

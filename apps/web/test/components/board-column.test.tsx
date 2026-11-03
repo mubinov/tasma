@@ -127,7 +127,8 @@ it("sets the page's top scroll padding past the sticky header", async () => {
 
   const header = screen.getByRole("heading", { level: 2 }).parentElement!;
   expect(header.classList.contains("sticky")).toBe(true);
-  expect(header.classList.contains("[html:has(&)]:scroll-pt-13")).toBe(true);
+  expect(header.classList.contains("top-(--title-band)")).toBe(true);
+  expect(header.classList.contains("[html:has(&)]:scroll-pt-[calc(var(--title-band)+--spacing(13))]")).toBe(true);
 });
 
 it("counts the matching tasks of all while labels are selected", async () => {

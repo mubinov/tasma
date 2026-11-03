@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 const GLOBAL_CSS = readFileSync(join(import.meta.dirname, "../src/styles/global.css"), "utf8");
+const THEME_CSS = readFileSync(join(import.meta.dirname, "../src/styles/theme.css"), "utf8");
 
 /** The index just past the block that opens at the first `{` after `at`. */
 function pastBlock(css: string, at: number): number {
@@ -58,4 +59,23 @@ it("registers the page's scroll padding as a length that starts at 0, so script 
   expect(GLOBAL_CSS).toMatch(
     /@property --page-scroll-padding\s*\{\s*syntax:\s*"<length>";\s*inherits:\s*false;\s*initial-value:\s*0px;\s*\}/,
   );
+});
+
+it("gives the page a top scroll padding of the band on every screen, inside a layer so a screen can set its own", () => {
+  expect(GLOBAL_CSS).toMatch(/@layer base\s*\{\s*html\s*\{[^}]*scroll-padding-top:\s*var\(--title-band\)/);
+  expect(unlayered(GLOBAL_CSS)).not.toContain("scroll-padding-top");
+});
+
+it("gives a browser no band and no width for the window buttons", () => {
+  expect(THEME_CSS).toMatch(/:root\s*\{[^}]*--title-band:\s*0px;[^}]*--title-controls:\s*0px;/);
+});
+
+it("puts the cover of the band above the top bar and below the sidebar", () => {
+  const layer = (name: string) => Number(new RegExp(`--layer-${name}:\\s*(\\d+);`).exec(THEME_CSS)?.[1]);
+
+  expect(layer("title-cover")).toBeGreaterThan(layer("top-bar"));
+  expect(layer("title-cover")).toBeGreaterThan(layer("column-header"));
+  expect(layer("title-cover")).toBeGreaterThan(layer("comment-header"));
+  expect(layer("title-cover")).toBeLessThan(layer("sidebar"));
+  expect(layer("sidebar")).toBeLessThan(layer("notice"));
 });

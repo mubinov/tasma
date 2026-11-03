@@ -218,6 +218,10 @@ describe("the dialog", () => {
     const viewport = dialog().parentElement;
     expect(viewport?.className).toContain("overflow-y-auto");
     expect(viewport?.className).toContain("items-start");
+    for (const name of ["inset-x-0", "top-(--title-band)", "bottom-0"]) {
+      expect(viewport?.classList.contains(name), name).toBe(true);
+    }
+    expect(viewport?.classList.contains("inset-0")).toBe(false);
     expect(dialog().className).toContain("my-auto");
   });
 });

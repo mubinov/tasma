@@ -1,5 +1,6 @@
 import { Outlet, useRouter, useRouterState } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, type ReactNode } from "react";
+import { TITLE_COVER_ID } from "../lib/use-top-bar-lengths";
 import { useUiStore } from "../store/ui";
 import { NoticeStack, SpokenRegion } from "./notice-stack";
 import { Sidebar } from "./sidebar";
@@ -48,10 +49,16 @@ export function AppShell(): ReactNode {
   return (
     <div className="flex min-h-screen bg-bg text-text">
       <Sidebar />
+      {/* It takes pointer events, so `elementFromPoint` reads a target under the band as covered. */}
+      <div
+        id={TITLE_COVER_ID}
+        aria-hidden="true"
+        className="fixed inset-x-0 top-0 z-(--layer-title-cover) h-(--title-band) bg-bg"
+      />
       <main
         ref={mainRef}
         tabIndex={-1}
-        className="min-w-0 flex-1 p-6 pb-[calc(--spacing(6)+var(--notice-stack-height,0px))] sm:p-10 sm:pb-[calc(--spacing(10)+var(--notice-stack-height,0px))]"
+        className="min-w-0 flex-1 p-6 pt-[calc(--spacing(6)+var(--title-band))] pb-[calc(--spacing(6)+var(--notice-stack-height,0px))] sm:p-10 sm:pt-[calc(--spacing(10)+var(--title-band))] sm:pb-[calc(--spacing(10)+var(--notice-stack-height,0px))]"
       >
         <Outlet />
       </main>

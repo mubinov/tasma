@@ -8,7 +8,7 @@ use std::sync::{Mutex, PoisonError};
 
 use tauri::{AppHandle, Manager as _, Runtime, WebviewWindow};
 
-use crate::{WINDOW, log, menu};
+use crate::{WINDOW, log, menu, titlebar};
 
 const ACTUAL_SIZE: u16 = 100;
 const STEP: u16 = 20;
@@ -64,7 +64,7 @@ pub(crate) fn enabled(level: u16) -> (bool, bool, bool) {
     (level != ACTUAL_SIZE, level < LARGEST, level > SMALLEST)
 }
 
-fn scale(level: u16) -> f64 {
+pub(crate) fn scale(level: u16) -> f64 {
     f64::from(level) / 100.0
 }
 
@@ -79,7 +79,10 @@ pub(crate) fn change<R: Runtime>(app: &AppHandle<R>, change: Change) {
         .state::<Level>()
         .apply(change, |scale| window.set_zoom(scale))
     {
-        Ok(level) => menu::show_zoom(app, level),
+        Ok(level) => {
+            menu::show_zoom(app, level);
+            titlebar::sync(&window);
+        }
         Err(error) => note(&error),
     }
 }

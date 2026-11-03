@@ -16,6 +16,7 @@
   html {
     background-color: var(--color-bg);
     color: var(--color-text);
+    scroll-padding-top: var(--title-band);
   }
 
   /*
@@ -48,7 +49,7 @@
 
 /*
  * The page's top scroll padding, which the task page's top bar sets. A length,
- * so it computes to px for script, also while the page has no scroll padding.
+ * so it computes to px for script, also while the page has the band's alone.
  */
 @property --page-scroll-padding {
   syntax: "<length>";

@@ -454,6 +454,7 @@ describe("the comment editor", () => {
 
     const card = screen.getByRole("article", { name: "Note 3" });
     const header = card.querySelector<HTMLElement>(".sticky")!;
+    expect(header.classList.contains("top-[calc(var(--title-band)+var(--spacing-top-bar))]")).toBe(true);
     Object.defineProperty(header, "offsetHeight", { configurable: true, value: 71 });
     resize.report(header);
 

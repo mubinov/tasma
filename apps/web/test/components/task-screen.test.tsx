@@ -106,12 +106,13 @@ describe("the page", () => {
     expect(back.parentElement?.parentElement).toBe(bar);
     expect(back.parentElement?.classList.contains("h-top-bar")).toBe(true);
     expect(bar.className).toContain("sticky");
+    expect(bar.classList.contains("top-(--title-band)")).toBe(true);
     expect(bar.className).toContain("z-(--layer-top-bar)");
     expect(bar.classList.contains("border-b")).toBe(true);
     expect(bar.classList.contains("[html:has(&:not(:focus-within))]:scroll-pt-(--page-scroll-padding)")).toBe(true);
     expect(bar.childElementCount).toBe(1);
     expect(bar.parentElement?.className).toBe("contents lg:block lg:min-w-0 lg:flex-1");
-    expect(bar.parentElement?.nextElementSibling).toBe(sidebar());
+    expect(bar.parentElement?.nextElementSibling).toBe(sidebar().parentElement);
     const current = screen.getAllByRole("link").filter((link) => link.getAttribute("aria-current") === "page");
     expect(current.map((link) => link.textContent)).toEqual(["Tasks"]);
   });
@@ -295,7 +296,7 @@ describe("the comments", () => {
       expect(sentinel?.childNodes).toHaveLength(0);
       for (const name of [
         "sticky",
-        "top-top-bar",
+        "top-[calc(var(--title-band)+var(--spacing-top-bar))]",
         "z-(--layer-comment-header)",
         "rounded-t-card",
         "bg-surface",
@@ -350,7 +351,7 @@ describe("the title in the top bar and scroll to top", () => {
     const resize = stubResizeObservers();
     // The bar's rem height at an 18px root font size.
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      return { height: this.classList.contains("top-0") ? 59.625 : 0 } as DOMRect;
+      return { height: this.classList.contains("top-(--title-band)") ? 59.625 : 0 } as DOMRect;
     });
     const { transport } = daemon();
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
@@ -389,7 +390,7 @@ describe("the title in the top bar and scroll to top", () => {
     const resize = stubResizeObservers();
     let barHeight = 53;
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      return { height: this.classList.contains("top-0") ? barHeight : 0 } as DOMRect;
+      return { height: this.classList.contains("top-(--title-band)") ? barHeight : 0 } as DOMRect;
     });
     document.documentElement.style.setProperty("--page-scroll-padding", "64px");
     const { transport } = daemon({ [TASK_PATH]: task({ body: "## Plan" }) });
@@ -520,11 +521,31 @@ describe("the sidebar", () => {
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
     const aside = sidebar();
-    for (const name of ["lg:sticky", "lg:h-screen", "lg:w-task-sidebar", "lg:border-l", "lg:border-t-0", "border-t"]) {
+    const column = aside.parentElement!;
+    for (const name of ["lg:border-t-0", "border-t", "lg:min-h-0", "lg:flex-1", "lg:overflow-y-auto"]) {
       expect(aside.classList.contains(name), name).toBe(true);
     }
-    expect(aside.parentElement?.classList.contains("lg:flex-row")).toBe(true);
-    expect(aside.previousElementSibling?.contains(screen.getByRole("heading", { level: 1 }))).toBe(true);
+    expect(aside.classList.contains("lg:sticky")).toBe(false);
+    for (const name of [
+      "lg:sticky",
+      "lg:top-0",
+      "lg:z-(--layer-sidebar)",
+      "lg:-mt-(--title-band)",
+      "lg:pt-(--title-band)",
+      "lg:h-screen",
+      "lg:w-task-sidebar",
+      "lg:shrink-0",
+      "lg:self-start",
+      "lg:border-l",
+      "lg:bg-surface-2",
+      "lg:flex",
+      "lg:flex-col",
+    ]) {
+      expect(column.classList.contains(name), name).toBe(true);
+    }
+    expect(column.hasAttribute("tabindex")).toBe(false);
+    expect(column.parentElement?.classList.contains("lg:flex-row")).toBe(true);
+    expect(column.previousElementSibling?.contains(screen.getByRole("heading", { level: 1 }))).toBe(true);
 
     const groups = [...aside.querySelectorAll("dl")];
     expect(groups[0]?.className).toContain("grid-cols-[5.25rem_minmax(0,1fr)]");
@@ -617,7 +638,7 @@ describe("the sidebar", () => {
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
     const aside = sidebar();
-    const frame = aside.parentElement!;
+    const frame = aside.parentElement!.parentElement!;
     const content = screen.getByRole("heading", { level: 1 }).parentElement!.parentElement!;
     const room = (spacing: number) => `[calc(--spacing(${String(spacing)})+var(--notice-stack-height,0px))]`;
     expect(frame.classList.contains(`-mb-${room(6)}`)).toBe(true);
