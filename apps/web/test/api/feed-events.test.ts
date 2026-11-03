@@ -188,3 +188,20 @@ describe("FEED_MAPPINGS", () => {
     ]);
   });
 });
+
+describe("the setup reads", () => {
+  const setup = { setup: [...daemonKeys.setup(), "full", undefined] };
+
+  it.each<FeedEvent>([
+    { kind: "project", tag: "SAGA", change: "created" },
+    { kind: "workflow", name: "review", change: "changed" },
+    { kind: "config" },
+  ])("reads again on a $kind event", (event) => {
+    expect(keysMatched(event, setup)).toEqual(["setup"]);
+  });
+
+  it("does not read again on a task event or a chat event", () => {
+    expect(keysMatched({ kind: "task", tag: "SAGA", id: "SAGA-1", change: "changed" }, setup)).toEqual([]);
+    expect(keysMatched({ kind: "chat", tag: "SAGA", task: "SAGA-1", chat: 1, step: "build", state: "working" }, setup)).toEqual([]);
+  });
+});

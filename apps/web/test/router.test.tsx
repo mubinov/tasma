@@ -14,7 +14,7 @@ import { ErrorScreen, RouteFailure } from "../src/components/error-boundary";
 import { router } from "../src/router";
 import { createAppRouter } from "../src/routes";
 import config from "../vite.config";
-import { testContext } from "./helpers";
+import { setupStatus, testContext } from "./helpers";
 
 /*
  * Which component throws is chosen per test. Both failures are caught by the
@@ -61,9 +61,13 @@ function silenceFailureNoise() {
   vi.stubGlobal("scrollTo", () => {});
 }
 
-/** Opens the app's router, which reads the hash of the document, on a screen whose route has no loader. */
+/**
+ * Opens the app's router, which reads the hash of the document, on a screen
+ * whose route has no loader. The only read is the start read of the setup.
+ */
 function openWithNoLoader() {
   window.location.hash = "#/settings";
+  vi.stubGlobal("fetch", () => Promise.resolve(Response.json({ ok: true, data: setupStatus(), diagnostics: [] })));
 }
 
 afterEach(() => {

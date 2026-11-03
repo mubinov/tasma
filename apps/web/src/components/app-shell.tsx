@@ -1,6 +1,8 @@
 import { Outlet, useRouter, useRouterState } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, type ReactNode } from "react";
+import { SETUP_PATH } from "../lib/setup-steps";
 import { TITLE_COVER_ID } from "../lib/use-top-bar-lengths";
+import { useNoticeStore } from "../store/notices";
 import { useUiStore } from "../store/ui";
 import { NoticeStack, SpokenRegion } from "./notice-stack";
 import { Sidebar } from "./sidebar";
@@ -11,8 +13,11 @@ export function AppShell(): ReactNode {
   // A retry replaces the failure panel without navigating anywhere, which the
   // path alone cannot see.
   const failing = useRouterState({ select: (state) => state.matches.some((match) => match.status === "error") });
+  // The match rather than the path: the path changes when a navigation starts,
+  // and the setup screen stays on the page until the next screen has its data.
+  const onSetup = useRouterState({ select: (state) => state.matches.some((match) => match.routeId === SETUP_PATH) });
   const mainRef = useRef<HTMLElement>(null);
-  const shownRef = useRef({ pathname, failing });
+  const shownRef = useRef({ pathname, failing, onSetup });
   const editRequest = useUiStore((state) => state.editRequest);
   const requestedPathname = editRequest === null
     ? null
@@ -38,30 +43,49 @@ export function AppShell(): ReactNode {
   // What the region shows is compared rather than the renders counted: the first
   // paint replaced nothing, and StrictMode runs every mount effect twice.
   useEffect(() => {
-    if (shownRef.current.pathname === pathname && shownRef.current.failing === failing) {
+    const shown = shownRef.current;
+
+    if (shown.pathname === pathname && shown.failing === failing && shown.onSetup === onSetup) {
       return;
     }
 
-    shownRef.current = { pathname, failing };
-    mainRef.current?.focus();
-  }, [pathname, failing]);
+    shownRef.current = { pathname, failing, onSetup };
+    const main = mainRef.current;
 
+    if (main !== null) {
+      main.focus();
+
+      // A live message and a focus move compete, and the live message loses.
+      const words = useUiStore.getState().takeArrivalWords();
+
+      if (words !== null) {
+        useNoticeStore.getState().announce(words);
+      }
+    }
+  }, [pathname, failing, onSetup]);
+
+  // Each child keeps its place in both layouts: a message in the spoken region
+  // has to survive the move from the setup screen to the next page.
   return (
-    <div className="flex min-h-screen bg-bg text-text">
-      <Sidebar />
+    <div className={onSetup ? "flex min-h-screen flex-col bg-bg text-text" : "flex min-h-screen bg-bg text-text"}>
+      {!onSetup && <Sidebar />}
       {/* It takes pointer events, so `elementFromPoint` reads a target under the band as covered. */}
       <div
         id={TITLE_COVER_ID}
         aria-hidden="true"
         className="fixed inset-x-0 top-0 z-(--layer-title-cover) h-(--title-band) bg-bg"
       />
-      <main
-        ref={mainRef}
-        tabIndex={-1}
-        className="min-w-0 flex-1 p-6 pt-[calc(--spacing(6)+var(--title-band))] pb-[calc(--spacing(6)+var(--notice-stack-height,0px))] sm:p-10 sm:pt-[calc(--spacing(10)+var(--title-band))] sm:pb-[calc(--spacing(10)+var(--notice-stack-height,0px))]"
-      >
-        <Outlet />
-      </main>
+      {onSetup
+        ? <Outlet />
+        : (
+            <main
+              ref={mainRef}
+              tabIndex={-1}
+              className="min-w-0 flex-1 p-6 pt-[calc(--spacing(6)+var(--title-band))] pb-[calc(--spacing(6)+var(--notice-stack-height,0px))] sm:p-10 sm:pt-[calc(--spacing(10)+var(--title-band))] sm:pb-[calc(--spacing(10)+var(--notice-stack-height,0px))]"
+            >
+              <Outlet />
+            </main>
+          )}
       <NoticeStack />
       <SpokenRegion />
     </div>

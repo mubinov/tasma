@@ -33,10 +33,12 @@ it("serves a screen at every path the sidebar offers", () => {
 // The other direction: a top-level route with no entry beside it is a screen
 // nothing in the sidebar reaches. A route under a destination's address, as
 // /tasks/$project/$task under /tasks, is reached from that destination's screen.
+// /setup is the one exception: only the gate at start leads to it.
 it("offers every top-level route from the sidebar", () => {
   const offered = LINKED.map((entry) => entry.path);
   const served = (appRouter().routeTree.children ?? [])
     .map((route) => route.fullPath)
+    .filter((path) => path !== "/setup")
     .filter((path) => !offered.some((prefix) => prefix !== "/" && path.startsWith(`${prefix}/`)));
 
   expect(offered.sort()).toEqual([...served].sort());

@@ -13,6 +13,7 @@ import {
   projectQuery,
   projectsQuery,
   readUpdate,
+  setupQuery,
   taskChatsQuery,
   taskQuery,
   taskSearchQuery,
@@ -22,7 +23,7 @@ import {
   workflowReadQuery,
   workflowsQuery,
 } from "../../src/api/queries";
-import { refusalReply, stubTransport, successReply } from "../helpers";
+import { refusalReply, setupStatus, startOf, stubTransport, successReply } from "../helpers";
 
 const HEALTH = { name: "tasma-daemon", version: "0.0.0" };
 
@@ -504,5 +505,31 @@ describe("an update answer", () => {
   it("is null for an update that names no version or no release page", () => {
     expect(readUpdate({ state: "ready", current: "1.0.0", releaseUrl: "https://example.invalid/r" })).toBeNull();
     expect(readUpdate({ state: "ready", current: "1.0.0", version: "1.1.0" })).toBeNull();
+  });
+});
+
+describe("setupQuery", () => {
+  const STATUS = startOf(setupStatus({ agents: [] }));
+
+  it("reads the mode and the skip flag, and gives the whole envelope", async () => {
+    const { transport, paths } = stubTransport({
+      "/setup?mode=start&skipSkill=true": successReply(STATUS),
+    });
+    const client = createClient(transport);
+
+    await expect(createAppQueryClient().query({ ...setupQuery(client, { mode: "start", skipSkill: true }), staleTime: "static" }))
+      .resolves.toEqual({ data: STATUS, diagnostics: [] });
+    expect(paths).toEqual(["/setup?mode=start&skipSkill=true"]);
+  });
+
+  it("keys an entry by the mode and the skip flag, under the setup key", () => {
+    const client = createClient(stubTransport().transport);
+
+    expect(setupQuery(client, { mode: "full" }).queryKey).toEqual(["daemon", "setup", "full", undefined]);
+    expect(setupQuery(client, { mode: "start", skipSkill: true }).queryKey).toEqual(["daemon", "setup", "start", true]);
+  });
+
+  it("keeps an entry for the whole session", () => {
+    expect(setupQuery(createClient(stubTransport().transport), { mode: "start" }).gcTime).toBe(Infinity);
   });
 });

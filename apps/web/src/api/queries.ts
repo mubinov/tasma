@@ -8,6 +8,7 @@ import {
   type Client,
   type Diagnostic,
   type Failure,
+  type SetupQuery,
   type Success,
   type Workflow,
 } from "@tasma/protocol";
@@ -49,6 +50,7 @@ export const daemonKeys = {
   chats: () => [...daemonKeys.all, "chats"] as const,
   chatList: (filter: ChatFilter) => [...daemonKeys.chats(), filter] as const,
   chatItem: (id: string, chat: number) => [...daemonKeys.chats(), id, chat] as const,
+  setup: () => [...daemonKeys.all, "setup"] as const,
 };
 
 /**
@@ -160,6 +162,15 @@ export function workflowsQuery(client: Client) {
   return queryOptions({
     queryKey: daemonKeys.workflowList(),
     queryFn: () => client.listWorkflows(),
+  });
+}
+
+/** An entry stays for the whole session: the gate reads the start status again when the cache holds no entry. */
+export function setupQuery(client: Client, query: SetupQuery) {
+  return queryOptions({
+    queryKey: [...daemonKeys.setup(), query.mode, query.skipSkill],
+    queryFn: () => client.readSetup(query),
+    gcTime: Infinity,
   });
 }
 

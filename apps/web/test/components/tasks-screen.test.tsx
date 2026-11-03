@@ -166,12 +166,12 @@ describe("the address", () => {
     expect(screen.getByRole("combobox", { name: "Project 2026" })).toBeTruthy();
   });
 
-  it("hands a tag no URL segment can carry to the not-found screen, with no request", async () => {
+  it("hands a tag no URL segment can carry to the not-found screen, with no read of the tag", async () => {
     const { transport, paths } = daemon();
     await renderWithRouter("/tasks?projects=..", transport);
 
     expect(screen.getByRole("main").textContent).toContain("names nothing the application can show");
-    expect(paths).toEqual([]);
+    expect(paths).toEqual(["/setup?mode=start"]);
   });
 
   it("hands a tag no project carries to the failure panel", async () => {

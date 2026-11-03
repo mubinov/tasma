@@ -15,6 +15,7 @@ const THEME_KEY = "tasma.theme";
 const SIDEBAR_KEY = "tasma.sidebar";
 const TASKS_PROJECT_KEY = "tasma.tasks.project";
 const CREATE_PROJECT_KEY = "tasma.tasks.createProject";
+const SKILL_CHECK_KEY = "tasma.setup.skillCheck";
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -24,6 +25,8 @@ beforeEach(() => {
     sidebarCollapsed: false,
     lastTasksProject: null,
     lastCreateProject: null,
+    skillCheckStopped: false,
+    arrivalWords: null,
     boardReturn: null,
     boardRestorePending: false,
     lastBoard: null,
@@ -70,6 +73,7 @@ describe("the ui store", () => {
       sidebarCollapsed: false,
       lastTasksProject: null,
       lastCreateProject: null,
+      skillCheckStopped: false,
     });
   });
 
@@ -100,6 +104,7 @@ describe("the ui store", () => {
       sidebarCollapsed: true,
       lastTasksProject: null,
       lastCreateProject: null,
+      skillCheckStopped: false,
     });
     useUiStore.getState().setThemePreference("light");
     useUiStore.getState().setSidebarCollapsed(false);
@@ -295,6 +300,7 @@ describe("the restore a card open asks for", () => {
       sidebarCollapsed: false,
       lastTasksProject: null,
       lastCreateProject: null,
+      skillCheckStopped: false,
     });
     expect(useUiStore.getState().lastBoard).toEqual({ projects: "DELTA,SAGA", labels: "web" });
   });
@@ -465,5 +471,58 @@ describe("the Cmd+F request", () => {
 
     second.unmount();
     expect(useUiStore.getState().findTargets).toBe(0);
+  });
+});
+
+describe("the stored skill check choice", () => {
+  it("starts as not stopped", () => {
+    expect(useUiStore.getState().skillCheckStopped).toBe(false);
+  });
+
+  it("stores the choice and reads it at start", () => {
+    useUiStore.getState().setSkillCheckStopped(true);
+
+    expect(useUiStore.getState().skillCheckStopped).toBe(true);
+    expect(window.localStorage.getItem(SKILL_CHECK_KEY)).toBe("stopped");
+
+    useUiStore.setState({ skillCheckStopped: false });
+
+    expect(hydrateUiStore().skillCheckStopped).toBe(true);
+    expect(useUiStore.getState().skillCheckStopped).toBe(true);
+  });
+
+  it("reads any other stored value as not stopped", () => {
+    window.localStorage.setItem(SKILL_CHECK_KEY, "true");
+
+    expect(hydrateUiStore().skillCheckStopped).toBe(false);
+  });
+
+  it("reads no stored value as not stopped", () => {
+    expect(hydrateUiStore().skillCheckStopped).toBe(false);
+  });
+
+  it("reads the skill check as not stopped after the choice is taken back", () => {
+    useUiStore.getState().setSkillCheckStopped(true);
+    useUiStore.getState().setSkillCheckStopped(false);
+
+    expect(hydrateUiStore().skillCheckStopped).toBe(false);
+  });
+});
+
+describe("the words after the setup screen closes", () => {
+  it("gives the words one time", () => {
+    useUiStore.getState().setArrivalWords("Setup is complete.");
+
+    expect(useUiStore.getState().takeArrivalWords()).toBe("Setup is complete.");
+    expect(useUiStore.getState().takeArrivalWords()).toBeNull();
+  });
+
+  it("does not store the words over a restart", () => {
+    const written: [string, string][] = [];
+    setPreferenceStorage({ read: () => null, write: (key, value) => void written.push([key, value]) });
+
+    useUiStore.getState().setArrivalWords("Setup is complete.");
+
+    expect(written).toEqual([]);
   });
 });

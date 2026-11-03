@@ -20,6 +20,7 @@ import {
   chatListQuery,
   projectQuery,
   projectsQuery,
+  setupQuery,
   taskChatsQuery,
   taskQuery,
   tasksQuery,
@@ -34,11 +35,14 @@ import { PlaceholderScreen } from "./components/placeholder-screen";
 import { ProjectScreen } from "./components/project-screen";
 import { ProjectsScreen } from "./components/projects-screen";
 import { SettingsScreen } from "./components/settings-screen";
+import { SetupScreen } from "./components/setup-screen";
+import { StartLoader } from "./components/start-loader";
 import { TaskScreen } from "./components/task-screen";
 import { TasksFailure, TasksScreen } from "./components/tasks-screen";
 import { WorkflowScreen } from "./components/workflow-screen";
 import { WorkflowsScreen } from "./components/workflows-screen";
 import { boardValue, isSeveral, openedBoard, readBoard, workflowNames } from "./lib/board";
+import { newestSetup, SETUP_PATH, setupNeeded } from "./lib/setup-steps";
 import { chatFilterOf } from "./lib/use-chat-filter";
 import { useUiStore } from "./store/ui";
 
@@ -59,9 +63,42 @@ function requirePath(route: Route, params: Record<string, string>): void {
   }
 }
 
+/**
+ * Only a first navigation reaches the daemon: an answer in the cache stands for
+ * the whole session, so the setup screen never opens again during one. A failed
+ * read goes on to the route, whose own loader shows the failure with Retry: an
+ * error of the root route shows `ErrorScreen`, which has none.
+ */
+async function requireSetup({ queryClient, client }: RouterContext, target: string): Promise<void> {
+  if (newestSetup(queryClient) === undefined) {
+    const skipSkill = useUiStore.getState().skillCheckStopped;
+
+    try {
+      await queryClient.query({
+        ...setupQuery(client, skipSkill ? { mode: "start", skipSkill } : { mode: "start" }),
+        staleTime: "static",
+      });
+    } catch {
+      return;
+    }
+  }
+
+  if (target !== SETUP_PATH && setupOpens(queryClient)) {
+    throw redirect({ to: SETUP_PATH, replace: true });
+  }
+}
+
+function setupOpens(queryClient: QueryClient): boolean {
+  return setupNeeded(newestSetup(queryClient), useUiStore.getState().skillCheckStopped);
+}
+
 const rootRoute = createRootRouteWithContext<RouterContext>()({
+  beforeLoad: ({ context, location }) => requireSetup(context, location.pathname),
   component: AppShell,
   errorComponent: ErrorScreen,
+  pendingComponent: StartLoader,
+  pendingMs: 300,
+  pendingMinMs: 600,
 });
 
 /**
@@ -326,6 +363,17 @@ const settingsRoute = createRoute({
   component: SettingsScreen,
 });
 
+const setupRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: SETUP_PATH,
+  beforeLoad: ({ context: { queryClient } }) => {
+    if (!setupOpens(queryClient)) {
+      throw redirect({ to: "/tasks", replace: true });
+    }
+  },
+  component: SetupScreen,
+});
+
 export const routeTree = rootRoute.addChildren([
   dashboardRoute,
   tasksRoute,
@@ -333,6 +381,7 @@ export const routeTree = rootRoute.addChildren([
   projectsRoute.addChildren([projectsIndexRoute, projectRoute]),
   workflowsRoute.addChildren([workflowsIndexRoute, workflowRoute]),
   settingsRoute,
+  setupRoute,
 ]);
 
 /**

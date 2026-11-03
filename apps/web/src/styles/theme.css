@@ -29,6 +29,7 @@
   --color-dim: var(--palette-dim);
   --color-signal: var(--palette-signal);
   --color-running: var(--palette-running);
+  --color-done: var(--palette-done);
   --color-graphic: var(--palette-graphic);
   --color-line: var(--palette-line);
   --color-focus: var(--palette-focus);
@@ -143,6 +144,37 @@
   --animate-enter: rise var(--duration-base) var(--ease-standard);
   /* No duration token: the reduced-motion durations would make it spin faster. */
   --animate-spin: spin 1s linear infinite;
+  /* A step of the setup screen that changes to done. */
+  --animate-step-done: step-done 280ms ease-out;
+  /* The start loader: a light that runs along the six marks. */
+  --animate-step-mark: step-mark 1500ms ease-in-out infinite;
+  --animate-step-light: step-light 1500ms ease-in-out infinite;
+
+  @keyframes step-done {
+    from {
+      transform: scale(0.7);
+    }
+  }
+
+  @keyframes step-mark {
+    30% {
+      transform: scale(1.2);
+    }
+
+    60% {
+      transform: scale(1);
+    }
+  }
+
+  @keyframes step-light {
+    30% {
+      opacity: 1;
+    }
+
+    70% {
+      opacity: 0;
+    }
+  }
 
   /* Not `enter`: tw-animate-css defines a keyframe of that name. */
   @keyframes rise {
@@ -193,6 +225,7 @@
   --palette-dim: light-dark(#5e656e, #8b939d);
   --palette-signal: light-dark(#8a5a0b, #f0ae4a);
   --palette-running: light-dark(#136b41, #5fc98a);
+  --palette-done: light-dark(#136b41, #5fc98a);
   --palette-graphic: light-dark(#808791, #666e7a);
   --palette-line: light-dark(#e2e4e8, #343a43);
   /* Focus alone: never hover, selection, a link or a state. */

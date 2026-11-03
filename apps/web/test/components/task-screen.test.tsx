@@ -1034,12 +1034,12 @@ describe("a failed load", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
   });
 
-  it("hands an id no URL segment can carry to the not-found screen, with no request", async () => {
+  it("hands an id no URL segment can carry to the not-found screen, with no read of the id", async () => {
     const { transport, paths } = daemon();
     await renderWithRouter("/tasks/SAGA/%5C", transport);
 
     expect(screen.getByRole("main").textContent).toContain("names nothing the application can show");
-    expect(paths).toEqual([]);
+    expect(paths).toEqual(["/setup?mode=start"]);
   });
 
   it.each<{ case: string; path: string; replies: Record<string, TransportReply>; words: string[] }>([

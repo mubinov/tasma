@@ -23,6 +23,7 @@ const READABILITY_CONTRACT: readonly { role: string; minimum: number }[] = [
   { role: "dim", minimum: 4.5 },
   { role: "signal", minimum: 4.5 },
   { role: "running", minimum: 4.5 },
+  { role: "done", minimum: 3 },
   // Also the mark that tells one control state from another. A selected
   // segment told apart by its surface alone is roughly 1.1:1 against the group
   // it sits in and invisible, so the mark carries the state and holds 3:1 on

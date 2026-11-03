@@ -11,9 +11,11 @@ import {
 } from "@tanstack/react-router";
 import {
   createClient,
+  type AgentSetup,
   type Diagnostic,
   type Failure,
   type FeedEvent,
+  type SetupStatus,
   type Transport,
   type TransportReply,
   type TransportRequest,
@@ -153,16 +155,18 @@ export function stubIntersectionObserver() {
  * `PATCH /projects/P/tasks/P-1`. A reply can be a promise, for an answer a test
  * holds back.
  *
- * The default map answers `/health`, an empty `/projects`, an empty
- * `/workflows` and an empty `/chats`, which is what every test that only mounts
- * the tree needs. A caller's entries extend it, and override by key. The map is
- * returned too: an entry set later answers the next request.
+ * The default map answers `/health`, a complete start read of the setup, an
+ * empty `/projects`, an empty `/workflows` and an empty `/chats`, which is what
+ * every test that only mounts the tree needs. A caller's entries extend it, and
+ * override by key. The map is returned too: an entry set later answers the next
+ * request.
  */
 export function stubTransport(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
   const paths: string[] = [];
   const requests: TransportRequest[] = [];
   const map: Record<string, TransportReply | Promise<TransportReply>> = {
     "/health": successReply({ name: "tasma-daemon", version: "0.0.0" }),
+    "/setup?mode=start": completeSetup(),
     "/projects": successReply([]),
     "/workflows": successReply([]),
     "/chats": successReply({ items: [], total: 0, active: 0 }),
@@ -193,6 +197,13 @@ export function heldBack() {
   return { reply, answer };
 }
 
+/** Moves the fake clock inside `act`, so React handles what the timers start. */
+export async function advance(ms: number): Promise<void> {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+
 /** A success envelope, the shape every reply in a stub map starts from. */
 export function successReply(data: unknown, diagnostics: readonly Diagnostic[] = []): TransportReply {
   return { status: 200, body: { ok: true, data, diagnostics } };
@@ -201,6 +212,31 @@ export function successReply(data: unknown, diagnostics: readonly Diagnostic[] =
 /** A refusal the daemon spelled out, which no query retries. */
 export function refusalReply(status: number, failure: Failure): TransportReply {
   return { status, body: { ok: false, error: failure } };
+}
+
+/** What the setup route answers when every check passes, with the changes. */
+export function setupStatus(checks: Partial<SetupStatus> = {}, agent: Partial<AgentSetup> = {}): SetupStatus {
+  return {
+    project: "pass",
+    workflow: "pass",
+    cli: "pass",
+    agents: [{ agent: "claude", installed: "pass", loggedIn: "pass", skill: "pass", ...agent }],
+    ...checks,
+  };
+}
+
+/** What a start read gives for the same machine: the checks of a full read did not run. */
+export function startOf(status: SetupStatus): SetupStatus {
+  return {
+    ...status,
+    cli: "not-run",
+    agents: status.agents.map((agent) => ({ ...agent, installed: "not-run", loggedIn: "not-run" })),
+  };
+}
+
+/** A start read of a complete setup. */
+export function completeSetup(): TransportReply {
+  return successReply(startOf(setupStatus()));
 }
 
 /** The context every loader and every screen is handed, over a stub daemon. */

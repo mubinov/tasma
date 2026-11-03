@@ -2,7 +2,7 @@ import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { stubSystemTheme } from "./helpers";
+import { setupStatus, stubSystemTheme } from "./helpers";
 
 // The entry keeps no handle on its root. A root that stays mounted keeps its
 // feed loop alive, and the loop reads through the fetch stubs of later tests.
@@ -36,7 +36,11 @@ beforeEach(() => {
   // created, so every test states where it opens before it imports the entry.
   window.location.hash = "#/";
   // The dashboard at #/ lists the projects and the chats before it renders.
-  const replies: Record<string, unknown> = { "/daemon/chats": { items: [], total: 0, active: 0 }, "/daemon/projects": [] };
+  const replies: Record<string, unknown> = {
+    "/daemon/chats": { items: [], total: 0, active: 0 },
+    "/daemon/projects": [],
+    "/daemon/setup?mode=start": setupStatus(),
+  };
   vi.stubGlobal("fetch", (input: string) => {
     const path = Object.keys(replies).find((key) => input.endsWith(key));
     return path === undefined
@@ -158,10 +162,16 @@ it("switches the theme through the wired entry path", async () => {
 it("lists the daemon's projects through the wired entry path", async () => {
   document.body.innerHTML = '<div id="root"></div>';
   window.location.hash = "#/projects";
-  vi.stubGlobal("fetch", (input: string) =>
-    input.endsWith("/daemon/projects")
-      ? Promise.resolve(Response.json({ ok: true, data: [{ tag: "SAGA", name: "saga" }], diagnostics: [] }))
-      : Promise.reject(new Error(`no stub answers ${input}`)));
+  vi.stubGlobal("fetch", (input: string) => {
+    const envelope = (data: unknown) => Promise.resolve(Response.json({ ok: true, data, diagnostics: [] }));
+
+    if (input.endsWith("/daemon/projects")) {
+      return envelope([{ tag: "SAGA", name: "saga" }]);
+    }
+    return input.endsWith("/daemon/setup?mode=start")
+      ? envelope(setupStatus())
+      : Promise.reject(new Error(`no stub answers ${input}`));
+  });
 
   await act(async () => {
     await import("../src/main");

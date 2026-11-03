@@ -16,11 +16,14 @@ const THEME_STORAGE_KEY = "tasma.theme";
 const SIDEBAR_STORAGE_KEY = "tasma.sidebar";
 const TASKS_PROJECT_STORAGE_KEY = "tasma.tasks.project";
 const CREATE_PROJECT_STORAGE_KEY = "tasma.tasks.createProject";
+const SKILL_CHECK_STORAGE_KEY = "tasma.setup.skillCheck";
 
 const PROJECT_TAG = /^[A-Z0-9]+$/;
 
 const SIDEBAR_COLLAPSED = "collapsed";
 const SIDEBAR_EXPANDED = "expanded";
+
+const SKILL_CHECK_STOPPED = "stopped";
 
 function readSidebarState(stored: string | null): boolean | null {
   if (stored === SIDEBAR_COLLAPSED) {
@@ -149,6 +152,14 @@ type UiState = {
   findTargets: number;
   addFindTarget: () => void;
   removeFindTarget: () => void;
+  /** The setup screen no longer opens for a skill it does not find. */
+  skillCheckStopped: boolean;
+  setSkillCheckStopped: (stopped: boolean) => void;
+  /** What the app says after focus is on the page that the setup screen closed to. Never persisted. */
+  arrivalWords: string | null;
+  setArrivalWords: (words: string) => void;
+  /** Reads the words and clears them, so they are said once. */
+  takeArrivalWords: () => string | null;
 };
 
 export type EditRequest = { tag: string; id: string };
@@ -255,6 +266,23 @@ export const useUiStore = create<UiState>((set, get) => ({
   removeFindTarget: () => {
     set((state) => ({ findTargets: Math.max(0, state.findTargets - 1) }));
   },
+  skillCheckStopped: false,
+  setSkillCheckStopped: (stopped) => {
+    storage.write(SKILL_CHECK_STORAGE_KEY, stopped ? SKILL_CHECK_STOPPED : "");
+    set({ skillCheckStopped: stopped });
+  },
+  arrivalWords: null,
+  setArrivalWords: (words) => {
+    set({ arrivalWords: words });
+  },
+  takeArrivalWords: () => {
+    const words = get().arrivalWords;
+    if (words !== null) {
+      set({ arrivalWords: null });
+    }
+
+    return words;
+  },
 }));
 
 /** Runs `onRequest` after each Cmd+F press that comes after the caller mounts. */
@@ -298,6 +326,7 @@ export type HydratedUi = {
   sidebarCollapsed: boolean;
   lastTasksProject: string | null;
   lastCreateProject: string | null;
+  skillCheckStopped: boolean;
 };
 
 function readStoredBoard(stored: string | null): string | null {
@@ -320,7 +349,8 @@ export function hydrateUiStore(): HydratedUi {
   const sidebarCollapsed = readSidebarState(storage.read(SIDEBAR_STORAGE_KEY)) ?? false;
   const lastTasksProject = readStoredBoard(storage.read(TASKS_PROJECT_STORAGE_KEY));
   const lastCreateProject = readStoredTag(storage.read(CREATE_PROJECT_STORAGE_KEY));
+  const skillCheckStopped = storage.read(SKILL_CHECK_STORAGE_KEY) === SKILL_CHECK_STOPPED;
 
-  useUiStore.setState({ themePreference, sidebarCollapsed, lastTasksProject, lastCreateProject });
-  return { themePreference, sidebarCollapsed, lastTasksProject, lastCreateProject };
+  useUiStore.setState({ themePreference, sidebarCollapsed, lastTasksProject, lastCreateProject, skillCheckStopped });
+  return { themePreference, sidebarCollapsed, lastTasksProject, lastCreateProject, skillCheckStopped };
 }

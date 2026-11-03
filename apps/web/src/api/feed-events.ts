@@ -25,6 +25,7 @@ export const FEED_MAPPINGS: FeedMappings = {
     { queryKey: daemonKeys.project(event.tag) },
     ...(event.change === "renamed" ? [{ queryKey: daemonKeys.project(event.to) }] : []),
     { queryKey: daemonKeys.chats() },
+    { queryKey: daemonKeys.setup() },
   ],
   // A change of state, a new request and a move of `seen` send it. The list of
   // all chats and the chats of the task read again, and the record reads do
@@ -44,6 +45,7 @@ export const FEED_MAPPINGS: FeedMappings = {
     { queryKey: daemonKeys.workflowRead(name), exact: true },
     { queryKey: daemonKeys.workflowList(), exact: true },
     { queryKey: daemonKeys.projects() },
+    { queryKey: daemonKeys.setup() },
   ],
 };
 
