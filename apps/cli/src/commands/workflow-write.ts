@@ -1,5 +1,5 @@
-// The three write verbs of the `workflow` noun. Each prints the name of the
-// workflow it wrote, one line.
+// The write verbs of the `workflow` noun. Create, edit and delete print the name
+// of the workflow they wrote, one line. Install prints what it did, one line.
 //
 // Whether a step name, an owner or a path is valid is the daemon's to say: a
 // second copy of any of those rules here could disagree with it.
@@ -30,6 +30,8 @@ const EDIT_OPTIONS = {
 } as const satisfies Options;
 
 const DELETE_OPTIONS = { ...HELP_OPTION } as const satisfies Options;
+
+const INSTALL_OPTIONS = { ...HELP_OPTION } as const satisfies Options;
 
 const STEP_FLAG = "      --step <name>,<owner>,<file>";
 
@@ -62,6 +64,8 @@ const EDIT_HELP = [
 ];
 
 const DELETE_HELP = usageBlock("workflow delete <name>");
+
+const INSTALL_HELP = usageBlock("workflow install <name>");
 
 /** The flags that state a field, and the fields a clear removes. `steps` is never removed. */
 const FIELDS: Fields = {
@@ -119,7 +123,7 @@ function readSteps(io: Io, values: readonly string[], cwd: string): StepInput[] 
   return steps;
 }
 
-/** How every write reports what it did: the workflow's name, one line, and nothing else on stdout. */
+/** How create, edit and delete report what they did: the workflow's name, one line, and nothing else on stdout. */
 function receiptPrinter(io: Io): (data: unknown, url: string) => number {
   return (data, url) => {
     const { name } = fieldsOf(data);
@@ -225,12 +229,48 @@ async function remove(args: string[], io: Io, target: Target): Promise<number> {
   return attempt(io, target, (client) => client.deleteWorkflow(name), receiptPrinter(io), { prove: true });
 }
 
+/** How an install reports what it did: `installed  <folder>` or `exists`, one line. */
+function installPrinter(io: Io): (data: unknown, url: string) => number {
+  return (data, url) => {
+    const { result, folder } = fieldsOf(data);
+
+    if (result === "exists") {
+      io.stdout.write("exists\n");
+      return 0;
+    }
+
+    if (result !== "installed" || typeof folder !== "string") return refuseAnswer(io, url, "an install result");
+
+    io.stdout.write(`installed  ${wireText(folder)}\n`);
+    return 0;
+  };
+}
+
+async function install(args: string[], io: Io, target: Target): Promise<number> {
+  const parsed = readVerb(io, args, { command: "workflow install", help: INSTALL_HELP, takes: 1 }, () =>
+    parseArgs({ args, strict: true, allowPositionals: true, options: INSTALL_OPTIONS }));
+
+  if (typeof parsed === "number") return parsed;
+
+  const name = readName(io, "workflow install", parsed.positionals[0]);
+
+  if (typeof name === "number") return name;
+
+  return attempt(io, target, (client) => client.installWorkflow(name), installPrinter(io), { prove: true });
+}
+
 export const WRITE_VERBS: Command[] = [
   {
     name: "create",
     summary: "Create a workflow",
     usage: { help: CREATE_HELP, options: CREATE_OPTIONS },
     run: create,
+  },
+  {
+    name: "install",
+    summary: "Install a base workflow that ships with Tasma",
+    usage: { help: INSTALL_HELP, options: INSTALL_OPTIONS },
+    run: install,
   },
   {
     name: "edit",

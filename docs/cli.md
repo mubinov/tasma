@@ -47,7 +47,7 @@ The daemon refuses each request without its token, except its health check and t
 - To remove a field, use `--clear <field>`, one time for each field. You cannot use `--clear` and a flag for the same field together.
 - `--append` adds the new body after the stored body, with one empty line between them. It needs `--body` or `--body-file`. The read and the write are two requests: a change made between them is lost.
 
-**Output.** stdout carries the result: a table, a text, the id, tag or workflow name that a write command changed, the number of a chat, or the line of a `daemon` command. The help and the version also go to stdout. Tables have no header row, columns are separated by 2 or more spaces, and `-` marks an empty value. Notes and errors go to stderr, and each note and error line starts with `tasma:`.
+**Output.** stdout carries the result: a table, a text, the id, tag or workflow name that a write command changed, the line of `workflow install`, the number of a chat, or the line of a `daemon` command. The help and the version also go to stdout. Tables have no header row, columns are separated by 2 or more spaces, and `-` marks an empty value. Notes and errors go to stderr, and each note and error line starts with `tasma:`.
 
 ## project
 
@@ -219,6 +219,10 @@ Print one workflow as three blocks with an empty line between them: the name and
 Create a workflow: a folder named `<name>` that holds `workflow.yml`. Give one `--step` for each step, in the order of the steps. The value of `--step` is split at its first two commas: the step name, the owner (`agent` or `human`) and the path of the step document. A step name never contains `,`, and the path can. Repeat `--instruction` for each document that applies to every step. Prints the name.
 
 A name that exists is refused. The rules for the paths and for the check are those of `workflow edit`.
+
+### `tasma workflow install <name>`
+
+Install a workflow that ships with Tasma, for example `dev`. The command copies the documents of the workflow to a folder outside `$HOME/.tasma` and creates the workflow with the paths of the copies. It does not add the workflow to a project. Prints `installed  <folder>`, or `exists` when a workflow of this name is already there, and then nothing changes. Both exit 0. A name that Tasma does not ship is refused. When a folder that the install needs is not free, the install is refused, and the error names the folder.
 
 ### `tasma workflow edit <name> [options]`
 

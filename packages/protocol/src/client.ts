@@ -34,7 +34,7 @@ import type {
 import { buildPath, routes } from "./routes.js";
 import type { SetupStatus } from "./setup.js";
 import type { CommentHeader, CommentInput, Task, TaskInput, TaskList, TaskText, WriteResult } from "./task.js";
-import type { Workflow, WorkflowChange, WorkflowInput, WorkflowReceipt } from "./workflow.js";
+import type { Workflow, WorkflowChange, WorkflowInput, WorkflowInstall, WorkflowReceipt } from "./workflow.js";
 
 /**
  * The part of an `AbortSignal` a transport reads. This package compiles with no
@@ -169,6 +169,7 @@ export type Client = {
   readWorkflow(name: string): Promise<Success<Workflow>>;
   updateWorkflow(name: string, change: WorkflowChange): Promise<Success<Workflow>>;
   deleteWorkflow(name: string): Promise<Success<WorkflowReceipt>>;
+  installWorkflow(name: string): Promise<Success<WorkflowInstall>>;
   readUserConfig(): Promise<Success<UserConfig>>;
   updateUserConfig(change: UserConfigChange): Promise<Success<UserConfig>>;
   /** A failed check never refuses the call: the check gives `fail` or `unknown`. */
@@ -306,6 +307,8 @@ export function createClient(transport: Transport): Client {
     readWorkflow: (name) => call<Workflow>(routes.readWorkflow, { workflow: name }),
     updateWorkflow: (name, change) => call<Workflow>(routes.updateWorkflow, { workflow: name }, { body: change }),
     deleteWorkflow: (name) => call<WorkflowReceipt>(routes.deleteWorkflow, { workflow: name }),
+    // The daemon refuses a POST with no content type, and a transport sets one only with a body.
+    installWorkflow: (name) => call<WorkflowInstall>(routes.installWorkflow, { workflow: name }, { body: {} }),
     readUserConfig: () => call<UserConfig>(routes.readUserConfig, {}),
     updateUserConfig: (change) => call<UserConfig>(routes.updateUserConfig, {}, { body: change }),
     readSetup: (query) => call<SetupStatus>(routes.readSetup, {}, { query }),

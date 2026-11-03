@@ -314,6 +314,13 @@ const invocations: Invocation[] = [
     path: "/workflows/dev",
   },
   {
+    name: "installWorkflow",
+    send: (client) => client.installWorkflow("dev"),
+    method: "POST",
+    path: "/workflows/dev/install",
+    body: {},
+  },
+  {
     name: "readUserConfig",
     send: (client) => client.readUserConfig(),
     method: "GET",

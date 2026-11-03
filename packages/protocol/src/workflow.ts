@@ -52,3 +52,8 @@ export type WorkflowChange = { title?: string | null; instructions?: string[] | 
  * refused as `workflow-in-use`.
  */
 export type WorkflowReceipt = { name: string };
+
+/** What an install did. `exists` means a workflow of this name is there and nothing changed. */
+export type WorkflowInstall
+  = | { result: "installed"; folder: string }
+    | { result: "exists" };

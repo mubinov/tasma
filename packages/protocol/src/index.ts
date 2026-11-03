@@ -89,6 +89,7 @@ export type {
   Workflow,
   WorkflowChange,
   WorkflowInput,
+  WorkflowInstall,
   WorkflowReceipt,
   WorkflowStep,
 } from "./workflow.js";

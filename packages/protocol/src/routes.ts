@@ -46,6 +46,7 @@ export const routes = {
   readWorkflow: { method: "GET", template: "/workflows/{workflow}" },
   updateWorkflow: { method: "PATCH", template: "/workflows/{workflow}" },
   deleteWorkflow: { method: "DELETE", template: "/workflows/{workflow}" },
+  installWorkflow: { method: "POST", template: "/workflows/{workflow}/install" },
   readUserConfig: { method: "GET", template: "/config" },
   updateUserConfig: { method: "PATCH", template: "/config" },
   readSetup: { method: "GET", template: "/setup" },

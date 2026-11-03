@@ -1,5 +1,6 @@
 export { openAgentDefaults } from "./agent-defaults.js";
 export type { AgentDefaults, AgentDefaultsRead, AgentDefaultsStore } from "./agent-defaults.js";
+export { createExclusive, createExclusiveDirectory, sameNode, syncDirectory } from "./atomic.js";
 export {
   chatFinding,
   chatPath,
@@ -14,7 +15,7 @@ export {
 export type { ChatAgent, ChatChange, ChatInput, ChatList, ChatRecord } from "./chat.js";
 export { openChatLog } from "./chat-log.js";
 export type { ChatLog, ChatLogEntry } from "./chat-log.js";
-export { TaskStoreError } from "./errors.js";
+export { errnoOf, TaskStoreError } from "./errors.js";
 export type { TaskStoreErrorCode } from "./errors.js";
 export { locateProject } from "./locate.js";
 export type { LocatedProject, LocateResult } from "./locate.js";

@@ -19,7 +19,7 @@ import { dirname, join, posix } from "node:path";
 import { execPath } from "node:process";
 import { promisify } from "node:util";
 import { build, resolveConfig } from "vite";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { binTargets, packageDirs, readManifest, workspaceRoot } from "../workspace.js";
 
 // Read from the manifests rather than listed here: the target pnpm links at
@@ -253,6 +253,14 @@ function executable(dir: string): string {
   return join(outRoot, dir, target);
 }
 
+/** The built daemon as one binary, the way the app ships it. */
+async function compileDaemon(binary: string): Promise<void> {
+  await promisify(execFile)("bun", [
+    "build", executable(DAEMON), "--compile", "--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv",
+    "--outfile", binary,
+  ]);
+}
+
 describe("the built executables", () => {
   // The explicit timeout is for a cold machine, where vitest's 5 s default is
   // not enough to run the builds.
@@ -353,10 +361,7 @@ describe("the built executables", () => {
     const binary = join(dir, "tasma-daemon");
 
     try {
-      await promisify(execFile)("bun", [
-        "build", executable(DAEMON), "--compile", "--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv",
-        "--outfile", binary,
-      ]);
+      await compileDaemon(binary);
       mkdirSync(join(dir, "home"));
       const child = spawn(binary, ["--agent", "claude"], {
         env: { HOME: join(dir, "home"), CLAUDE_CONFIG_DIR: join(dir, "claude"), CLAUDE_CODE_EXECUTABLE: "/usr/bin/false" },
@@ -384,6 +389,56 @@ describe("the built executables", () => {
         expect(await within(exited, 10_000)).toBe(0);
       } finally {
         child.kill("SIGKILL");
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("install the base workflow from the compiled daemon, with no access to the repository", async (ctx) => {
+    if (!HAS_BUN) ctx.skip("bun is not on PATH");
+    const dir = mkdtempSync(join(tmpdir(), "tasma-compiled-"));
+    const binary = join(dir, "tasma-daemon");
+    const home = join(dir, "home");
+    const folder = join(home, "tasma-workflows", "dev");
+    const env = treeEnv(home);
+
+    try {
+      await compileDaemon(binary);
+      mkdirSync(home);
+      const child = spawn(binary, [], { cwd: dir, env, stdio: "ignore" });
+      const exited = new Promise<void>((resolve) => child.on("close", () => {
+        resolve();
+      }));
+
+      try {
+        // Without a record, the CLI starts the JS daemon.
+        await vi.waitFor(() => {
+          expect(recordIn(home)?.pid).toBe(child.pid);
+        }, { timeout: 10_000, interval: 50 });
+
+        const first = await node(executable(CLI), ["workflow", "install", "dev"], { env, cwd: dir });
+
+        expect(first).toEqual({ code: 0, stdout: `installed  ${folder}\n`, stderr: "" });
+
+        const shown = await node(executable(CLI), ["workflow", "show", "dev"], { env, cwd: dir });
+        const steps = shown.stdout.trimEnd().split("\n\n").at(-1)?.split("\n") ?? [];
+        const files = steps.map((row) => row.split(/\s{2,}/).at(-1) ?? "");
+
+        expect(shown.code).toBe(0);
+        expect(files).toHaveLength(7);
+
+        for (const file of files) {
+          expect(file.startsWith(`${folder}/`), file).toBe(true);
+          expect(existsSync(file), file).toBe(true);
+        }
+
+        const second = await node(executable(CLI), ["workflow", "install", "dev"], { env, cwd: dir });
+
+        expect(second).toEqual({ code: 0, stdout: "exists\n", stderr: "" });
+      } finally {
+        child.kill("SIGTERM");
+        await within(exited, 10_000);
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -573,6 +628,14 @@ describe("the built executables", () => {
         `tasma: store/workflow-unknown: ${workflowDirIn(home, "nope")}: `
         + 'there is no directory for the workflow "nope"\n',
       );
+    });
+
+    it("answers exists for a base workflow the tree holds", async () => {
+      const { code, stdout, stderr } = await node(executable(CLI), ["workflow", "install", "dev"], { env: treeEnv(home) });
+
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(stdout).toBe("exists\n");
     });
 
     // The writes, as one sequence: each step acts on what the step before it

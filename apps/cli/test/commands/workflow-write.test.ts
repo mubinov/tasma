@@ -16,6 +16,7 @@ function runWorkflow(
 const CREATED = "POST /workflows";
 const UPDATED = "PATCH /workflows/flow-a";
 const DELETED = "DELETE /workflows/flow-a";
+const INSTALLED = "POST /workflows/flow-a/install";
 
 const WRITTEN = ok({ name: "flow-a", file: "/flows/flow-a/workflow.yml", steps: [], instructions: [] });
 
@@ -199,9 +200,67 @@ describe("workflow delete", () => {
   });
 });
 
+describe("workflow install", () => {
+  it("sends an empty object and prints the folder it installed to", async () => {
+    const { code, out, err, seen, bodies } = await runWorkflow(["install", "flow-a"], {
+      [INSTALLED]: ok({ result: "installed", folder: "/flows/flow-a" }),
+    });
+
+    expect(code).toBe(0);
+    expect(out).toBe("installed  /flows/flow-a\n");
+    expect(err).toBe("");
+    expect(seen).toEqual([HEALTH, INSTALLED]);
+    expect(bodies.at(-1)).toEqual({});
+  });
+
+  it("prints exists at exit 0", async () => {
+    const { code, out, err } = await runWorkflow(["install", "flow-a"], { [INSTALLED]: ok({ result: "exists" }) });
+
+    expect(code).toBe(0);
+    expect(out).toBe("exists\n");
+    expect(err).toBe("");
+  });
+
+  it("reports a refusal the daemon answered with, at exit 1", async () => {
+    const message = "/flows/flow-a: the documents of this workflow go in this path, and it is not free";
+    const { code, out, err } = await runWorkflow(["install", "flow-a"], {
+      [INSTALLED]: { ok: false, error: { kind: "store", code: "path-taken", message, path: "/flows/flow-a" } },
+    });
+
+    expect(code).toBe(1);
+    expect(out).toBe("");
+    expect(err).toBe(`tasma: store/path-taken: ${message}\n`);
+  });
+
+  it("refuses a missing name, a name that is not one path component and an extra argument", async () => {
+    await refuses(["install"], "workflow install needs a workflow name");
+    await refuses(["install", ""], "workflow install needs a workflow name");
+    await refuses(["install", "a/b"], "not a workflow name: a/b");
+    await refuses(["install", "flow-a", "more"], "workflow install takes one argument: more");
+  });
+
+  it("refuses an answer of another shape, at exit 3", async () => {
+    for (const data of [{ result: "installed" }, { result: "installed", folder: 7 }, { result: "other" }, {}, "exists", null]) {
+      const { code, out, err } = await runWorkflow(["install", "flow-a"], { [INSTALLED]: ok(data) });
+
+      expect(code, JSON.stringify(data)).toBe(3);
+      expect(out).toBe("");
+      expect(err).toContain("answered, but not with an install result\n");
+    }
+  });
+
+  it("prints its usage", async () => {
+    const { code, out, seen } = await runWorkflow(["install", "--help"]);
+
+    expect(code).toBe(0);
+    expect(out).toContain("Usage: tasma workflow install <name>");
+    expect(seen).toEqual([]);
+  });
+});
+
 describe("every workflow write", () => {
   it("refuses a flag it does not know, before it reaches a daemon", async () => {
-    for (const args of [["create", "flow-a", "--bogus"], ["edit", "flow-a", "--bogus"], ["delete", "flow-a", "--bogus"]]) {
+    for (const args of [["create", "flow-a", "--bogus"], ["edit", "flow-a", "--bogus"], ["delete", "flow-a", "--bogus"], ["install", "flow-a", "--bogus"]]) {
       const { code, seen } = await runWorkflow(args);
 
       expect(code, args.join(" ")).toBe(2);

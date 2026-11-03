@@ -1,5 +1,5 @@
 // The routes over the workflows of one tree: the names it holds, one workflow,
-// and the create, the edit and the delete of one workflow.
+// and the create, the edit, the delete and the install of one workflow.
 
 import {
   createWorkflow,
@@ -11,12 +11,13 @@ import {
 } from "@tasma/engine";
 import type { WorkflowChange as EngineWorkflowChange, WorkflowInput as EngineWorkflowInput } from "@tasma/engine";
 import { routes } from "@tasma/protocol";
-import type { Diagnostic, Success, Workflow, WorkflowReceipt } from "@tasma/protocol";
+import type { Diagnostic, Success, Workflow, WorkflowInstall, WorkflowReceipt } from "@tasma/protocol";
 import type { Publish } from "../events/feed.js";
 import type { RouteEntry } from "../http/router.js";
 import { assertNoQuery } from "../tasks/filter.js";
 import { toChange } from "../tasks/input.js";
 import { CONFIG_KEY, type WriteQueue, workflowKey } from "../tasks/serialize.js";
+import { installBaseWorkflow } from "./install.js";
 
 /**
  * The notes of the tasks on a removed step. They are advisory and the edit is
@@ -114,6 +115,16 @@ export function workflowRoutes(options: { root?: string; writes: WriteQueue; pub
         await inTurn(name, () => removeWorkflow(name, { root }));
         publish?.({ kind: "workflow", name, change: "deleted" });
         return { data: { name }, diagnostics: [] };
+      },
+    },
+    {
+      route: routes.installWorkflow,
+      handler: async (request): Promise<Success<WorkflowInstall>> => {
+        assertNoQuery(request.query);
+        const name = request.params.workflow!;
+        const outcome = await inTurn(name, () => installBaseWorkflow(name, { root }));
+        if (outcome.data.result === "installed") publish?.({ kind: "workflow", name, change: "created" });
+        return outcome;
       },
     },
   ];

@@ -1,4 +1,4 @@
-// The `workflow` noun: the two reads here, and the three writes in
+// The `workflow` noun: the two reads here, and the writes in
 // `workflow-write.ts`.
 //
 // No verb names a project: one definition is shared by the whole tree, so there

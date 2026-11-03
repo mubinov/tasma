@@ -1,4 +1,4 @@
-export { openWorkflows } from "./load.js";
+export { openWorkflows, shapeWorkflow } from "./load.js";
 export type {
   InstructionDocument,
   InstructionsResult,

@@ -41,8 +41,9 @@ it. A project selects the workflows its tasks may name; it does not copy them an
 it does not change them.
 
 A workflow file is a UTF-8 text file. It is written by hand or by
-`tasma workflow create` and `tasma workflow edit`. A file written by hand and a
-file written by these commands must obey the same rules.
+`tasma workflow create`, `tasma workflow install` and `tasma workflow edit`. A
+file written by hand and a file written by these commands must obey the same
+rules.
 This document states the rules of the reader; section 11 states what a write
 adds.
 
@@ -407,9 +408,9 @@ states for the task that names one.
 
 ## 11. Writing a workflow file
 
-`tasma workflow create` and `tasma workflow edit` write `workflow.yml` through
-the daemon. The new text must pass every rule of the reader before it is
-written, and a change that fails a rule writes nothing.
+`tasma workflow create`, `tasma workflow install` and `tasma workflow edit` write
+`workflow.yml` through the daemon. The new text must pass every rule of the
+reader before it is written, and a change that fails a rule writes nothing.
 
 A write:
 
