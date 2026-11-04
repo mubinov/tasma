@@ -4,41 +4,16 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { homedir } from "node:os";
-import { delimiter, isAbsolute, join, sep } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AcpObject } from "@tasma/protocol";
 import { causeOf } from "../http/failure.js";
 import { AGENT_MODE } from "./adapter.js";
 import type { AgentAdapter, AgentEnv, LaunchResult } from "./adapter.js";
 import { BACKGROUND_RULE, claudeBackground } from "./claude-background.js";
-import { isExecutableFile, killGroup } from "./process.js";
+import { childEnv, childPath, isExecutableFile, killGroup } from "./process.js";
 
 const ADAPTER_ENTRY = "@agentclientprotocol/claude-agent-acp/dist/index.js";
-
-/**
- * The variables a running Claude Code session (the CLI or the IDE extension)
- * sets for its children. The daemon often inherits them, because the first
- * `tasma` call that starts it often comes from an agent inside Claude Code.
- */
-export const CLAUDE_SESSION_VARIABLES = [
-  "CLAUDECODE",
-  "CLAUDE_PID",
-  "CLAUDE_EFFORT",
-  "CLAUDE_AGENT_SDK_VERSION",
-  "CLAUDE_CODE_ENTRYPOINT",
-  "CLAUDE_CODE_EXECPATH",
-  "CLAUDE_CODE_SESSION_ID",
-  "CLAUDE_CODE_CHILD_SESSION",
-  "CLAUDE_CODE_SESSION_ATTENDED",
-  "CLAUDE_CODE_MESSAGING_SOCKET",
-  "CLAUDE_CODE_MESSAGING_TOKEN",
-  "CLAUDE_CODE_SSE_PORT",
-  "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING",
-  "CLAUDE_CODE_ENABLE_TASKS",
-  "CLAUDE_CODE_QUESTION_PREVIEW_FORMAT",
-  "CLAUDE_CODE_EMIT_STARTUP_TIMING",
-  "MCP_CONNECTION_NONBLOCKING",
-] as const;
 
 /** The largest `_meta.claudeCode.toolResponse` an update keeps, in bytes of JSON. */
 const TOOL_RESPONSE_LIMIT = 8 * 1024;
@@ -63,28 +38,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * The `PATH` directories the agent gets. A relative directory resolves in the
- * folder of each chat. A directory inside `node_modules` holds the bins of one
- * repository: a package script puts them first on `PATH`, and the daemon it
- * starts keeps that `PATH`.
- */
-function agentPath(path: string | undefined): string[] {
-  return (path ?? "").split(delimiter).filter((dir) => isAbsolute(dir) && !dir.split(sep).includes("node_modules"));
-}
-
-/**
  * The first `claude` that this user can run, as found: a link is not resolved,
  * so a self-update of Claude Code reaches the next chat.
  */
 function findClaude(dirs: string[]): string | undefined {
   return dirs.map((dir) => join(dir, "claude")).find(isExecutableFile);
-}
-
-/** The environment of each process that runs Claude Code: the agent of a chat, the login check and the plugin list. */
-function claudeEnv(env: AgentEnv, path: string[]): AgentEnv {
-  const kept: AgentEnv = { ...env, PATH: path.join(delimiter) };
-  for (const name of CLAUDE_SESSION_VARIABLES) delete kept[name];
-  return kept;
 }
 
 /**
@@ -183,10 +141,10 @@ function claudeOutput(
  * count as a login there, as they do for a chat in the same environment.
  */
 async function loggedIn(env: AgentEnv, signal: AbortSignal, timeoutMs: number): Promise<boolean | undefined> {
-  const path = agentPath(env.PATH);
+  const path = childPath(env.PATH);
   const claude = findClaude(path);
   if (claude === undefined) return undefined;
-  const stdout = await claudeOutput(claude, ["auth", "status", "--json"], claudeEnv(env, path), signal, timeoutMs);
+  const stdout = await claudeOutput(claude, ["auth", "status", "--json"], childEnv(env, path), signal, timeoutMs);
   return stdout === undefined ? undefined : loginOf(stdout);
 }
 
@@ -200,10 +158,10 @@ function skillFiles(env: AgentEnv): string[] {
 /** Checks the signal first, so that a cancelled check does not read as a machine with no `claude`. */
 async function skillListed(env: AgentEnv, signal: AbortSignal, timeoutMs: number): Promise<boolean | undefined> {
   if (signal.aborted) return undefined;
-  const path = agentPath(env.PATH);
+  const path = childPath(env.PATH);
   const claude = findClaude(path);
   if (claude === undefined) return false;
-  const stdout = await claudeOutput(claude, ["plugin", "list", "--json"], claudeEnv(env, path), signal, timeoutMs);
+  const stdout = await claudeOutput(claude, ["plugin", "list", "--json"], childEnv(env, path), signal, timeoutMs);
   return stdout === undefined ? undefined : skillPluginOf(stdout);
 }
 
@@ -224,10 +182,10 @@ export function createClaudeAdapter(
     notLoggedIn: 'Claude is not logged in. Run "claude /login" in a terminal.',
     sessionGone: "Claude no longer has the conversation of this chat. Start a new chat for this step.",
     launch(env): LaunchResult {
-      const path = agentPath(env.PATH);
+      const path = childPath(env.PATH);
       const claude = findClaude(path);
       if (claude === undefined) return { missing: "Claude Code is not installed" };
-      const agentEnv = { ...claudeEnv(env, path), CLAUDE_CODE_EXECUTABLE: claude };
+      const agentEnv = { ...childEnv(env, path), CLAUDE_CODE_EXECUTABLE: claude };
       // `process.execPath` is the compiled daemon itself.
       if (host.runtime === "compiled") return { command: process.execPath, args: [AGENT_MODE, "claude"], env: agentEnv };
       let entry: string;
@@ -243,6 +201,7 @@ export function createClaudeAdapter(
     loggedIn: (env, signal) => loggedIn(env, signal, commandTimeoutMs),
     skillFiles,
     skillListed: (env, signal) => skillListed(env, signal, commandTimeoutMs),
+    skillsAgent: "claude-code",
     async serve() {
       // A literal, so that the build keeps it as an external import and
       // `bun build --compile` puts the adapter into the binary.

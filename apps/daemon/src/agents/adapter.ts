@@ -42,6 +42,8 @@ export type AgentAdapter = {
   skillFiles(env: AgentEnv): string[];
   /** Whether the agent itself lists the tasma skill: `false` with no binary, `undefined` when it cannot tell. */
   skillListed(env: AgentEnv, signal: AbortSignal): Promise<boolean | undefined>;
+  /** The name of the agent for `npx skills add -a`. */
+  skillsAgent: string;
   /**
    * Runs the ACP server of the agent in this process, over its stdin and
    * stdout. Only an agent whose ACP server is code of the daemon has it.

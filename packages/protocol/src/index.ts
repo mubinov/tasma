@@ -67,7 +67,7 @@ export type {
   TaskReadOptions,
   TaskTextOptions,
 } from "./routes.js";
-export type { AgentSetup, SetupCheck, SetupStatus } from "./setup.js";
+export type { AgentSetup, SetupCheck, SetupStatus, SkillInstall } from "./setup.js";
 export type {
   Comment,
   CommentFields,

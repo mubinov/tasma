@@ -337,6 +337,21 @@ export async function untilPid(path: string, what: string): Promise<number> {
   return pid;
 }
 
+export function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Waits until each process whose id is in a file of `out` is gone. */
+export async function untilGone(out: string, ...names: string[]): Promise<void> {
+  const pids = await Promise.all(names.map((name) => untilPid(join(out, name), `${name} wrote its process id`)));
+  await until(() => !pids.some(alive), `processes ${pids.join(", ")} are gone`);
+}
+
 export async function logOf(live: LiveChat): Promise<ChatEvent[]> {
   return (await live.read(0)).map((entry) => entry.event);
 }

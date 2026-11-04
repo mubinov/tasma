@@ -134,7 +134,7 @@ describe("the macOS shell", () => {
 
   // The forward's timeout counts from the start of the request, so a held read
   // that comes close to it ends in a 502.
-  it("waits on a forward at least 5 s longer than the daemon holds a read of the feed or of a chat log", () => {
+  it("waits on a forward at least 5 s longer than the daemon holds a read of the feed or of a chat log, or the install of the skill", () => {
     expect(HOLD_MS + 5000).toBeLessThanOrEqual(rustDuration("daemon.rs", "TIMEOUT"));
   });
 

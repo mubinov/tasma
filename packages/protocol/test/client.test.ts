@@ -346,6 +346,20 @@ const invocations: Invocation[] = [
     path: "/setup",
   },
   {
+    name: "installSkill",
+    send: (client) => client.installSkill(),
+    method: "POST",
+    path: "/setup/skill-install",
+    body: {},
+  },
+  {
+    name: "installSkill with a run",
+    send: (client) => client.installSkill("2f6d1c0e-8a4b-4c3d-9e7f-1a2b3c4d5e6f"),
+    method: "POST",
+    path: "/setup/skill-install",
+    body: { run: "2f6d1c0e-8a4b-4c3d-9e7f-1a2b3c4d5e6f" },
+  },
+  {
     name: "readEvents",
     send: (client) => client.readEvents("4f0c9a1b2e3d-41"),
     method: "GET",
@@ -515,6 +529,26 @@ describe("the client", () => {
     const { calls, transport } = recorder(ok({ cursor: 5, entries: [] }));
 
     await createClient(transport).readChatEvents("SAGA", "SAGA-3", 2, 5);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toHaveProperty("signal");
+  });
+
+  it("puts the signal of a skill install on the request", async () => {
+    const { calls, transport } = recorder(ok({ result: "running", run: "2f6d1c0e-8a4b-4c3d-9e7f-1a2b3c4d5e6f" }));
+    const { signal } = new AbortController();
+
+    await createClient(transport).installSkill(undefined, { signal });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.signal).toBe(signal);
+    expect(calls[0]?.body).toEqual({});
+  });
+
+  it("sends no signal key on a skill install with no options", async () => {
+    const { calls, transport } = recorder(ok({ result: "installed" }));
+
+    await createClient(transport).installSkill("2f6d1c0e-8a4b-4c3d-9e7f-1a2b3c4d5e6f");
 
     expect(calls).toHaveLength(1);
     expect(calls[0]).not.toHaveProperty("signal");

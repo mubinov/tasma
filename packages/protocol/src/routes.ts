@@ -50,6 +50,7 @@ export const routes = {
   readUserConfig: { method: "GET", template: "/config" },
   updateUserConfig: { method: "PATCH", template: "/config" },
   readSetup: { method: "GET", template: "/setup" },
+  installSkill: { method: "POST", template: "/setup/skill-install" },
   readEvents: { method: "GET", template: "/events" },
 } as const satisfies Record<string, Route>;
 

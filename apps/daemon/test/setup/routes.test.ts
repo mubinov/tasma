@@ -2,19 +2,21 @@ import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import type { AgentSetup, ChatAgent, SetupStatus } from "@tasma/protocol";
+import type { AgentSetup, ChatAgent, SetupStatus, SkillInstall } from "@tasma/protocol";
 import type { AgentAdapter, AgentEnv, AgentLaunch, LaunchResult } from "../../src/agents/adapter.js";
 import type { ShellEnv } from "../../src/agents/shell-env.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import { createSetupChecks } from "../../src/setup/checks.js";
 import type { SetupChecks } from "../../src/setup/checks.js";
 import { setupRoutes } from "../../src/setup/routes.js";
+import type { SkillInstaller } from "../../src/setup/skill-install.js";
 import {
   failure,
   get,
   plant,
   projectConfig,
   projectsRoot,
+  send,
   startTestServer,
   stillPending,
   success,
@@ -52,6 +54,7 @@ function fakeAdapter(options: {
     loggedIn,
     skillFiles,
     skillListed,
+    skillsAgent: "fake-agent",
     notLoggedIn: "Log in to the agent first",
     sessionGone: "The agent lost the chat",
     filterUpdate: (update) => update,
@@ -64,12 +67,20 @@ function shellGiving(result: ShellEnv) {
   return vi.fn<(signal: AbortSignal) => Promise<ShellEnv>>(async () => result);
 }
 
+/** An installer that answers `installed`, and records the run of each call. */
+function fakeInstaller() {
+  const install = vi.fn<(run?: string) => Promise<SkillInstall>>(async () => ({ result: "installed" }));
+  const installer: SkillInstaller = { install, stop: vi.fn() };
+  return { installer, install };
+}
+
 async function serving(
   root: string,
   options: {
     adapters?: AgentAdapter[];
     env?: AgentEnv;
     shellEnv?: (signal: AbortSignal) => Promise<ShellEnv>;
+    installer?: SkillInstaller;
   } = {},
 ): Promise<{ server: TestServer; checks: SetupChecks }> {
   const host = createProjectHost({ root });
@@ -82,7 +93,8 @@ async function serving(
     shellEnv: options.shellEnv ?? shellGiving({ env: { PATH: AGENT_PATH } }),
   });
   onTestFinished(() => checks.stop());
-  return { server: await startTestServer(setupRoutes(checks)), checks };
+  const installer = options.installer ?? fakeInstaller().installer;
+  return { server: await startTestServer(setupRoutes(checks, installer)), checks };
 }
 
 async function statusOf(server: TestServer, path: string): Promise<SetupStatus> {
@@ -759,5 +771,84 @@ describe("the skill check of GET /setup", () => {
       { agent: "codex", ...NOT_RUN, skill: "fail" },
       { agent: "claude", ...NOT_RUN, skill: "pass" },
     ]);
+  });
+});
+
+describe("POST /setup/skill-install", () => {
+  const RUN = "2f6d1c0e-8a4b-4c3d-9e7f-1a2b3c4d5e6f";
+
+  const INSTALL_ROUTE = "/setup/skill-install";
+
+  async function installing(answer: SkillInstall = { result: "installed" }) {
+    const { installer, install } = fakeInstaller();
+    install.mockResolvedValue(answer);
+    const { server } = await serving(await projectsRoot(), { installer });
+    return { server, install };
+  }
+
+  it.each([
+    ["{}", {}, undefined],
+    ["an empty body", undefined, undefined],
+    ["a run", { run: RUN }, RUN],
+  ])("takes %s, and gives the run to the installer", async (_name, body, run) => {
+    const { server, install } = await installing();
+
+    const response = await send(server, "POST", INSTALL_ROUTE, body);
+
+    expect(response.status).toBe(200);
+    expect(await success<SkillInstall>(response)).toEqual({ data: { result: "installed" }, diagnostics: [] });
+    expect(install.mock.calls).toEqual([[run]]);
+  });
+
+  it.each<SkillInstall>([
+    { result: "running", run: RUN },
+    { result: "npx-missing" },
+    { result: "failed", output: "Cloning failed" },
+  ])("answers $result with status 200", async (answer) => {
+    const { server } = await installing(answer);
+
+    const response = await send(server, "POST", INSTALL_ROUTE, {});
+
+    expect(response.status).toBe(200);
+    expect((await success<SkillInstall>(response)).data).toEqual(answer);
+  });
+
+  it.each([
+    ["a body that is not an object", ["run"]],
+    ["a body of null", null],
+    ["an unknown key", { run: RUN, force: true }],
+    ["a run that is not a string", { run: 1 }],
+    ["a run of null", { run: null }],
+  ])("refuses %s with malformed-request, and starts no install", async (_name, body) => {
+    const { server, install } = await installing();
+
+    const response = await send(server, "POST", INSTALL_ROUTE, body);
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+    expect(install).not.toHaveBeenCalled();
+  });
+
+  it("refuses a query with malformed-request, and starts no install", async () => {
+    const { server, install } = await installing();
+
+    const response = await send(server, "POST", `${INSTALL_ROUTE}?run=${RUN}`, {});
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+    expect(install).not.toHaveBeenCalled();
+  });
+
+  it("requires the token, and starts no install without it", async () => {
+    const { server, install } = await installing();
+
+    const response = await fetch(`${server.url}${INSTALL_ROUTE}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(401);
+    expect(install).not.toHaveBeenCalled();
   });
 });

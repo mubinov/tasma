@@ -39,6 +39,7 @@ export function fakeAdapter(launch: AgentLaunch | { failed: string } = LAUNCH) {
     loggedIn: async () => true,
     skillFiles: () => [],
     skillListed: async () => false,
+    skillsAgent: "fake-agent",
     notLoggedIn: "Log in to the agent first",
     sessionGone: "The agent lost the chat",
     filterUpdate: (update) => ({ ...update, filtered: true }),

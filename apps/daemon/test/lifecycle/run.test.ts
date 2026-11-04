@@ -7,13 +7,14 @@ import { connect } from "node:net";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it, onTestFinished } from "vitest";
-import type { Chat, ChatEntry, DaemonRecord, EventsReply, FeedEvent, SetupStatus } from "@tasma/protocol";
+import type { Chat, ChatEntry, DaemonRecord, EventsReply, FeedEvent, SetupStatus, SkillInstall } from "@tasma/protocol";
 import type { AgentEnv } from "../../src/agents/adapter.js";
 import { daemonAnswers } from "../../src/lifecycle/probe.js";
 import { readRecord, recordPath } from "../../src/lifecycle/record.js";
 import { runDaemon, startDaemon } from "../../src/lifecycle/run.js";
 import type { DaemonIo, Start } from "../../src/lifecycle/run.js";
 import {
+  alive,
   bearer,
   chatFolder,
   failure,
@@ -36,6 +37,7 @@ import {
   taskText,
   TIMESTAMP,
   until,
+  untilPid,
   userConfig,
 } from "../helpers.js";
 import type { TestServer } from "../helpers.js";
@@ -643,6 +645,34 @@ describe("the setup route", () => {
     const response = await reply;
     expect(response.status).toBe(200);
     expect((await success<SetupStatus>(response)).data).toMatchObject({ cli: "unknown" });
+  });
+
+  it("does not hold a stop with a skill install that runs, and ends it", async () => {
+    const root = await projectsRoot();
+    const home = await target();
+    const bin = await target();
+    await writeFile(join(bin, "npx"), "#!/bin/sh\necho $$ > \"$HOME/npx\"; exec /bin/sleep 30\n");
+    await chmod(join(bin, "npx"), 0o755);
+    // A login shell whose PATH holds the npx above, which runs the script that reads its environment.
+    const shell = join(home, "shell");
+    await writeFile(shell, `#!/bin/sh\nPATH='${bin}'; export PATH\neval "$4"\n`);
+    await chmod(shell, 0o755);
+    const start = await startDaemon({ port: 0, root, env: { SHELL: shell, HOME: home, PATH: "" }, drainMs: 60_000 });
+    if (!start.started) throw new Error(start.message);
+    onTestFinished(() => start.stop());
+
+    const reply = fetch(`${start.url}/setup/skill-install`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...bearer(await tokenOf(root)) },
+      body: "{}",
+    });
+    const npx = await untilPid(join(home, "npx"), "npx started");
+    await start.stop();
+
+    const response = await reply;
+    expect(response.status).toBe(200);
+    expect((await success<SkillInstall>(response)).data).toEqual({ result: "failed", output: "The daemon stopped." });
+    await until(() => !alive(npx), "npx is gone");
   });
 });
 

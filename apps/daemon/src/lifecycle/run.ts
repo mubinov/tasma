@@ -34,6 +34,7 @@ import type { ProjectHost } from "../projects/host.js";
 import { projectRoutes } from "../projects/routes.js";
 import { createSetupChecks } from "../setup/checks.js";
 import { setupRoutes } from "../setup/routes.js";
+import { createSkillInstaller } from "../setup/skill-install.js";
 import { taskRoutes } from "../tasks/routes.js";
 import { WriteQueue } from "../tasks/serialize.js";
 import { workflowRoutes } from "../workflows/routes.js";
@@ -214,6 +215,7 @@ export async function startDaemon(options: {
   });
   const starts = createStepChats({ root, host, chats, runner });
   const setup = createSetupChecks({ root, host, adapters: AGENT_ADAPTERS, env });
+  const installer = createSkillInstaller({ adapters: AGENT_ADAPTERS, env });
   const server = createDaemonServer(
     [
       ...projectRoutes(host, writes, chats),
@@ -222,7 +224,7 @@ export async function startDaemon(options: {
       ...chatListRoutes({ root, host, chats }),
       ...workflowRoutes({ root, writes, publish }),
       ...configRoutes({ root, writes, publish }),
-      ...setupRoutes(setup),
+      ...setupRoutes(setup, installer),
       ...eventRoutes(feed),
     ],
     { token },
@@ -236,9 +238,11 @@ export async function startDaemon(options: {
     connections.closeAfterEachReply();
     feed.close();
     chats.close();
-    // Before the drain, so that a start or a setup read that waits for the login shell does not hold it.
+    // Before the drain, so that a start, a setup read that waits for the login shell
+    // or a skill install does not hold it.
     runner.stopStarts();
     setup.stop();
+    installer.stop();
     await drain(server, drainMs);
     // The daemon never calls process.exit, so an agent process or an index left
     // open would hold its pipes or its watch handle and the process would never

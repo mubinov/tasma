@@ -8,8 +8,9 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AcpObject } from "@tasma/protocol";
 import type { AgentLaunch } from "../../src/agents/adapter.js";
-import { CLAUDE_SESSION_VARIABLES, claudeAdapter, createClaudeAdapter } from "../../src/agents/claude.js";
-import { target, until, untilPid } from "../helpers.js";
+import { claudeAdapter, createClaudeAdapter } from "../../src/agents/claude.js";
+import { CLAUDE_SESSION_VARIABLES } from "../../src/agents/process.js";
+import { target, untilGone, untilPid } from "../helpers.js";
 
 /** Counts the evaluations of the adapter entry. The real entry would serve ACP over the stdio of the test worker. */
 const entry = vi.hoisted(() => ({ evaluated: 0 }));
@@ -75,21 +76,6 @@ function lingeringClaude(out: string, print: string): Promise<string> {
     print,
     `/bin/sh -c "echo \\$\\$ > '${out}/inner'; exec /bin/sleep 10"`,
   ].join("\n"));
-}
-
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Waits until each process whose id is in a file of `out` is gone. */
-async function gone(out: string, ...names: string[]): Promise<void> {
-  const pids = await Promise.all(names.map((name) => untilPid(join(out, name), `${name} wrote its process id`)));
-  await until(() => !pids.some(alive), `processes ${pids.join(", ")} are gone`);
 }
 
 describe("claudeAdapter.launch", () => {
@@ -385,7 +371,7 @@ describe("claudeAdapter.loggedIn", () => {
 
     await expect(adapter.loggedIn({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBeUndefined();
 
-    await gone(out, "claude");
+    await untilGone(out, "claude");
   });
 
   it("gives undefined when claude runs longer than the time limit, and ends claude and the processes it started", async () => {
@@ -396,7 +382,7 @@ describe("claudeAdapter.loggedIn", () => {
 
     await expect(adapter.loggedIn({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBeUndefined();
 
-    await gone(out, "claude", "inner");
+    await untilGone(out, "claude", "inner");
   });
 
   it("gives undefined when the signal is cancelled while claude runs, and ends claude and the processes it started", async () => {
@@ -410,7 +396,7 @@ describe("claudeAdapter.loggedIn", () => {
     controller.abort();
 
     await expect(answer).resolves.toBeUndefined();
-    await gone(out, "claude", "inner");
+    await untilGone(out, "claude", "inner");
   });
 
   it("starts no claude for a signal cancelled before the call", async () => {
@@ -473,6 +459,12 @@ describe("claudeAdapter.skillFiles", () => {
   });
 });
 
+describe("claudeAdapter.skillsAgent", () => {
+  it("names Claude Code as the skills CLI does", () => {
+    expect(claudeAdapter.skillsAgent).toBe("claude-code");
+  });
+});
+
 describe("claudeAdapter.skillListed", () => {
   const LISTED = '[{"id":"other@other","enabled":true},{"id":"tasma@tasma","enabled":true}]';
 
@@ -522,7 +514,7 @@ describe("claudeAdapter.skillListed", () => {
 
     await expect(adapter.skillListed({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBeUndefined();
 
-    await gone(out, "claude");
+    await untilGone(out, "claude");
   });
 
   it("runs plugin list --json in HOME, with stdin closed, CLAUDE_CONFIG_DIR and no Claude session variables", async () => {
@@ -551,7 +543,7 @@ describe("claudeAdapter.skillListed", () => {
 
     await expect(adapter.skillListed({ PATH: dir, HOME: dir }, liveSignal())).resolves.toBeUndefined();
 
-    await gone(out, "claude", "inner");
+    await untilGone(out, "claude", "inner");
   });
 
   it("gives undefined when the signal is cancelled while claude runs, and ends claude and the processes it started", async () => {
@@ -565,7 +557,7 @@ describe("claudeAdapter.skillListed", () => {
     controller.abort();
 
     await expect(answer).resolves.toBeUndefined();
-    await gone(out, "claude", "inner");
+    await untilGone(out, "claude", "inner");
   });
 
   it("gives undefined for a signal cancelled before the call, and starts no claude", async () => {

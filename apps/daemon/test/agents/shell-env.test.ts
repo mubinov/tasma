@@ -10,7 +10,7 @@ import type { AgentEnv } from "../../src/agents/adapter.js";
 import { isExecutableFile } from "../../src/agents/process.js";
 import { readShellEnv } from "../../src/agents/shell-env.js";
 import type { ShellEnv } from "../../src/agents/shell-env.js";
-import { target, until, untilPid } from "../helpers.js";
+import { alive, target, until, untilPid } from "../helpers.js";
 
 /** A child that the next spawn gives in place of a real one. */
 const spawning = vi.hoisted(() => ({ next: undefined as ChildProcess | undefined }));
@@ -79,15 +79,6 @@ async function shellGot(fake: FakeShell): Promise<Record<string, string>> {
     const at = entry.indexOf("=");
     return [entry.slice(0, at), entry.slice(at + 1)];
   }));
-}
-
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** Waits until each process is gone. */

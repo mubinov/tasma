@@ -93,7 +93,7 @@ async function loggedInCheck(adapter: AgentAdapter, installed: Installed, signal
   }
 }
 
-async function skillFileIn(paths: string[]): Promise<SkillFile> {
+export async function skillFileIn(paths: string[]): Promise<SkillFile> {
   let unread = false;
   for (const path of paths) {
     try {
