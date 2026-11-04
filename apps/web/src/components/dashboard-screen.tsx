@@ -3,7 +3,7 @@ import { getRouteApi } from "@tanstack/react-router";
 import type { ChatListItem } from "@tasma/protocol";
 import { useDeferredValue, useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 import { chatListQuery, projectsQuery } from "../api/queries";
-import { chatKey, chatListAnnouncements, chatListItems, resultCountWords, type OpenChat } from "../lib/chat-list-announcements";
+import { chatKey, chatListAnnouncements, chatListItems, knownChats, resultCountWords, type KnownChats, type OpenChat } from "../lib/chat-list-announcements";
 import { useDocumentTitle } from "../lib/document-title";
 import { focusInView } from "../lib/focus-in-view";
 import { FILTER_FAILURE_TEXT, filterKey, useChatFilter } from "../lib/use-chat-filter";
@@ -43,7 +43,7 @@ export function DashboardScreen(): ReactNode {
   const wide = useWide();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const pendingFocus = usePendingFocus();
-  const lastResultRef = useRef<{ key: string; items: readonly ChatListItem[]; complete: boolean } | null>(null);
+  const lastResultRef = useRef<{ key: string; items: readonly ChatListItem[]; known: KnownChats } | null>(null);
   // The chat that "Chats" closed, for the one mount of the list that follows.
   const [returnKey, setReturnKey] = useState<string>();
   const [shownKey, setShownKey] = useState(openKey);
@@ -56,10 +56,10 @@ export function DashboardScreen(): ReactNode {
   }
 
   // The first result after a mount announces nothing, and a result of a new filter its count.
-  const announceChanges = useEffectEvent((items: readonly ChatListItem[], total: number, complete: boolean) => {
+  const announceChanges = useEffectEvent((items: readonly ChatListItem[], total: number) => {
     const before = lastResultRef.current;
     const key = filterKey(applied);
-    lastResultRef.current = { key, items, complete };
+    lastResultRef.current = { key, items, known: knownChats(items, before?.key === key ? before.known : undefined) };
     if (before === null) {
       return;
     }
@@ -67,13 +67,13 @@ export function DashboardScreen(): ReactNode {
       announce(resultCountWords(total));
       return;
     }
-    for (const words of chatListAnnouncements(before.items, items, open, before.complete)) {
+    for (const words of chatListAnnouncements(before.items, items, open, before.known)) {
       announce(words);
     }
   });
 
   useEffect(() => {
-    announceChanges(chatListItems(data.pages), data.pages[0]!.data.total, data.pages.at(-1)!.data.next === undefined);
+    announceChanges(chatListItems(data.pages), data.pages[0]!.data.total);
   }, [data]);
 
   const sayFailure = useEffectEvent(() => {

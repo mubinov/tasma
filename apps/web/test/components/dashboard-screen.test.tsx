@@ -272,10 +272,19 @@ describe("the groups", () => {
   });
 
   it("shows no band with no active chat", async () => {
-    const others = [ITEMS[2]!, listItem("SAGA-1", 1, 120, { status: { state: "failed" } })];
+    const others = [ITEMS[2]!, listItem("SAGA-1", 1, 120, { status: { state: "continued-outside", where: "terminal" } })];
     await renderDashboard(stubDashboard({ "/chats": pageReply(others) }));
 
     expect(bandNames()).toEqual([]);
+  });
+
+  it("shows a failed row under the band Active, and counts it in Active", async () => {
+    const failed = listItem("SAGA-1", 1, 10, { status: { state: "failed" } });
+    await renderDashboard(stubDashboard({ "/chats": pageReply([ITEMS[0]!, failed, ITEMS[2]!]) }));
+
+    expect(bandNames()).toEqual(["Active 2 chats", "Other chats 1"]);
+    expect(itemState("SAGA-1", 1)).toBe("Failed");
+    expect(band(/^Other chats/).closest("li")).toBe(itemLink("SAGA-3", 1).closest("li"));
   });
 
   it("shows the band Active alone with only active chats", async () => {
@@ -887,6 +896,44 @@ describe("live updates", () => {
       expect(spoken()).toContain("ACME-7 needs you");
     });
     expect(spoken()).not.toContain("SAGA-3 failed");
+  });
+
+  it("announces nothing for a failed chat that comes back after a result left out its project", async () => {
+    const [acme, ...rest] = ITEMS as [ChatListItem, ...ChatListItem[]];
+    const withFailedChat = pageReply([{ ...acme, status: { state: "failed" } }, ...rest]);
+    const stub = stubDashboard({ "/chats": withFailedChat });
+    await renderDashboard(stub);
+    stub.replies["/chats"] = pageReply(rest);
+
+    await stub.send([LIST_EVENT]);
+    await waitFor(() => {
+      expect(itemLinks()).toHaveLength(2);
+    });
+    stub.replies["/chats"] = withFailedChat;
+    await stub.send([LIST_EVENT]);
+    await waitFor(() => {
+      expect(itemLinks()).toHaveLength(3);
+    });
+
+    expect(spoken()).toEqual([]);
+  });
+
+  it("forgets the chats of the last filter, so a failed chat that now matches the new one is announced", async () => {
+    const failed: ChatListItem = { ...ITEMS[0]!, status: { state: "failed" } };
+    const other = ITEMS[2]!;
+    const stub = stubDashboard({ "/chats": pageReply([failed, other]), [chatsPath({ q: "parser" })]: pageReply([other]) });
+    const router = await renderDashboard(stub);
+
+    await navigateSearch(router, { q: "parser" });
+    await waitFor(() => {
+      expect(spoken()).toEqual(["1 chat"]);
+    });
+    stub.replies[chatsPath({ q: "parser" })] = pageReply([failed, other]);
+    await stub.send([LIST_EVENT]);
+
+    await waitFor(() => {
+      expect(spoken()).toEqual(["1 chat", "ACME-7 failed"]);
+    });
   });
 
   it("announces in the narrow window too, where the list is not shown", async () => {

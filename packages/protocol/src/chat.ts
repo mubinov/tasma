@@ -268,5 +268,5 @@ export function chatMark(
 
 /** Whether a row of the chat list with this mark is in the Active group. */
 export function isActiveChat(status: ChatStatus | undefined): boolean {
-  return status?.state === "working" || status?.state === "needs-you";
+  return status?.state === "working" || status?.state === "needs-you" || status?.state === "failed";
 }

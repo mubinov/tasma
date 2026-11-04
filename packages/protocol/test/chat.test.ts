@@ -293,6 +293,7 @@ describe("chatMark", () => {
     ["no current step, not seen", { ...base, seen: 3 }, undefined, { state: "needs-you" }],
     ["no current step, seen", { ...base, seen: 6 }, undefined, undefined],
     ["failed on a past step", { ...base, state: "failed" }, "dev:plan", { state: "failed" }],
+    ["failed on a past step that the user saw to its state", { ...base, state: "failed", seen: 4 }, "dev:plan", undefined],
     [
       "continued-outside on a past step",
       { ...base, state: "continued-outside", where: "terminal" },
@@ -314,7 +315,7 @@ describe("isActiveChat", () => {
   it.each<[string, ChatStatus | undefined, boolean]>([
     ["working", { state: "working" }, true],
     ["needs-you", { state: "needs-you" }, true],
-    ["failed", { state: "failed" }, false],
+    ["failed", { state: "failed" }, true],
     ["continued-outside", { state: "continued-outside", where: "vscode" }, false],
     ["no mark", undefined, false],
   ])("counts a row with the mark %s as active: %s", (_case, status, active) => {

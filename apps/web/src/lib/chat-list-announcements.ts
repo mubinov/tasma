@@ -67,34 +67,69 @@ function countWords(count: number, state: Announced): string {
   return count === 1 ? "1 chat failed" : `${String(count)} chats failed`;
 }
 
+/** The latest item of each chat that the results of one filter held. */
+export type KnownChats = ReadonlyMap<string, ChatListItem>;
+
+/** Chats of two projects can share this key, so it only serves an item whose id is not known. */
+function keyAcrossRename({ tag, task, chat, created, title }: ChatListItem): string {
+  return `${task.slice(tag.length)}/${String(chat)}/${created}/${title}`;
+}
+
+/**
+ * An id with another time names another chat: a new project can take the tag of
+ * a renamed or deleted project, and its numbers start again.
+ */
+function lastItem(item: ChatListItem, known: KnownChats): ChatListItem | undefined {
+  const sameId = known.get(chatKey(item));
+  return sameId?.created === item.created ? sameId : known.get(keyAcrossRename(item));
+}
+
+/**
+ * A chat stays only under its latest id and key, so a rename back reads its
+ * latest state. An id that `items` holds is another chat with the same key.
+ */
+export function knownChats(items: readonly ChatListItem[], known: KnownChats = new Map()): KnownChats {
+  const next = new Map(known);
+  const held = new Set(items.map(chatKey));
+  for (const item of items) {
+    const last = lastItem(item, known);
+    if (last !== undefined) {
+      if (!held.has(chatKey(last))) {
+        next.delete(chatKey(last));
+      }
+      next.delete(keyAcrossRename(last));
+    }
+    next.set(chatKey(item), item);
+    next.set(keyAcrossRename(item), item);
+  }
+  return next;
+}
+
 /**
  * What a new result of the list of all chats announces after the last one: an
- * item, not the open chat, that is now "Needs you" or "Failed" and was in the
- * last result with another state, or is newer than every item of its group in
- * the last result. An item of an older page is neither. `complete` tells that
- * the last result held all pages; an empty last result is complete.
+ * item, not the open chat, that is now "Needs you" or "Failed" and that `known`
+ * holds with another state. A chat that a failed read left out of the last
+ * result, or that a rename gave a new id, keeps its state in `known`.
  *
- * With no active item in the last result, no page held one, so every "Needs
- * you" item is new. With no other item, a "Failed" item can come from a page
- * the last result did not load, so it is new only after a complete result.
+ * The daemon sorts the active chats first, so a last result that is empty or
+ * holds an item outside Active held every active chat. An item that `known`
+ * does not hold is then a new chat, got its state on a page that the result did
+ * not load, or now matches the filter, and is announced. A last result of active
+ * items alone can end before an older page, so only an item newer than the
+ * newest of them is announced.
  */
 export function chatListAnnouncements(
   before: readonly ChatListItem[],
   after: readonly ChatListItem[],
   open: OpenChat | undefined,
-  complete = false,
+  known: KnownChats = knownChats(before),
 ): string[] {
-  const newestActive = before.find((one) => isActiveChat(one.status));
-  const newestOther = before.find((one) => !isActiveChat(one.status));
+  const newest = before[0];
+  const reachedOther = before.some((one) => !isActiveChat(one.status));
   const found: { task: string; state: Announced }[] = [];
 
-  function isNew(item: ChatListItem): boolean {
-    const active = isActiveChat(item.status);
-    const newest = active ? newestActive : newestOther;
-    if (newest === undefined) {
-      return active || complete || before.length === 0;
-    }
-    return compareChats(item, newest) < 0;
+  function changedOutOfView(item: ChatListItem): boolean {
+    return newest === undefined || reachedOther || compareChats(item, newest) < 0;
   }
 
   for (const item of after) {
@@ -103,8 +138,8 @@ export function chatListAnnouncements(
       continue;
     }
 
-    const last = before.find((one) => sameChat(one, item));
-    const changed = last === undefined ? isNew(item) : announcedState(last) !== state;
+    const last = lastItem(item, known);
+    const changed = last === undefined ? changedOutOfView(item) : announcedState(last) !== state;
     if (changed) {
       found.push({ task: item.task, state });
     }

@@ -206,19 +206,38 @@ describe("GET /chats", () => {
 
     expect(data.items.map((listed) => [listed.task, listed.status?.state])).toEqual([
       ["BETA-1", "needs-you"],
+      ["ALPHA-2", "failed"],
       ["ALPHA-1", "needs-you"],
       ["ALPHA-4", "continued-outside"],
       ["ALPHA-3", undefined],
-      ["ALPHA-2", "failed"],
     ]);
-    expect([data.total, data.active]).toEqual([5, 2]);
+    expect([data.total, data.active]).toEqual([5, 3]);
+  });
+
+  it("puts a failed chat with no state in the other group: the latest chat of a task in a final status, and a chat that a newer chat of its task follows", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantTask(root, "ALPHA-1", "Parse the tree", "Done");
+    await plantTask(root, "ALPHA-2", "Draw the board");
+    await plantChat(root, at("ALPHA-1", 1), { created: "2026-01-01T00:03:00Z" }, [USER, FAILED]);
+    await plantChat(root, at("ALPHA-2", 1), { created: "2026-01-01T00:01:00Z" }, [USER, FAILED]);
+    await plantChat(root, at("ALPHA-2", 2), { created: "2026-01-01T00:02:00Z" }, [USER, TURN_END]);
+    const { server } = await world(root);
+
+    const { data } = await page(server);
+
+    expect(data.items.map((listed) => [listed.task, listed.chat, listed.status])).toEqual([
+      ["ALPHA-2", 2, { state: "needs-you" }],
+      ["ALPHA-1", 1, undefined],
+      ["ALPHA-2", 1, undefined],
+    ]);
+    expect(data.active).toBe(1);
   });
 
   it.each([
-    ["no filter", "", ["BETA-1/1", "ALPHA-1/1", "ALPHA-4/1", "ALPHA-3/1", "ALPHA-2/1"], 2],
-    ["project", "?project=ALPHA", ["ALPHA-1/1", "ALPHA-4/1", "ALPHA-3/1", "ALPHA-2/1"], 1],
+    ["no filter", "", ["BETA-1/1", "ALPHA-2/1", "ALPHA-1/1", "ALPHA-4/1", "ALPHA-3/1"], 3],
+    ["project", "?project=ALPHA", ["ALPHA-2/1", "ALPHA-1/1", "ALPHA-4/1", "ALPHA-3/1"], 2],
     ["q", "?q=parse", ["BETA-1/1", "ALPHA-1/1", "ALPHA-3/1"], 2],
-    ["project and q", "?project=ALPHA&q=draw", ["ALPHA-4/1", "ALPHA-2/1"], 0],
+    ["project and q", "?project=ALPHA&q=draw", ["ALPHA-2/1", "ALPHA-4/1"], 1],
   ])("counts the active chats that %s keeps", async (_name, query, expected, active) => {
     const { server } = await world(await markedTasks());
 
