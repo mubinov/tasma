@@ -28,4 +28,6 @@ It works with Claude Code and Codex. Install it once for each machine:
 npx skills add mubinov/tasma-skill -g
 ```
 
+The setup screen of the app can run this command for you. It installs the skill for Claude Code only.
+
 For other install methods, see [tasma-skill](https://github.com/mubinov/tasma-skill).

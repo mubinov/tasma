@@ -197,14 +197,14 @@ describe("setupSteps", () => {
       "You do this",
       "You do this",
       "Tasma does this",
-      "You do this",
+      "Tasma does this",
       "You do this",
       "You do this",
     ]);
   });
 
   it("gives each step its owner, in every state", () => {
-    const owners = ["you", "you", "tasma", "you", "you", "you"];
+    const owners = ["you", "you", "tasma", "tasma", "you", "you"];
 
     expect(setupSteps(input()).map(({ owner }) => owner)).toEqual(owners);
     expect(setupSteps(input({ status: undefined })).map(({ owner }) => owner)).toEqual(owners);
@@ -337,6 +337,45 @@ describe("setupSteps", () => {
       const steps = setupSteps(input({ status: undefined }));
 
       expect(steps.map(({ state }) => state)).toEqual(Array<string>(6).fill("cannot-check"));
+    });
+  });
+
+  describe("the label of step 4 and the write", () => {
+    const FAILS = setupStatus({}, { skill: "fail" });
+
+    it("names the owner when the write has not started", () => {
+      const step = stepOf(setupSteps(input({ status: FAILS })), "skill");
+
+      expect(step.label).toBe("Tasma does this");
+      expect(step.labelIsOwner).toBe(true);
+    });
+
+    it.each([
+      ["running", "Install in progress"],
+      ["cannot-install", "Cannot install"],
+    ] as const)("follows the write while the step is to-do: %s", (skillInstall, label) => {
+      const step = stepOf(setupSteps(input({ status: FAILS, skillInstall })), "skill");
+
+      expect(step.state).toBe("to-do");
+      expect(step.label).toBe(label);
+      expect(step.labelIsOwner).toBe(false);
+    });
+
+    it.each(["running", "cannot-install"] as const)("keeps the labels of the other states with %s", (skillInstall) => {
+      const label = (checks: Partial<StepInput>): string =>
+        stepOf(setupSteps(input({ ...checks, skillInstall })), "skill").label;
+
+      expect(label({ status: FAILS, skillCheckStopped: true })).toBe("Not checked");
+      expect(label({ status: setupStatus() })).toBe("Done");
+      expect(label({ status: setupStatus({}, { skill: "unknown" }) })).toBe("Cannot check");
+      expect(label({ status: setupStatus({}, { skill: "not-run" }) })).toBe("Cannot check");
+    });
+
+    it.each(["running", "cannot-install"] as const)("changes no other step with %s", (skillInstall) => {
+      const fails = setupStatus({ cli: "fail", project: "fail", workflow: "fail" }, { installed: "fail", loggedIn: "fail", skill: "fail" });
+      const labels = setupSteps(input({ status: fails, skillInstall })).map(({ label }) => label);
+
+      expect(labels.toSpliced(3, 1)).toEqual(["You do this", "You do this", "Tasma does this", "You do this", "You do this"]);
     });
   });
 

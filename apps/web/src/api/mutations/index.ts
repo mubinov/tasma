@@ -33,6 +33,8 @@ export {
 export type { CommentWrite } from "./comments";
 export { bodyCorrection, failureKind, refusalWords, titleCorrection, WriteError } from "./notices";
 export type { FailureKind, WriteFailure } from "./notices";
+export { closeSkillInstallFailure, installSkillOptions } from "./setup";
+export type { SkillInstallWrite } from "./setup";
 export {
   createRefusal,
   openCreateWarnings,

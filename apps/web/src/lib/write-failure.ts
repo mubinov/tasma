@@ -66,6 +66,16 @@ const CHAT_RESTART_FAILURE_LINES: Record<FailureKind, string> = {
   unsent: "The request did not start, so nothing changed.",
 };
 
+const SKILL_INSTALL_NO_ANSWER_LINE = "Tasma did not get an answer from the daemon. The install can still run. "
+  + "Select \"Install in Claude Code\" to see its result.";
+
+const SKILL_INSTALL_FAILURE_LINES: Record<FailureKind, string> = {
+  refused: "The daemon refused the request.",
+  unanswered: SKILL_INSTALL_NO_ANSWER_LINE,
+  address: SKILL_INSTALL_NO_ANSWER_LINE,
+  unsent: "Tasma could not send the request to the daemon.",
+};
+
 const TURN_RUNNING_LINE = "The agent is working on a turn. Send the message when the turn ends.";
 
 function chatName({ task, chat }: ChatPlace): string {
@@ -148,6 +158,13 @@ export function chatRestartFailure(step: string, id: string, chat: number): Writ
       ? `The task moved to another step while the agent of chat ${String(chat)} stopped. `
       + `Chat ${String(chat)} stopped, and no new chat started.`
       : CHAT_RESTART_FAILURE_LINES[failureKind(error.cause)],
+  };
+}
+
+export function skillInstallFailure(): WriteFailure {
+  return {
+    title: "Cannot install the skill",
+    line: (error) => SKILL_INSTALL_FAILURE_LINES[failureKind(error.cause)],
   };
 }
 

@@ -1,8 +1,9 @@
 import { Accordion } from "@base-ui/react/accordion";
 import { Button } from "@base-ui/react/button";
-import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import type { SkillInstall } from "@tasma/protocol";
+import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from "react";
 import { CaretDownIcon, CheckIcon, CircleNotchIcon } from "../lib/icons";
-import { isChangeToDone, type SetupStep, type StepState } from "../lib/setup-steps";
+import { isChangeToDone, type SetupStep, type SkillInstallState, type StepState } from "../lib/setup-steps";
 import { useNoticeStore } from "../store/notices";
 import { BUTTON_CLASS, BUTTON_FILLED_CLASS } from "./control-classes";
 
@@ -23,6 +24,8 @@ const WHY_CLASS = "max-w-lg text-base text-subtle";
 const RUN_CLASS = "mt-3.5 max-w-lg text-sm text-subtle";
 
 const ACTIONS_CLASS = "mt-3.5 flex flex-wrap items-center gap-x-3 gap-y-2";
+
+const PROBLEM_CLASS = "mt-3.5 max-w-lg text-sm font-medium text-text";
 
 function markLook(state: StepState, current: boolean, settling: boolean): string {
   if (state === "done") {
@@ -80,9 +83,17 @@ type CopyResult = "none" | "copied" | "failed";
 
 const COPY_WORDS: Record<CopyResult, string> = { none: "Copy", copied: "Copied", failed: "Cannot copy" };
 
-function CommandBox({ command }: { command: string }): ReactNode {
+type CopyButtonProps = {
+  text: string;
+  /** The element that holds the text, which a failed copy selects. */
+  holder: RefObject<HTMLElement | null>;
+  /** What the words of a failed copy call the text. */
+  noun: "command" | "output";
+  describedBy: string;
+};
+
+function CopyButton({ text, holder, noun, describedBy }: CopyButtonProps): ReactNode {
   const [result, setResult] = useState<CopyResult>("none");
-  const codeRef = useRef<HTMLElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => () => {
@@ -101,26 +112,36 @@ function CommandBox({ command }: { command: string }): ReactNode {
     const { announce } = useNoticeStore.getState();
 
     try {
-      await navigator.clipboard.writeText(command);
+      await navigator.clipboard.writeText(text);
       showResult("copied");
       announce("Copied");
     } catch {
-      window.getSelection()?.selectAllChildren(codeRef.current!);
+      window.getSelection()?.selectAllChildren(holder.current!);
       showResult("failed");
-      announce("Cannot copy. The command is selected. Press Command-C to copy it.");
+      announce(`Cannot copy. The ${noun} is selected. Press Command-C to copy it.`);
     }
   }
 
   return (
+    <Button
+      type="button"
+      aria-describedby={describedBy}
+      onClick={() => void copy()}
+      className="inline-flex min-h-7 shrink-0 items-center rounded-control border border-line bg-bg px-2.5 text-xs-plus text-text hover:border-graphic"
+    >
+      {COPY_WORDS[result]}
+    </Button>
+  );
+}
+
+function CommandBox({ command }: { command: string }): ReactNode {
+  const codeRef = useRef<HTMLElement>(null);
+  const codeId = useId();
+
+  return (
     <div className="mt-1.5 flex w-full max-w-lg items-center justify-between gap-3 rounded-control bg-surface-2 py-1.5 pr-1.5 pl-3">
-      <code ref={codeRef} className="font-mono text-xs-plus wrap-anywhere">{command}</code>
-      <Button
-        type="button"
-        onClick={() => void copy()}
-        className="inline-flex min-h-7 shrink-0 items-center rounded-control border border-line bg-bg px-2.5 text-xs-plus text-text hover:border-graphic"
-      >
-        {COPY_WORDS[result]}
-      </Button>
+      <code ref={codeRef} id={codeId} className="font-mono text-xs-plus wrap-anywhere">{command}</code>
+      <CopyButton text={command} holder={codeRef} noun="command" describedBy={codeId} />
     </div>
   );
 }
@@ -134,21 +155,92 @@ function RunCommand({ command, words = "Run this command in a terminal:" }: { co
   );
 }
 
-function SkillContent({ onStop }: { onStop: () => void }): ReactNode {
+function InstallOutput({ output }: { output: string }): ReactNode {
+  const outputRef = useRef<HTMLPreElement>(null);
+  const lineId = useId();
+
+  return (
+    <>
+      <p id={lineId} className={PROBLEM_CLASS}>Tasma cannot install the skill. The command gave this output:</p>
+      <div className="mt-1.5 flex w-full max-w-lg items-start gap-3 rounded-control bg-surface-2 py-1.5 pr-1.5 pl-3">
+        <pre
+          ref={outputRef}
+          tabIndex={0}
+          role="group"
+          aria-labelledby={lineId}
+          className="max-h-36 min-w-0 flex-1 overflow-auto rounded-control py-0.5 font-mono text-xs-plus whitespace-pre-wrap wrap-anywhere text-subtle"
+        >
+          {output}
+        </pre>
+        <CopyButton text={output} holder={outputRef} noun="output" describedBy={lineId} />
+      </div>
+    </>
+  );
+}
+
+function NoNpx(): ReactNode {
+  return (
+    <>
+      <p className={PROBLEM_CLASS}>
+        Tasma cannot find
+        {" "}
+        <code className="font-mono text-xs-plus">npx</code>
+        , which comes with Node.js.
+      </p>
+      <RunCommand
+        command="/plugin marketplace add mubinov/tasma-skill"
+        words="To install the skill as a Claude Code plugin, run these commands in Claude Code:"
+      />
+      <CommandBox command="/plugin install tasma@tasma" />
+      <p className={RUN_CLASS}>Or install Node.js, and then select &quot;Try again&quot;.</p>
+    </>
+  );
+}
+
+/** What step 4 shows of the write that lives in the screen. */
+type SkillInstallRun = {
+  state: SkillInstallState | undefined;
+  answer: SkillInstall | undefined;
+  onInstall: () => void;
+};
+
+const INSTALL_WORDS: Record<SkillInstallState, string> = { "running": "Install in progress", "cannot-install": "Try again" };
+
+function SkillContent({ install, onStop }: { install: SkillInstallRun; onStop: () => void }): ReactNode {
+  const { state, answer, onInstall } = install;
+  const running = state === "running";
+  const warningId = useId();
   const descriptionId = useId();
 
   return (
     <>
       <p className={WHY_CLASS}>Claude Code needs this skill to run workflow steps.</p>
-      <RunCommand command="npx skills add mubinov/tasma-skill -g" />
+      {answer?.result === "failed" && <InstallOutput output={answer.output} />}
+      {answer?.result === "npx-missing" && <NoNpx />}
       <div className={ACTIONS_CLASS}>
+        {/* One element in all states, and aria-disabled: `disabled` would drop the focus resting here. */}
+        <Button
+          type="button"
+          aria-disabled={running}
+          aria-describedby={warningId}
+          onClick={onInstall}
+          className={answer?.result === "npx-missing" ? BUTTON_CLASS : BUTTON_FILLED_CLASS}
+        >
+          {running && <CircleNotchIcon size={14} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />}
+          {state === undefined ? "Install in Claude Code" : INSTALL_WORDS[state]}
+        </Button>
         <ExternalLink href={SKILL_INSTALL_URL} className="text-sm text-subtle underline underline-offset-2 hover:text-text">
           Other ways to install the skill
         </ExternalLink>
       </div>
+      {running && <p className={RUN_CLASS}>Tasma downloads the skill from GitHub. This can take up to 2 minutes.</p>}
       <p id={descriptionId} className={RUN_CLASS}>
-        If the skill is in a different folder, Tasma cannot find it. If you stop the check, Tasma does not check for
-        the skill again, also after a restart.
+        <span id={warningId}>
+          If the skill is already in a different folder, Tasma cannot find it, and a second install makes Claude Code
+          load two copies.
+        </span>
+        {" "}
+        In that case, stop the check. Tasma then does not check for the skill again, also after a restart.
       </p>
       <div className="mt-2">
         <Button type="button" aria-describedby={descriptionId} onClick={onStop} className={BUTTON_CLASS}>
@@ -178,9 +270,9 @@ function CheckAgain({ checking, onCheckAgain }: { checking: boolean; onCheckAgai
   );
 }
 
-type StepContentProps = Pick<SetupStepRowProps, "step" | "checking" | "onCheckAgain" | "onStop">;
+type StepContentProps = Pick<SetupStepRowProps, "step" | "checking" | "onCheckAgain" | "onStop" | "install">;
 
-function StepContent({ step, checking, onCheckAgain, onStop }: StepContentProps): ReactNode {
+function StepContent({ step, checking, onCheckAgain, onStop, install }: StepContentProps): ReactNode {
   if (step.state === "stopped") {
     return (
       <p className={WHY_CLASS}>
@@ -229,7 +321,7 @@ function StepContent({ step, checking, onCheckAgain, onStop }: StepContentProps)
         </>
       );
     case "skill":
-      return <SkillContent onStop={onStop} />;
+      return <SkillContent install={install} onStop={onStop} />;
     case "project":
       return (
         <>
@@ -253,6 +345,7 @@ type SetupStepRowProps = {
   checking: boolean;
   onCheckAgain: () => void;
   onStop: () => void;
+  install: SkillInstallRun;
   /** The user pressed a control inside the panel. */
   onPressInside: () => void;
 };
@@ -263,6 +356,7 @@ export function SetupStepRow({
   checking,
   onCheckAgain,
   onStop,
+  install,
   onPressInside,
 }: SetupStepRowProps): ReactNode {
   const [shown, setShown] = useState({ state: step.state, settling: false });
@@ -300,7 +394,7 @@ export function SetupStepRow({
         </Accordion.Trigger>
       </Accordion.Header>
       <Accordion.Panel onClickCapture={pressInside} className="animate-enter pb-6 pl-10">
-        <StepContent step={step} checking={checking} onCheckAgain={onCheckAgain} onStop={onStop} />
+        <StepContent step={step} checking={checking} onCheckAgain={onCheckAgain} onStop={onStop} install={install} />
       </Accordion.Panel>
     </Accordion.Item>
   );

@@ -15,6 +15,9 @@ export type StepState = "stopped" | "done" | "in-progress" | "cannot-check" | "w
 
 export type SetupOwner = "you" | "tasma";
 
+/** The write that installs the skill runs, or ended with a result that installed nothing. */
+export type SkillInstallState = "running" | "cannot-install";
+
 export type SetupStep = {
   id: StepId;
   number: number;
@@ -36,6 +39,8 @@ export type StepInput = {
   /** A full read failed. */
   fullFailed: boolean;
   skillCheckStopped: boolean;
+  /** The state of the write that installs the skill, for the label of step 4. */
+  skillInstall?: SkillInstallState | undefined;
 };
 
 const OWNER_LABELS: Record<SetupOwner, string> = { you: "You do this", tasma: "Tasma does this" };
@@ -54,7 +59,7 @@ const DEFINITIONS: readonly StepDefinition[] = [
   { id: "install", name: "Install Claude Code", owner: "you", fullOnly: true, check: (_status, agent) => agent?.installed },
   { id: "login", name: "Log in to Claude Code", owner: "you", fullOnly: true, needs: "install", check: (_status, agent) => agent?.loggedIn },
   { id: "command", name: "Add the tasma command", owner: "tasma", fullOnly: true, check: (status) => status?.cli },
-  { id: "skill", name: "Install the tasma skill in Claude Code", owner: "you", check: (_status, agent) => agent?.skill },
+  { id: "skill", name: "Install the tasma skill in Claude Code", owner: "tasma", check: (_status, agent) => agent?.skill },
   { id: "project", name: "Add a project", owner: "you", check: (status) => status?.project },
   { id: "workflow", name: "Add a workflow", owner: "you", needs: "project", check: (status) => status?.workflow },
 ];
@@ -66,6 +71,8 @@ const STATE_LABELS: Partial<Record<StepState, string>> = {
   "cannot-check": "Cannot check",
   "not-run": "Cannot check",
 };
+
+const SKILL_INSTALL_LABELS: Record<SkillInstallState, string> = { "running": "Install in progress", "cannot-install": "Cannot install" };
 
 function claudeOf(status: SetupStatus | undefined): AgentSetup | undefined {
   return status?.agents.find(({ agent }) => agent === "claude");
@@ -156,7 +163,9 @@ export function setupSteps(input: StepInput): SetupStep[] {
     const needed = steps.find(({ id }) => id === definition.needs);
     const needDone = needed === undefined || needed.state === "done";
     const state = stateOf(definition, definition.check(input.status, agent), needDone, input);
-    const stateLabel = STATE_LABELS[state];
+    const stateLabel = definition.id === "skill" && state === "to-do" && input.skillInstall !== undefined
+      ? SKILL_INSTALL_LABELS[input.skillInstall]
+      : STATE_LABELS[state];
 
     steps.push({
       id: definition.id,

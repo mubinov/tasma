@@ -235,7 +235,8 @@ describe("the first full answer", () => {
     expect(screen.getByText("Tasma > Install Command Line Tool…")).toBeTruthy();
 
     await userEvent.click(trigger("Install the tasma skill in Claude Code"));
-    expect(screen.getByText("npx skills add mubinov/tasma-skill -g")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Install in Claude Code" })).toBeTruthy();
+    expect(screen.queryByText("npx skills add mubinov/tasma-skill -g")).toBeNull();
     expect(screen.getByRole("link", { name: "Other ways to install the skill (opens in the browser)" }).getAttribute("href"))
       .toBe("https://github.com/mubinov/tasma-skill#install");
 
@@ -919,6 +920,510 @@ describe("Copy", () => {
     await advance(1600);
 
     expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
+  });
+});
+
+describe("installing the skill", () => {
+  const INSTALL = "POST /setup/skill-install";
+  const INSTALL_PATH = "/setup/skill-install";
+  const SKILL = "Install the tasma skill in Claude Code";
+  const SKILL_AND_PROJECT = setupStatus({ project: "fail", workflow: "fail" }, { skill: "fail" });
+  const ONLY_PROJECT = setupStatus({ project: "fail", workflow: "fail" });
+  const ONLY_SKILL = setupStatus({}, { skill: "fail" });
+  const INSTALL_WORDS = "Install in Claude Code";
+  const BUSY_WORDS = "Install in progress";
+  const AGAIN_WORDS = "Try again";
+  const STARTED = "Install in progress. This can take up to 2 minutes.";
+  const FAILED = "Tasma cannot install the skill. The output is in step 4, above the Try again button.";
+  const NO_NPX = "Tasma cannot find npx. The plugin commands are in step 4, above the Try again button.";
+  const OUTPUT = "npm error network request failed\nnpm error code ENOTFOUND";
+  const OUTPUT_LINE = "Tasma cannot install the skill. The command gave this output:";
+  const FIRST_COMMAND = "/plugin marketplace add mubinov/tasma-skill";
+  const SECOND_COMMAND = "/plugin install tasma@tasma";
+
+  function installBodies(stub: ReturnType<typeof stubTransport>): unknown[] {
+    return stub.requests.filter(({ path }) => path === INSTALL_PATH).map(({ body }) => body);
+  }
+
+  function installButton(name = INSTALL_WORDS): HTMLElement {
+    return screen.getByRole("button", { name });
+  }
+
+  function descriptionOf(element: HTMLElement): string | null | undefined {
+    return document.getElementById(element.getAttribute("aria-describedby")!)?.textContent;
+  }
+
+  async function press(
+    stub: ReturnType<typeof stubTransport>,
+    reply: TransportReply | Promise<TransportReply>,
+  ): Promise<void> {
+    stub.replies[INSTALL] = reply;
+    await userEvent.click(installButton());
+  }
+
+  async function openFailed(): Promise<ReturnType<typeof stubTransport>> {
+    const { stub } = await openAnswered(SKILL_AND_PROJECT);
+
+    await press(stub, successReply({ result: "failed", output: OUTPUT }));
+    await screen.findByRole("button", { name: AGAIN_WORDS });
+
+    return stub;
+  }
+
+  async function openNoNpx(): Promise<ReturnType<typeof stubTransport>> {
+    const { stub } = await openAnswered(SKILL_AND_PROJECT);
+
+    await press(stub, successReply({ result: "npx-missing" }));
+    await screen.findByRole("button", { name: AGAIN_WORDS });
+
+    return stub;
+  }
+
+  it("shows the install content while the step is to-do, with the owner label and the owner colour of Tasma", async () => {
+    await openAnswered(SKILL_AND_PROJECT);
+
+    expect(isOpen(SKILL)).toBe(true);
+    expect(screen.getByRole("button", { name: `${SKILL}, Tasma does this` })).toBeTruthy();
+    expect(within(trigger(SKILL)).getByText("Tasma does this").className).toContain("text-dim");
+    expect(installButton().className).toContain("bg-text");
+    expect(screen.queryByText(/Tasma downloads the skill/)).toBeNull();
+    expect(screen.queryByText("npx skills add mubinov/tasma-skill -g")).toBeNull();
+    expect(screen.getByRole("link", { name: /^Other ways to install the skill/ })).toBeTruthy();
+  });
+
+  it("describes the install button by the first sentence, and the stop button by the whole text", async () => {
+    await openAnswered(SKILL_AND_PROJECT);
+
+    const first = "If the skill is already in a different folder, Tasma cannot find it, and a second install makes Claude Code load two copies.";
+
+    expect(descriptionOf(installButton())).toBe(first);
+    expect(descriptionOf(screen.getByRole("button", { name: "Stop checking for the skill" })))
+      .toBe(`${first} In that case, stop the check. Tasma then does not check for the skill again, also after a restart.`);
+  });
+
+  it("repeats the POST while the answer is running, is busy, and keeps focus and the element", async () => {
+    const { stub } = await openAnswered(SKILL_AND_PROJECT);
+    const first = heldBack();
+    const second = heldBack();
+    const button = installButton();
+
+    said = [];
+    await press(stub, first.reply);
+
+    expect(installBodies(stub)).toEqual([{}]);
+    expect(installButton(BUSY_WORDS)).toBe(button);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.querySelector("svg.animate-spin.motion-reduce\\:animate-none[aria-hidden=\"true\"]")).not.toBeNull();
+    expect(document.activeElement).toBe(button);
+    expect(screen.getByRole("button", { name: `${SKILL}, ${BUSY_WORDS}` })).toBeTruthy();
+    expect(screen.getByText("Tasma downloads the skill from GitHub. This can take up to 2 minutes.")).toBeTruthy();
+    expect(words()).toEqual([STARTED]);
+
+    stub.replies[INSTALL] = second.reply;
+    await act(async () => {
+      first.answer(successReply({ result: "running", run: "run-1" }));
+    });
+    await waitFor(() => {
+      expect(installBodies(stub)).toEqual([{}, { run: "run-1" }]);
+    });
+
+    expect(words()).toEqual([STARTED]);
+    expect(document.activeElement).toBe(button);
+
+    await act(async () => {
+      second.answer(successReply({ result: "installed" }));
+    });
+  });
+
+  it("does nothing on a press during the run", async () => {
+    const { stub } = await openAnswered(SKILL_AND_PROJECT);
+    const held = heldBack();
+
+    await press(stub, held.reply);
+    said = [];
+    await userEvent.click(installButton(BUSY_WORDS));
+
+    expect(installBodies(stub)).toEqual([{}]);
+    expect(words()).toEqual([]);
+
+    await act(async () => {
+      held.answer(successReply({ result: "installed" }));
+    });
+  });
+
+  it("reads the full status after installed, then shows Done and moves focus to the trigger of step 5", async () => {
+    const { stub } = await openAnswered(SKILL_AND_PROJECT);
+    const read = heldBack();
+    const reads = countReads(stub, FULL);
+
+    stub.replies[FULL] = read.reply;
+    said = [];
+    await press(stub, successReply({ result: "installed" }));
+    await waitFor(() => {
+      expect(reads()).toBeGreaterThan(0);
+    });
+
+    expect(installButton(BUSY_WORDS).getAttribute("aria-disabled")).toBe("true");
+
+    await act(async () => {
+      read.answer(successReply(ONLY_PROJECT));
+    });
+    await waitFor(() => {
+      expect(screen.getByText(SKILL).closest("button")).toBeNull();
+    });
+
+    expect(words()).toEqual([STARTED, `${SKILL}: done.`]);
+    await waitFor(() => {
+      expect(isOpen("Add a project")).toBe(true);
+    });
+    expect(document.activeElement).toBe(trigger("Add a project"));
+  });
+
+  it("shows the output after failed, with Try again filled and with focus", async () => {
+    const stub = await openFailed();
+    const again = installButton(AGAIN_WORDS);
+
+    expect(document.activeElement).toBe(again);
+    expect(again.className).toContain("bg-text");
+    expect(again.getAttribute("aria-disabled")).toBe("false");
+    expect(screen.getByRole("button", { name: `${SKILL}, Cannot install` })).toBeTruthy();
+
+    const box = screen.getByRole("group", { name: OUTPUT_LINE });
+
+    expect(box.textContent).toBe(OUTPUT);
+    expect(box.tagName).toBe("PRE");
+    expect(box.getAttribute("tabindex")).toBe("0");
+    expect(box.className).toContain("max-h-36");
+    expect(words()).toEqual(expect.arrayContaining([STARTED, FAILED]));
+    expect(screen.queryByText(/Tasma downloads the skill/)).toBeNull();
+
+    stub.replies[INSTALL] = heldBack().reply;
+    await userEvent.click(again);
+
+    expect(screen.queryByRole("group", { name: OUTPUT_LINE })).toBeNull();
+    expect(installBodies(stub)).toEqual([{}, {}]);
+  });
+
+  it("goes from Try again to the Copy of the output and then to the output box with Shift+Tab", async () => {
+    await openFailed();
+
+    await userEvent.tab({ shift: true });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Copy" }));
+
+    await userEvent.tab({ shift: true });
+    expect(document.activeElement).toBe(screen.getByRole("group", { name: OUTPUT_LINE }));
+  });
+
+  it("copies the output, and describes its Copy by the line above the output", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    const writeText = vi.fn(() => Promise.resolve());
+
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+
+    const { stub } = await openAnswered(SKILL_AND_PROJECT);
+
+    stub.replies[INSTALL] = successReply({ result: "failed", output: OUTPUT });
+    await user.click(installButton());
+    await screen.findByRole("button", { name: AGAIN_WORDS });
+
+    const copy = screen.getByRole("button", { name: "Copy" });
+
+    expect(descriptionOf(copy)).toBe(OUTPUT_LINE);
+
+    await user.click(copy);
+
+    expect(writeText).toHaveBeenCalledWith(OUTPUT);
+    expect(screen.getByRole("button", { name: "Copied" })).toBeTruthy();
+    expect(words()).toContain("Copied");
+
+    await advance(1600);
+
+    expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
+  });
+
+  it("selects the output when the copy fails, and says how to copy it", async () => {
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: () => Promise.reject(new Error("not allowed")) } });
+    await openFailed();
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy" }));
+
+    expect(await screen.findByRole("button", { name: "Cannot copy" })).toBeTruthy();
+    expect(window.getSelection()?.toString()).toBe(OUTPUT);
+    expect(words()).toContain("Cannot copy. The output is selected. Press Command-C to copy it.");
+  });
+
+  it("shows the two plugin commands after npx-missing, with a plain Try again", async () => {
+    const stub = await openNoNpx();
+    const again = installButton(AGAIN_WORDS);
+
+    expect(again.className).toContain("bg-surface-2");
+    expect(again.className).not.toContain("bg-text");
+    expect(document.activeElement).toBe(again);
+    expect(screen.getByRole("button", { name: `${SKILL}, Cannot install` })).toBeTruthy();
+    expect(screen.getByText(/, which comes with Node\.js\./).textContent).toBe("Tasma cannot find npx, which comes with Node.js.");
+    expect(screen.getByText("To install the skill as a Claude Code plugin, run these commands in Claude Code:")).toBeTruthy();
+    expect(screen.getByText(FIRST_COMMAND)).toBeTruthy();
+    expect(screen.getByText(SECOND_COMMAND)).toBeTruthy();
+    expect(screen.getByText("Or install Node.js, and then select \"Try again\".")).toBeTruthy();
+    expect(words()).toEqual(expect.arrayContaining([STARTED, NO_NPX]));
+
+    const held = heldBack();
+
+    stub.replies[INSTALL] = held.reply;
+    await userEvent.click(again);
+
+    expect(screen.queryByText(FIRST_COMMAND)).toBeNull();
+    expect(installBodies(stub)).toEqual([{}, {}]);
+    expect(again.className).toContain("bg-text");
+  });
+
+  it("describes each Copy of a command box by its command", async () => {
+    await openNoNpx();
+
+    const copies = screen.getAllByRole("button", { name: "Copy" });
+
+    expect(copies.map(descriptionOf)).toEqual([FIRST_COMMAND, SECOND_COMMAND]);
+  });
+
+  it("says the end of the write with step 4 collapsed", async () => {
+    const { stub } = await openAnswered(SKILL_AND_PROJECT);
+    const held = heldBack();
+
+    await press(stub, held.reply);
+    await userEvent.click(trigger(SKILL));
+    expect(isOpen(SKILL)).toBe(false);
+
+    await act(async () => {
+      held.answer(successReply({ result: "failed", output: OUTPUT }));
+    });
+    await waitFor(() => {
+      expect(words()).toContain(FAILED);
+    });
+    expect(screen.getByRole("button", { name: `${SKILL}, Cannot install` })).toBeTruthy();
+
+    await userEvent.click(trigger(SKILL));
+    expect(screen.getByRole("group", { name: OUTPUT_LINE })).toBeTruthy();
+  });
+
+  it("says the end of the write with step 5 open", async () => {
+    const { stub } = await openAnswered(SKILL_AND_PROJECT);
+    const held = heldBack();
+
+    await press(stub, held.reply);
+    await userEvent.click(trigger("Add a project"));
+
+    await act(async () => {
+      held.answer(successReply({ result: "npx-missing" }));
+    });
+    await waitFor(() => {
+      expect(words()).toContain(NO_NPX);
+    });
+    expect(isOpen("Add a project")).toBe(true);
+    expect(isOpen(SKILL)).toBe(false);
+  });
+
+  it("keeps the panel open by hand while step 4 shows a result", async () => {
+    const stub = await openFailed();
+
+    (document.activeElement as HTMLElement).blur();
+    await nextAnswer(stub, successReply(setupStatus({ project: "fail", workflow: "fail" }, { loggedIn: "fail", skill: "fail" })));
+
+    expect(trigger("Log in to Claude Code").getAttribute("aria-current")).toBe("step");
+    expect(isOpen(SKILL)).toBe(true);
+    expect(screen.getByRole("group", { name: OUTPUT_LINE })).toBeTruthy();
+  });
+
+  it("says no end of the write and shows no result after Stop checking for the skill during the run", async () => {
+    const stub = stubTransport({
+      [START]: successReply(startOf(SKILL_AND_PROJECT)),
+      [FULL]: successReply(SKILL_AND_PROJECT),
+      [FULL_SKIPPED]: successReply(setupStatus({ project: "fail", workflow: "fail" }, { skill: "not-run" })),
+    });
+    const held = heldBack();
+
+    await renderWithRouter("/", stub.transport);
+    await waitFor(() => {
+      expect(isOpen(SKILL)).toBe(true);
+    });
+    await press(stub, held.reply);
+    await userEvent.click(screen.getByRole("button", { name: "Stop checking for the skill" }));
+
+    expect(screen.getByRole("button", { name: `${SKILL}, Not checked` })).toBeTruthy();
+
+    said = [];
+    await act(async () => {
+      held.answer(successReply({ result: "failed", output: OUTPUT }));
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: `${SKILL}, Not checked` })).toBeTruthy();
+    });
+    await act(async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 20);
+      });
+    });
+
+    expect(words()).toEqual([]);
+    expect(screen.queryByText(OUTPUT_LINE)).toBeNull();
+  });
+
+  it("goes to Done with no words about a failure when the status read after failed shows pass", async () => {
+    const { stub } = await openAnswered(SKILL_AND_PROJECT);
+
+    stub.replies[FULL] = successReply(ONLY_PROJECT);
+    said = [];
+    await press(stub, successReply({ result: "failed", output: OUTPUT }));
+
+    await waitFor(() => {
+      expect(screen.getByText(SKILL).closest("button")).toBeNull();
+    });
+    expect(words()).not.toContain(FAILED);
+    expect(screen.queryByText(OUTPUT_LINE)).toBeNull();
+  });
+
+  it("does not show the old result when the check fails again after Done", async () => {
+    const stub = await openFailed();
+
+    await nextAnswer(stub, successReply(ONLY_PROJECT));
+    expect(screen.getByText(SKILL).closest("button")).toBeNull();
+
+    await nextAnswer(stub, successReply(SKILL_AND_PROJECT));
+    await userEvent.click(trigger(SKILL));
+
+    expect(screen.getByRole("button", { name: `${SKILL}, Tasma does this` })).toBeTruthy();
+    expect(installButton()).toBeTruthy();
+    expect(screen.queryByText(OUTPUT_LINE)).toBeNull();
+  });
+
+  it("shows the install button again when the read after installed still fails", async () => {
+    const { stub } = await openAnswered(SKILL_AND_PROJECT);
+
+    stub.replies[FULL] = REFUSED;
+    await press(stub, successReply({ result: "installed" }));
+
+    await screen.findByText(READ_FAILED);
+    await waitFor(() => {
+      expect(installButton()).toBeTruthy();
+    });
+    expect(screen.getByRole("button", { name: `${SKILL}, Tasma does this` })).toBeTruthy();
+  });
+
+  it("opens the write notice on a transport failure, shows the install button and says nothing more", async () => {
+    useNoticeStore.setState({ notices: [], dismissed: new Map() });
+
+    const { stub } = await openAnswered(SKILL_AND_PROJECT);
+
+    said = [];
+    await press(stub, { status: 502 });
+
+    await waitFor(() => {
+      expect(useNoticeStore.getState().notices.map(({ title }) => title)).toEqual(["Cannot install the skill"]);
+    });
+    expect(useNoticeStore.getState().notices[0]!.line).toContain("The install can still run.");
+    expect(installButton()).toBeTruthy();
+    expect(screen.getByRole("button", { name: `${SKILL}, Tasma does this` })).toBeTruthy();
+    expect(words()).toHaveLength(2);
+    expect(words()[0]).toBe(STARTED);
+    expect(words()[1]).toMatch(/^Cannot install the skill\. /);
+    useNoticeStore.setState({ notices: [], dismissed: new Map() });
+  });
+
+  describe("the notice of a failed write", () => {
+    const SKIPPED_ANSWER = successReply(setupStatus({ project: "fail", workflow: "fail" }, { skill: "not-run" }));
+
+    function noticeTitles(): string[] {
+      return useNoticeStore.getState().notices.map(({ title }) => title);
+    }
+
+    /**
+     * A read after this comes from the interval: in jsdom, a window focus event
+     * breaks the toast viewport of the open notice.
+     */
+    async function failByTransport(status: SetupStatus = SKILL_AND_PROJECT) {
+      const opened = await openAnswered(status);
+
+      await press(opened.stub, { status: 502 });
+      await waitFor(() => {
+        expect(noticeTitles()).toEqual(["Cannot install the skill"]);
+      });
+
+      return opened;
+    }
+
+    beforeEach(() => {
+      useNoticeStore.setState({ notices: [], dismissed: new Map() });
+    });
+
+    afterEach(() => {
+      useNoticeStore.setState({ notices: [], dismissed: new Map() });
+    });
+
+    it("closes when step 4 changes to Done", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const { stub } = await failByTransport();
+
+      stub.replies[FULL] = successReply(ONLY_PROJECT);
+      await advance(5000);
+
+      await waitFor(() => {
+        expect(screen.getByText(SKILL).closest("button")).toBeNull();
+      });
+      expect(noticeTitles()).toEqual([]);
+    });
+
+    it("closes on Stop checking for the skill", async () => {
+      const { stub } = await failByTransport();
+
+      stub.replies[FULL_SKIPPED] = SKIPPED_ANSWER;
+      await userEvent.click(screen.getByRole("button", { name: "Stop checking for the skill" }));
+
+      expect(noticeTitles()).toEqual([]);
+    });
+
+    it("closes when step 4 changes to Done and the screen closes", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const { stub, router } = await failByTransport(ONLY_SKILL);
+
+      stub.replies[FULL] = successReply(setupStatus());
+      await advance(5000);
+      await advance(1000);
+      await waitFor(() => {
+        expect(router.state.location.pathname).toBe("/tasks");
+      });
+
+      expect(noticeTitles()).toEqual([]);
+    });
+
+    it("does not open when the write fails after Stop checking for the skill", async () => {
+      const { stub } = await openAnswered(SKILL_AND_PROJECT);
+      const held = heldBack();
+
+      stub.replies[FULL_SKIPPED] = SKIPPED_ANSWER;
+      await press(stub, held.reply);
+      await userEvent.click(screen.getByRole("button", { name: "Stop checking for the skill" }));
+
+      await act(async () => {
+        held.answer({ status: 502 });
+        await new Promise((resolve) => {
+          setTimeout(resolve, 20);
+        });
+      });
+
+      expect(screen.getByRole("button", { name: `${SKILL}, Not checked` })).toBeTruthy();
+      expect(noticeTitles()).toEqual([]);
+    });
+  });
+
+  it("does not show the old result when the check fails again before the screen closes", async () => {
+    const { stub } = await openAnswered(ONLY_SKILL);
+
+    await press(stub, successReply({ result: "failed", output: OUTPUT }));
+    await screen.findByRole("button", { name: AGAIN_WORDS });
+    await nextAnswer(stub, successReply(setupStatus()));
+    await nextAnswer(stub, successReply(ONLY_SKILL));
+
+    expect(screen.getByRole("button", { name: `${SKILL}, Tasma does this` })).toBeTruthy();
   });
 });
 

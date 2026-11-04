@@ -1,5 +1,5 @@
 import { Accordion } from "@base-ui/react/accordion";
-import { keepPreviousData, notifyManager, useQuery, type QueryClient } from "@tanstack/react-query";
+import { keepPreviousData, notifyManager, useMutation, useQuery, type QueryClient } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
 import {
   useEffect,
@@ -13,6 +13,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { closeSkillInstallFailure, installSkillOptions } from "../api/mutations";
 import { setupQuery } from "../api/queries";
 import { useDocumentTitle } from "../lib/document-title";
 import {
@@ -26,9 +27,12 @@ import {
   setupNeeded,
   setupSteps,
   stepsNowDone,
+  type SkillInstallState,
   type StepId,
+  type StepState,
 } from "../lib/setup-steps";
 import { focusDropped } from "../lib/use-focus-lost";
+import { skillInstallFailure } from "../lib/write-failure";
 import { useNoticeStore } from "../store/notices";
 import { useUiStore } from "../store/ui";
 import { ScreenHeading } from "./screen-heading";
@@ -47,6 +51,16 @@ const COMPLETE_WORDS = "Setup is complete.";
 const READ_FAILED_WORDS = `Tasma cannot check the steps now. It tries again every ${String(READ_INTERVAL_MS / 1000)} seconds.`;
 
 const STILL_CANNOT_CHECK_WORDS = "Tasma still cannot check this.";
+
+const INSTALL_STARTED_WORDS = "Install in progress. This can take up to 2 minutes.";
+
+function installFailedWords(step: number): string {
+  return `Tasma cannot install the skill. The output is in step ${String(step)}, above the Try again button.`;
+}
+
+function noNpxWords(step: number): string {
+  return `Tasma cannot find npx. The plugin commands are in step ${String(step)}, above the Try again button.`;
+}
 
 function announce(words: string): void {
   useNoticeStore.getState().announce(words);
@@ -124,7 +138,13 @@ export function SetupScreen(): ReactNode {
     placeholderData: keepPreviousData,
   });
 
-  const steps = setupSteps({ status, fullAnswered, fullFailed, skillCheckStopped });
+  // Here and not in the panel, which unmounts when step 4 closes or changes to Done.
+  const install = useMutation(installSkillOptions(queryClient, client));
+  const cannotInstall = install.data?.result === "failed" || install.data?.result === "npx-missing";
+  const skillInstall: SkillInstallState | undefined = install.isPending ? "running" : cannotInstall ? "cannot-install" : undefined;
+
+  const steps = setupSteps({ status, fullAnswered, fullFailed, skillCheckStopped, skillInstall });
+  const skillStep = steps.find(({ id }) => id === "skill")!;
   const current = currentStep(steps);
   const stateKey = steps.map(({ state }) => state).join();
   const doneWords = `${String(doneCount(steps))} of ${String(steps.length)}`;
@@ -192,15 +212,25 @@ export function SetupScreen(): ReactNode {
   const followChange = useEffectEvent(() => {
     const last = lastRef.current;
     const opener = fullAnswered ? current?.id ?? null : null;
+    const nowDone = stepsNowDone(last.steps, steps);
 
     lastRef.current = { steps, fullAnswered, opener };
+
+    // The notice of a failed install sends the user to the install button, which only this state shows.
+    if (skillStep.state !== "to-do") {
+      closeSkillInstallFailure();
+    }
+    // The result of an install goes when its step is done, also if the check fails again later.
+    if (nowDone.some(({ id }) => id === "skill")) {
+      install.reset();
+    }
 
     // The change that closes the screen opens nothing and says nothing.
     if (!needed) {
       return;
     }
 
-    for (const { name } of stepsNowDone(last.steps, steps)) {
+    for (const { name } of nowDone) {
       announce(`${name}: done.`);
     }
     if (fullAnswered && !last.fullAnswered) {
@@ -247,6 +277,16 @@ export function SetupScreen(): ReactNode {
     setOpen(reopens ? current.id : null);
   }
 
+  /** A render holds the state of the answers before it, and an end of a read or a write needs the newest. */
+  function stateNow(step: StepId): StepState | undefined {
+    return setupSteps({
+      status: newestSetup(queryClient),
+      fullAnswered: hasFullAnswer(queryClient),
+      fullFailed: hasFullFailure(queryClient),
+      skillCheckStopped: useUiStore.getState().skillCheckStopped,
+    }).find(({ id }) => id === step)?.state;
+  }
+
   async function checkAgain(step: StepId): Promise<void> {
     if (checking !== null) {
       return;
@@ -256,18 +296,36 @@ export function SetupScreen(): ReactNode {
     const result = await full.refetch({ cancelRefetch: false });
     setChecking(null);
 
-    const stopped = useUiStore.getState().skillCheckStopped;
-    const answer = newestSetup(queryClient);
-    const state = setupSteps({
-      status: answer,
-      fullAnswered: hasFullAnswer(queryClient),
-      fullFailed: hasFullFailure(queryClient),
-      skillCheckStopped: stopped,
-    }).find(({ id }) => id === step)?.state;
+    const state = stateNow(step);
 
-    if (setupNeeded(answer, stopped) && (result.isError || state === "cannot-check" || state === "not-run")) {
+    if (
+      setupNeeded(newestSetup(queryClient), useUiStore.getState().skillCheckStopped)
+      && (result.isError || state === "cannot-check" || state === "not-run")
+    ) {
       announce(STILL_CANNOT_CHECK_WORDS);
     }
+  }
+
+  function startInstall(): void {
+    if (install.isPending) {
+      return;
+    }
+
+    const offered = (): boolean => stateNow("skill") === "to-do";
+
+    announce(INSTALL_STARTED_WORDS);
+    install.mutate({ failure: skillInstallFailure(), offered }, {
+      onSuccess: ({ result }) => {
+        if (!offered()) {
+          return;
+        }
+        if (result === "failed") {
+          announce(installFailedWords(skillStep.number));
+        } else if (result === "npx-missing") {
+          announce(noNpxWords(skillStep.number));
+        }
+      },
+    });
   }
 
   function stopChecking(): void {
@@ -317,6 +375,7 @@ export function SetupScreen(): ReactNode {
               checking={checking === step.id}
               onCheckAgain={() => void checkAgain(step.id)}
               onStop={stopChecking}
+              install={{ state: skillInstall, answer: install.data, onInstall: startInstall }}
               onPressInside={() => {
                 byHandRef.current = true;
               }}

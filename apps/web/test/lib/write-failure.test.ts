@@ -12,6 +12,7 @@ import {
   chatRestartSkippedNotice,
   chatStartFailure,
   pageFailureLine,
+  skillInstallFailure,
 } from "../../src/lib/write-failure";
 
 const CAUSES: Record<FailureKind, { label: string; cause: unknown }> = {
@@ -193,6 +194,26 @@ describe("chatStartFailure", () => {
 
   it.each(CASES)("says whether a chat started for $label", ({ cause, line }) => {
     expect(chatStartFailure("research", "SAGA-3").line(new WriteError(cause))).toBe(line);
+  });
+});
+
+describe("skillInstallFailure", () => {
+  const NO_ANSWER = "Tasma did not get an answer from the daemon. The install can still run. "
+    + "Select \"Install in Claude Code\" to see its result.";
+  const LINES: Record<FailureKind, string> = {
+    refused: "The daemon refused the request.",
+    unanswered: NO_ANSWER,
+    address: NO_ANSWER,
+    unsent: "Tasma could not send the request to the daemon.",
+  };
+  const CASES = KINDS.map((kind) => ({ ...CAUSES[kind], line: LINES[kind] }));
+
+  it("titles the failure", () => {
+    expect(skillInstallFailure().title).toBe("Cannot install the skill");
+  });
+
+  it.each(CASES)("says what happened to the request for $label", ({ cause, line }) => {
+    expect(skillInstallFailure().line(new WriteError(cause))).toBe(line);
   });
 });
 
