@@ -6,21 +6,31 @@ export {
   chatPath,
   chatRecordPath,
   createChat,
+  listAllTaskChats,
   listChats,
-  listProjectChats,
   readChat,
   readListedChat,
   updateChat,
 } from "./chat.js";
 export type { ChatAgent, ChatChange, ChatInput, ChatList, ChatRecord } from "./chat.js";
-export { openChatLog } from "./chat-log.js";
-export type { ChatLog, ChatLogEntry } from "./chat-log.js";
+export { openChatLog, openProjectChatLog } from "./chat-log.js";
+export type { ChatLog, ChatLogEntry, ProjectChatLog } from "./chat-log.js";
 export { errnoOf, TaskStoreError } from "./errors.js";
 export type { TaskStoreErrorCode } from "./errors.js";
 export { locateProject } from "./locate.js";
 export type { LocatedProject, LocateResult } from "./locate.js";
 export { expandRoot } from "./paths.js";
 export type { ProjectPaths } from "./paths.js";
+export {
+  createProjectChat,
+  listProjectChats,
+  projectChatPath,
+  projectChatRecordPath,
+  readListedProjectChat,
+  readProjectChat,
+  updateProjectChat,
+} from "./project-chat.js";
+export type { ProjectChatInput, ProjectChatList, ProjectChatRecord } from "./project-chat.js";
 export { discoverProjects, readProjectDeclaration } from "./projects.js";
 export { createProject, pathMissing, readProject, removeProject, updateProject } from "./registry.js";
 export { renameProject } from "./rename.js";

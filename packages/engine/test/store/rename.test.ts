@@ -17,6 +17,7 @@ import {
   plant,
   plantProject,
   PROJECT,
+  projectChatDir,
   projectConfig,
   projectDir,
   read,
@@ -230,6 +231,20 @@ describe("the chats of a renamed project", () => {
     await expect(read(join(chatDir(root, "1", 1, NEW), "chat.json"))).resolves.toBe('{"step":"build"}\n');
     await expect(read(join(chatDir(root, "1", 1, NEW), "events.jsonl"))).resolves.toBe('{"seq":1}\n');
     expect((await stat(join(chatDir(root, "1", 1, NEW), "events.jsonl"))).ino).toBe(before.ino);
+  });
+
+  it("carry the project chats with the same content and the same inode", async () => {
+    const root = await bareRoot();
+    await planted(root);
+    await plant(join(projectChatDir(root, 1), "chat.json"), '{"title":"Plan"}\n');
+    await plant(join(projectChatDir(root, 1), "events.jsonl"), '{"seq":1}\n');
+    const before = await stat(join(projectChatDir(root, 1), "events.jsonl"));
+
+    await renameProject({ project: PROJECT, root }, { tag: NEW });
+
+    await expect(read(join(projectChatDir(root, 1, NEW), "chat.json"))).resolves.toBe('{"title":"Plan"}\n');
+    await expect(read(join(projectChatDir(root, 1, NEW), "events.jsonl"))).resolves.toBe('{"seq":1}\n');
+    expect((await stat(join(projectChatDir(root, 1, NEW), "events.jsonl"))).ino).toBe(before.ino);
   });
 
   it("leave a project with no chats renaming as before", async () => {

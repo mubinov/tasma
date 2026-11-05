@@ -2,9 +2,9 @@ import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { isRecord } from "../format/values.js";
 import { appendLine, type FileNode, nodeOf, openRegularEntry, sameNode } from "./atomic.js";
-import { chatDirectory, LOG_FILE, openTaskChats, readRecord } from "./chat.js";
+import { chatDirectory, chatPath, LOG_FILE, openTaskChats, readRecord } from "./chat.js";
 import { fail } from "./errors.js";
-import { projectPaths, taskChatsPath } from "./paths.js";
+import { openProjectChats, projectChatPath, projectInputFault } from "./project-chat.js";
 import { now } from "./store.js";
 import type { ProjectOptions, StoreDiagnostic } from "./types.js";
 
@@ -35,6 +35,9 @@ export type ChatLog = {
   /** Points the log at the same chat in a renamed project. */
   relocate(project: string): void;
 };
+
+/** The event log of one chat of a project that belongs to no task. */
+export type ProjectChatLog = Omit<ChatLog, "task">;
 
 const CHUNK = 64 * 1024;
 
@@ -145,33 +148,27 @@ function firstAfter(seqs: readonly number[], after: number): number {
   return low;
 }
 
-class EventLog implements ChatLog {
+type LogFile = { path: string; node: FileNode };
+
+class EventLog implements ProjectChatLog {
   readonly chat: number;
   readonly diagnostics: StoreDiagnostic[];
-  readonly #root: string;
-  readonly #digits: string;
+  readonly #pathIn: (project: string) => string;
   readonly #node: FileNode;
   readonly #ranges: Ranges;
-  #task: string;
   #path: string;
   #unterminated: boolean;
   #broken = false;
   #queue: Promise<unknown> = Promise.resolve();
 
-  constructor(root: string, task: string, chat: number, file: { path: string; node: FileNode }, scanned: Scanned) {
+  constructor(chat: number, pathIn: (project: string) => string, file: LogFile, scanned: Scanned) {
     this.chat = chat;
     this.diagnostics = scanned.diagnostics;
-    this.#root = root;
-    this.#digits = task.slice(task.indexOf("-") + 1);
+    this.#pathIn = pathIn;
     this.#node = file.node;
     this.#ranges = { seqs: scanned.seqs, starts: scanned.starts, ends: scanned.ends };
-    this.#task = task;
     this.#path = file.path;
     this.#unterminated = scanned.unterminated;
-  }
-
-  get task(): string {
-    return this.#task;
   }
 
   get last(): number {
@@ -267,10 +264,49 @@ class EventLog implements ChatLog {
   }
 
   relocate(project: string): void {
-    const task = `${project}-${this.#digits}`;
-    const taskChats = taskChatsPath(projectPaths({ project, root: this.#root }), task);
+    this.#path = this.#pathIn(project);
+  }
+}
+
+class TaskEventLog extends EventLog implements ChatLog {
+  readonly #digits: string;
+  #task: string;
+
+  constructor(root: string, task: string, chat: number, file: LogFile, scanned: Scanned) {
+    const digits = task.slice(task.indexOf("-") + 1);
+    const pathIn = (project: string): string => join(chatPath({ project, root }, `${project}-${digits}`, chat), LOG_FILE);
+    super(chat, pathIn, file, scanned);
+    this.#digits = digits;
     this.#task = task;
-    this.#path = join(taskChats, String(this.chat), LOG_FILE);
+  }
+
+  get task(): string {
+    return this.#task;
+  }
+
+  override relocate(project: string): void {
+    super.relocate(project);
+    this.#task = `${project}-${this.#digits}`;
+  }
+}
+
+/** Opens and reads the log of the chat in `directory`, as `openChatLog` states. */
+async function loadLog<T>(
+  directory: string,
+  onEntry: ((entry: ChatLogEntry) => void) | undefined,
+  build: (file: LogFile, scanned: Scanned) => T,
+): Promise<T> {
+  const path = join(directory, LOG_FILE);
+  const opened = await openRegularEntry(path);
+  if (opened === "absent") fail("chat-unreadable", "this chat has a record but no event log", path);
+  if (opened === "irregular") fail("chat-unreadable", NOT_ONE_FILE, path);
+  try {
+    // `appendLine` refuses a file with a second name, so no open takes one as the log of this chat.
+    if (opened.entry.nlink !== 1) fail("chat-unreadable", NOT_ONE_FILE, path);
+    const file = { path, node: nodeOf(opened.entry) };
+    return build(file, await scanLog(opened.handle, path, onEntry));
+  } finally {
+    await opened.handle.close();
   }
 }
 
@@ -288,16 +324,18 @@ export async function openChatLog(
   const { paths, taskChats } = await openTaskChats(options, task);
   const directory = chatDirectory(taskChats, chat);
   await readRecord(directory);
-  const path = join(directory, LOG_FILE);
-  const opened = await openRegularEntry(path);
-  if (opened === "absent") fail("chat-unreadable", "this chat has a record but no event log", path);
-  if (opened === "irregular") fail("chat-unreadable", NOT_ONE_FILE, path);
-  try {
-    // `appendLine` refuses a file with a second name, so no open takes one as the log of this chat.
-    if (opened.entry.nlink !== 1) fail("chat-unreadable", NOT_ONE_FILE, path);
-    const file = { path, node: nodeOf(opened.entry) };
-    return new EventLog(paths.root, task, chat, file, await scanLog(opened.handle, path, onEntry));
-  } finally {
-    await opened.handle.close();
-  }
+  return loadLog(directory, onEntry, (file, scanned) => new TaskEventLog(paths.root, task, chat, file, scanned));
+}
+
+/** The same, for one chat of a project that belongs to no task. */
+export async function openProjectChatLog(
+  options: ProjectOptions,
+  chat: number,
+  onEntry?: (entry: ChatLogEntry) => void,
+): Promise<ProjectChatLog> {
+  const { paths, projectChats } = await openProjectChats(options);
+  const directory = chatDirectory(projectChats, chat);
+  await readRecord(directory, projectInputFault);
+  const pathIn = (project: string): string => join(projectChatPath({ project, root: paths.root }, chat), LOG_FILE);
+  return loadLog(directory, onEntry, (file, scanned) => new EventLog(chat, pathIn, file, scanned));
 }

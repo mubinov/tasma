@@ -1,7 +1,15 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { pathsUnder, projectPaths, scanTasks, taskChatsPath, taskPath, tempPath } from "../../src/store/paths.js";
+import {
+  pathsUnder,
+  projectChatsPath,
+  projectPaths,
+  scanTasks,
+  taskChatsPath,
+  taskPath,
+  tempPath,
+} from "../../src/store/paths.js";
 import { plant, PROJECT, read, storeFault, tasksDir, taskText, tempRoot } from "./helpers.js";
 
 function paths(root: string) {
@@ -85,6 +93,12 @@ describe("taskChatsPath", () => {
 
   it("reports an id of another project as no task of this project", () => {
     expect(storeFault(() => taskChatsPath(paths("/tmp/tree"), "OTHER-7")).code).toBe("task-not-found");
+  });
+});
+
+describe("projectChatsPath", () => {
+  it("names the directory of the project chats under chats/", () => {
+    expect(projectChatsPath(paths("/tmp/tree"))).toBe("/tmp/tree/projects/SAGA/chats/project");
   });
 });
 

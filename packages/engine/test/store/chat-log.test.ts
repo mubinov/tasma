@@ -1,7 +1,14 @@
-import { appendFile, chmod, link, open as openFile, readFile, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { appendFile, chmod, link, mkdir, open as openFile, readFile, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { type ChatLogEntry, createChat, openChatLog, renameProject } from "@tasma/engine";
+import {
+  type ChatLogEntry,
+  createChat,
+  createProjectChat,
+  openChatLog,
+  openProjectChatLog,
+  renameProject,
+} from "@tasma/engine";
 import { isTimestamp } from "../../src/format/schema.js";
 import {
   CHAT_INPUT,
@@ -11,6 +18,8 @@ import {
   plant,
   project,
   PROJECT,
+  PROJECT_CHAT_INPUT,
+  projectChatDir,
   read,
   storeError,
   tempRoot,
@@ -371,5 +380,84 @@ describe("a chat that moved away", () => {
     expect((await opened.read(0)).map((entry) => entry.event.text)).toEqual(["one", "two", "three"]);
     const reopened = await openChatLog({ project: "NEW", root }, "NEW-1", 1);
     expect(reopened.last).toBe(3);
+  });
+});
+
+describe("the event log of a project chat", () => {
+  /** A tree holding one project chat with no task, and the path of its event log. */
+  async function withProjectChat(): Promise<{ root: string; log: string }> {
+    const root = await tempRoot();
+    await createProjectChat({ project: PROJECT, root }, PROJECT_CHAT_INPUT);
+    return { root, log: join(projectChatDir(root, 1), "events.jsonl") };
+  }
+
+  it("appends and reads, and a second open replays it", async () => {
+    const { root, log } = await withProjectChat();
+    const opened = await openProjectChatLog({ project: PROJECT, root }, 1);
+
+    await opened.append({ text: "one" });
+    await opened.append({ text: "two" });
+
+    expect(opened.chat).toBe(1);
+    expect(opened).not.toHaveProperty("task");
+    expect(seqs(await opened.read(0))).toEqual([1, 2]);
+    expect((await read(log)).trimEnd().split("\n")).toHaveLength(2);
+    const seen: ChatLogEntry[] = [];
+    const again = await openProjectChatLog({ project: PROJECT, root }, 1, (entry) => seen.push(entry));
+    expect(again.last).toBe(2);
+    expect(seen.map((entry) => entry.event.text)).toEqual(["one", "two"]);
+  });
+
+  it("goes on with the next seq in the renamed project once it is relocated", async () => {
+    const { root } = await withProjectChat();
+    const opened = await openProjectChatLog({ project: PROJECT, root }, 1);
+    await opened.append({ text: "one" });
+    await opened.append({ text: "two" });
+
+    await renameProject({ project: PROJECT, root }, { tag: "NEW" });
+
+    expect((await storeError(opened.append({ text: "lost" }))).code).toBe("chat-not-found");
+    opened.relocate("NEW");
+    await expect(opened.append({ text: "three" })).resolves.toMatchObject({ seq: 3 });
+    expect((await opened.read(0)).map((entry) => entry.event.text)).toEqual(["one", "two", "three"]);
+    await expect(read(join(projectChatDir(root, 1, "NEW"), "events.jsonl"))).resolves.toContain('"text":"three"');
+    const reopened = await openProjectChatLog({ project: "NEW", root }, 1);
+    expect(reopened.last).toBe(opened.last);
+  });
+
+  it("refuses a record with no title", async () => {
+    const { root } = await withProjectChat();
+    const record = join(projectChatDir(root, 1), "chat.json");
+    const stored = JSON.parse(await read(record)) as Record<string, unknown>;
+    delete stored.title;
+    await writeFile(record, JSON.stringify(stored));
+
+    expect((await storeError(openProjectChatLog({ project: PROJECT, root }, 1))).code).toBe("chat-unreadable");
+  });
+
+  it.each([
+    ["no log", (log: string) => rm(log)],
+    ["a log with a second name", (log: string) => link(log, `${log}.copy`)],
+  ])("refuses a record with %s", async (_name, build) => {
+    const { root, log } = await withProjectChat();
+    await build(log);
+
+    expect((await storeError(openProjectChatLog({ project: PROJECT, root }, 1))).code).toBe("chat-unreadable");
+  });
+
+  it("refuses a chat that does not exist", async () => {
+    const { root } = await withProjectChat();
+
+    expect((await storeError(openProjectChatLog({ project: PROJECT, root }, 2))).code).toBe("chat-not-found");
+  });
+
+  it("refuses a chats/project that is a symbolic link", async () => {
+    const root = await tempRoot();
+    await plant(join(root, "outside", "1", "chat.json"), JSON.stringify({ ...PROJECT_CHAT_INPUT, created: "2026-01-01T00:00:00+03:00" }));
+    await plant(join(root, "outside", "1", "events.jsonl"), "");
+    await mkdir(chatsDir(root));
+    await symlink(join(root, "outside"), join(chatsDir(root), "project"));
+
+    expect((await storeError(openProjectChatLog({ project: PROJECT, root }, 1))).code).toBe("project-invalid");
   });
 });

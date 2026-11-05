@@ -212,6 +212,14 @@ export function taskChatsPath(paths: ProjectPaths, id: string): string {
 }
 
 /**
+ * The directory of the chats of a project that belong to no task. Its name holds
+ * no digit, so it is never the directory of the chats of a task.
+ */
+export function projectChatsPath(paths: ProjectPaths): string {
+  return join(paths.chats, "project");
+}
+
+/**
  * The temp file one write renames over `target`. It sits in the directory of the
  * target, so the rename stays on one filesystem, and its random component gives
  * each writer a file of its own: under a fixed name two concurrent writers would

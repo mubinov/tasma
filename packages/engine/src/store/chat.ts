@@ -49,7 +49,7 @@ export type ChatChange = { session?: string; options?: Record<string, string>; s
 
 export type ChatList = { chats: ChatRecord[]; diagnostics: StoreDiagnostic[] };
 
-const RECORD_FILE = "chat.json";
+export const RECORD_FILE = "chat.json";
 
 export const LOG_FILE = "events.jsonl";
 
@@ -62,7 +62,7 @@ function chatNumber(name: string): number | undefined {
   return Number.isSafeInteger(number) ? number : undefined;
 }
 
-function isText(value: unknown): value is string {
+export function isText(value: unknown): value is string {
   return typeof value === "string" && value !== "";
 }
 
@@ -71,8 +71,10 @@ function isSeq(value: unknown): value is number {
 }
 
 /** What keeps the fields a create states from making a record, or `undefined` when they make one. */
-function inputFault(value: Record<string, unknown>): string | undefined {
-  if (!isText(value.step)) return '"step" must be a non-empty string';
+export type InputRule = (value: Record<string, unknown>) => string | undefined;
+
+/** The rule for the two fields a chat of a task and a chat of a project both state. */
+export function sharedInputFault(value: Record<string, unknown>): string | undefined {
   if (typeof value.agent !== "string" || !Object.hasOwn(AGENTS, value.agent)) {
     return `"agent" must be one of ${Object.keys(AGENTS).join(", ")}`;
   }
@@ -80,7 +82,12 @@ function inputFault(value: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-function recordFault(value: unknown): string | undefined {
+const taskInputFault: InputRule = (value) => {
+  if (!isText(value.step)) return '"step" must be a non-empty string';
+  return sharedInputFault(value);
+};
+
+function recordFault(value: unknown, inputFault: InputRule): string | undefined {
   if (!isRecord(value)) return "the record of this chat is not a JSON object";
   const fault = inputFault(value);
   if (fault !== undefined) return fault;
@@ -89,20 +96,24 @@ function recordFault(value: unknown): string | undefined {
   return undefined;
 }
 
-function recordOf(task: string, chat: number, stored: Record<string, unknown>): ChatRecord {
-  const record: ChatRecord = {
-    task,
-    chat,
-    step: stored.step as string,
+/** The fields of a record that a chat of a task and a chat of a project share. */
+export type SharedFields = Pick<ChatRecord, "agent" | "folder" | "created" | "session" | "options" | "seen">;
+
+export function sharedFieldsOf(stored: Record<string, unknown>): SharedFields {
+  const fields: SharedFields = {
     agent: stored.agent as ChatAgent,
     folder: stored.folder as string,
     created: stored.created as string,
   };
-  if (stored.session !== undefined) record.session = stored.session as string;
+  if (stored.session !== undefined) fields.session = stored.session as string;
   const options = stringRecord(stored.options);
-  if (options !== undefined) record.options = options;
-  if (isSeq(stored.seen)) record.seen = stored.seen;
-  return record;
+  if (options !== undefined) fields.options = options;
+  if (isSeq(stored.seen)) fields.seen = stored.seen;
+  return fields;
+}
+
+function recordOf(task: string, chat: number, stored: Record<string, unknown>): ChatRecord {
+  return { task, chat, step: stored.step as string, ...sharedFieldsOf(stored) };
 }
 
 function recordText(stored: Record<string, unknown>): string {
@@ -122,9 +133,9 @@ export async function openTaskChats(
 }
 
 /** The directory of one chat. A number that no chat directory can carry names no chat. */
-export function chatDirectory(taskChats: string, chat: number): string {
-  if (!Number.isSafeInteger(chat) || chat < 1) fail("chat-not-found", `${chat} is not a chat number`, taskChats);
-  return join(taskChats, String(chat));
+export function chatDirectory(chats: string, chat: number): string {
+  if (!Number.isSafeInteger(chat) || chat < 1) fail("chat-not-found", `${chat} is not a chat number`, chats);
+  return join(chats, String(chat));
 }
 
 /** The directory of one chat of a task, which a finding about that chat names. */
@@ -142,7 +153,7 @@ export function chatRecordPath(options: ProjectOptions, task: string, chat: numb
  * directory with no record is what an interrupted create leaves, so it is no
  * chat.
  */
-export async function readRecord(directory: string): Promise<Record<string, unknown>> {
+export async function readRecord(directory: string, inputFault = taskInputFault): Promise<Record<string, unknown>> {
   const entry = await entryAt(directory);
   if (entry === undefined) fail("chat-not-found", "there is no chat here", directory);
   if (!entry.isDirectory()) fail("chat-unreadable", "the name of this chat holds no directory", directory);
@@ -156,28 +167,28 @@ export async function readRecord(directory: string): Promise<Record<string, unkn
   } catch (error) {
     fail("chat-unreadable", `the record of this chat is not JSON: ${causeOf(error)}`, path, error);
   }
-  const fault = recordFault(stored);
+  const fault = recordFault(stored, inputFault);
   if (fault !== undefined) fail("chat-unreadable", fault, path);
   return stored as Record<string, unknown>;
 }
 
 /** The highest chat number one directory holds, 0 for none. Every name counts, a broken chat's too. */
-async function highestChat(taskChats: string): Promise<number> {
+async function highestChat(chats: string): Promise<number> {
   let highest = 0;
-  for (const name of await readdir(taskChats)) highest = Math.max(highest, chatNumber(name) ?? 0);
+  for (const name of await readdir(chats)) highest = Math.max(highest, chatNumber(name) ?? 0);
   return highest;
 }
 
 /**
- * Claims the directory of the next chat of a task. A name taken between the
- * read and the create means another writer claimed it, so the read runs again
- * once, and a second collision reaches the caller.
+ * Claims the directory of the next chat in one directory of chats. A name taken
+ * between the read and the create means another writer claimed it, so the read
+ * runs again once, and a second collision reaches the caller.
  */
-export async function claimChat(taskChats: string, readHighest = highestChat): Promise<number> {
+export async function claimChat(chats: string, readHighest = highestChat): Promise<number> {
   for (let attempt = 0; ; attempt += 1) {
-    const chat = (await readHighest(taskChats)) + 1;
+    const chat = (await readHighest(chats)) + 1;
     try {
-      await createExclusiveDirectory(join(taskChats, String(chat)));
+      await createExclusiveDirectory(join(chats, String(chat)));
       return chat;
     } catch (error) {
       if (errnoOf(error) !== "EEXIST" || attempt > 0) throw error;
@@ -186,25 +197,37 @@ export async function claimChat(taskChats: string, readHighest = highestChat): P
 }
 
 /**
- * Creates the next chat of a task. The empty log is written before the record,
- * so every record has a log.
+ * Makes `chats/` and one directory of chats under it. Each directory is checked
+ * before the next one is made under it, so a link put in its place never takes
+ * the create out of the tree.
  */
-export async function createChat(options: ProjectOptions, task: string, input: ChatInput): Promise<ChatRecord> {
-  const { paths, taskChats } = await openTaskChats(options, task);
-  const fault = inputFault(input);
-  if (fault !== undefined) fail("field-required", fault);
-  // Each directory is checked before the next one is made under it, so a link
-  // put in its place never takes the create out of the tree.
+export async function makeChatDirectories(paths: ProjectPaths, chats: string, subject?: string): Promise<void> {
   await makeDirectory(paths.chats);
-  await checkChatDirectories(paths, taskChats);
-  await makeDirectory(taskChats);
-  await checkChatDirectories(paths, taskChats);
-  const chat = await claimChat(taskChats);
-  const directory = join(taskChats, String(chat));
-  const stored = { step: input.step, agent: input.agent, folder: input.folder, created: now() };
+  await checkChatDirectories(paths, chats, subject);
+  await makeDirectory(chats);
+  await checkChatDirectories(paths, chats, subject);
+}
+
+/**
+ * Claims the next chat in one directory of chats and writes it. The empty log is
+ * written before the record, so every record has a log.
+ */
+export async function writeNewChat(chats: string, stored: Record<string, unknown>): Promise<number> {
+  const chat = await claimChat(chats);
+  const directory = join(chats, String(chat));
   await createExclusive(join(directory, LOG_FILE), "");
   await createExclusive(join(directory, RECORD_FILE), recordText(stored));
-  return { task, chat, ...stored };
+  return chat;
+}
+
+/** Creates the next chat of a task. */
+export async function createChat(options: ProjectOptions, task: string, input: ChatInput): Promise<ChatRecord> {
+  const { paths, taskChats } = await openTaskChats(options, task);
+  const fault = taskInputFault(input);
+  if (fault !== undefined) fail("field-required", fault);
+  await makeChatDirectories(paths, taskChats);
+  const stored = { step: input.step, agent: input.agent, folder: input.folder, created: now() };
+  return { task, chat: await writeNewChat(taskChats, stored), ...stored };
 }
 
 export async function readChat(options: ProjectOptions, task: string, chat: number): Promise<ChatRecord> {
@@ -220,12 +243,17 @@ export async function readListedChat(options: ProjectOptions, task: string, chat
 
 async function readListed(directory: string, task: string, chat: number): Promise<ChatRecord> {
   const record = recordOf(task, chat, await readRecord(directory));
+  await checkListedLog(directory);
+  return record;
+}
+
+/** Refuses a chat whose event log no open would take, so a list leaves it out. */
+export async function checkListedLog(directory: string): Promise<void> {
   const log = join(directory, LOG_FILE);
   const entry = await entryAt(log);
   if (entry?.isFile() !== true || entry.nlink !== 1) {
     fail("chat-unreadable", "the event log of this chat is missing, or is not a regular file with one name", log);
   }
-  return record;
 }
 
 /** The finding that leaves one chat out of a list, for a refusal and for a fault of the filesystem alike. */
@@ -241,7 +269,7 @@ export function chatFinding(error: unknown, directory: string): StoreDiagnostic 
  */
 export async function listChats(options: ProjectOptions, task: string): Promise<ChatList> {
   const { taskChats, exists } = await openTaskChats(options, task);
-  return exists ? readChats(taskChats, task) : { chats: [], diagnostics: [] };
+  return exists ? readTaskChats(taskChats, task) : { chats: [], diagnostics: [] };
 }
 
 /**
@@ -250,7 +278,7 @@ export async function listChats(options: ProjectOptions, task: string): Promise<
  * is listed too. A directory of the chats of one task that cannot be read is
  * left out and reported, as one broken chat is.
  */
-export async function listProjectChats(options: ProjectOptions): Promise<ChatList> {
+export async function listAllTaskChats(options: ProjectOptions): Promise<ChatList> {
   const paths = projectPaths(options);
   await openProjectDirectory(paths);
   const list: ChatList = { chats: [], diagnostics: [] };
@@ -268,7 +296,7 @@ export async function listProjectChats(options: ProjectOptions): Promise<ChatLis
 async function readOrReportTaskChats(taskChats: string, task: string): Promise<ChatList> {
   let message;
   try {
-    if ((await entryAt(taskChats))?.isDirectory() === true) return await readChats(taskChats, task);
+    if ((await entryAt(taskChats))?.isDirectory() === true) return await readTaskChats(taskChats, task);
     message = "the name of the chats of this task holds no directory";
   } catch (error) {
     message = `the chats of this task cannot be read: ${causeOf(error)}`;
@@ -276,18 +304,54 @@ async function readOrReportTaskChats(taskChats: string, task: string): Promise<C
   return { chats: [], diagnostics: [{ code: "chat-file-unreadable", message, path: taskChats }] };
 }
 
-async function readChats(taskChats: string, task: string): Promise<ChatList> {
-  const list: ChatList = { chats: [], diagnostics: [] };
-  const numbers = (await readdir(taskChats)).map(chatNumber).filter((chat) => chat !== undefined);
+function readTaskChats(taskChats: string, task: string): Promise<ChatList> {
+  return readChats(taskChats, (directory, chat) => readListed(directory, task, chat));
+}
+
+/**
+ * Every chat of one directory of chats that `read` gives, in chat number order.
+ * A chat that `read` refuses is left out and reported.
+ */
+export async function readChats<T>(
+  chats: string,
+  read: (directory: string, chat: number) => Promise<T>,
+): Promise<{ chats: T[]; diagnostics: StoreDiagnostic[] }> {
+  const list: { chats: T[]; diagnostics: StoreDiagnostic[] } = { chats: [], diagnostics: [] };
+  const numbers = (await readdir(chats)).map(chatNumber).filter((chat) => chat !== undefined);
   for (const chat of numbers.sort((a, b) => a - b)) {
-    const directory = join(taskChats, String(chat));
+    const directory = join(chats, String(chat));
     try {
-      list.chats.push(await readListed(directory, task, chat));
+      list.chats.push(await read(directory, chat));
     } catch (error) {
       list.diagnostics.push(chatFinding(error, directory));
     }
   }
   return list;
+}
+
+/** A change with each field checked, its options holding their string values alone. */
+export function checkChange(change: ChatChange): ChatChange {
+  if (change.session !== undefined && !isText(change.session)) {
+    fail("field-required", '"session" must be a non-empty string');
+  }
+  const options = change.options === undefined ? undefined : stringRecord(change.options);
+  if (change.options !== undefined && options === undefined) fail("field-required", '"options" must be an object');
+  if (change.seen !== undefined && !isSeq(change.seen)) fail("field-required", '"seen" must be a whole number of 0 or more');
+  return { session: change.session, options, seen: change.seen };
+}
+
+/** Writes a checked change onto the record of one chat, which keeps every field and key the change does not name. */
+export async function applyChange(
+  directory: string,
+  change: ChatChange,
+  inputFault?: InputRule,
+): Promise<Record<string, unknown>> {
+  const stored = await readRecord(directory, inputFault);
+  if (change.session !== undefined) stored.session = change.session;
+  if (change.options !== undefined) stored.options = change.options;
+  if (change.seen !== undefined) stored.seen = change.seen;
+  await replaceFile(join(directory, RECORD_FILE), recordText(stored));
+  return stored;
 }
 
 export async function updateChat(
@@ -297,17 +361,6 @@ export async function updateChat(
   change: ChatChange,
 ): Promise<ChatRecord> {
   const { taskChats } = await openTaskChats(options, task);
-  if (change.session !== undefined && !isText(change.session)) {
-    fail("field-required", '"session" must be a non-empty string');
-  }
-  const changedOptions = change.options === undefined ? undefined : stringRecord(change.options);
-  if (change.options !== undefined && changedOptions === undefined) fail("field-required", '"options" must be an object');
-  if (change.seen !== undefined && !isSeq(change.seen)) fail("field-required", '"seen" must be a whole number of 0 or more');
-  const directory = chatDirectory(taskChats, chat);
-  const stored = await readRecord(directory);
-  if (change.session !== undefined) stored.session = change.session;
-  if (changedOptions !== undefined) stored.options = changedOptions;
-  if (change.seen !== undefined) stored.seen = change.seen;
-  await replaceFile(join(directory, RECORD_FILE), recordText(stored));
-  return recordOf(task, chat, stored);
+  const checked = checkChange(change);
+  return recordOf(task, chat, await applyChange(chatDirectory(taskChats, chat), checked));
 }

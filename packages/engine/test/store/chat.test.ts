@@ -8,8 +8,8 @@ import {
   type ChatRecord,
   chatRecordPath,
   createChat,
+  listAllTaskChats,
   listChats,
-  listProjectChats,
   readChat,
   readListedChat,
   removeProject,
@@ -394,7 +394,7 @@ describe("readListedChat", () => {
   });
 });
 
-describe("listProjectChats", () => {
+describe("listAllTaskChats", () => {
   /** The records in one order, because the tasks of a project come in no fixed order. */
   function sorted(records: ChatRecord[]): ChatRecord[] {
     return records.toSorted((a, b) => (a.task === b.task ? a.chat - b.chat : a.task < b.task ? -1 : 1));
@@ -408,7 +408,7 @@ describe("listProjectChats", () => {
     await createChat(options(root), "SAGA-2", CHAT_INPUT);
     await createChat(options(root), "SAGA-007", CHAT_INPUT);
 
-    const listed = await listProjectChats(options(root));
+    const listed = await listAllTaskChats(options(root));
 
     const expected = [];
     for (const task of ["SAGA-007", "SAGA-1", "SAGA-2"]) expected.push(...(await listChats(options(root), task)).chats);
@@ -422,13 +422,13 @@ describe("listProjectChats", () => {
     await createChat(options(root), "SAGA-1", CHAT_INPUT);
     await rm(taskFile(root, "SAGA-1"));
 
-    expect((await listProjectChats(options(root))).chats).toMatchObject([{ task: "SAGA-1", chat: 1 }]);
+    expect((await listAllTaskChats(options(root))).chats).toMatchObject([{ task: "SAGA-1", chat: 1 }]);
   });
 
   it("lists nothing for a project with no chats directory", async () => {
     const root = await withTasks();
 
-    await expect(listProjectChats(options(root))).resolves.toEqual({ chats: [], diagnostics: [] });
+    await expect(listAllTaskChats(options(root))).resolves.toEqual({ chats: [], diagnostics: [] });
   });
 
   it("passes over a name that is no task number or no chat number", async () => {
@@ -441,7 +441,7 @@ describe("listProjectChats", () => {
     await mkdir(join(chatsDir(root), "1", "01"));
     await plant(join(chatsDir(root), "1", "notes.txt"), "not a chat");
 
-    await expect(listProjectChats(options(root))).resolves.toEqual({
+    await expect(listAllTaskChats(options(root))).resolves.toEqual({
       chats: [expect.objectContaining({ task: "SAGA-1", chat: 1 })],
       diagnostics: [],
     });
@@ -455,7 +455,7 @@ describe("listProjectChats", () => {
     await writeFile(join(chatDir(root, "1", 2), "chat.json"), "{");
     await rm(join(chatDir(root, "2", 1), "events.jsonl"));
 
-    const listed = await listProjectChats(options(root));
+    const listed = await listAllTaskChats(options(root));
 
     expect(listed.chats).toMatchObject([{ task: "SAGA-1", chat: 1 }]);
     expect(listed.diagnostics.toSorted((a, b) => (a.path! < b.path! ? -1 : 1))).toEqual([
@@ -481,7 +481,7 @@ describe("listProjectChats", () => {
     await mkdir(join(root, "outside", "1"), { recursive: true });
     await build(root);
 
-    const listed = await listProjectChats(options(root));
+    const listed = await listAllTaskChats(options(root));
 
     expect(listed.chats).toMatchObject([{ task: "SAGA-1", chat: 1 }]);
     expect(listed.diagnostics).toEqual([
@@ -496,7 +496,7 @@ describe("listProjectChats", () => {
     await chmod(join(chatsDir(root), "2"), 0o000);
     onTestFinished(() => chmod(join(chatsDir(root), "2"), 0o700));
 
-    const listed = await listProjectChats(options(root));
+    const listed = await listAllTaskChats(options(root));
 
     expect(listed.chats).toMatchObject([{ task: "SAGA-1", chat: 1 }]);
     expect(listed.diagnostics).toEqual([
@@ -518,13 +518,13 @@ describe("listProjectChats", () => {
     const root = await withTasks();
     await build(root);
 
-    expect((await storeError(listProjectChats(options(root)))).code).toBe("project-invalid");
+    expect((await storeError(listAllTaskChats(options(root)))).code).toBe("project-invalid");
   });
 
   it("refuses a project that does not exist", async () => {
     const root = await withTasks();
 
-    expect((await storeError(listProjectChats({ project: "OTHER", root }))).code).toBe("project-not-found");
+    expect((await storeError(listAllTaskChats({ project: "OTHER", root }))).code).toBe("project-not-found");
   });
 });
 

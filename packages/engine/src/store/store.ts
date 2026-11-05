@@ -269,14 +269,18 @@ function checkStorageDirectory(path: string, entry: Stats | undefined, subject: 
 }
 
 /**
- * `chats/` and the directory of one task's chats under the rule of
+ * `chats/` and one directory of chats in it, checked under the rule of
  * `checkTasksDirectory`, so a recursive delete or an append never leaves the
- * tree. Answers whether the directory of the task's chats stands.
+ * tree. `subject` names that directory in a refusal. Answers whether it stands.
  */
-export async function checkChatDirectories(paths: ProjectPaths, taskChats: string): Promise<boolean> {
+export async function checkChatDirectories(
+  paths: ProjectPaths,
+  chats: string,
+  subject = "the chats directory of this task",
+): Promise<boolean> {
   await checkChatsDirectory(paths);
-  const entry = await entryAt(taskChats);
-  checkStorageDirectory(taskChats, entry, "the chats directory of this task");
+  const entry = await entryAt(chats);
+  checkStorageDirectory(chats, entry, subject);
   return entry !== undefined;
 }
 

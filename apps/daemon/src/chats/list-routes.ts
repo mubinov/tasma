@@ -7,8 +7,8 @@ import { Buffer } from "node:buffer";
 import {
   chatFinding,
   chatPath,
+  listAllTaskChats,
   listChats,
-  listProjectChats,
   openProject,
   openTreeWorkflows,
   readListedChat,
@@ -146,7 +146,7 @@ export function chatListRoutes(options: { root?: string; host: ProjectHost; chat
   async function candidatesOf(tag: string): Promise<Found<Candidate[]>> {
     let listed;
     try {
-      listed = await listProjectChats({ project: tag, root });
+      listed = await listAllTaskChats({ project: tag, root });
     } catch (error) {
       return { found: [], diagnostics: leftOut(tag, error) };
     }

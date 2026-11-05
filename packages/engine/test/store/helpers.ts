@@ -2,7 +2,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { onTestFinished } from "vitest";
-import { type ChatInput, openProject, type Project, type StoreDiagnostic, TaskStoreError } from "@tasma/engine";
+import {
+  type ChatInput,
+  openProject,
+  type Project,
+  type ProjectChatInput,
+  type StoreDiagnostic,
+  TaskStoreError,
+} from "@tasma/engine";
 
 export const PROJECT = "SAGA";
 
@@ -49,8 +56,21 @@ export function chatDir(root: string, digits: string, chat: number, project: str
   return join(chatsDir(root, project), digits, String(chat));
 }
 
+/** The directory of the chats of a project that belong to no task. */
+export function projectChatsDir(root: string, project: string = PROJECT): string {
+  return join(chatsDir(root, project), "project");
+}
+
+/** The directory of one chat of a project that belongs to no task. */
+export function projectChatDir(root: string, chat: number, project: string = PROJECT): string {
+  return join(projectChatsDir(root, project), String(chat));
+}
+
 /** What a create of a chat states, for a test that does not care which chat it makes. */
 export const CHAT_INPUT: ChatInput = { step: "build", agent: "claude", folder: "/srv/saga" };
+
+/** The same for a chat of a project that belongs to no task. */
+export const PROJECT_CHAT_INPUT: ProjectChatInput = { title: "Plan the spring release", agent: "codex", folder: "/srv/saga" };
 
 export function userConfig(root: string): string {
   return join(root, "config.yml");
