@@ -4,8 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { CHAT_CLIENT } from "../../src/api/mutations";
 import { daemonKeys } from "../../src/api/queries";
-import { BAND_HEIGHT, BANDED_ROW_CLASS } from "../../src/components/chat-list-item";
-import { ICON_BUTTON_CLASS } from "../../src/components/control-classes";
+import { BAND_HEIGHT, BANDED_ROW_CLASS, ROW_CLASS } from "../../src/components/chat-list-item";
+import { ICON_BUTTON_CLASS, SCROLL_TO_TOP_CLASS } from "../../src/components/control-classes";
 import { FindShortcut } from "../../src/components/find-shortcut";
 import { STEP_ACTION_SELECTOR } from "../../src/lib/step-action";
 import { useNoticeStore } from "../../src/store/notices";
@@ -265,10 +265,11 @@ describe("the groups", () => {
     expect(active.className).toContain("uppercase");
   });
 
-  it("gives a scroll margin of the height of the band to the item under a band alone", async () => {
+  it("gives each item a scroll margin that clears the button Scroll chats to top, and the item under a band the height of the band as well", async () => {
     await renderDashboard(stubDashboard());
 
-    expect(itemLinks().map((link) => link.className.includes(BANDED_ROW_CLASS))).toEqual([true, false, true]);
+    expect(itemLinks().map((link) => [link.classList.contains(BANDED_ROW_CLASS), link.classList.contains(ROW_CLASS)]))
+      .toEqual([[true, false], [false, true], [true, false]]);
   });
 
   it("shows no band with no active chat", async () => {
@@ -439,6 +440,97 @@ describe("a focused item that leaves the group Active", () => {
       expect(itemLinks()[0]?.getAttribute("data-chat-key")).toBe("ACME-8/1");
     });
     expect(list.top()).toBe(0);
+  });
+});
+
+describe("a new chat above the view", () => {
+  const others = Array.from({ length: 10 }, (_, index) => listItem(`BETA-${String(20 - index)}`, 1, 100 + index));
+
+  function toTop(): HTMLElement | null {
+    return screen.queryByRole("button", { name: "Scroll chats to top" });
+  }
+
+  it("shows at the top under Active when the open chat stops in the same update, and the open chat stays selected under Other chats", async () => {
+    const [acme, open, older] = ITEMS as [ChatListItem, ChatListItem, ChatListItem];
+    const stub = stubDashboard({ "/chats": pageReply([...ITEMS, ...others]) });
+    await renderDashboard(stub, OPEN_PATH);
+    const list = scrollableList();
+    // The open chat, under ACME-7, stays whole in view.
+    list.scrollTo(40);
+
+    stub.replies["/chats"] = pageReply([listItem("ACME-8", 1, 1, NEEDS_YOU), acme, { ...open, status: undefined }, older, ...others]);
+    await stub.send([LIST_EVENT]);
+
+    await waitFor(() => {
+      expect(itemLinks()[0]?.getAttribute("data-chat-key")).toBe("ACME-8/1");
+    });
+    expect(band(/^Active/).closest("li")).toBe(itemLink("ACME-8", 1).closest("li"));
+    expect(band(/^Other chats/).closest("li")).toBe(itemLink("SAGA-3", 2).closest("li"));
+    expect(itemLink("SAGA-3", 2).getAttribute("aria-current")).toBe("page");
+    expect(list.top()).toBe(0);
+  });
+
+  it("shows Scroll chats to top while the list is scrolled, with the look of the control of the task page, before the items in the tab order", async () => {
+    const user = userEvent.setup();
+    await renderDashboard(stubDashboard({ "/chats": pageReply([...ITEMS, ...others]) }));
+    expect(toTop()).toBeNull();
+
+    scrollableList().scrollTo(300);
+
+    const button = toTop()!;
+    expect(button.className).toBe(SCROLL_TO_TOP_CLASS);
+    expect(button.getAttribute("type")).toBe("button");
+    expect(button.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    projectFilter().focus();
+    await user.tab();
+    expect(document.activeElement).toBe(button);
+    await user.tab();
+    expect(document.activeElement).toBe(itemLink("ACME-7", 1));
+  });
+
+  it("returns the list to its top on a click and focuses the first item", async () => {
+    const user = userEvent.setup();
+    await renderDashboard(stubDashboard({ "/chats": pageReply([...ITEMS, ...others]) }), OPEN_PATH);
+    const list = scrollableList();
+    list.scrollTo(300);
+
+    await user.click(toTop()!);
+
+    expect(list.top()).toBe(0);
+    expect(document.activeElement).toBe(itemLink("ACME-7", 1));
+  });
+
+  it("moves the focus to the first item when it goes away with the focus, and the focus then holds the items in view", async () => {
+    const stub = stubDashboard({ "/chats": pageReply([...ITEMS, ...others]) });
+    await renderDashboard(stub, OPEN_PATH);
+    const list = scrollableList();
+    list.scrollTo(300);
+    toTop()!.focus();
+
+    list.scrollTo(0);
+
+    expect(toTop()).toBeNull();
+    expect(document.activeElement).toBe(itemLink("ACME-7", 1));
+
+    stub.replies["/chats"] = pageReply([listItem("ACME-8", 1, 1, NEEDS_YOU), ...ITEMS, ...others]);
+    await stub.send([LIST_EVENT]);
+    await waitFor(() => {
+      expect(itemLinks()[0]?.getAttribute("data-chat-key")).toBe("ACME-8/1");
+    });
+    expect(list.top()).toBeGreaterThan(0);
+  });
+
+  it("goes away with the list while it holds the focus, and the new list takes the focus", async () => {
+    const router = await renderDashboard(stubDashboard());
+    scrollableList().scrollTo(40);
+    toTop()!.focus();
+
+    await navigateSearch(router, { project: "SAGA" });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(itemLink("SAGA-3", 2));
+    });
+    expect(toTop()).toBeNull();
   });
 });
 

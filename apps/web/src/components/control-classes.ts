@@ -42,6 +42,11 @@ export const BUTTON_FILLED_CLASS = `${CONTROL_BASE} border-text bg-text px-3 tex
 export const ICON_BUTTON_CLASS
   = `${CONTROL_BASE} w-8 justify-center border-line bg-surface-2 text-dim hover:border-graphic hover:text-text`;
 
+// The round control that scrolls a page or a list to its top. A control using it carries a text accessible name and
+// an aria-hidden icon. The caller places it.
+export const SCROLL_TO_TOP_CLASS
+  = "flex size-9 items-center justify-center rounded-full border border-line bg-surface text-subtle shadow-float hover:border-graphic hover:text-text";
+
 /*
  * A value of a definition list that opens a menu. Written out rather than laid
  * on `CONTROL_BASE`, whose `min-h-8` would make the row 32px tall, and it takes

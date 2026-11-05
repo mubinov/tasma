@@ -4,6 +4,7 @@ import { ArrowUpIcon } from "../lib/icons";
 import { scrollBehavior } from "../lib/scroll-behavior";
 import { useFocusLost } from "../lib/use-focus-lost";
 import { useNoticeStore } from "../store/notices";
+import { SCROLL_TO_TOP_CLASS } from "./control-classes";
 
 /**
  * The column at the right of the task page, which the control stays to the left of: the sidebar at lg and wider, the
@@ -44,7 +45,7 @@ function Control({ headingRef, column, onFocusLost }: ControlProps): ReactNode {
         window.scrollTo({ top: 0, behavior: scrollBehavior() });
         headingRef.current?.focus({ preventScroll: true });
       }}
-      className={`fixed right-6 bottom-6 z-(--layer-scroll-to-top) flex size-9 items-center justify-center rounded-full border border-line bg-surface text-subtle shadow-float hover:border-graphic hover:text-text ${COLUMN_RIGHT[column]}`}
+      className={`fixed right-6 bottom-6 z-(--layer-scroll-to-top) ${SCROLL_TO_TOP_CLASS} ${COLUMN_RIGHT[column]}`}
     >
       <ArrowUpIcon size={16} aria-hidden="true" />
     </Button>

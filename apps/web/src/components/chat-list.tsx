@@ -1,9 +1,11 @@
+import { Button } from "@base-ui/react/button";
 import { useSuspenseInfiniteQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import { isActiveChat, type ChatListItem as Item, type ProjectSummary } from "@tasma/protocol";
 import { useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { chatListQuery, type ChatFilter } from "../api/queries";
 import { chatKey, chatListItems } from "../lib/chat-list-announcements";
+import { ArrowUpIcon } from "../lib/icons";
 import { searchWords } from "../lib/match-ranges";
 import { filterKey, type FailedFields } from "../lib/use-chat-filter";
 import { useFocusLost } from "../lib/use-focus-lost";
@@ -11,6 +13,7 @@ import { useMinute } from "../lib/use-minute";
 import { usePendingFocus } from "../lib/use-pending-focus";
 import { ChatFilterBar } from "./chat-filter-bar";
 import { BAND_HEIGHT, ChatListItem, type Band } from "./chat-list-item";
+import { SCROLL_TO_TOP_CLASS } from "./control-classes";
 import { RetryButton } from "./retry-button";
 import { VirtualList } from "./virtual-list";
 
@@ -255,8 +258,23 @@ function ChatRows({
         )}
         onEnd={onEnd}
         anchorTop
+        selectedKey={openKey}
+        renderToTop={(goToTop) => <ToTopButton goToTop={goToTop} />}
       />
     </div>
+  );
+}
+
+/** Returns the list to its top. When it goes away while it holds the focus, the first item takes the focus. */
+function ToTopButton({ goToTop }: { goToTop: () => void }): ReactNode {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useFocusLost(buttonRef, goToTop);
+
+  return (
+    <Button ref={buttonRef} type="button" aria-label="Scroll chats to top" onClick={goToTop} className={SCROLL_TO_TOP_CLASS}>
+      <ArrowUpIcon size={16} aria-hidden="true" />
+    </Button>
   );
 }
 

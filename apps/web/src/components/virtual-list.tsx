@@ -17,6 +17,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
+import { scrollBehavior } from "../lib/scroll-behavior";
 import { useFocusLost } from "../lib/use-focus-lost";
 
 type RowKey = string | number;
@@ -43,7 +44,19 @@ type ListName
   /** The scroll region is a tab stop with this name. */
     | { roving?: never; labelledBy?: never; label: string };
 
-type VirtualListProps<T> = ListName & {
+/** `goToTop` focuses the first row, and only a list with `roving` has a row element that takes the focus. */
+type ToTop
+  = | {
+    roving: RovingOptions;
+    /**
+     * Rendered at the top of the part in view while the list is not at its top, and before the rows in the tab
+     * order. `goToTop` scrolls the list to its top and focuses the first row.
+     */
+    renderToTop?: (goToTop: () => void) => ReactNode;
+  }
+  | { roving?: never; renderToTop?: never };
+
+type VirtualListProps<T> = ListName & ToTop & {
   items: readonly T[];
   /**
    * A row's height in pixels before measurement; measured rows override it. A row that first renders above the view
@@ -81,14 +94,28 @@ type VirtualListProps<T> = ListName & {
    */
   onEnd?: () => void;
   /**
-   * Rows that come before the first row in view do not move the rows in view.
-   * At the top of the list, with neither the pointer nor the focus in it, they
-   * show at the top.
+   * Rows that come before the rows in view do not move them while the pointer is in the region, or while the region
+   * holds a focus that no press in it gave. Otherwise a list at its top stays at its top and shows the rows, unless
+   * the row of `selectedKey` is whole in view and would not be whole at the top. A scrolled list keeps the rows in view
+   * in place, unless a new row comes first and the row of `selectedKey` is whole in view, now and at the top: then the
+   * list goes to its top. While the scroll of `goToTop` runs, an update keeps the offset.
    */
   anchorTop?: boolean;
+  /** The row that `anchorTop` keeps whole in view. */
+  selectedKey?: RowKey;
   /** The indexes of rows that render also when they are far from the view, as the row of the tab stop does. */
   keepRendered?: readonly number[];
 };
+
+type FocusTarget = {
+  key: RowKey;
+  /** The focus counts as one that a press gave. */
+  pointer: boolean;
+  preventScroll: boolean;
+};
+
+/** A focus that counts as no press, and scrolls the row into view. */
+const NO_PRESS_FOCUS: Omit<FocusTarget, "key"> = { pointer: false, preventScroll: false };
 
 /** The length of the longest series of `keys` whose indexes in `indexes` increase. A key with no index is skipped. */
 function orderedLength(keys: readonly Key[], indexes: ReadonlyMap<Key, number>): number {
@@ -125,12 +152,26 @@ function moved(last: readonly Key[], indexes: ReadonlyMap<Key, number>, key: Key
     && orderedLength(last.filter((one) => one !== key), indexes) === orderedLength(last, indexes);
 }
 
+/** The keys of the rows of `virtualizer`, which are those of the last render until it gets the rows of this one. */
+function keysOf(virtualizer: Virtualizer<HTMLDivElement, Element>): Key[] {
+  const { count, getItemKey } = virtualizer.options;
+  return Array.from({ length: count }, (_, index) => getItemKey(index));
+}
+
 /** Whether the row at the scroll offset of `virtualizer`, before it gets the list of `indexes`, moves in that list. */
 function offsetRowMoves(virtualizer: Virtualizer<HTMLDivElement, Element>, indexes: ReadonlyMap<Key, number>): boolean {
-  const { count, getItemKey } = virtualizer.options;
   // The offset is set in the first render.
   const row = virtualizer.getVirtualItemForOffset(virtualizer.scrollOffset!);
-  return row !== undefined && moved(Array.from({ length: count }, (_, index) => getItemKey(index)), indexes, row.key);
+  return row !== undefined && moved(keysOf(virtualizer), indexes, row.key);
+}
+
+/** Whether the row of `key` is whole in the part in view of `virtualizer`, before it gets the rows of this render. */
+function wholeInView(virtualizer: Virtualizer<HTMLDivElement, Element>, key: Key): boolean {
+  // A row that is whole in view is rendered.
+  const row = virtualizer.getVirtualItems().find((item) => item.key === key);
+  // The offset is set in the first render, the region in a layout effect.
+  const top = virtualizer.scrollOffset!;
+  return row !== undefined && row.start >= top && row.end <= top + virtualizer.scrollRect!.height;
 }
 
 /** The element of the row at `index` that takes the focus, when the row is rendered. */
@@ -194,6 +235,8 @@ export function VirtualList<T>({
   footer,
   onEnd,
   anchorTop = false,
+  selectedKey,
+  renderToTop,
   keepRendered = [],
 }: VirtualListProps<T>): ReactNode {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -204,12 +247,27 @@ export function VirtualList<T>({
   const indexes = new Map(keys.map((key, index) => [key, index]));
   const [lastFocusedKey, setLastFocusedKey] = useState<RowKey | null>(null);
   // The row the list moves the focus to.
-  const [focusTarget, setFocusTarget] = useState<RowKey | null>(null);
+  const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
   const [atTop, setAtTop] = useState(true);
   const [pointerIn, setPointerIn] = useState(false);
   const [focusIn, setFocusIn] = useState(false);
+  // The focus that the region holds followed a press in it. It does not read `:focus-visible`: a click on a row in
+  // WebKit is a focus by script.
+  const [pointerFocus, setPointerFocus] = useState(false);
   // The element in the region that holds the focus got it from the keyboard.
   const [keyboardFocus, setKeyboardFocus] = useState(false);
+  // A press in the region that no focus, click or exit of the pointer has ended yet.
+  const pressRef = useRef(false);
+  // The element in the region that holds the focus, also while the window is in the background.
+  const heldRef = useRef<EventTarget | null>(null);
+  // The kind of the focus that `takeFocusTarget` gives while it gives it.
+  const pointerTargetRef = useRef(false);
+  // The first pass of a render decides the automatic move to the top: a second pass of StrictMode reads a virtualizer
+  // that already holds the rows of the render.
+  const autoTopRef = useRef(false);
+  // `goToTop` scrolls the list, until the list is at its top or the reader takes the scroll. An update in that time
+  // keeps the offset: the scroll of an anchor stops a smooth scroll.
+  const goingTopRef = useRef(false);
   const lostRef = useRef<RowKey | null>(null);
   const lastKeysRef = useRef<readonly RowKey[]>(keys);
   // The virtualizer, to read before the call that gives it the rows of this render.
@@ -224,6 +282,42 @@ export function VirtualList<T>({
     ? lastFocusedKey
     : preferredKey !== undefined && indexes.has(preferredKey) ? preferredKey : keys[0];
   const stopIndex = roving === undefined || stopKey === undefined ? -1 : indexes.get(stopKey)!;
+
+  // The row at `index` is whole in view in a list at its top. A measured height holds no band that the rows of this
+  // render add, so every row up to it counts at its estimate.
+  function wholeAtTop(index: number, viewport: number): boolean {
+    let end = 0;
+    for (let at = 0; at <= index && end <= viewport; at++) {
+      end += estimateSize(items[at] as T, at);
+    }
+    return end <= viewport;
+  }
+
+  // "end" keeps the rows in view in place, "start" keeps the offset, and "top" is "start" and then a move to the top.
+  function anchorOf(virtualizer: Virtualizer<HTMLDivElement, Element>): "start" | "end" | "top" {
+    if (pointerIn || (focusIn && !pointerFocus)) {
+      return "end";
+    }
+
+    const selected = selectedKey === undefined ? undefined : indexes.get(selectedKey);
+    if (selected === undefined || !wholeInView(virtualizer, keys[selected]!)) {
+      return atTop ? "start" : "end";
+    }
+
+    // The region is measured before `instance` is set.
+    const later = wholeAtTop(selected, virtualizer.scrollRect!.height);
+    if (atTop) {
+      return later ? "start" : "end";
+    }
+    return later && !keysOf(virtualizer).includes(keys[0]!) ? "top" : "end";
+  }
+
+  const anchor = !anchorTop || instance === null
+    ? "start"
+    : autoTopRef.current ? "top" : goingTopRef.current ? "start" : anchorOf(instance);
+  if (anchor === "top") {
+    autoTopRef.current = true;
+  }
 
   // eslint-disable-next-line react-hooks/incompatible-library -- the call stays here so the window follows the scroll
   const virtualizer = useVirtualizer({
@@ -242,11 +336,28 @@ export function VirtualList<T>({
     },
     // "end" keeps the row at the scroll offset in place when rows come before it, and takes the view along when that
     // row moves.
-    anchorTo: anchorTop && (!atTop || pointerIn || focusIn) && !(instance !== null && offsetRowMoves(instance, indexes))
-      ? "end"
-      : "start",
+    anchorTo: anchor === "end" && instance !== null && !offsetRowMoves(instance, indexes) ? "end" : "start",
   });
   const rows = virtualizer.getVirtualItems();
+
+  // A scroll of the virtualizer sets the offset of the region at once, clamped to its content, and the virtualizer
+  // keeps its own offset unclamped. The `scroll` event comes only at the next rendering update, which a window in the
+  // background does not run.
+  const followOffset = useEffectEvent(() => {
+    setAtTop(scrollRef.current!.scrollTop <= 0);
+  });
+
+  // After the effects of `useVirtualizer`, which write the offset of the render. Instant, as the arrival of a row at
+  // the top is: the reader did not ask for this scroll.
+  useLayoutEffect(() => {
+    if (autoTopRef.current) {
+      autoTopRef.current = false;
+      virtualizer.scrollToOffset(0);
+      // `scrollToOffset` sets the offset of the region, and not its own.
+      virtualizer.scrollOffset = 0;
+    }
+    followOffset();
+  });
 
   const keepInstance = useEffectEvent(() => {
     setInstance(virtualizer);
@@ -262,9 +373,23 @@ export function VirtualList<T>({
     return list !== null && row?.parentElement === list ? Number(row.getAttribute("data-index")) : null;
   }
 
-  function focusRow(key: RowKey): void {
+  function focusRow(key: RowKey, how: Omit<FocusTarget, "key"> = NO_PRESS_FOCUS): void {
     setLastFocusedKey(key);
-    setFocusTarget(key);
+    setFocusTarget({ key, ...how });
+  }
+
+  // The button takes no focus on a press in WebKit, and in other engines it takes a focus that ends the press.
+  function goToTop(): void {
+    // A list that unmounts detaches the region before the layout cleanups of the button.
+    const region = scrollRef.current;
+    if (region === null) {
+      return;
+    }
+
+    // At the top, the scroll fires no `scroll` event to end it.
+    goingTopRef.current = region.scrollTop > 0;
+    virtualizer.scrollToOffset(0, { behavior: scrollBehavior() });
+    focusRow(keys[0]!, { pointer: pressRef.current || (focusIn && pointerFocus), preventScroll: true });
   }
 
   function tabIndexOf(index: number): number | undefined {
@@ -289,7 +414,7 @@ export function VirtualList<T>({
 
   const focusOnMount = useEffectEvent(() => {
     if (roving?.focusOnMount === true && stopKey !== undefined) {
-      setFocusTarget(stopKey);
+      setFocusTarget({ key: stopKey, ...NO_PRESS_FOCUS });
     }
   });
 
@@ -336,19 +461,21 @@ export function VirtualList<T>({
   });
 
   // The target is the row of the tab stop, which renders once the virtualizer has measured the scroll region. The
-  // focus then scrolls the row into view, clear of the scroll padding.
+  // focus then scrolls the row into view, clear of the scroll padding, unless the target prevents the scroll.
   const takeFocusTarget = useEffectEvent(() => {
     if (focusTarget === null) {
       return;
     }
 
-    const index = indexes.get(focusTarget);
+    const index = indexes.get(focusTarget.key);
     const element = index === undefined ? null : rowTarget(listRef.current, index);
     if (index !== undefined && element === null) {
       return;
     }
     setFocusTarget(null);
-    element?.focus();
+    pointerTargetRef.current = focusTarget.pointer;
+    element?.focus({ preventScroll: focusTarget.preventScroll });
+    pointerTargetRef.current = false;
   });
 
   useLayoutEffect(() => {
@@ -370,7 +497,7 @@ export function VirtualList<T>({
     }
   });
 
-  function onKeyDown(event: KeyboardEvent<HTMLUListElement>): void {
+  function onRowKeyDown(event: KeyboardEvent<HTMLUListElement>): void {
     const index = rowIndexOf(event.target);
     if (index === null || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
       return;
@@ -405,7 +532,7 @@ export function VirtualList<T>({
   }
 
   // WebKit does not focus a link on a click.
-  function onClick(event: MouseEvent<HTMLUListElement>): void {
+  function onRowClick(event: MouseEvent<HTMLUListElement>): void {
     const index = rowIndexOf(event.target);
     const target = index === null ? null : rowTarget(listRef.current, index);
     if (target !== null && target.contains(event.target as Node) && document.activeElement !== target) {
@@ -437,22 +564,59 @@ export function VirtualList<T>({
       className={className}
       style={{ overflow: "auto", height }}
       onScroll={(event) => {
-        setAtTop(event.currentTarget.scrollTop <= 0);
+        const reachedTop = event.currentTarget.scrollTop <= 0;
+        setAtTop(reachedTop);
+        if (reachedTop) {
+          goingTopRef.current = false;
+        }
+      }}
+      onWheel={() => {
+        goingTopRef.current = false;
+      }}
+      onKeyDown={() => {
+        goingTopRef.current = false;
       }}
       onPointerEnter={() => {
         setPointerIn(true);
       }}
       onPointerLeave={() => {
         setPointerIn(false);
+        pressRef.current = false;
+      }}
+      onPointerDown={() => {
+        pressRef.current = true;
+        goingTopRef.current = false;
+      }}
+      // After the click handlers of a row and of the button, which read the press.
+      onClick={() => {
+        pressRef.current = false;
       }}
       onFocus={(event) => {
+        // A focus on the element that the region holds, as when the window comes back from the background, keeps its
+        // kind.
+        if (event.target !== heldRef.current) {
+          heldRef.current = event.target;
+          setPointerFocus(pressRef.current || pointerTargetRef.current);
+        }
+        pressRef.current = false;
         setFocusIn(true);
         setKeyboardFocus(event.target.matches(":focus-visible"));
       }}
       onBlur={(event) => {
-        setFocusIn(event.currentTarget.contains(event.relatedTarget));
+        // A window that goes to the background blurs the element and keeps it active.
+        const kept = event.currentTarget.contains(event.relatedTarget) || document.activeElement === event.target;
+        setFocusIn(kept);
+        if (!kept) {
+          heldRef.current = null;
+        }
       }}
     >
+      {renderToTop !== undefined && !atTop && (
+        // No height, so the rows keep their place when the button comes or goes.
+        <div className="sticky top-2 z-(--layer-scroll-to-top) flex h-0 items-start justify-center">
+          {renderToTop(goToTop)}
+        </div>
+      )}
       {/*
        * Both roles are stated rather than inherited: list-style: none drops the
        * list role in WebKit, and only a window of rows is in the DOM, so the
@@ -464,7 +628,7 @@ export function VirtualList<T>({
         aria-labelledby={roving === undefined ? undefined : labelledBy}
         className="relative m-0 list-none p-0"
         style={{ height: `${virtualizer.getTotalSize()}px` }}
-        {...(roving === undefined ? {} : { onKeyDown, onClick, onFocus: onRowFocus })}
+        {...(roving === undefined ? {} : { onKeyDown: onRowKeyDown, onClick: onRowClick, onFocus: onRowFocus })}
       >
         {rows.map((row) => (
           <Row

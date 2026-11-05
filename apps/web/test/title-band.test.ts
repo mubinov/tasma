@@ -59,10 +59,16 @@ it("reads a .ts file as TypeScript, where angle brackets open no JSX", () => {
   }
 });
 
+/** Boxes that stick to the top of a scroll region of their own, which sits below the band, and not of the window. */
+const STICKY_IN_A_REGION = new Set([
+  "components/virtual-list.tsx: \"sticky top-2 z-(--layer-scroll-to-top) flex h-0 items-start justify-center\"",
+]);
+
 it("names the band in each class string that reaches the top of the window", () => {
   const files = tasmaSourceFiles();
   const offenders = files.flatMap((file) =>
-    withoutBand(readFileSync(file, "utf8"), file).map((literal) => `${relative(SRC, file)}: ${literal}`));
+    withoutBand(readFileSync(file, "utf8"), file).map((literal) => `${relative(SRC, file)}: ${literal}`))
+    .filter((offender) => !STICKY_IN_A_REGION.has(offender));
 
   expect(files.length).toBeGreaterThan(0);
   expect(offenders).toEqual([]);

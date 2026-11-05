@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PageVirtualList, VirtualList } from "../../src/components/virtual-list";
-import { stubFocusVisible, stubResizeObservers, stubScrollIntoView } from "../helpers";
+import { stubFocusVisible, stubReducedMotion, stubResizeObservers, stubScrollIntoView } from "../helpers";
 
 const ROW_HEIGHT = 32;
 const rows = Array.from({ length: 500 }, (_, index) => `row ${index}`);
@@ -167,6 +167,11 @@ function scrollable(element: HTMLElement) {
   };
 }
 
+/** The scroll region of the list in `container`. */
+function regionOf(container: HTMLElement): HTMLElement {
+  return container.querySelector<HTMLElement>("ul")!.parentElement!;
+}
+
 describe("onEnd", () => {
   it("is called when the end of the rows is one list height or less below the part in view", () => {
     const onEnd = vi.fn();
@@ -203,11 +208,22 @@ type RovingProps = {
   anchorTop?: boolean;
   footer?: ReactNode;
   height?: number;
+  selectedKey?: string;
+  /** Renders a button "Top" that calls `goToTop`. */
+  toTop?: boolean;
 };
 
-function rovingList(
-  { items = rows, preferredKey, focusOnMount, onEnd, anchorTop, footer, height = 320 }: RovingProps = {},
-) {
+function rovingList({
+  items = rows,
+  preferredKey,
+  focusOnMount,
+  onEnd,
+  anchorTop,
+  footer,
+  height = 320,
+  selectedKey,
+  toTop = false,
+}: RovingProps = {}) {
   return (
     <>
       <button type="button">Before</button>
@@ -223,6 +239,8 @@ function rovingList(
         onEnd={onEnd}
         anchorTop={anchorTop}
         footer={footer}
+        selectedKey={selectedKey}
+        renderToTop={toTop ? (goToTop) => <button type="button" onClick={goToTop}>Top</button> : undefined}
       />
     </>
   );
@@ -687,10 +705,6 @@ describe("footer", () => {
     vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(() => END + footerHeight);
   });
 
-  function regionOf(container: HTMLElement): HTMLElement {
-    return container.querySelector("ul")!.parentElement!;
-  }
-
   it("scrolls the region to its end when the footer grows while the end of the rows is in view", () => {
     const { container, rerender } = render(rovingList({ footer: <p /> }));
     const region = scrollable(regionOf(container));
@@ -738,13 +752,9 @@ describe("anchorTop", () => {
   const anchored = (items: readonly string[]) => rovingList({ items, anchorTop: true });
   const added = ["new 1", "new 0", ...rows];
 
-  function regionOf(container: HTMLElement) {
-    return scrollable(container.querySelector<HTMLElement>("ul")!.parentElement!);
-  }
-
   it("shows rows that come first at the top while the list is at its top, with neither the pointer nor the focus in it", () => {
     const { container, rerender } = render(anchored(rows));
-    const region = regionOf(container);
+    const region = scrollable(regionOf(container));
 
     rerender(anchored(added));
 
@@ -754,7 +764,7 @@ describe("anchorTop", () => {
 
   it("keeps the rows in view in place when rows come first while the list is scrolled", () => {
     const { container, rerender } = render(anchored(rows));
-    const region = regionOf(container);
+    const region = scrollable(regionOf(container));
     region.scrollTo(320);
 
     rerender(anchored(added));
@@ -764,8 +774,9 @@ describe("anchorTop", () => {
 
   it("keeps the rows in view in place when rows come first while the pointer is in the list", () => {
     const { container, rerender } = render(anchored(rows));
-    const region = regionOf(container);
-    fireEvent.pointerEnter(container.querySelector("ul")!.parentElement!);
+    const element = regionOf(container);
+    const region = scrollable(element);
+    fireEvent.pointerEnter(element);
 
     rerender(anchored(added));
 
@@ -774,7 +785,7 @@ describe("anchorTop", () => {
 
   it("keeps the rows in view in place when rows come first while the focus is in the list, and not after the focus leaves", () => {
     const { container, rerender } = render(anchored(rows));
-    const region = regionOf(container);
+    const region = scrollable(regionOf(container));
     link("row 0").focus();
 
     rerender(anchored(added));
@@ -793,7 +804,7 @@ describe("anchorTop", () => {
       return selectors === ":hover" ? this.tagName === "DIV" : matches.call(this, selectors);
     });
     const { container, rerender } = render(anchored(rows));
-    const region = regionOf(container);
+    const region = scrollable(regionOf(container));
 
     rerender(anchored(added));
 
@@ -810,8 +821,9 @@ describe("anchorTop", () => {
     }],
   ])("keeps the view when the first row in view goes to a later place while %s is in the list", (_case, enter) => {
     const { container, rerender } = render(anchored(rows));
-    const region = regionOf(container);
-    enter(container.querySelector<HTMLElement>("ul")!.parentElement!);
+    const element = regionOf(container);
+    const region = scrollable(element);
+    enter(element);
 
     rerender(anchored([...rows.slice(1, 11), "row 0", ...rows.slice(11)]));
 
@@ -820,8 +832,9 @@ describe("anchorTop", () => {
 
   it("keeps the view when the first row in view and the row after it change places while the pointer is in the list", () => {
     const { container, rerender } = render(anchored(rows));
-    const region = regionOf(container);
-    fireEvent.pointerEnter(container.querySelector("ul")!.parentElement!);
+    const element = regionOf(container);
+    const region = scrollable(element);
+    fireEvent.pointerEnter(element);
 
     rerender(anchored(["row 1", "row 0", ...rows.slice(2)]));
 
@@ -830,8 +843,9 @@ describe("anchorTop", () => {
 
   it("keeps the rows after the first row in view in place when it goes to a later place and a row comes first", () => {
     const { container, rerender } = render(anchored(rows));
-    const region = regionOf(container);
-    fireEvent.pointerEnter(container.querySelector("ul")!.parentElement!);
+    const element = regionOf(container);
+    const region = scrollable(element);
+    fireEvent.pointerEnter(element);
 
     rerender(anchored(["new 0", ...rows.slice(1, 11), "row 0", ...rows.slice(11)]));
 
@@ -841,7 +855,7 @@ describe("anchorTop", () => {
 
   it("moves the rows below the first row in view up when it goes to a later place while the list is scrolled", () => {
     const { container, rerender } = render(anchored(rows));
-    const region = regionOf(container);
+    const region = scrollable(regionOf(container));
     region.scrollTo(320);
 
     rerender(anchored([...rows.slice(0, 10), ...rows.slice(11, 21), "row 10", ...rows.slice(21)]));
@@ -851,7 +865,7 @@ describe("anchorTop", () => {
 
   it("keeps the rows in view in place when a row above the view goes past the first row in view", () => {
     const { container, rerender } = render(anchored(rows));
-    const region = regionOf(container);
+    const region = scrollable(regionOf(container));
     region.scrollTo(320);
 
     rerender(anchored([...rows.slice(1, 16), "row 0", ...rows.slice(16)]));
@@ -861,8 +875,8 @@ describe("anchorTop", () => {
 
   it("shows rows that come first at the top again after the pointer leaves", () => {
     const { container, rerender } = render(anchored(rows));
-    const region = regionOf(container);
-    const element = container.querySelector("ul")!.parentElement!;
+    const element = regionOf(container);
+    const region = scrollable(element);
     fireEvent.pointerEnter(element);
     fireEvent.pointerLeave(element);
 
@@ -873,12 +887,479 @@ describe("anchorTop", () => {
 
   it("does not anchor without anchorTop", () => {
     const { container, rerender } = render(rovingList({ items: rows }));
-    const region = regionOf(container);
+    const region = scrollable(regionOf(container));
     region.scrollTo(320);
 
     rerender(rovingList({ items: added }));
 
     expect(region.top()).toBe(320);
+  });
+});
+
+/*
+ * Ten rows of 32px are in view. A list scrolled by one row shows "row 1" to "row 10" whole, and a new row that comes
+ * first moves the rows in view down by one row, to the offset 64, when they hold their place.
+ */
+describe("selectedKey and renderToTop", () => {
+  const added = ["new 0", ...rows];
+  const list = (items: readonly string[], selectedKey?: string) =>
+    rovingList({ items, anchorTop: true, selectedKey, toTop: true });
+
+  function topButton(): HTMLElement | null {
+    return screen.queryByRole("button", { name: "Top" });
+  }
+
+  function firstRow(): string | null {
+    return screen.getAllByRole("listitem")[0]!.textContent;
+  }
+
+  /** A list scrolled by one row. `update` gives it a new row that comes first. */
+  function scrolledList(selectedKey?: string) {
+    const view = render(list(rows, selectedKey));
+    const region = scrollable(regionOf(view.container));
+    region.scrollTo(ROW_HEIGHT);
+    return {
+      ...view,
+      region,
+      update: () => {
+        view.rerender(list(added, selectedKey));
+      },
+    };
+  }
+
+  /** A window in the background runs no rendering update, so a scroll of the region fires no `scroll` event. */
+  function withoutScrollEvents(element: HTMLElement): void {
+    element.scrollTo = ((options: ScrollToOptions) => {
+      element.scrollTop = options.top!;
+    }) as typeof element.scrollTo;
+  }
+
+  /** Gives the element a scroll offset that stays inside its content. A scroll that does not move it fires no event. */
+  function clamping(element: HTMLElement) {
+    let top = 0;
+    const clamp = (value: number) =>
+      Math.min(Math.max(value, 0), Math.max(Number.parseFloat(screen.getByRole("list").style.height) - 320, 0));
+    Object.defineProperty(element, "scrollTop", {
+      configurable: true,
+      get: () => top,
+      set: (value: number) => {
+        top = clamp(value);
+      },
+    });
+    element.scrollTo = ((options: ScrollToOptions) => {
+      const next = clamp(options.top!);
+      if (next !== top) {
+        top = next;
+        element.dispatchEvent(new Event("scroll"));
+      }
+    }) as typeof element.scrollTo;
+
+    return { top: () => top };
+  }
+
+  describe("a list at its top", () => {
+    it("keeps the rows in view in place while the pointer is in the list, and shows the button", () => {
+      const { container, rerender } = render(list(rows, "row 2"));
+      const region = scrollable(regionOf(container));
+      fireEvent.pointerEnter(regionOf(container));
+
+      rerender(list(added, "row 2"));
+
+      expect(region.top()).toBe(ROW_HEIGHT);
+      expect(topButton()).not.toBeNull();
+    });
+
+    it("keeps the rows in view in place when the selected row is whole in view and would not be whole at the top", () => {
+      const { container, rerender } = render(list(rows, "row 9"));
+      const region = scrollable(regionOf(container));
+
+      rerender(list(added, "row 9"));
+
+      expect(region.top()).toBe(ROW_HEIGHT);
+      expect(topButton()).not.toBeNull();
+    });
+
+    it("shows the button and counts as scrolled for the next update when the rows that hold their place fire no scroll event", () => {
+      const { container, rerender } = render(list(rows, "row 3"));
+      const region = scrollable(regionOf(container));
+      withoutScrollEvents(regionOf(container));
+      fireEvent.pointerEnter(regionOf(container));
+
+      rerender(list(added, "row 3"));
+      expect(region.top()).toBe(ROW_HEIGHT);
+      expect(topButton()).not.toBeNull();
+
+      fireEvent.pointerLeave(regionOf(container));
+      rerender(list(["new 1", ...added], "row 3"));
+      expect(region.top()).toBe(0);
+    });
+
+    it("shows no button when the rows that hold their place fit the region, and stays at its top once they do not", () => {
+      const few = rows.slice(0, 3);
+      const { container, rerender } = render(list(few));
+      const region = clamping(regionOf(container));
+      fireEvent.pointerEnter(regionOf(container));
+
+      rerender(list(["new 0", ...few]));
+      expect(region.top()).toBe(0);
+      expect(topButton()).toBeNull();
+
+      fireEvent.pointerLeave(regionOf(container));
+      rerender(list(["new 1", ...added]));
+      expect(region.top()).toBe(0);
+      expect(firstRow()).toBe("new 1");
+    });
+
+    it.each([
+      ["no row is selected", added, undefined],
+      ["the selected row stays whole in view", added, "row 2"],
+      ["the selected row is not whole in view", added, "row 20"],
+      ["the selected row leaves the list", ["new 0", ...rows.filter((row) => row !== "row 9")], "row 9"],
+    ])("stays at its top and shows the new rows when %s", (_case, items, selectedKey) => {
+      const { container, rerender } = render(list(rows, selectedKey));
+      const region = scrollable(regionOf(container));
+
+      rerender(list(items, selectedKey));
+
+      expect(region.top()).toBe(0);
+      expect(firstRow()).toBe("new 0");
+      expect(topButton()).toBeNull();
+    });
+  });
+
+  describe("a scrolled list", () => {
+    it("goes to its top when a new row comes first and the selected row is whole in view, now and at the top", () => {
+      const { region, update } = scrolledList("row 3");
+
+      update();
+
+      expect(region.top()).toBe(0);
+      expect(firstRow()).toBe("new 0");
+      expect(topButton()).toBeNull();
+      expect(document.activeElement).toBe(document.body);
+    });
+
+    it("is at its top for the next update when the move to the top fires no scroll event", () => {
+      const { container, rerender, region, update } = scrolledList("row 3");
+      withoutScrollEvents(regionOf(container));
+
+      update();
+      expect(region.top()).toBe(0);
+      expect(topButton()).toBeNull();
+
+      fireEvent.pointerEnter(regionOf(container));
+      rerender(list(["new 1", ...added], "row 3"));
+      expect(region.top()).toBe(ROW_HEIGHT);
+    });
+
+    it("reads the height of a row that a resize measured before the update", () => {
+      const observers = stubResizeObservers();
+      const { region, update } = scrolledList("row 8");
+      const grown = screen.getByText("row 7").closest("li")!;
+      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+        return this === grown ? 4 * ROW_HEIGHT : this.tagName === "LI" ? ROW_HEIGHT : Number.parseFloat(this.style.height);
+      });
+
+      // "row 8" goes below the view, and the list renders the resize and the update together.
+      act(() => {
+        observers.report(grown);
+        update();
+      });
+
+      expect(region.top()).toBe(2 * ROW_HEIGHT);
+    });
+
+    it("goes to its top in StrictMode", () => {
+      const { container, rerender } = render(list(rows, "row 3"), { reactStrictMode: true });
+      const region = scrollable(regionOf(container));
+      region.scrollTo(ROW_HEIGHT);
+
+      rerender(list(added, "row 3"));
+
+      expect(region.top()).toBe(0);
+      expect(firstRow()).toBe("new 0");
+    });
+
+    it("keeps the rows in view in place while the pointer is in the list", () => {
+      const { container, rerender, region } = scrolledList("row 3");
+      fireEvent.pointerEnter(regionOf(container));
+
+      rerender(list(added, "row 3"));
+
+      expect(region.top()).toBe(2 * ROW_HEIGHT);
+    });
+
+    it.each([
+      ["no row is selected", added, undefined, 2 * ROW_HEIGHT],
+      ["the selected row is not whole in view", added, "row 0", 2 * ROW_HEIGHT],
+      ["the selected row would not be whole at the top", added, "row 9", 2 * ROW_HEIGHT],
+      ["the selected row leaves the list", ["new 0", ...rows.filter((row) => row !== "row 3")], "row 3", 2 * ROW_HEIGHT],
+      ["a row comes at the end", [...rows, "new 0"], "row 3", ROW_HEIGHT],
+      ["a row of the list moves to the first place", ["row 5", ...rows.filter((row) => row !== "row 5")], "row 3", 2 * ROW_HEIGHT],
+    ])("keeps the rows in view in place when %s", (_case, items, selectedKey, top) => {
+      const { rerender, region } = scrolledList(selectedKey);
+
+      rerender(list(items, selectedKey));
+
+      expect(region.top()).toBe(top);
+      expect(topButton()).not.toBeNull();
+    });
+  });
+
+  describe("the inputs that hold the rows in view", () => {
+    it("counts the pointer on the button", () => {
+      const { region, update } = scrolledList("row 3");
+      fireEvent.pointerEnter(topButton()!);
+
+      update();
+
+      expect(region.top()).toBe(2 * ROW_HEIGHT);
+    });
+
+    it("counts a keyboard focus on the button", () => {
+      const { region, update } = scrolledList("row 3");
+      topButton()!.focus();
+
+      update();
+
+      expect(region.top()).toBe(2 * ROW_HEIGHT);
+    });
+
+    it.each([true, false])("counts a focus with no press, with :focus-visible %s", (visible) => {
+      const { region, update } = scrolledList("row 3");
+      stubFocusVisible(visible);
+      link("row 3").focus();
+
+      update();
+
+      expect(region.top()).toBe(2 * ROW_HEIGHT);
+    });
+
+    it.each([true, false])("does not count a focus that follows a press, with :focus-visible %s, and keeps it", (visible) => {
+      const { region, update } = scrolledList("row 3");
+      stubFocusVisible(visible);
+      fireEvent.pointerDown(link("row 3"));
+      link("row 3").focus();
+
+      update();
+
+      expect(region.top()).toBe(0);
+      expect(document.activeElement).toBe(link("row 3"));
+    });
+
+    it("does not count the focus of a click on a row that the click does not focus", () => {
+      const { region, update } = scrolledList("row 3");
+      fireEvent.pointerDown(link("row 3"));
+      fireEvent.click(link("row 3"));
+      expect(document.activeElement).toBe(link("row 3"));
+
+      update();
+
+      expect(region.top()).toBe(0);
+    });
+
+    it.each([
+      ["a click", (element: HTMLElement) => {
+        fireEvent.click(element);
+      }],
+      ["the exit of the pointer", (element: HTMLElement) => {
+        fireEvent.pointerLeave(element);
+      }],
+    ])("counts a focus after a press that %s ended", (_case, end) => {
+      const { container, region, update } = scrolledList("row 3");
+      fireEvent.pointerDown(screen.getByRole("list"));
+      end(regionOf(container));
+      link("row 3").focus();
+
+      update();
+
+      expect(region.top()).toBe(2 * ROW_HEIGHT);
+    });
+
+    it("counts a focus with no press that stays active while the window is in the background", () => {
+      const { region, update } = scrolledList("row 3");
+      link("row 3").focus();
+      fireEvent.blur(link("row 3"));
+
+      update();
+
+      expect(region.top()).toBe(2 * ROW_HEIGHT);
+    });
+
+    it("keeps the kind of a focus that followed a press when the window comes back from the background", () => {
+      const { region, update } = scrolledList("row 3");
+      fireEvent.pointerDown(link("row 3"));
+      link("row 3").focus();
+      fireEvent.blur(link("row 3"));
+      fireEvent.focus(link("row 3"));
+
+      update();
+
+      expect(region.top()).toBe(0);
+    });
+
+    it("counts a focus with no press on the element that a press focused, after the focus left the list", () => {
+      const { region, update } = scrolledList("row 3");
+      fireEvent.pointerDown(link("row 3"));
+      link("row 3").focus();
+      screen.getByRole("button", { name: "Before" }).focus();
+      link("row 3").focus();
+
+      update();
+
+      expect(region.top()).toBe(2 * ROW_HEIGHT);
+    });
+
+    it("follows the pointer after the button goes away under it", () => {
+      const { container, region, rerender, update } = scrolledList("row 3");
+      fireEvent.pointerEnter(topButton()!);
+      region.scrollTo(0);
+      expect(topButton()).toBeNull();
+
+      update();
+      expect(region.top()).toBe(ROW_HEIGHT);
+
+      fireEvent.pointerLeave(regionOf(container));
+      region.scrollTo(0);
+      rerender(list(["new 1", ...added], "row 3"));
+      expect(region.top()).toBe(0);
+    });
+  });
+
+  describe("the button", () => {
+    it("shows while the list is not at its top, before the rows in the tab order, over the rows with no height", async () => {
+      const user = userEvent.setup();
+      const { container } = render(list(rows));
+      const region = scrollable(regionOf(container));
+      expect(topButton()).toBeNull();
+
+      region.scrollTo(ROW_HEIGHT);
+
+      const wrapper = topButton()!.parentElement!;
+      expect(wrapper.nextElementSibling).toBe(screen.getByRole("list"));
+      for (const name of ["sticky", "top-2", "z-(--layer-scroll-to-top)", "h-0", "justify-center"]) {
+        expect(wrapper.classList.contains(name), name).toBe(true);
+      }
+      screen.getByRole("button", { name: "Before" }).focus();
+      await user.tab();
+      expect(document.activeElement).toBe(topButton());
+      await user.tab();
+      expect(document.activeElement).toBe(link("row 0"));
+    });
+
+    it.each([
+      { reduce: false, behavior: "smooth" },
+      { reduce: true, behavior: "auto" },
+    ])("scrolls to the top with behavior $behavior, and focuses the first row once it renders, with no scroll", async ({ reduce, behavior }) => {
+      const user = userEvent.setup();
+      stubReducedMotion(reduce);
+      // The row of the tab stop renders far from the view.
+      const { container } = render(rovingList({ preferredKey: "row 300", anchorTop: true, toTop: true }));
+      const element = regionOf(container);
+      const region = scrollable(element);
+      region.scrollTo(8000);
+      expect(screen.queryByText("row 0")).toBeNull();
+      // The scroll is still on its way.
+      const scrollTo = vi.spyOn(element, "scrollTo").mockImplementation(() => {});
+      const focus = vi.spyOn(HTMLElement.prototype, "focus");
+
+      await user.click(topButton()!);
+
+      expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 0, behavior });
+      expect(document.activeElement).toBe(link("row 0"));
+      expect(focus.mock.contexts.at(-1)).toBe(link("row 0"));
+      expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
+    });
+
+    it.each([
+      ["a press that focuses the button", async (button: HTMLElement) => {
+        await userEvent.setup().click(button);
+      }],
+      ["a press that does not focus the button", async (button: HTMLElement) => {
+        fireEvent.pointerDown(button);
+        fireEvent.click(button);
+      }],
+    ])("gives the first row a focus that does not hold the rows after %s", async (_case, press) => {
+      const { container, rerender } = render(list(rows));
+      const region = scrollable(regionOf(container));
+      region.scrollTo(320);
+
+      await press(topButton()!);
+      fireEvent.pointerLeave(regionOf(container));
+      expect(document.activeElement).toBe(link("row 0"));
+      rerender(list(added));
+
+      expect(region.top()).toBe(0);
+      expect(firstRow()).toBe("new 0");
+    });
+
+    it("gives the first row a focus that holds the rows after the keyboard", async () => {
+      const user = userEvent.setup();
+      const { container, rerender } = render(list(rows));
+      const region = scrollable(regionOf(container));
+      region.scrollTo(320);
+      topButton()!.focus();
+
+      await user.keyboard("{Enter}");
+      expect(document.activeElement).toBe(link("row 0"));
+      rerender(list(added));
+
+      expect(region.top()).toBe(ROW_HEIGHT);
+    });
+  });
+
+  describe("an update while the button scrolls the list to its top", () => {
+    /** The pointer stays on the button, and the smooth scroll is on its way, at the offset 160. */
+    async function goingToTop() {
+      stubReducedMotion(false);
+      const view = render(list(rows));
+      const element = regionOf(view.container);
+      const region = scrollable(element);
+      region.scrollTo(320);
+      const scrollTo = vi.spyOn(element, "scrollTo").mockImplementation(() => {});
+      await userEvent.setup().click(topButton()!);
+      region.scrollTo(160);
+      return { ...view, element, region, scrollTo };
+    }
+
+    it("keeps the offset, so that the scroll goes on", async () => {
+      const { rerender, region, scrollTo } = await goingToTop();
+
+      rerender(list(added));
+
+      expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 0, behavior: "smooth" });
+      expect(region.top()).toBe(160);
+    });
+
+    it("holds the rows in view again once the list is at its top", async () => {
+      const { rerender, region, scrollTo } = await goingToTop();
+      scrollTo.mockRestore();
+      region.scrollTo(0);
+
+      rerender(list(added));
+
+      expect(region.top()).toBe(ROW_HEIGHT);
+    });
+
+    it.each([
+      ["a wheel", (element: HTMLElement) => {
+        fireEvent.wheel(element);
+      }],
+      ["a key", (element: HTMLElement) => {
+        fireEvent.keyDown(element, { key: "PageDown" });
+      }],
+      ["a press", (element: HTMLElement) => {
+        fireEvent.pointerDown(element);
+      }],
+    ])("holds the rows in view again once the reader takes the scroll with %s", async (_case, take) => {
+      const { element, rerender, region, scrollTo } = await goingToTop();
+      scrollTo.mockRestore();
+      take(element);
+
+      rerender(list(added));
+
+      expect(region.top()).toBe(160 + ROW_HEIGHT);
+    });
   });
 });
 

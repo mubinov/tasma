@@ -24,10 +24,16 @@ type ChatListItemProps = {
 export type Band = { name: "Active" | "Other chats"; count: number };
 
 /**
- * The scroll margin of an item under a band, so a focus that scrolls the item into view shows the band too. It is
- * the height of `GroupBand`: the line of `text-xs` and the `py-2`.
+ * The scroll margin of an item, so a focus that scrolls the item into view keeps it clear of the scroll-to-top button
+ * of the list: the `top-2` of the button, its `size-9` and 8px below it.
  */
-export const BANDED_ROW_CLASS = "scroll-mt-[calc(var(--text-xs--line-height)+--spacing(4))]";
+export const ROW_CLASS = "scroll-mt-13";
+
+/**
+ * The scroll margin of an item under a band, so a focus that scrolls the item into view shows the band too, clear of
+ * the button. It is the height of `GroupBand`, the line of `text-xs` and the `py-2`, and the margin of `ROW_CLASS`.
+ */
+export const BANDED_ROW_CLASS = "scroll-mt-[calc(var(--text-xs--line-height)+--spacing(4)+--spacing(13))]";
 
 /** The height of `GroupBand` in pixels, before it is measured. */
 export const BAND_HEIGHT = 33;
@@ -80,7 +86,7 @@ export function ChatListItem({ item, selected, now, tabIndex, words, band }: Cha
         aria-label={label.join(", ")}
         aria-current={selected ? "page" : undefined}
         data-chat-key={chatKey(item)}
-        className={`relative block border-b border-line py-2.5 pr-3 pl-3.5 text-text hover:bg-surface-2 focus-visible:-outline-offset-2 ${band === undefined ? "" : BANDED_ROW_CLASS} ${selected ? SELECTED_ROW_CLASS : ""}`}
+        className={`relative block border-b border-line py-2.5 pr-3 pl-3.5 text-text hover:bg-surface-2 focus-visible:-outline-offset-2 ${band === undefined ? ROW_CLASS : BANDED_ROW_CLASS} ${selected ? SELECTED_ROW_CLASS : ""}`}
       >
         <span className="flex min-w-0 items-center gap-2">
           <span className="min-w-0 font-mono text-xs text-dim wrap-anywhere"><Marked text={task} words={words} /></span>
