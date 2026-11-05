@@ -124,6 +124,13 @@ export function refusalWords(error: unknown): string {
   return joinFailureWords(failureWords(error instanceof WriteError ? error.cause : error));
 }
 
+/** The path that a refusal names, when the daemon gave one. */
+export function refusalPath(error: unknown): string | undefined {
+  const cause = error instanceof WriteError ? error.cause : error;
+
+  return cause instanceof ProtocolError && cause.failure.kind === "store" ? cause.failure.path : undefined;
+}
+
 /** One pending write of a domain, as a screen reads it. */
 type PendingVariables<T> = { variables: T; submittedAt: number };
 

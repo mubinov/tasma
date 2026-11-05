@@ -11,8 +11,11 @@ import {
   chatRestartingLine,
   chatRestartSkippedNotice,
   chatStartFailure,
+  FOLDER_DIALOG_FAILURE,
   pageFailureLine,
+  projectAddFailure,
   skillInstallFailure,
+  workflowAddFailure,
 } from "../../src/lib/write-failure";
 
 const CAUSES: Record<FailureKind, { label: string; cause: unknown }> = {
@@ -213,6 +216,64 @@ describe("skillInstallFailure", () => {
 
   it.each(CASES)("says what happened to the request for $label", ({ cause, line }) => {
     expect(skillInstallFailure().line(new WriteError(cause))).toBe(line);
+  });
+});
+
+describe.each([
+  { name: "projectAddFailure", failure: projectAddFailure, title: "Tasma cannot add the project.", added: "the project" },
+  { name: "workflowAddFailure", failure: workflowAddFailure, title: "Tasma cannot add the workflow.", added: "the workflow" },
+])("$name", ({ failure, title, added }) => {
+  it("gives the words of the daemon and the path of a refusal", () => {
+    const cause = new ProtocolError({
+      kind: "store",
+      code: "path-taken",
+      message: "this path is not free",
+      path: "/Users/sample/tasma-workflows/dev",
+    }, 409);
+
+    expect(failure(new WriteError(cause))).toEqual({
+      title,
+      line: "store/path-taken · this path is not free",
+      box: { text: "/Users/sample/tasma-workflows/dev", noun: "path" },
+    });
+  });
+
+  it("gives no box for a refusal with no path", () => {
+    expect(failure(new WriteError(CAUSES.refused.cause))).toEqual({
+      title,
+      line: "store/status-unknown · status \"Gone\" is not configured",
+    });
+  });
+
+  it("says that the write can have succeeded when no daemon answered", () => {
+    expect(failure(new WriteError(CAUSES.unanswered.cause))).toEqual({
+      title,
+      line: `The daemon did not answer. If ${added} was added, this step changes to Done.`,
+    });
+  });
+
+  it("gives the address and the HTTP words in the box for an answer that is not the daemon's", () => {
+    expect(failure(new WriteError(CAUSES.address.cause))).toEqual({
+      title,
+      line: "The daemon did not answer through the address below. Start the daemon there if it is not running.",
+      box: { text: expect.stringContaining("HTTP 502 · answered with no envelope") as unknown, noun: "address" },
+    });
+  });
+
+  it("says that nothing changed for a request that did not start", () => {
+    expect(failure(new WriteError(CAUSES.unsent.cause))).toEqual({
+      title,
+      line: "The request did not start, so nothing changed.",
+    });
+  });
+});
+
+describe("FOLDER_DIALOG_FAILURE", () => {
+  it("gives the texts of a folder dialog that did not open", () => {
+    expect(FOLDER_DIALOG_FAILURE).toEqual({
+      title: "Tasma cannot open the folder dialog.",
+      line: "Select \"Choose folder\" to try again. If the dialog does not open, restart Tasma.",
+    });
   });
 });
 

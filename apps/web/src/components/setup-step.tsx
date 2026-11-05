@@ -1,11 +1,13 @@
 import { Accordion } from "@base-ui/react/accordion";
 import { Button } from "@base-ui/react/button";
+import { Field } from "@base-ui/react/field";
 import type { SkillInstall } from "@tasma/protocol";
 import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from "react";
 import { CaretDownIcon, CheckIcon, CircleNotchIcon } from "../lib/icons";
 import { isChangeToDone, type SetupStep, type SkillInstallState, type StepState } from "../lib/setup-steps";
+import type { SetupFailure } from "../lib/write-failure";
 import { useNoticeStore } from "../store/notices";
-import { BUTTON_CLASS, BUTTON_FILLED_CLASS } from "./control-classes";
+import { BUTTON_CLASS, BUTTON_FILLED_CLASS, FIELD_BORDER_CLASS, FIELD_ERROR_CLASS } from "./control-classes";
 
 const INSTALL_GUIDE_URL = "https://code.claude.com/docs/en/setup";
 const SKILL_INSTALL_URL = "https://github.com/mubinov/tasma-skill#install";
@@ -26,6 +28,10 @@ const RUN_CLASS = "mt-3.5 max-w-lg text-sm text-subtle";
 const ACTIONS_CLASS = "mt-3.5 flex flex-wrap items-center gap-x-3 gap-y-2";
 
 const PROBLEM_CLASS = "mt-3.5 max-w-lg text-sm font-medium text-text";
+
+const PATH_CLASS = `mt-1 h-8 w-full rounded-control bg-bg px-2.5 text-sm text-text placeholder:text-dim ${FIELD_BORDER_CLASS}`;
+
+const EMPTY_PATH_WORDS = "Type the path of a folder.";
 
 function markLook(state: StepState, current: boolean, settling: boolean): string {
   if (state === "done") {
@@ -83,12 +89,14 @@ type CopyResult = "none" | "copied" | "failed";
 
 const COPY_WORDS: Record<CopyResult, string> = { none: "Copy", copied: "Copied", failed: "Cannot copy" };
 
+/** What the words of a failed copy call the text. */
+type CopyNoun = "command" | "output" | "path" | "address";
+
 type CopyButtonProps = {
   text: string;
   /** The element that holds the text, which a failed copy selects. */
   holder: RefObject<HTMLElement | null>;
-  /** What the words of a failed copy call the text. */
-  noun: "command" | "output";
+  noun: CopyNoun;
   describedBy: string;
 };
 
@@ -134,14 +142,22 @@ function CopyButton({ text, holder, noun, describedBy }: CopyButtonProps): React
   );
 }
 
-function CommandBox({ command }: { command: string }): ReactNode {
+type CommandBoxProps = {
+  command: string;
+  noun?: CopyNoun;
+  /** The id of the `<code>`, for a control that the box describes. */
+  codeId?: string;
+};
+
+function CommandBox({ command, noun = "command", codeId }: CommandBoxProps): ReactNode {
   const codeRef = useRef<HTMLElement>(null);
-  const codeId = useId();
+  const ownId = useId();
+  const id = codeId ?? ownId;
 
   return (
     <div className="mt-1.5 flex w-full max-w-lg items-center justify-between gap-3 rounded-control bg-surface-2 py-1.5 pr-1.5 pl-3">
-      <code ref={codeRef} id={codeId} className="font-mono text-xs-plus wrap-anywhere">{command}</code>
-      <CopyButton text={command} holder={codeRef} noun="command" describedBy={codeId} />
+      <code ref={codeRef} id={id} className="font-mono text-xs-plus wrap-anywhere">{command}</code>
+      <CopyButton text={command} holder={codeRef} noun={noun} describedBy={id} />
     </div>
   );
 }
@@ -197,6 +213,10 @@ function NoNpx(): ReactNode {
   );
 }
 
+function Spinner(): ReactNode {
+  return <CircleNotchIcon size={14} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />;
+}
+
 /** What step 4 shows of the write that lives in the screen. */
 type SkillInstallRun = {
   state: SkillInstallState | undefined;
@@ -226,7 +246,7 @@ function SkillContent({ install, onStop }: { install: SkillInstallRun; onStop: (
           onClick={onInstall}
           className={answer?.result === "npx-missing" ? BUTTON_CLASS : BUTTON_FILLED_CLASS}
         >
-          {running && <CircleNotchIcon size={14} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />}
+          {running && <Spinner />}
           {state === undefined ? "Install in Claude Code" : INSTALL_WORDS[state]}
         </Button>
         <ExternalLink href={SKILL_INSTALL_URL} className="text-sm text-subtle underline underline-offset-2 hover:text-text">
@@ -270,9 +290,215 @@ function CheckAgain({ checking, onCheckAgain }: { checking: boolean; onCheckAgai
   );
 }
 
-type StepContentProps = Pick<SetupStepRowProps, "step" | "checking" | "onCheckAgain" | "onStop" | "install">;
+type FailureIds = { title: string; line: string; box: string };
 
-function StepContent({ step, checking, onCheckAgain, onStop, install }: StepContentProps): ReactNode {
+function useFailureIds(): FailureIds {
+  return { title: useId(), line: useId(), box: useId() };
+}
+
+/** The ids of the words of a failure block: the Copy button is left out. */
+function failureWordIds(failure: SetupFailure | undefined, ids: FailureIds): string[] {
+  if (failure === undefined) {
+    return [];
+  }
+
+  return failure.box === undefined ? [ids.title, ids.line] : [ids.title, ids.line, ids.box];
+}
+
+function idRefs(ids: readonly string[]): string | undefined {
+  return ids.length === 0 ? undefined : ids.join(" ");
+}
+
+/** Not a live region: the screen announces the failure. */
+function FailureBlock({ failure, ids }: { failure: SetupFailure; ids: FailureIds }): ReactNode {
+  return (
+    <div className="mt-3.5 w-full max-w-lg">
+      <p id={ids.title} className="text-base font-medium text-signal">{failure.title}</p>
+      <p id={ids.line} className="mt-0.5 text-sm text-subtle wrap-anywhere">{failure.line}</p>
+      {failure.box !== undefined && <CommandBox command={failure.box.text} noun={failure.box.noun} codeId={ids.box} />}
+    </div>
+  );
+}
+
+/** What step 5 shows of the pick and the write that live in the screen. */
+type ProjectStepRun = {
+  /** The macOS app offers the folder dialog. The browser shows a path field. */
+  dialog: boolean;
+  picking: boolean;
+  adding: boolean;
+  failure: SetupFailure | undefined;
+  /** The last failure was not about the folder, so the button sends the same path again. */
+  retry: boolean;
+  /** The path of the last try, which the field starts with. */
+  path: string;
+  /** Opens the dialog, or sends the path again when `retry` is true. */
+  onPress: () => void;
+  /** Sends the path of the field. */
+  onAdd: (path: string) => void;
+};
+
+function ChooseFolder({ run, failureIds }: { run: ProjectStepRun; failureIds: string[] }): ReactNode {
+  const busy = run.picking || run.adding;
+  let words = run.retry ? "Try again" : "Choose folder";
+
+  if (run.adding) {
+    words = "Adding project";
+  }
+
+  return (
+    <div className={ACTIONS_CLASS}>
+      <Button
+        type="button"
+        aria-disabled={busy}
+        aria-describedby={idRefs(failureIds)}
+        onClick={run.onPress}
+        className={BUTTON_FILLED_CLASS}
+      >
+        {busy && <Spinner />}
+        {words}
+      </Button>
+    </div>
+  );
+}
+
+function PathForm({ run, failureIds }: { run: ProjectStepRun; failureIds: string[] }): ReactNode {
+  const [value, setValue] = useState(run.path);
+  const [error, setError] = useState<string | undefined>(undefined);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function submit(): void {
+    if (run.adding) {
+      return;
+    }
+
+    const path = value.trim();
+
+    if (path === "") {
+      // `Field.Error` is not a live region: a caret already in the field hears
+      // the words only when they are spoken. The focus move reads them otherwise.
+      const inField = document.activeElement === inputRef.current;
+
+      setError(EMPTY_PATH_WORDS);
+      inputRef.current!.focus();
+      if (inField) {
+        useNoticeStore.getState().announce(EMPTY_PATH_WORDS);
+      }
+      return;
+    }
+
+    run.onAdd(path);
+  }
+
+  return (
+    <form
+      className="mt-3.5 w-full max-w-lg"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <Field.Root name="path" invalid={error !== undefined}>
+        <Field.Label className="font-chrome text-sm font-medium text-text">Folder path</Field.Label>
+        <Field.Control
+          ref={inputRef}
+          aria-required="true"
+          placeholder="Required"
+          value={value}
+          onValueChange={(next) => {
+            setValue(next);
+            setError(undefined);
+          }}
+          className={PATH_CLASS}
+        />
+        {error !== undefined && <Field.Error match className={FIELD_ERROR_CLASS}>{error}</Field.Error>}
+      </Field.Root>
+      <div className={ACTIONS_CLASS}>
+        <Button
+          type="submit"
+          aria-disabled={run.adding}
+          aria-describedby={idRefs(failureIds)}
+          className={BUTTON_FILLED_CLASS}
+        >
+          {run.adding && <Spinner />}
+          {run.adding ? "Adding project" : "Add project"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function ProjectContent({ run }: { run: ProjectStepRun }): ReactNode {
+  const ids = useFailureIds();
+  const failureIds = failureWordIds(run.failure, ids);
+
+  return (
+    <>
+      <p className={WHY_CLASS}>Choose the folder with your code. Claude Code works in this folder.</p>
+      {run.failure !== undefined && <FailureBlock failure={run.failure} ids={ids} />}
+      {run.dialog ? <ChooseFolder run={run} failureIds={failureIds} /> : <PathForm run={run} failureIds={failureIds} />}
+    </>
+  );
+}
+
+/** What step 6 shows of the write that lives in the screen. */
+type WorkflowStepRun = {
+  /** The name of the project that gets the workflow, or its tag. */
+  project: string | undefined;
+  /** The words of a failed read of the projects, while the row has no project to name. */
+  listFailure: string | undefined;
+  running: boolean;
+  failure: SetupFailure | undefined;
+  onAdd: () => void;
+};
+
+function WorkflowContent({ run }: { run: WorkflowStepRun }): ReactNode {
+  const ids = useFailureIds();
+  const whyId = useId();
+  const listId = useId();
+  const failureIds = failureWordIds(run.failure, ids);
+  const reading = !run.running && run.project === undefined;
+  let words = run.failure === undefined ? "Add workflow" : "Try again";
+  let description = run.failure === undefined ? [whyId] : failureIds;
+
+  if (run.running) {
+    words = "Adding workflow";
+    description = [whyId];
+  } else if (reading) {
+    words = "Reading projects";
+    description = run.listFailure === undefined ? failureIds : [listId, ...failureIds];
+  }
+
+  return (
+    <>
+      <p id={whyId} className={`${WHY_CLASS} wrap-anywhere`}>
+        Tasma adds a default development workflow to
+        {" "}
+        {run.project === undefined ? "your project" : <span className="font-medium text-text">{run.project}</span>}
+        . You can change it later.
+      </p>
+      {run.listFailure !== undefined && <p id={listId} className={RUN_CLASS}>{run.listFailure}</p>}
+      {run.failure !== undefined && <FailureBlock failure={run.failure} ids={ids} />}
+      <div className={ACTIONS_CLASS}>
+        <Button
+          type="button"
+          aria-disabled={run.running || reading}
+          aria-describedby={idRefs(description)}
+          onClick={run.onAdd}
+          className={BUTTON_FILLED_CLASS}
+        >
+          {(run.running || reading) && <Spinner />}
+          {words}
+        </Button>
+      </div>
+    </>
+  );
+}
+
+type StepContentProps = Omit<SetupStepRowProps, "current" | "onPressInside">;
+
+function StepContent(props: StepContentProps): ReactNode {
+  const { step, checking, onCheckAgain, onStop, install, project, workflow } = props;
+
   if (step.state === "stopped") {
     return (
       <p className={WHY_CLASS}>
@@ -323,18 +549,9 @@ function StepContent({ step, checking, onCheckAgain, onStop, install }: StepCont
     case "skill":
       return <SkillContent install={install} onStop={onStop} />;
     case "project":
-      return (
-        <>
-          <p className={WHY_CLASS}>Choose the folder with your code. Claude Code works in this folder.</p>
-          <RunCommand command="tasma project create --path ." words="Open a terminal in this folder, and run this command:" />
-        </>
-      );
+      return <ProjectContent run={project} />;
     case "workflow":
-      return (
-        <p className={WHY_CLASS}>
-          A workflow gives each task its steps. Ask Claude Code to create a workflow for your project.
-        </p>
-      );
+      return <WorkflowContent run={workflow} />;
   }
 }
 
@@ -346,6 +563,8 @@ type SetupStepRowProps = {
   onCheckAgain: () => void;
   onStop: () => void;
   install: SkillInstallRun;
+  project: ProjectStepRun;
+  workflow: WorkflowStepRun;
   /** The user pressed a control inside the panel. */
   onPressInside: () => void;
 };
@@ -357,6 +576,8 @@ export function SetupStepRow({
   onCheckAgain,
   onStop,
   install,
+  project,
+  workflow,
   onPressInside,
 }: SetupStepRowProps): ReactNode {
   const [shown, setShown] = useState({ state: step.state, settling: false });
@@ -394,7 +615,15 @@ export function SetupStepRow({
         </Accordion.Trigger>
       </Accordion.Header>
       <Accordion.Panel onClickCapture={pressInside} className="animate-enter pb-6 pl-10">
-        <StepContent step={step} checking={checking} onCheckAgain={onCheckAgain} onStop={onStop} install={install} />
+        <StepContent
+          step={step}
+          checking={checking}
+          onCheckAgain={onCheckAgain}
+          onStop={onStop}
+          install={install}
+          project={project}
+          workflow={workflow}
+        />
       </Accordion.Panel>
     </Accordion.Item>
   );

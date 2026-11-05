@@ -199,12 +199,12 @@ describe("setupSteps", () => {
       "Tasma does this",
       "Tasma does this",
       "You do this",
-      "You do this",
+      "Tasma does this",
     ]);
   });
 
   it("gives each step its owner, in every state", () => {
-    const owners = ["you", "you", "tasma", "tasma", "you", "you"];
+    const owners = ["you", "you", "tasma", "tasma", "you", "tasma"];
 
     expect(setupSteps(input()).map(({ owner }) => owner)).toEqual(owners);
     expect(setupSteps(input({ status: undefined })).map(({ owner }) => owner)).toEqual(owners);
@@ -375,7 +375,76 @@ describe("setupSteps", () => {
       const fails = setupStatus({ cli: "fail", project: "fail", workflow: "fail" }, { installed: "fail", loggedIn: "fail", skill: "fail" });
       const labels = setupSteps(input({ status: fails, skillInstall })).map(({ label }) => label);
 
-      expect(labels.toSpliced(3, 1)).toEqual(["You do this", "You do this", "Tasma does this", "You do this", "You do this"]);
+      expect(labels.toSpliced(3, 1)).toEqual(["You do this", "You do this", "Tasma does this", "You do this", "Tasma does this"]);
+    });
+  });
+
+  describe("step 5 and the project that the app added", () => {
+    it("is done while the status does not see the project yet", () => {
+      const steps = setupSteps(input({ status: setupStatus({ project: "fail", workflow: "fail" }), projectAdded: true }));
+
+      expect(stepOf(steps, "project").state).toBe("done");
+      expect(stepOf(steps, "project").label).toBe("Done");
+      expect(stepOf(steps, "workflow").state).toBe("to-do");
+    });
+
+    it("is done also when the check of step 5 is unknown or did not run", () => {
+      for (const project of ["unknown", "not-run"] as const) {
+        const steps = setupSteps(input({ status: setupStatus({ project, workflow: "fail" }), projectAdded: true }));
+
+        expect(stepOf(steps, "project").state).toBe("done");
+      }
+    });
+
+    it("leaves step 6 done when its check passes", () => {
+      const steps = setupSteps(input({ status: setupStatus({ project: "fail" }), projectAdded: true }));
+
+      expect(stepOf(steps, "workflow").state).toBe("done");
+    });
+
+    it("follows the status when no project was added", () => {
+      const steps = setupSteps(input({ status: setupStatus({ project: "fail", workflow: "fail" }), projectAdded: false }));
+
+      expect(stepOf(steps, "project").state).toBe("to-do");
+      expect(stepOf(steps, "workflow").state).toBe("waits");
+    });
+  });
+
+  describe("the label of step 6 and the write", () => {
+    const FAILS = setupStatus({ workflow: "fail" });
+
+    it("names the owner when the write has not started", () => {
+      const step = stepOf(setupSteps(input({ status: FAILS })), "workflow");
+
+      expect(step.label).toBe("Tasma does this");
+      expect(step.labelIsOwner).toBe(true);
+    });
+
+    it.each([
+      ["running", "In progress"],
+      ["cannot-add", "Cannot add"],
+    ] as const)("follows the write while the step is to-do: %s", (workflowWrite, label) => {
+      const step = stepOf(setupSteps(input({ status: FAILS, workflowWrite })), "workflow");
+
+      expect(step.state).toBe("to-do");
+      expect(step.label).toBe(label);
+      expect(step.labelIsOwner).toBe(false);
+    });
+
+    it.each(["running", "cannot-add"] as const)("keeps the labels of the other states with %s", (workflowWrite) => {
+      const label = (status: SetupStatus): string => stepOf(setupSteps(input({ status, workflowWrite })), "workflow").label;
+
+      expect(label(setupStatus())).toBe("Done");
+      expect(label(setupStatus({ workflow: "unknown" }))).toBe("Cannot check");
+      expect(label(setupStatus({ workflow: "not-run" }))).toBe("Cannot check");
+      expect(label(setupStatus({ project: "fail", workflow: "fail" }))).toBe("Tasma does this");
+    });
+
+    it.each(["running", "cannot-add"] as const)("changes no other step with %s", (workflowWrite) => {
+      const fails = setupStatus({ cli: "fail", workflow: "fail" }, { installed: "fail", loggedIn: "fail", skill: "fail" });
+      const labels = setupSteps(input({ status: fails, workflowWrite })).map(({ label }) => label);
+
+      expect(labels.slice(0, 5)).toEqual(["You do this", "You do this", "Tasma does this", "Tasma does this", "Done"]);
     });
   });
 

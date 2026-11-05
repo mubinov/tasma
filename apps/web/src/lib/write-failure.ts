@@ -4,6 +4,8 @@ import {
   chatRestartFailureTitle,
   chatStartFailureTitle,
   failureKind,
+  refusalPath,
+  refusalWords,
   titleCorrection,
   type ChatWrite,
   type ClosedNotice,
@@ -166,6 +168,48 @@ export function skillInstallFailure(): WriteFailure {
     line: (error) => SKILL_INSTALL_FAILURE_LINES[failureKind(error.cause)],
   };
 }
+
+/** A failure that a setup step shows in its row, above the button that tries again. */
+export type SetupFailure = {
+  title: string;
+  line: string;
+  /** What the user acts on outside the app, in a box with a Copy button. */
+  box?: { text: string; noun: "path" | "address" };
+};
+
+/** `added` names what the write adds, as the line of a lost answer names it. */
+function setupWriteFailure(title: string, added: string, error: WriteError): SetupFailure {
+  switch (failureKind(error.cause)) {
+    case "refused": {
+      const path = refusalPath(error);
+
+      return { title, line: refusalWords(error), ...(path === undefined ? {} : { box: { text: path, noun: "path" } }) };
+    }
+    case "unanswered":
+      return { title, line: `The daemon did not answer. If ${added} was added, this step changes to Done.` };
+    case "address":
+      return {
+        title,
+        line: "The daemon did not answer through the address below. Start the daemon there if it is not running.",
+        box: { text: refusalWords(error), noun: "address" },
+      };
+    case "unsent":
+      return { title, line: "The request did not start, so nothing changed." };
+  }
+}
+
+export function projectAddFailure(error: WriteError): SetupFailure {
+  return setupWriteFailure("Tasma cannot add the project.", "the project", error);
+}
+
+export function workflowAddFailure(error: WriteError): SetupFailure {
+  return setupWriteFailure("Tasma cannot add the workflow.", "the workflow", error);
+}
+
+export const FOLDER_DIALOG_FAILURE: SetupFailure = {
+  title: "Tasma cannot open the folder dialog.",
+  line: "Select \"Choose folder\" to try again. If the dialog does not open, restart Tasma.",
+};
 
 /** The warning of a restart that the dialog did not send. */
 export function chatRestartSkippedNotice(id: string, chat: number): SkippedNotice {

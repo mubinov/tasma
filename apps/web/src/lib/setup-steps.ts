@@ -18,6 +18,9 @@ export type SetupOwner = "you" | "tasma";
 /** The write that installs the skill runs, or ended with a result that installed nothing. */
 export type SkillInstallState = "running" | "cannot-install";
 
+/** The writes of steps 5 and 6 run, or the last workflow write failed. */
+export type WorkflowWriteState = "running" | "cannot-add";
+
 export type SetupStep = {
   id: StepId;
   number: number;
@@ -41,6 +44,10 @@ export type StepInput = {
   skillCheckStopped: boolean;
   /** The state of the write that installs the skill, for the label of step 4. */
   skillInstall?: SkillInstallState | undefined;
+  /** The app created a project, and no status since then gave `project: "pass"`. Step 5 is then done. */
+  projectAdded?: boolean;
+  /** The state of the writes that add the workflow, for the label of step 6. */
+  workflowWrite?: WorkflowWriteState | undefined;
 };
 
 const OWNER_LABELS: Record<SetupOwner, string> = { you: "You do this", tasma: "Tasma does this" };
@@ -61,7 +68,7 @@ const DEFINITIONS: readonly StepDefinition[] = [
   { id: "command", name: "Add the tasma command", owner: "tasma", fullOnly: true, check: (status) => status?.cli },
   { id: "skill", name: "Install the tasma skill in Claude Code", owner: "tasma", check: (_status, agent) => agent?.skill },
   { id: "project", name: "Add a project", owner: "you", check: (status) => status?.project },
-  { id: "workflow", name: "Add a workflow", owner: "you", needs: "project", check: (status) => status?.workflow },
+  { id: "workflow", name: "Add a workflow", owner: "tasma", needs: "project", check: (status) => status?.workflow },
 ];
 
 const STATE_LABELS: Partial<Record<StepState, string>> = {
@@ -73,6 +80,20 @@ const STATE_LABELS: Partial<Record<StepState, string>> = {
 };
 
 const SKILL_INSTALL_LABELS: Record<SkillInstallState, string> = { "running": "Install in progress", "cannot-install": "Cannot install" };
+
+const WORKFLOW_WRITE_LABELS: Record<WorkflowWriteState, string> = { "running": "In progress", "cannot-add": "Cannot add" };
+
+/** The label of a step to do whose write runs or failed. */
+function writeLabel(id: StepId, input: StepInput): string | undefined {
+  if (id === "skill" && input.skillInstall !== undefined) {
+    return SKILL_INSTALL_LABELS[input.skillInstall];
+  }
+  if (id === "workflow" && input.workflowWrite !== undefined) {
+    return WORKFLOW_WRITE_LABELS[input.workflowWrite];
+  }
+
+  return undefined;
+}
 
 function claudeOf(status: SetupStatus | undefined): AgentSetup | undefined {
   return status?.agents.find(({ agent }) => agent === "claude");
@@ -162,10 +183,9 @@ export function setupSteps(input: StepInput): SetupStep[] {
   DEFINITIONS.forEach((definition, index) => {
     const needed = steps.find(({ id }) => id === definition.needs);
     const needDone = needed === undefined || needed.state === "done";
-    const state = stateOf(definition, definition.check(input.status, agent), needDone, input);
-    const stateLabel = definition.id === "skill" && state === "to-do" && input.skillInstall !== undefined
-      ? SKILL_INSTALL_LABELS[input.skillInstall]
-      : STATE_LABELS[state];
+    const check = definition.id === "project" && input.projectAdded === true ? "pass" : definition.check(input.status, agent);
+    const state = stateOf(definition, check, needDone, input);
+    const stateLabel = state === "to-do" ? writeLabel(definition.id, input) : STATE_LABELS[state];
 
     steps.push({
       id: definition.id,

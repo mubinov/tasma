@@ -1,7 +1,8 @@
 import type { SetupStatus, TransportReply } from "@tasma/protocol";
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FolderDialogError } from "../../src/api/folder-dialog";
 import { TITLE_COVER_ID } from "../../src/lib/use-top-bar-lengths";
 import { useNoticeStore } from "../../src/store/notices";
 import { browserPreferenceStorage, setPreferenceStorage, useUiStore } from "../../src/store/ui";
@@ -15,9 +16,19 @@ import {
   renderWithRouter,
   setupStatus,
   startOf,
+  stubScrollIntoView,
   stubTransport,
   successReply,
 } from "../helpers";
+
+/** The macOS folder dialog: the tests choose whether it is there, and what a pick gives. */
+const dialog = vi.hoisted(() => ({ available: true, pick: vi.fn<() => Promise<string | null>>() }));
+
+vi.mock(import("../../src/api/folder-dialog"), async (importOriginal) => ({
+  ...await importOriginal(),
+  folderDialogAvailable: () => dialog.available,
+  pickFolder: () => dialog.pick(),
+}));
 
 const START = "/setup?mode=start";
 const FULL = "/setup?mode=full";
@@ -48,6 +59,12 @@ function trigger(name: string): HTMLElement {
 
 function isOpen(name: string): boolean {
   return trigger(name).getAttribute("aria-expanded") === "true";
+}
+
+function descriptionOf(element: HTMLElement): string {
+  return element.getAttribute("aria-describedby")!.split(" ")
+    .map((id) => document.getElementById(id)!.textContent)
+    .join(" | ");
 }
 
 /** Opens the screen with its full read held back, so a test chooses when the answer comes. */
@@ -89,6 +106,8 @@ async function nextAnswer(stub: ReturnType<typeof stubTransport>, reply: Transpo
 }
 
 beforeEach(() => {
+  dialog.available = true;
+  dialog.pick.mockReset();
   window.localStorage.clear();
   setPreferenceStorage(browserPreferenceStorage);
   useUiStore.setState({ skillCheckStopped: false, arrivalWords: null });
@@ -184,7 +203,7 @@ describe("before the first full answer", () => {
     await userEvent.click(trigger("Add a project"));
 
     expect(isOpen("Add a project")).toBe(true);
-    expect(screen.getByText("tasma project create --path .")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Choose folder" })).toBeTruthy();
   });
 });
 
@@ -241,18 +260,27 @@ describe("the first full answer", () => {
       .toBe("https://github.com/mubinov/tasma-skill#install");
 
     await userEvent.click(trigger("Add a project"));
-    expect(screen.getByText("Open a terminal in this folder, and run this command:")).toBeTruthy();
-    expect(screen.getByText("tasma project create --path .")).toBeTruthy();
+    expect(screen.getByText("Choose the folder with your code. Claude Code works in this folder.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Choose folder" }).className).toContain("bg-text");
+    expect(screen.queryByText("tasma project create --path .")).toBeNull();
 
     await userEvent.click(trigger("Add a workflow"));
     expect(screen.getByText("First, complete step 5: Add a project.")).toBeTruthy();
   });
 
   it("gives step 6 its content when step 5 is done", async () => {
-    await openAnswered(setupStatus({ workflow: "fail" }));
+    const stub = stubTransport({
+      [START]: successReply(startOf(setupStatus({ workflow: "fail" }))),
+      [FULL]: successReply(setupStatus({ workflow: "fail" })),
+      "/projects": successReply([{ tag: "ORBI", name: "orbit-notes", path: "/Users/sample/code/orbit-notes" }]),
+    });
+
+    await renderWithRouter("/", stub.transport);
+    await screen.findByRole("button", { name: "Add workflow" });
 
     expect(isOpen("Add a workflow")).toBe(true);
-    expect(screen.getByText("A workflow gives each task its steps. Ask Claude Code to create a workflow for your project.")).toBeTruthy();
+    expect(screen.getByText(/^Tasma adds a default development workflow to/).textContent)
+      .toBe("Tasma adds a default development workflow to orbit-notes. You can change it later.");
   });
 });
 
@@ -370,9 +398,9 @@ describe("opening by itself", () => {
 
   it("counts a press inside a panel as opened by hand", async () => {
     const { stub } = await openAnswered(setupStatus({ project: "fail", workflow: "fail" }));
-    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: () => Promise.resolve() } });
+    dialog.pick.mockResolvedValue(null);
 
-    await userEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await userEvent.click(screen.getByRole("button", { name: "Choose folder" }));
     (document.activeElement as HTMLElement).blur();
     await nextAnswer(stub, successReply(setupStatus({ project: "fail", workflow: "fail" }, { loggedIn: "fail" })));
 
@@ -883,6 +911,8 @@ describe("closing", () => {
 });
 
 describe("Copy", () => {
+  const LOGIN = setupStatus({ project: "fail", workflow: "fail" }, { loggedIn: "fail" });
+
   function stubClipboard(writeText: (text: string) => Promise<void>): void {
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
   }
@@ -893,10 +923,10 @@ describe("Copy", () => {
     const writeText = vi.fn(() => Promise.resolve());
 
     stubClipboard(writeText);
-    await openAnswered(setupStatus({ project: "fail", workflow: "fail" }));
+    await openAnswered(LOGIN);
     await user.click(screen.getByRole("button", { name: "Copy" }));
 
-    expect(writeText).toHaveBeenCalledWith("tasma project create --path .");
+    expect(writeText).toHaveBeenCalledWith("claude auth login");
     expect(screen.getByRole("button", { name: "Copied" })).toBeTruthy();
     expect(words()).toContain("Copied");
 
@@ -910,11 +940,11 @@ describe("Copy", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
 
     stubClipboard(() => Promise.reject(new Error("not allowed")));
-    await openAnswered(setupStatus({ project: "fail", workflow: "fail" }));
+    await openAnswered(LOGIN);
     await user.click(screen.getByRole("button", { name: "Copy" }));
 
     expect(screen.getByRole("button", { name: "Cannot copy" })).toBeTruthy();
-    expect(window.getSelection()?.toString()).toBe("tasma project create --path .");
+    expect(window.getSelection()?.toString()).toBe("claude auth login");
     expect(words()).toContain("Cannot copy. The command is selected. Press Command-C to copy it.");
 
     await advance(1600);
@@ -947,10 +977,6 @@ describe("installing the skill", () => {
 
   function installButton(name = INSTALL_WORDS): HTMLElement {
     return screen.getByRole("button", { name });
-  }
-
-  function descriptionOf(element: HTMLElement): string | null | undefined {
-    return document.getElementById(element.getAttribute("aria-describedby")!)?.textContent;
   }
 
   async function press(
@@ -1424,6 +1450,765 @@ describe("installing the skill", () => {
     await nextAnswer(stub, successReply(ONLY_SKILL));
 
     expect(screen.getByRole("button", { name: `${SKILL}, Tasma does this` })).toBeTruthy();
+  });
+});
+
+describe("adding the project and the workflow", () => {
+  const CREATE = "POST /projects";
+  const INSTALL_DEV = "POST /workflows/dev/install";
+  const EDIT = "PATCH /projects/ORBI";
+  const FOLDER = "/Users/sample/code/orbit-notes";
+  const ORBIT = { tag: "ORBI", name: "orbit-notes", path: FOLDER, config: {}, live: true };
+  const DEV_FOLDER = "/Users/sample/tasma-workflows/dev";
+  const INSTALLED = successReply({ result: "installed", folder: DEV_FOLDER });
+  const TAKEN = refusalReply(409, { kind: "store", code: "path-taken", message: "this path is not free", path: DEV_FOLDER });
+  const GONE = refusalReply(404, { kind: "store", code: "project-not-found", message: "no project ORBI" });
+  const PROJECT_NEEDED = setupStatus({ project: "fail", workflow: "fail" });
+  const WORKFLOW_NEEDED = setupStatus({ workflow: "fail" });
+  const SKILL = "Install the tasma skill in Claude Code";
+  const PROJECT_STARTED = "Tasma adds the project.";
+  const WORKFLOW_STARTED = "Tasma adds the workflow to orbit-notes.";
+  const WORKFLOW_FAILED = "Tasma cannot add the workflow. store/path-taken · this path is not free";
+  const SHOWN = "Step 6 shows the reason and a Try again button.";
+  const OPEN_IT = "Open step 6 to read the reason and to try again.";
+  const LIST_FAILED = "Tasma cannot read your projects. It tries again every 5 seconds.";
+
+  function writes(stub: ReturnType<typeof stubTransport>): { key: string; body: unknown }[] {
+    return stub.requests
+      .filter(({ method }) => method !== "GET")
+      .map(({ method, path, body }) => ({ key: `${method} ${path}`, body }));
+  }
+
+  function button(name: string): HTMLElement {
+    return screen.getByRole("button", { name });
+  }
+
+  function isDone(name: string): boolean {
+    return screen.getByText(name).closest("button") === null;
+  }
+
+  /** A reply that no daemon gives: the request reaches nothing. */
+  function noDaemon(): Promise<TransportReply> {
+    const reply = Promise.reject(new Error("connection refused"));
+
+    reply.catch(() => {});
+    return reply;
+  }
+
+  /** Opens the screen with replies for the writes, and presses "Choose folder" with a pick of `folder`. */
+  async function pickWith(
+    status: SetupStatus,
+    replies: Record<string, TransportReply | Promise<TransportReply>>,
+    folder = FOLDER,
+  ) {
+    const opened = await openAnswered(status);
+
+    Object.assign(opened.stub.replies, replies);
+    dialog.pick.mockResolvedValue(folder);
+    said = [];
+    await userEvent.click(button("Choose folder"));
+
+    return opened;
+  }
+
+  async function openWithList(list: TransportReply | Promise<TransportReply>, status = WORKFLOW_NEEDED) {
+    const stub = stubTransport({ [START]: successReply(startOf(status)), [FULL]: successReply(status), "/projects": list });
+
+    await renderWithRouter("/", stub.transport);
+    await waitFor(() => {
+      expect(screen.getByText(/of 6 done/)).toBeTruthy();
+    });
+
+    return stub;
+  }
+
+  it("creates the project from the folder, installs dev, lists it on the project and closes the screen", async () => {
+    const { stub, router } = await pickWith(PROJECT_NEEDED, {
+      [CREATE]: successReply(ORBIT),
+      [INSTALL_DEV]: INSTALLED,
+      [EDIT]: successReply(ORBIT),
+      [FULL]: successReply(setupStatus()),
+    });
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/tasks");
+    }, { timeout: 3000 });
+    expect(writes(stub)).toEqual([
+      { key: CREATE, body: { path: FOLDER } },
+      { key: INSTALL_DEV, body: {} },
+      { key: EDIT, body: { workflows: ["dev"] } },
+    ]);
+    expect(dialog.pick).toHaveBeenCalledTimes(1);
+    expect(words().slice(0, 2)).toEqual([PROJECT_STARTED, WORKFLOW_STARTED]);
+  });
+
+  it("gives a folder name with no Latin letter the tag PROJ, with no question", async () => {
+    const first = heldBack();
+    const { stub } = await pickWith(PROJECT_NEEDED, {
+      [CREATE]: first.reply,
+      [INSTALL_DEV]: INSTALLED,
+      "PATCH /projects/PROJ": successReply({ ...ORBIT, tag: "PROJ", name: "日記" }),
+      [FULL]: successReply(WORKFLOW_NEEDED),
+    });
+
+    stub.replies[CREATE] = successReply({ ...ORBIT, tag: "PROJ", name: "日記" });
+    await act(async () => {
+      first.answer(refusalReply(422, { kind: "store", code: "tag-not-generated", message: "the folder name gives no tag" }));
+    });
+    await waitFor(() => {
+      expect(writes(stub).map(({ key }) => key)).toEqual([CREATE, CREATE, INSTALL_DEV, "PATCH /projects/PROJ"]);
+    });
+
+    expect(writes(stub)[1]!.body).toEqual({ path: FOLDER, tag: "PROJ" });
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("names the tag of a created project with no name", async () => {
+    await pickWith(PROJECT_NEEDED, {
+      [CREATE]: successReply({ tag: "PROJ", path: "/", config: {}, live: true }),
+      [INSTALL_DEV]: heldBack().reply,
+      [FULL]: heldBack().reply,
+    }, "/");
+
+    await screen.findByRole("button", { name: "Adding workflow" });
+    expect(screen.getByText(/^Tasma adds a default development workflow to/).textContent)
+      .toBe("Tasma adds a default development workflow to PROJ. You can change it later.");
+    expect(words()).toContain("Tasma adds the workflow to PROJ.");
+  });
+
+  it("lists the dev that exists on the project", async () => {
+    const { stub } = await pickWith(PROJECT_NEEDED, {
+      [CREATE]: successReply(ORBIT),
+      [INSTALL_DEV]: successReply({ result: "exists" }),
+      [EDIT]: successReply(ORBIT),
+      [FULL]: successReply(WORKFLOW_NEEDED),
+    });
+
+    await waitFor(() => {
+      expect(writes(stub).map(({ key }) => key)).toEqual([CREATE, INSTALL_DEV, EDIT]);
+    });
+    expect(writes(stub)[2]!.body).toEqual({ workflows: ["dev"] });
+  });
+
+  it("shows a spinner while the dialog is open and while the project is added, and keeps focus on the one button", async () => {
+    const { stub } = await openAnswered(PROJECT_NEEDED);
+    const create = heldBack();
+    const choose = button("Choose folder");
+    let picked: (path: string | null) => void = () => {};
+
+    dialog.pick.mockReturnValue(new Promise((resolve) => {
+      picked = resolve;
+    }));
+    stub.replies[CREATE] = create.reply;
+    said = [];
+    await userEvent.click(choose);
+
+    expect(choose.getAttribute("aria-disabled")).toBe("true");
+    expect(choose.querySelector("svg.animate-spin.motion-reduce\\:animate-none[aria-hidden=\"true\"]")).not.toBeNull();
+    expect(document.activeElement).toBe(choose);
+
+    await userEvent.click(choose);
+    expect(dialog.pick).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      picked(FOLDER);
+    });
+
+    expect(button("Adding project")).toBe(choose);
+    expect(choose.getAttribute("aria-disabled")).toBe("true");
+    expect(document.activeElement).toBe(choose);
+    expect(words()).toEqual([PROJECT_STARTED]);
+
+    await userEvent.click(choose);
+    expect(writes(stub)).toHaveLength(1);
+
+    await act(async () => {
+      create.answer(refusalReply(422, { kind: "store", code: "path-invalid", message: "this path names no directory", path: FOLDER }));
+    });
+
+    expect(await screen.findByRole("button", { name: "Choose folder" })).toBe(choose);
+    expect(document.activeElement).toBe(choose);
+  });
+
+  it("writes nothing and says nothing on Cancel, and leaves the row in its start state", async () => {
+    const { stub } = await openAnswered(PROJECT_NEEDED);
+
+    dialog.pick.mockResolvedValue(null);
+    said = [];
+    await userEvent.click(button("Choose folder"));
+
+    expect(writes(stub)).toEqual([]);
+    expect(words()).toEqual([]);
+    expect(button("Choose folder").getAttribute("aria-disabled")).toBe("false");
+    expect(button("Choose folder").hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  it("shows the failure of the dialog, opens the dialog again, and removes the failure on Cancel", async () => {
+    const { stub } = await openAnswered(PROJECT_NEEDED);
+
+    dialog.pick.mockRejectedValue(new FolderDialogError("The app did not answer the folder request."));
+    said = [];
+    await userEvent.click(button("Choose folder"));
+
+    const choose = button("Choose folder");
+    const line = "Select \"Choose folder\" to try again. If the dialog does not open, restart Tasma.";
+
+    expect(screen.getByText("Tasma cannot open the folder dialog.").className).toContain("text-signal");
+    expect(descriptionOf(choose)).toBe(`Tasma cannot open the folder dialog. | ${line}`);
+    expect(words()).toEqual([`Tasma cannot open the folder dialog. ${line}`]);
+    expect(document.activeElement).toBe(choose);
+
+    dialog.pick.mockResolvedValue(null);
+    await userEvent.click(choose);
+
+    expect(dialog.pick).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("Tasma cannot open the folder dialog.")).toBeNull();
+    expect(writes(stub)).toEqual([]);
+  });
+
+  it("shows a refused path with its Copy, and opens the dialog again", async () => {
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: () => Promise.reject(new Error("not allowed")) } });
+
+    const { stub } = await pickWith(PROJECT_NEEDED, {
+      [CREATE]: refusalReply(422, { kind: "store", code: "path-invalid", message: "this path names no directory", path: FOLDER }),
+    });
+    const choose = await screen.findByRole("button", { name: "Choose folder" });
+
+    await waitFor(() => {
+      expect(screen.getByText("store/path-invalid · this path names no directory")).toBeTruthy();
+    });
+    expect(descriptionOf(choose))
+      .toBe(`Tasma cannot add the project. | store/path-invalid · this path names no directory | ${FOLDER}`);
+    expect(words()).toEqual([PROJECT_STARTED, "Tasma cannot add the project. store/path-invalid · this path names no directory"]);
+
+    const copy = button("Copy");
+
+    expect(descriptionOf(copy)).toBe(FOLDER);
+    await userEvent.click(copy);
+    expect(await screen.findByRole("button", { name: "Cannot copy" })).toBeTruthy();
+    expect(words()).toContain("Cannot copy. The path is selected. Press Command-C to copy it.");
+
+    dialog.pick.mockResolvedValue("/Users/sample/code/orbit");
+    stub.replies[CREATE] = heldBack().reply;
+    await userEvent.click(choose);
+
+    expect(dialog.pick).toHaveBeenCalledTimes(2);
+    expect(writes(stub).map(({ body }) => body)).toEqual([{ path: FOLDER }, { path: "/Users/sample/code/orbit" }]);
+    expect(screen.queryByText(/store\/path-invalid/)).toBeNull();
+  });
+
+  it("sends the same path again on Try again after no answer, and changes to Done when a read sees the project", async () => {
+    const { stub } = await pickWith(PROJECT_NEEDED, { [CREATE]: noDaemon() });
+    const again = await screen.findByRole("button", { name: "Try again" });
+    const line = "The daemon did not answer. If the project was added, this step changes to Done.";
+
+    expect(screen.getByText(line)).toBeTruthy();
+    expect(words()).toEqual([PROJECT_STARTED, `Tasma cannot add the project. ${line}`]);
+
+    stub.replies[CREATE] = refusalReply(409, { kind: "store", code: "path-taken", message: "project ORBI holds this directory", path: FOLDER });
+    await userEvent.click(again);
+
+    await screen.findByText("store/path-taken · project ORBI holds this directory");
+    expect(dialog.pick).toHaveBeenCalledTimes(1);
+    expect(writes(stub).map(({ body }) => body)).toEqual([{ path: FOLDER }, { path: FOLDER }]);
+
+    await nextAnswer(stub, successReply(WORKFLOW_NEEDED));
+
+    expect(isDone("Add a project")).toBe(true);
+    expect(trigger("Add a workflow").textContent).toContain("Tasma does this");
+  });
+
+  it("puts the address in the box when the answer is not the daemon's", async () => {
+    await pickWith(PROJECT_NEEDED, { [CREATE]: { status: 502 } });
+    const again = await screen.findByRole("button", { name: "Try again" });
+
+    expect(descriptionOf(again)).toMatch(
+      /^Tasma cannot add the project\. \| The daemon did not answer through the address below\. .* \| .*HTTP 502/,
+    );
+  });
+
+  it("changes step 5 to Done before a status read answers, starts the workflow write, and starts no second pick", async () => {
+    const read = heldBack();
+    const install = heldBack();
+    const { stub } = await pickWith(PROJECT_NEEDED, {
+      [CREATE]: successReply(ORBIT),
+      [INSTALL_DEV]: install.reply,
+      [FULL]: read.reply,
+    });
+
+    await waitFor(() => {
+      expect(isDone("Add a project")).toBe(true);
+    });
+
+    expect(screen.queryByRole("button", { name: "Choose folder" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add workflow" })).toBeNull();
+    expect(button("Adding workflow").getAttribute("aria-disabled")).toBe("true");
+    expect(trigger("Add a workflow").getAttribute("aria-label")).toBe("Add a workflow, In progress");
+    expect(screen.getByText("orbit-notes").className).toContain("font-medium");
+    expect(writes(stub).map(({ key }) => key)).toEqual([CREATE, INSTALL_DEV]);
+    expect(words()).toEqual([PROJECT_STARTED, WORKFLOW_STARTED, "Add a project: done."]);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(trigger("Add a workflow"));
+    });
+
+    await userEvent.click(button("Adding workflow"));
+    expect(writes(stub)).toHaveLength(2);
+
+    stub.replies[EDIT] = successReply(ORBIT);
+    await act(async () => {
+      install.answer(INSTALLED);
+    });
+
+    expect(button("Adding workflow")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add workflow" })).toBeNull();
+    expect(writes(stub).map(({ key }) => key)).toEqual([CREATE, INSTALL_DEV, EDIT]);
+
+    await act(async () => {
+      read.answer(successReply(setupStatus({}, { skill: "fail" })));
+    });
+    await waitFor(() => {
+      expect(isDone("Add a workflow")).toBe(true);
+    });
+  });
+
+  it("starts the workflow write when a status read sees the project before the create answers", async () => {
+    const create = heldBack();
+    const { stub } = await pickWith(PROJECT_NEEDED, {
+      [CREATE]: create.reply,
+      [INSTALL_DEV]: heldBack().reply,
+      "/projects": successReply([ORBIT]),
+    });
+
+    await nextAnswer(stub, successReply(WORKFLOW_NEEDED));
+
+    expect(isDone("Add a project")).toBe(true);
+    expect(button("Adding workflow").getAttribute("aria-disabled")).toBe("true");
+    expect(trigger("Add a workflow").getAttribute("aria-label")).toBe("Add a workflow, In progress");
+
+    await act(async () => {
+      create.answer(successReply(ORBIT));
+    });
+
+    await waitFor(() => {
+      expect(writes(stub).map(({ key }) => key)).toEqual([CREATE, INSTALL_DEV]);
+    });
+    expect(button("Adding workflow")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add workflow" })).toBeNull();
+    expect(words()).toContain(WORKFLOW_STARTED);
+  });
+
+  it("drops a failed create when a status read saw the project first, and says nothing", async () => {
+    const create = heldBack();
+    const { stub } = await pickWith(PROJECT_NEEDED, { [CREATE]: create.reply, "/projects": successReply([ORBIT]) });
+
+    await nextAnswer(stub, successReply(WORKFLOW_NEEDED));
+    said = [];
+    await act(async () => {
+      create.answer({ status: 502 });
+    });
+
+    expect(await screen.findByRole("button", { name: "Add workflow" })).toBeTruthy();
+    expect(words()).toEqual([]);
+    expect(writes(stub).map(({ key }) => key)).toEqual([CREATE]);
+
+    await nextAnswer(stub, successReply(PROJECT_NEEDED));
+    await userEvent.click(trigger("Add a project"));
+
+    expect(button("Choose folder")).toBeTruthy();
+    expect(screen.queryByText(/Tasma cannot add/)).toBeNull();
+  });
+
+  it("shows a failed install in step 6 before a status read answers, keeps the project, and succeeds on Try again", async () => {
+    const read = heldBack();
+    const { stub } = await pickWith(PROJECT_NEEDED, {
+      [CREATE]: successReply(ORBIT),
+      [INSTALL_DEV]: TAKEN,
+      [FULL]: read.reply,
+    });
+    const again = await screen.findByRole("button", { name: "Try again" });
+
+    expect(trigger("Add a workflow").getAttribute("aria-label")).toBe("Add a workflow, Cannot add");
+    expect(isDone("Add a project")).toBe(true);
+    expect(descriptionOf(again)).toBe(`Tasma cannot add the workflow. | store/path-taken · this path is not free | ${DEV_FOLDER}`);
+    expect(words()).toEqual([PROJECT_STARTED, WORKFLOW_STARTED, "Add a project: done.", `${WORKFLOW_FAILED} ${SHOWN}`]);
+    expect(writes(stub).map(({ key }) => key)).toEqual([CREATE, INSTALL_DEV]);
+
+    await act(async () => {
+      read.answer(successReply(WORKFLOW_NEEDED));
+    });
+    stub.replies[INSTALL_DEV] = INSTALLED;
+    stub.replies[EDIT] = successReply(ORBIT);
+    stub.replies[FULL] = successReply(setupStatus({}, { skill: "fail" }));
+    said = [];
+    await userEvent.click(again);
+
+    expect(screen.queryByText(/store\/path-taken/)).toBeNull();
+    await waitFor(() => {
+      expect(isDone("Add a workflow")).toBe(true);
+    });
+    expect(writes(stub).map(({ key }) => key)).toEqual([CREATE, INSTALL_DEV, INSTALL_DEV, EDIT]);
+    expect(words()).toEqual([WORKFLOW_STARTED, "Add a workflow: done."]);
+  });
+
+  it("shows a failed edit after the install", async () => {
+    await pickWith(PROJECT_NEEDED, {
+      [CREATE]: successReply(ORBIT),
+      [INSTALL_DEV]: INSTALLED,
+      [EDIT]: refusalReply(422, { kind: "store", code: "workflow-invalid", message: "dev does not load" }),
+      [FULL]: successReply(WORKFLOW_NEEDED),
+    });
+
+    expect(await screen.findByText("store/workflow-invalid · dev does not load")).toBeTruthy();
+    expect(button("Try again")).toBeTruthy();
+  });
+
+  it("returns step 5 to its start state when a later status gives project fail", async () => {
+    const { stub } = await pickWith(PROJECT_NEEDED, {
+      [CREATE]: successReply(ORBIT),
+      [INSTALL_DEV]: TAKEN,
+      [FULL]: successReply(WORKFLOW_NEEDED),
+    });
+
+    await screen.findByRole("button", { name: "Try again" });
+    await nextAnswer(stub, successReply(PROJECT_NEEDED));
+
+    expect(trigger("Add a project").getAttribute("aria-label")).toBe("Add a project, You do this");
+    expect(trigger("Add a workflow").getAttribute("aria-label")).toBe("Add a workflow, Tasma does this");
+
+    await userEvent.click(trigger("Add a project"));
+
+    expect(button("Choose folder")).toBeTruthy();
+    expect(screen.queryByText(/Tasma cannot add/)).toBeNull();
+  });
+
+  it("clears the project after project-not-found, and Try again waits for the list", async () => {
+    const list = heldBack();
+    const { stub } = await pickWith(PROJECT_NEEDED, {
+      [CREATE]: successReply(ORBIT),
+      [INSTALL_DEV]: INSTALLED,
+      [EDIT]: GONE,
+      [FULL]: successReply(WORKFLOW_NEEDED),
+      "/projects": list.reply,
+    });
+    const reading = await screen.findByRole("button", { name: "Reading projects" });
+
+    expect(reading.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByText(/^Tasma adds a default development workflow to/).textContent).toContain("to your project.");
+    expect(descriptionOf(reading)).toBe("Tasma cannot add the workflow. | store/project-not-found · no project ORBI");
+    expect(trigger("Add a workflow").getAttribute("aria-label")).toBe("Add a workflow, Cannot add");
+
+    await userEvent.click(reading);
+    expect(writes(stub)).toHaveLength(3);
+
+    stub.replies[INSTALL_DEV] = successReply({ result: "exists" });
+    stub.replies["PATCH /projects/ORBIT"] = successReply({ ...ORBIT, tag: "ORBIT" });
+    await act(async () => {
+      list.answer(successReply([{ tag: "ORBIT", name: "orbit-notes", path: FOLDER }]));
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Try again" }));
+
+    await waitFor(() => {
+      expect(writes(stub).at(-1)).toEqual({ key: "PATCH /projects/ORBIT", body: { workflows: ["dev"] } });
+    });
+  });
+
+  it("says only the failure when project-not-found returns step 5 to its start state", async () => {
+    await pickWith(PROJECT_NEEDED, {
+      [CREATE]: successReply(ORBIT),
+      [INSTALL_DEV]: INSTALLED,
+      [EDIT]: GONE,
+      [FULL]: heldBack().reply,
+    });
+
+    await waitFor(() => {
+      expect(words()).toContain("Tasma cannot add the workflow. store/project-not-found · no project ORBI");
+    });
+    expect(trigger("Add a project").getAttribute("aria-label")).toBe("Add a project, You do this");
+    expect(isOpen("Add a workflow")).toBe(false);
+  });
+
+  describe("with no project from this session", () => {
+    const ALPHA = { tag: "ALPHA", name: "alpha-notes", path: "/Users/sample/code/alpha-notes" };
+    const BETA = { tag: "BETA", name: "beta-notes", path: "/Users/sample/code/beta-notes" };
+
+    it("names the first project, waits for a press and attaches dev only to that project", async () => {
+      const list = heldBack();
+      const stub = await openWithList(list.reply);
+      const reading = await screen.findByRole("button", { name: "Reading projects" });
+
+      expect(reading.getAttribute("aria-disabled")).toBe("true");
+      expect(reading.hasAttribute("aria-describedby")).toBe(false);
+      expect(screen.getByText(/^Tasma adds a default development workflow to/).textContent)
+        .toBe("Tasma adds a default development workflow to your project. You can change it later.");
+
+      await act(async () => {
+        list.answer(successReply([ALPHA, BETA]));
+      });
+
+      const add = await screen.findByRole("button", { name: "Add workflow" });
+
+      expect(add).toBe(reading);
+      expect(add.getAttribute("aria-disabled")).toBe("false");
+      expect(descriptionOf(add)).toBe("Tasma adds a default development workflow to alpha-notes. You can change it later.");
+      expect(trigger("Add a workflow").getAttribute("aria-label")).toBe("Add a workflow, Tasma does this");
+      expect(writes(stub)).toEqual([]);
+
+      stub.replies[INSTALL_DEV] = INSTALLED;
+      stub.replies["PATCH /projects/ALPHA"] = successReply(ALPHA);
+      said = [];
+      await userEvent.click(add);
+
+      await waitFor(() => {
+        expect(writes(stub)).toEqual([
+          { key: INSTALL_DEV, body: {} },
+          { key: "PATCH /projects/ALPHA", body: { workflows: ["dev"] } },
+        ]);
+      });
+      expect(words()[0]).toBe("Tasma adds the workflow to alpha-notes.");
+      expect(document.activeElement).toBe(add);
+    });
+
+    it("reads the list again after project-not-found, and Try again sends the tag of the new first project", async () => {
+      const stub = await openWithList(successReply([ALPHA]));
+
+      stub.replies[INSTALL_DEV] = INSTALLED;
+      stub.replies["PATCH /projects/ALPHA"] = refusalReply(404, { kind: "store", code: "project-not-found", message: "no project ALPHA" });
+      stub.replies["/projects"] = successReply([BETA]);
+      await userEvent.click(await screen.findByRole("button", { name: "Add workflow" }));
+
+      await screen.findByText("beta-notes");
+      stub.replies["PATCH /projects/BETA"] = successReply(BETA);
+      await userEvent.click(button("Try again"));
+
+      await waitFor(() => {
+        expect(writes(stub).at(-1)).toEqual({ key: "PATCH /projects/BETA", body: { workflows: ["dev"] } });
+      });
+    });
+
+    it("names the tag of a project with no name", async () => {
+      await openWithList(successReply([{ tag: "ALPHA" }]));
+
+      await screen.findByRole("button", { name: "Add workflow" });
+      expect(screen.getByText("ALPHA").className).toContain("font-medium");
+    });
+
+    it("shows and says a failed list read one time, and removes the line after a read that succeeds", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const stub = await openWithList(refusalReply(500, { kind: "daemon", code: "internal", message: "the list broke" }));
+
+      await screen.findByText(LIST_FAILED);
+
+      const reading = button("Reading projects");
+
+      expect(descriptionOf(reading)).toBe(LIST_FAILED);
+      expect(words().filter((spoken) => spoken === LIST_FAILED)).toHaveLength(1);
+
+      await advance(5000);
+      expect(words().filter((spoken) => spoken === LIST_FAILED)).toHaveLength(1);
+
+      stub.replies["/projects"] = successReply([ALPHA]);
+      await advance(5000);
+
+      await waitFor(() => {
+        expect(screen.queryByText(LIST_FAILED)).toBeNull();
+      });
+      expect(button("Add workflow")).toBe(reading);
+    });
+
+    it("reads the list again every 5 seconds while it holds no project", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const stub = await openWithList(successReply([]));
+      const reads = countReads(stub, "/projects");
+
+      await screen.findByRole("button", { name: "Reading projects" });
+      await advance(5000);
+      expect(reads()).toBe(1);
+
+      stub.replies["/projects"] = successReply([ALPHA]);
+      await advance(5000);
+      await screen.findByRole("button", { name: "Add workflow" });
+
+      await advance(5000);
+      expect(reads()).toBe(1);
+    });
+  });
+
+  describe("a failure of step 6 while steps 1 to 4 are not done", () => {
+    const SKILL_AND_PROJECT = setupStatus({ project: "fail", workflow: "fail" }, { skill: "fail" });
+
+    /** Opens step 5 by hand, with an install that the test answers after step 5 is done. */
+    async function openWithWrites() {
+      const opened = await openAnswered(SKILL_AND_PROJECT);
+      const install = heldBack();
+
+      Object.assign(opened.stub.replies, { [CREATE]: successReply(ORBIT), [INSTALL_DEV]: install.reply });
+      dialog.pick.mockResolvedValue(FOLDER);
+      await userEvent.click(trigger("Add a project"));
+      said = [];
+
+      return { ...opened, install };
+    }
+
+    async function failAfterDone(install: ReturnType<typeof heldBack>): Promise<void> {
+      await waitFor(() => {
+        expect(isDone("Add a project")).toBe(true);
+      });
+      await act(async () => {
+        install.answer(TAKEN);
+      });
+    }
+
+    it("leaves step 6 closed after a press with focus on the button, and says to open it", async () => {
+      const { install } = await openWithWrites();
+
+      await userEvent.click(button("Choose folder"));
+      await waitFor(() => {
+        expect(document.activeElement).toBe(trigger(SKILL));
+      });
+      await failAfterDone(install);
+
+      await waitFor(() => {
+        expect(words()).toContain(`${WORKFLOW_FAILED} ${OPEN_IT}`);
+      });
+      expect(isOpen(SKILL)).toBe(true);
+      expect(isOpen("Add a workflow")).toBe(false);
+      expect(document.activeElement).toBe(trigger(SKILL));
+      expect(trigger("Add a workflow").getAttribute("aria-label")).toBe("Add a workflow, Cannot add");
+    });
+
+    it("opens step 6 and scrolls it into view after a press with no focus on the button", async () => {
+      const scrollIntoView = stubScrollIntoView();
+      const { install } = await openWithWrites();
+
+      screen.getByRole("heading", { level: 1 }).focus();
+      fireEvent.click(button("Choose folder"));
+      await failAfterDone(install);
+
+      await waitFor(() => {
+        expect(words()).toContain(`${WORKFLOW_FAILED} ${SHOWN}`);
+      });
+      expect(isOpen("Add a workflow")).toBe(true);
+      expect(isOpen(SKILL)).toBe(false);
+      expect(scrollIntoView.mock.contexts).toEqual([screen.getByText("Add a workflow").closest("li")]);
+      expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1 }));
+    });
+
+    it("keeps open a panel that the user opened", async () => {
+      const install = heldBack();
+      const stub = await openWithList(
+        successReply([{ tag: "ORBI", name: "orbit-notes", path: FOLDER }]),
+        setupStatus({ workflow: "fail" }, { skill: "fail" }),
+      );
+
+      stub.replies[INSTALL_DEV] = install.reply;
+      await waitFor(() => {
+        expect(isOpen(SKILL)).toBe(true);
+      });
+      await userEvent.click(trigger("Add a workflow"));
+      await userEvent.click(await screen.findByRole("button", { name: "Add workflow" }));
+      await userEvent.click(trigger(SKILL));
+      (document.activeElement as HTMLElement).blur();
+      said = [];
+
+      await act(async () => {
+        install.answer(TAKEN);
+      });
+
+      await waitFor(() => {
+        expect(words()).toEqual([`${WORKFLOW_FAILED} ${OPEN_IT}`]);
+      });
+      expect(isOpen(SKILL)).toBe(true);
+      expect(isOpen("Add a workflow")).toBe(false);
+    });
+  });
+
+  describe("in the browser", () => {
+    const FIELD = "Folder path";
+
+    beforeEach(() => {
+      dialog.available = false;
+    });
+
+    function field(): HTMLElement {
+      return screen.getByRole("textbox", { name: FIELD });
+    }
+
+    it("takes a trimmed path from the field, and starts the workflow write by itself", async () => {
+      const { stub } = await openAnswered(PROJECT_NEEDED);
+
+      Object.assign(stub.replies, {
+        [CREATE]: successReply(ORBIT),
+        [INSTALL_DEV]: INSTALLED,
+        [EDIT]: successReply(ORBIT),
+        [FULL]: successReply(WORKFLOW_NEEDED),
+      });
+      expect(screen.queryByRole("button", { name: "Choose folder" })).toBeNull();
+
+      await userEvent.type(field(), `  ${FOLDER}  {Enter}`);
+
+      await waitFor(() => {
+        expect(writes(stub)).toEqual([
+          { key: CREATE, body: { path: FOLDER } },
+          { key: INSTALL_DEV, body: {} },
+          { key: EDIT, body: { workflows: ["dev"] } },
+        ]);
+      });
+      expect(dialog.pick).not.toHaveBeenCalled();
+    });
+
+    it("marks the field as required, to a screen reader and with its placeholder", async () => {
+      await openAnswered(PROJECT_NEEDED);
+
+      expect(field().getAttribute("aria-required")).toBe("true");
+      expect(field().getAttribute("placeholder")).toBe("Required");
+      expect(field().className).toContain("placeholder:text-dim");
+    });
+
+    it("sends nothing for an empty path, moves focus to the field, and says the words only when focus was there", async () => {
+      const { stub } = await openAnswered(PROJECT_NEEDED);
+      const empty = "Type the path of a folder.";
+
+      said = [];
+      await userEvent.click(button("Add project"));
+
+      expect(screen.getByText(empty)).toBeTruthy();
+      expect(document.activeElement).toBe(field());
+      expect(document.getElementById(field().getAttribute("aria-describedby")!)?.textContent).toBe(empty);
+      expect(words()).toEqual([]);
+
+      await userEvent.type(field(), "   {Enter}");
+
+      expect(words()).toEqual([empty]);
+      expect(writes(stub)).toEqual([]);
+
+      await userEvent.type(field(), "x");
+      expect(screen.queryByText(empty)).toBeNull();
+    });
+
+    it("is busy while the project is added, ignores Enter, and keeps the value and the button after a failure", async () => {
+      const { stub } = await openAnswered(PROJECT_NEEDED);
+      const create = heldBack();
+
+      stub.replies[CREATE] = create.reply;
+      await userEvent.type(field(), `${FOLDER}{Enter}`);
+
+      const adding = button("Adding project");
+
+      expect(adding.getAttribute("aria-disabled")).toBe("true");
+
+      await userEvent.type(field(), "{Enter}");
+      await userEvent.click(adding);
+      expect(writes(stub)).toHaveLength(1);
+
+      await act(async () => {
+        create.answer({ status: 502 });
+      });
+
+      expect(await screen.findByRole("button", { name: "Add project" })).toBe(adding);
+      expect((field() as HTMLInputElement).value).toBe(FOLDER);
+      expect(descriptionOf(adding)).toMatch(/^Tasma cannot add the project\. \| /);
+    });
   });
 });
 

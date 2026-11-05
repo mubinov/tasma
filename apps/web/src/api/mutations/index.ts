@@ -31,9 +31,9 @@ export {
   usePendingCollapsed,
 } from "./comments";
 export type { CommentWrite } from "./comments";
-export { bodyCorrection, failureKind, refusalWords, titleCorrection, WriteError } from "./notices";
+export { bodyCorrection, failureKind, refusalPath, refusalWords, titleCorrection, WriteError } from "./notices";
 export type { FailureKind, WriteFailure } from "./notices";
-export { closeSkillInstallFailure, installSkillOptions } from "./setup";
+export { addWorkflowOptions, closeSkillInstallFailure, createProjectOptions, installSkillOptions, projectGone } from "./setup";
 export type { SkillInstallWrite } from "./setup";
 export {
   createRefusal,
