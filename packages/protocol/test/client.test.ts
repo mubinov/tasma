@@ -1,11 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import { createClient, ProtocolError, TransportError } from "@tasma/protocol";
 import type {
+  Chat,
   Client,
   CommentHeader,
   Failure,
   Method,
+  ProjectChat,
   ProjectSummary,
+  Success,
   TaskText,
   Transport,
   TransportReply,
@@ -264,6 +267,64 @@ const invocations: Invocation[] = [
     body: { seq: 14, client: "app" },
   },
   {
+    name: "readChat of a chat of a project",
+    send: (client) => client.readChat("SAGA", undefined, 2),
+    method: "GET",
+    path: "/projects/SAGA/chats/2",
+  },
+  {
+    name: "readChatEvents of a chat of a project",
+    send: (client) => client.readChatEvents("SAGA", undefined, 2, 41),
+    method: "GET",
+    path: "/projects/SAGA/chats/2/events?after=41",
+  },
+  {
+    name: "sendChatMessage of a chat of a project",
+    send: (client) => client.sendChatMessage("SAGA", undefined, 2, { text: "  Build it\n", client: "app" }),
+    method: "POST",
+    path: "/projects/SAGA/chats/2/messages",
+    body: { text: "  Build it\n", client: "app" },
+  },
+  {
+    name: "cancelChatTurn of a chat of a project",
+    send: (client) => client.cancelChatTurn("SAGA", undefined, 2, { client: "app" }),
+    method: "POST",
+    path: "/projects/SAGA/chats/2/cancel",
+    body: { client: "app" },
+  },
+  {
+    name: "answerChatPermission of a chat of a project",
+    send: (client) => client.answerChatPermission("SAGA", undefined, 2, "req 1?", { optionId: "allow", client: "app" }),
+    method: "POST",
+    path: "/projects/SAGA/chats/2/permissions/req%201%3F",
+    body: { optionId: "allow", client: "app" },
+  },
+  {
+    name: "answerChatQuestion of a chat of a project",
+    send: (client) => client.answerChatQuestion("SAGA", undefined, 2, "req 2?", {
+      action: "accept",
+      content: { parser: "peg", depth: 2, strict: true, tags: ["a"] },
+      client: "app",
+    }),
+    method: "POST",
+    path: "/projects/SAGA/chats/2/questions/req%202%3F",
+    body: { action: "accept", content: { parser: "peg", depth: 2, strict: true, tags: ["a"] }, client: "app" },
+  },
+  {
+    name: "setChatOption of a chat of a project",
+    send: (client) => client.setChatOption("SAGA", undefined, 2, { configId: "mode", value: "acceptEdits", client: "app" }),
+    method: "POST",
+    path: "/projects/SAGA/chats/2/options",
+    body: { configId: "mode", value: "acceptEdits", client: "app" },
+  },
+  {
+    name: "markChatSeen of a chat of a project",
+    send: (client) => client.markChatSeen("SAGA", undefined, 2, { seq: 14, client: "app" }),
+    method: "POST",
+    path: "/projects/SAGA/chats/2/seen",
+    body: { seq: 14, client: "app" },
+  },
+  {
     name: "listAllChats",
     send: (client) => client.listAllChats({ project: "SAGA", q: "parse tree", after: "c0ffee" }),
     method: "GET",
@@ -280,6 +341,19 @@ const invocations: Invocation[] = [
     send: (client) => client.readChatItem("SAGA-3", 2),
     method: "GET",
     path: "/chats/SAGA-3/2",
+  },
+  {
+    name: "startProjectChat",
+    send: (client) => client.startProjectChat("SAGA", { text: "Plan the parser", client: "app" }),
+    method: "POST",
+    path: "/projects/SAGA/chats",
+    body: { text: "Plan the parser", client: "app" },
+  },
+  {
+    name: "readProjectChatItem",
+    send: (client) => client.readProjectChatItem("SAGA", 2),
+    method: "GET",
+    path: "/projects/SAGA/chats/2/item",
   },
   {
     name: "listWorkflows",
@@ -454,6 +528,19 @@ describe("the client", () => {
 
     await expect(createClient(transport).sendChatMessage("SAGA", "SAGA-3", 2, { text: "Go", client: "app" }))
       .resolves.toEqual({ data, diagnostics: [] });
+  });
+
+  it("answers a chat of a task with a task id, a chat of a project with none, and either with either", async () => {
+    const client = createClient(recorder(ok(null)).transport);
+    const either = "SAGA-3" as string | undefined;
+    const input = { text: "Go", client: "app" };
+
+    expectTypeOf(await client.readChat("SAGA", "SAGA-3", 2)).toEqualTypeOf<Success<Chat>>();
+    expectTypeOf(await client.readChat("SAGA", undefined, 2)).toEqualTypeOf<Success<ProjectChat>>();
+    expectTypeOf(await client.readChat("SAGA", either, 2)).toEqualTypeOf<Success<Chat | ProjectChat>>();
+    expectTypeOf(await client.sendChatMessage("SAGA", "SAGA-3", 2, input)).toEqualTypeOf<Success<Chat>>();
+    expectTypeOf(await client.sendChatMessage("SAGA", undefined, 2, input)).toEqualTypeOf<Success<ProjectChat>>();
+    expectTypeOf(await client.sendChatMessage("SAGA", either, 2, input)).toEqualTypeOf<Success<Chat | ProjectChat>>();
   });
 
   it.each(["turn-running", "chat-not-running", "already-answered"] as const)(

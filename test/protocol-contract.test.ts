@@ -11,6 +11,7 @@ import type {
   ListedEntry,
   LocatedProject,
   ProjectChange as EngineProjectChange,
+  ProjectChatRecord,
   ProjectDeclaration,
   QueryResult,
   RenameProjectInput,
@@ -48,6 +49,7 @@ import type {
   Frontmatter,
   ParseErrorCode,
   ProjectChange,
+  ProjectChat,
   ProjectInput,
   ProjectRename,
   ProjectSummary,
@@ -127,6 +129,7 @@ describe("the wire contract", () => {
     // A chat on the wire is the engine's record plus the last seq, the seq of
     // the state and the status, which the daemon derives from the log.
     expectTypeOf<Omit<Chat, "seq" | "stateSeq" | "state">>().toEqualTypeOf<Flat<ChatRecord>>();
+    expectTypeOf<Omit<ProjectChat, "seq" | "stateSeq" | "state">>().toEqualTypeOf<Flat<ProjectChatRecord>>();
   });
 
   it("keeps the task and the write result in step, less what JSON cannot carry", () => {

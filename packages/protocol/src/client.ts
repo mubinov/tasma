@@ -5,11 +5,15 @@ import type {
   ChatListItem,
   ChatListPage,
   ChatMessageInput,
+  ChatOf,
   ChatOptionChange,
   ChatSeenInput,
   ChatStart,
   ChatStartInput,
   PermissionAnswer,
+  ProjectChatListItem,
+  ProjectChatStart,
+  ProjectChatStartInput,
   QuestionAnswer,
 } from "./chat.js";
 import type { UserConfig, UserConfigChange } from "./config.js";
@@ -48,6 +52,8 @@ export type CallSignal = {
 };
 
 export type CallOptions = { signal?: CallSignal };
+
+type CallParts = { body?: unknown; query?: PathQuery; signal?: CallSignal };
 
 /**
  * One call, as the host that carries it sees it. `body` is a JavaScript value
@@ -106,14 +112,15 @@ export type Client = {
    * moves to another step while that agent stops.
    */
   startChat(tag: string, id: string, input: ChatStartInput): Promise<Success<ChatStart>>;
-  readChat(tag: string, id: string, chat: number): Promise<Success<Chat>>;
+  /** `id` is the id of the task. With `undefined`, reads chat `chat` of the project `tag`. */
+  readChat<Id extends string | undefined>(tag: string, id: Id, chat: number): Promise<Success<ChatOf<Id>>>;
   /**
    * With `after` at the last `seq` of the log the daemon holds the call until
    * the next entry, so a transport timeout must be longer than the hold.
    */
   readChatEvents(
     tag: string,
-    id: string,
+    id: string | undefined,
     chat: number,
     after?: number,
     options?: CallOptions,
@@ -127,33 +134,43 @@ export type Client = {
    * `turn-running` while the chat ends for a restart, and with
    * `chat-not-running` only while the daemon stops.
    */
-  sendChatMessage(tag: string, id: string, chat: number, input: ChatMessageInput): Promise<Success<Chat>>;
+  sendChatMessage<Id extends string | undefined>(
+    tag: string,
+    id: Id,
+    chat: number,
+    input: ChatMessageInput,
+  ): Promise<Success<ChatOf<Id>>>;
   /**
    * Cancels the turn that runs. A message that `sendChatMessage` answered with
    * success and that the agent has not read yet can be dropped. A message after the
    * cancel goes into the same turn when that turn has not ended yet. Does
    * nothing when no turn runs.
    */
-  cancelChatTurn(tag: string, id: string, chat: number, input: ChatCancelInput): Promise<Success<Chat>>;
+  cancelChatTurn<Id extends string | undefined>(
+    tag: string,
+    id: Id,
+    chat: number,
+    input: ChatCancelInput,
+  ): Promise<Success<ChatOf<Id>>>;
   /**
    * `request` is the `request` of the `permission` event in the log. The first
    * answer wins, and a later one is refused with `already-answered`.
    */
-  answerChatPermission(
+  answerChatPermission<Id extends string | undefined>(
     tag: string,
-    id: string,
+    id: Id,
     chat: number,
     request: string,
     answer: PermissionAnswer,
-  ): Promise<Success<Chat>>;
+  ): Promise<Success<ChatOf<Id>>>;
   /** As `answerChatPermission`, for a `question` event. */
-  answerChatQuestion(
+  answerChatQuestion<Id extends string | undefined>(
     tag: string,
-    id: string,
+    id: Id,
     chat: number,
     request: string,
     answer: QuestionAnswer,
-  ): Promise<Success<Chat>>;
+  ): Promise<Success<ChatOf<Id>>>;
   /**
    * Sets one config option of the agent of the chat, and makes the value the
    * default of the agent for new chats unless `AGENT_OPTION_RULES` lists it as
@@ -162,16 +179,30 @@ export type Client = {
    * `option-refused` when the agent does not offer or does not take the value,
    * and with `turn-running` while the chat ends for a restart.
    */
-  setChatOption(tag: string, id: string, chat: number, change: ChatOptionChange): Promise<Success<Chat>>;
+  setChatOption<Id extends string | undefined>(
+    tag: string,
+    id: Id,
+    chat: number,
+    change: ChatOptionChange,
+  ): Promise<Success<ChatOf<Id>>>;
   /**
    * Moves the `seen` of the chat forward to `seq`, at most to the last `seq` of
    * the log. A `seq` at or below the stored `seen` changes nothing.
    */
-  markChatSeen(tag: string, id: string, chat: number, input: ChatSeenInput): Promise<Success<Chat>>;
+  markChatSeen<Id extends string | undefined>(
+    tag: string,
+    id: Id,
+    chat: number,
+    input: ChatSeenInput,
+  ): Promise<Success<ChatOf<Id>>>;
   /** One page of the chats of all projects, the active chats first and each group newest first. */
   listAllChats(query?: ChatListQuery): Promise<Success<ChatListPage>>;
   /** One chat as `listAllChats` gives it, by the id of its task. */
   readChatItem(id: string, chat: number): Promise<Success<ChatListItem>>;
+  /** Starts a new chat of the project, with `text` as its first message. Each call makes a new chat. */
+  startProjectChat(tag: string, input: ProjectChatStartInput): Promise<Success<ProjectChatStart>>;
+  /** One chat of a project as a row of the list of the chats of all projects. */
+  readProjectChatItem(tag: string, chat: number): Promise<Success<ProjectChatListItem>>;
   listWorkflows(): Promise<Success<string[]>>;
   createWorkflow(input: WorkflowInput): Promise<Success<Workflow>>;
   readWorkflow(name: string): Promise<Success<Workflow>>;
@@ -249,7 +280,7 @@ export function createClient(transport: Transport): Client {
   async function call<T>(
     route: Route,
     params: Record<string, string | number>,
-    options: { body?: unknown; query?: PathQuery; signal?: CallSignal } = {},
+    options: CallParts = {},
   ): Promise<Success<T>> {
     const path = buildPath(route, params, options.query);
     const { body, signal } = options;
@@ -269,6 +300,19 @@ export function createClient(transport: Transport): Client {
     }
 
     return { data: reply.body.data as T, diagnostics: reply.body.diagnostics };
+  }
+
+  function callChat<T>(
+    taskRoute: Route,
+    projectRoute: Route,
+    tag: string,
+    id: string | undefined,
+    params: Record<string, string | number>,
+    options?: CallParts,
+  ): Promise<Success<T>> {
+    return id === undefined
+      ? call<T>(projectRoute, { ...params, project: tag }, options)
+      : call<T>(taskRoute, { ...params, project: tag, id }, options);
   }
 
   return {
@@ -295,27 +339,70 @@ export function createClient(transport: Transport): Client {
       call<WriteResult>(routes.deleteComment, { project: tag, id, commentId }),
     listChats: (tag, id) => call<Chat[]>(routes.listChats, { project: tag, id }),
     startChat: (tag, id, input) => call<ChatStart>(routes.startChat, { project: tag, id }, { body: input }),
-    readChat: (tag, id, chat) => call<Chat>(routes.readChat, { project: tag, id, chat }),
+    readChat: (tag, id, chat) =>
+      callChat<ChatOf<typeof id>>(routes.readChat, routes.readProjectChat, tag, id, { chat }),
     readChatEvents: (tag, id, chat, after, options) =>
-      call<ChatEventsReply>(
+      callChat<ChatEventsReply>(
         routes.readChatEvents,
-        { project: tag, id, chat },
+        routes.readProjectChatEvents,
+        tag,
+        id,
+        { chat },
         { query: { after } satisfies ChatEventsQuery, signal: options?.signal },
       ),
     sendChatMessage: (tag, id, chat, input) =>
-      call<Chat>(routes.sendChatMessage, { project: tag, id, chat }, { body: input }),
+      callChat<ChatOf<typeof id>>(
+        routes.sendChatMessage,
+        routes.sendProjectChatMessage,
+        tag,
+        id,
+        { chat },
+        { body: input },
+      ),
     cancelChatTurn: (tag, id, chat, input) =>
-      call<Chat>(routes.cancelChatTurn, { project: tag, id, chat }, { body: input }),
+      callChat<ChatOf<typeof id>>(
+        routes.cancelChatTurn,
+        routes.cancelProjectChatTurn,
+        tag,
+        id,
+        { chat },
+        { body: input },
+      ),
     answerChatPermission: (tag, id, chat, request, answer) =>
-      call<Chat>(routes.answerChatPermission, { project: tag, id, chat, request }, { body: answer }),
+      callChat<ChatOf<typeof id>>(
+        routes.answerChatPermission,
+        routes.answerProjectChatPermission,
+        tag,
+        id,
+        { chat, request },
+        { body: answer },
+      ),
     answerChatQuestion: (tag, id, chat, request, answer) =>
-      call<Chat>(routes.answerChatQuestion, { project: tag, id, chat, request }, { body: answer }),
+      callChat<ChatOf<typeof id>>(
+        routes.answerChatQuestion,
+        routes.answerProjectChatQuestion,
+        tag,
+        id,
+        { chat, request },
+        { body: answer },
+      ),
     setChatOption: (tag, id, chat, change) =>
-      call<Chat>(routes.setChatOption, { project: tag, id, chat }, { body: change }),
+      callChat<ChatOf<typeof id>>(
+        routes.setChatOption,
+        routes.setProjectChatOption,
+        tag,
+        id,
+        { chat },
+        { body: change },
+      ),
     markChatSeen: (tag, id, chat, input) =>
-      call<Chat>(routes.markChatSeen, { project: tag, id, chat }, { body: input }),
+      callChat<ChatOf<typeof id>>(routes.markChatSeen, routes.markProjectChatSeen, tag, id, { chat }, { body: input }),
     listAllChats: (query) => call<ChatListPage>(routes.listAllChats, {}, { query }),
     readChatItem: (id, chat) => call<ChatListItem>(routes.readChatItem, { id, chat }),
+    startProjectChat: (tag, input) =>
+      call<ProjectChatStart>(routes.startProjectChat, { project: tag }, { body: input }),
+    readProjectChatItem: (tag, chat) =>
+      call<ProjectChatListItem>(routes.readProjectChatItem, { project: tag, chat }),
     listWorkflows: () => call<string[]>(routes.listWorkflows, {}),
     createWorkflow: (input) => call<Workflow>(routes.createWorkflow, {}, { body: input }),
     readWorkflow: (name) => call<Workflow>(routes.readWorkflow, { workflow: name }),

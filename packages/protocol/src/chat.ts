@@ -1,6 +1,6 @@
-// A chat of a task as it crosses the wire: its events, its state, and the fold
-// that derives the state from the events. No file stores the state: the daemon
-// and every client derive it from the log with `foldChat`.
+// A chat of a task or of a project as it crosses the wire: its events, its
+// state, and the fold that derives the state from the events. No file stores
+// the state: the daemon and every client derive it from the log with `foldChat`.
 
 import type { Frontmatter } from "./task.js";
 import type { Workflow } from "./workflow.js";
@@ -70,6 +70,14 @@ export type Chat = {
   stateSeq: number;
 } & ChatStatus;
 
+/** A chat of a project, with no task and no step. */
+export type ProjectChat = { chat: number; title: string }
+  & Pick<Chat, "agent" | "folder" | "created" | "session" | "options" | "seen" | "seq" | "stateSeq">
+  & ChatStatus;
+
+/** The chat that a chat command answers: a chat of a task with a task id, a chat of a project with none. */
+export type ChatOf<Id extends string | undefined> = Id extends string ? Chat : ProjectChat;
+
 /** One chat in the list of the chats of all projects. */
 export type ChatListItem = {
   tag: string;
@@ -81,6 +89,17 @@ export type ChatListItem = {
   agent: ChatAgent;
   created: string;
   /** Only on the latest chat of a task whose status is not final, and only when `chatMark` gives a mark. */
+  status?: ChatStatus;
+};
+
+/** One chat of a project in the list of the chats of all projects. */
+export type ProjectChatListItem = {
+  tag: string;
+  title: string;
+  chat: number;
+  agent: ChatAgent;
+  created: string;
+  /** Only when the chat has a mark. */
   status?: ChatStatus;
 };
 
@@ -124,6 +143,9 @@ export type ChatCancelInput = { client: string };
  */
 export type ChatStartInput = { client: string; restart?: boolean };
 
+/** `text` is the first message of the chat. */
+export type ProjectChatStartInput = { text: string; client: string };
+
 /** A value for one config option of the agent of a chat, as ACP's `session/set_config_option` takes it. */
 export type ChatOptionChange = { configId: string; value: string; client: string };
 
@@ -145,6 +167,8 @@ export const AGENT_OPTION_RULES: Readonly<Record<ChatAgent, { hidden: OptionValu
 
 /** `started` is false when the answer is a chat that the task already had. */
 export type ChatStart = { chat: Chat; started: boolean };
+
+export type ProjectChatStart = { chat: ProjectChat };
 
 /** `optionId` is one of the options of the permission request. */
 export type PermissionAnswer = { optionId: string; client: string };

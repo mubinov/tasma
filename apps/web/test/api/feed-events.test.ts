@@ -160,6 +160,18 @@ describe("FEED_MAPPINGS", () => {
     ]);
   });
 
+  it("makes a project chat event refresh the chats of all projects and their items, and nothing else", () => {
+    const event: FeedEvent = { kind: "project-chat", tag: "SAGA", chat: 1, state: "working" };
+
+    expect(keysMatched(event, { ...sample, ...chatSample })).toEqual(["chatList", "chatItem"]);
+  });
+
+  it("gives a project chat event the filter of the chats of all projects alone", () => {
+    const event: FeedEvent = { kind: "project-chat", tag: "SAGA", chat: 1, state: "continued-outside", where: "terminal" };
+
+    expect(filtersOf([event], FEED_MAPPINGS)).toEqual([{ queryKey: daemonKeys.chats() }]);
+  });
+
   it("makes a task event refresh the chats of all projects and their items", () => {
     expect(keysMatched({ kind: "task", tag: "SAGA", id: "SAGA-1", change: "changed" }, chatSample)).toEqual([
       "chatList",

@@ -23,6 +23,7 @@ export type {
   ChatListItem,
   ChatListPage,
   ChatMessageInput,
+  ChatOf,
   ChatOptionChange,
   ChatOutside,
   ChatSeenInput,
@@ -31,6 +32,10 @@ export type {
   ChatState,
   ChatStatus,
   PermissionAnswer,
+  ProjectChat,
+  ProjectChatListItem,
+  ProjectChatStart,
+  ProjectChatStartInput,
   QuestionAnswer,
   QuestionValue,
 } from "./chat.js";

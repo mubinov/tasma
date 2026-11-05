@@ -9,13 +9,16 @@ import type { ChatStatus } from "./chat.js";
  * rename of a project folder comes as `deleted` and `created`. A `task` event
  * comes only from a project the daemon holds. `project` with `changed` also
  * comes when `live` changes. A `chat` event never carries the text, and a
- * rename or a delete of its project or task sends none.
+ * rename or a delete of its project or task sends none. A `project-chat` event
+ * is the `chat` event of a chat of a project. It never carries the text, and a
+ * rename or a delete of its project sends none.
  */
 export type FeedEvent
   = | { kind: "task"; tag: string; id: string; change: "created" | "changed" | "deleted" }
     | { kind: "project"; tag: string; change: "created" | "changed" | "deleted" }
     | { kind: "project"; tag: string; change: "renamed"; to: string }
     | ({ kind: "chat"; tag: string; task: string; chat: number; step: string } & ChatStatus)
+    | ({ kind: "project-chat"; tag: string; chat: number } & ChatStatus)
     | { kind: "config" }
     | { kind: "workflow"; name: string; change: "created" | "changed" | "deleted" };
 
