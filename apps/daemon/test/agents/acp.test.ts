@@ -220,6 +220,52 @@ describe("connectAgent", () => {
     expect(seen).toEqual([{ update: text("one") }, { update: text("two") }]);
   });
 
+  it("steers the turn with _session/steering, one text block and a prompt asked for when no turn runs", async () => {
+    const { fake, session } = await started();
+
+    await session.steer("Use the other parser");
+
+    expect(fake.steers).toEqual([{
+      sessionId: SESSION,
+      prompt: [{ type: "text", text: "Use the other parser" }],
+      _meta: { steering: { idleBehavior: "promptRequired" } },
+    }]);
+  });
+
+  it.each([
+    ["injected", { outcome: "injected" }, "injected"],
+    ["promptRequired", { outcome: "promptRequired", reason: "noRunningTurn" }, "prompt-required"],
+  ] as const)("gives the steering answer %s as %s", async (_outcome, answer, result) => {
+    const { session } = await started({ steer: async () => answer });
+
+    await expect(session.steer("Use the other parser")).resolves.toBe(result);
+  });
+
+  it("rejects a steering answer with another outcome, and names it", async () => {
+    const { session } = await started({ steer: async () => ({ outcome: "startedNewTurn" }) });
+
+    await expect(session.steer("Use the other parser")).rejects.toThrow("startedNewTurn");
+  });
+
+  it("rejects a steer that the agent refuses with the error of the agent", async () => {
+    const { session } = await started({ steer: () => Promise.reject(RequestError.internalError(undefined, "the session ended")) });
+
+    const error = await rejection(session.steer("Use the other parser"));
+
+    expect(error).toBeInstanceOf(RequestError);
+    expect(error).toMatchObject({ code: -32603 });
+  });
+
+  it("rejects a steer with AgentClosed when the connection closes", async () => {
+    const { fake, session } = await started({ steer: () => forever() });
+
+    const steered = rejection(session.steer("Use the other parser"));
+    await until(() => fake.steers.length === 1, "the agent got the steer");
+    fake.exit({ code: 0, signal: null });
+
+    expect(await steered).toBeInstanceOf(AgentClosed);
+  });
+
   it("hands each permission request and question to its handler, and the answer to the agent", async () => {
     const granted = { outcome: { outcome: "selected", optionId: "allow" } };
     const replied = { action: "accept", content: { parser: "peg" } };

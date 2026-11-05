@@ -13,6 +13,7 @@ import { RequestError } from "@agentclientprotocol/sdk";
 import type { RequestPermissionRequest, SessionConfigOption } from "@agentclientprotocol/sdk";
 import { readProjectDeclaration, TaskStoreError } from "@tasma/engine";
 import type { AgentDefaultsStore, TaskStoreErrorCode } from "@tasma/engine";
+import { chatBusy } from "@tasma/protocol";
 import type {
   AcpObject,
   ChatAgent,
@@ -106,16 +107,25 @@ export type ChatRunner = {
    * stored session, after the last process of the chat has ended. A message
    * while a pick starts the agent again joins that start: its `user` event
    * comes after the interrupt of the start, and its turn starts once the
-   * session has that pick and each pick that came before the message. Refused
-   * with `turn-running` while a turn runs or the chat ends for a restart, and
-   * with `chat-not-running` once `stopStarts()` was called.
+   * session has that pick and each pick that came before the message.
+   *
+   * A message during a turn goes into that turn. Before the first prompt is
+   * sent, its text joins the first prompt, and its `user` event comes after
+   * those of the messages before it. After that, the agent gets the text at
+   * its next step through a steer, or else as the next prompt of the same
+   * turn. It never waits for the agent. Refused with `turn-running` while the
+   * chat ends for a restart, and with `chat-not-running` once `stopStarts()`
+   * was called.
    */
   message(live: LiveChat, input: ChatMessageInput): Promise<void>;
   /**
    * Cancels the turn that runs, also an own turn, and resolves its open requests
-   * in the name of `client`. Does nothing when no turn runs, during the check
-   * after the prompt of a turn returned, and while a pick starts the agent again
-   * and no message has joined that start.
+   * in the name of `client`. Each text of a message that the agent has not got
+   * yet is dropped, except before the first prompt in a chat with no answer of
+   * the agent, as `LiveChat.unanswered` keeps them. Sends nothing to the agent
+   * when no turn runs, during the check after the prompt of a turn returned,
+   * and while a pick starts the agent again and no message has joined that
+   * start.
    */
   cancel(live: LiveChat, input: ChatCancelInput): Promise<void>;
   answerPermission(live: LiveChat, request: string, answer: PermissionAnswer): Promise<void>;
@@ -156,9 +166,10 @@ export type ChatRunner = {
   /**
    * Aborts a read of the login shell in progress and does not wait for it, and
    * clears every idle timer, so no idle stop starts after it. A start that has
-   * not spawned its agent yet then spawns none, a message that joined the
-   * start of a pick gets no prompt, and a later message is refused. `close()`
-   * does the same.
+   * not spawned its agent yet then spawns none, a restart and a message that
+   * joined a start get no prompt, a text that waits at the end of a prompt
+   * gets no next prompt, and a later message is refused. `close()` does the
+   * same.
    */
   stopStarts(): void;
   /**
@@ -180,6 +191,13 @@ type WaitingPick = {
 /** Sends the result of one waiting pick to its caller. */
 type PickAnswer = () => void;
 
+/** A text of the chat that the agent has not got. Its identity tells it from another text with the same words. */
+type Unsent = { readonly text: string };
+
+function unsentOf(texts: readonly string[]): Unsent[] {
+  return texts.map((text) => ({ text }));
+}
+
 type Run = RunningChat & {
   /** The picks that the session takes as it opens, in arrival order. */
   waiting: WaitingPick[];
@@ -188,13 +206,16 @@ type Run = RunningChat & {
    * session has the pick. While it is set, the session gets no prompt.
    */
   pickRelaunch: boolean;
-  /** The wait for the last process and the interrupt of a relaunch that a pick starts. */
+  /** The wait for the last process and the interrupt of a restart, and of a relaunch that a pick starts. */
   reopened: Promise<void> | undefined;
   /**
-   * The write of the `user` event of the message that joined a pick relaunch,
-   * and the push of its text into `unsent`.
+   * The writes of the `user` events of the messages that came before the
+   * first prompt of the run, each with the push of its text into `unsent`, in
+   * message order. Each message adds its write at the end.
    */
   held: Promise<void> | undefined;
+  /** The cancels of the turn before its first prompt is sent. A message records the count at its arrival. */
+  earlyCancels: number;
   /** The end of the picks of the chat that came before the message that joined a pick relaunch. */
   earlierPicks: Promise<void> | undefined;
   /** Set with the process. */
@@ -213,14 +234,21 @@ type Run = RunningChat & {
   outputs: number;
   /** The messages that started a turn in this run. A check that sees it change has an old result. */
   messages: number;
-  /** Set during the check after the prompt of a turn returned. */
+  /** Set from the return of a prompt of a turn until the turn ends or its next prompt is sent. */
   endCheck: boolean;
   /** Set during the check of a stop of an own turn. A check of a marker then writes nothing, so the notice stays. */
   stopCheck: boolean;
   /** Set by a stop of an own turn until the next marker or message. Output until then is late output of that turn. */
   ownTurnStopped: boolean;
-  /** The texts of the chat that no prompt has taken to the agent, in log order. A new session takes every text. */
-  unsent: string[];
+  /**
+   * The texts of the chat that no prompt and no steer has taken to the agent,
+   * in log order. A new session takes every text.
+   */
+  unsent: Unsent[];
+  /** The steers of the run whose answer has not come. */
+  steering: Set<Promise<void>>;
+  /** Set by a cancel after the prompt of the turn was sent, until the next prompt. A message then sends no steer. */
+  cancelAsked: boolean;
   /** Set when the run writes no more events: at a failure, once the chat is gone, and at a stop. */
   quiet: boolean;
   /** Set at the first refusal or fault of the log. */
@@ -235,8 +263,9 @@ type Run = RunningChat & {
    */
   cancelReachesAgent: boolean;
   /**
-   * Set by a cancel of a turn of a message before `cancelReachesAgent`. `begin`
-   * then sends no first prompt, and ends the first turn.
+   * Set by a cancel of a turn of a message before `cancelReachesAgent`, and
+   * cleared by a message after it. `begin` then sends no first prompt, and
+   * ends the first turn.
    */
   cancelledEarly: boolean;
   /**
@@ -335,6 +364,7 @@ function newRun(live: LiveChat): Run {
     pickRelaunch: false,
     reopened: undefined,
     held: undefined,
+    earlyCancels: 0,
     earlierPicks: undefined,
     adapter: undefined,
     idle: undefined,
@@ -348,6 +378,8 @@ function newRun(live: LiveChat): Run {
     stopCheck: false,
     ownTurnStopped: false,
     unsent: [],
+    steering: new Set(),
+    cancelAsked: false,
     quiet: false,
     halted: false,
     turning: true,
@@ -539,16 +571,59 @@ export function createChatRunner(options: {
     await written;
   }
 
+  /** Resolves when no steer of the run waits for its answer, also a steer that starts during the wait. */
+  async function steersAnswered(run: Run): Promise<void> {
+    while (run.steering.size > 0) await Promise.all(run.steering);
+  }
+
+  /** Resolves when each message that joins the start has written, also a message that joins during the wait. */
+  async function heldWritten(run: Run): Promise<void> {
+    let held: Promise<void> | undefined;
+    while (held !== run.held) {
+      held = run.held;
+      await held?.catch(() => undefined);
+    }
+  }
+
+  /** Gives the text to the turn that runs. A text that the agent does not take stays in `unsent`. */
+  function steer(run: Run, session: AgentSession, entry: Unsent): void {
+    const answered = session.steer(entry.text).then(
+      (outcome) => {
+        if (outcome === "injected") run.unsent = run.unsent.filter((one) => one !== entry);
+      },
+      (error: unknown) => {
+        // The exit of the process reports a closed connection.
+        if (error instanceof AgentClosed) return;
+        stderr.write(faultLine(run.live.chat, `the steer of a message failed: ${errorReason(run.adapter!, error)}`));
+      },
+    );
+    run.steering.add(answered);
+    void answered.then(() => run.steering.delete(answered));
+  }
+
+  /**
+   * Sends the texts of `unsent` as one prompt. A text that waits when the
+   * prompt returns goes as the next prompt of the same turn, so the turn ends
+   * only when no text waits.
+   */
   async function runTurn(run: Run, session: AgentSession): Promise<void> {
-    const text = run.unsent.join("\n\n");
+    const text = run.unsent.map((one) => one.text).join("\n\n");
     run.unsent = [];
+    run.cancelAsked = false;
     const note = notes.get(run.live);
     notes.delete(run.live);
     const result = await send(run, () => session.prompt(note === undefined ? text : `${note}\n\n${text}`));
     if (result === undefined) return;
     run.endCheck = true;
     const state = await backgroundState(run);
+    // An injected text leaves `unsent` at the answer of its steer, which can come after the prompt result.
+    await steersAnswered(run);
     run.endCheck = false;
+    if (run.unsent.length > 0 && !run.quiet) {
+      // The run stays in its turn, for `close()`.
+      if (stopping.signal.aborted) return;
+      return runTurn(run, session);
+    }
     // In the log before `turn-end`, so the state does not change to "Needs you" for a moment.
     if (jobRuns(state)) void setBackground(run, true, false);
     await endTurn(run, result.stopReason);
@@ -639,7 +714,7 @@ export function createChatRunner(options: {
         return undefined;
       }
     }
-    run.unsent = [...live.unanswered];
+    run.unsent = unsentOf(live.unanswered);
     const session = await send(run, () => connection.create(folder, meta));
     if (session === undefined) return undefined;
     try {
@@ -767,13 +842,13 @@ export function createChatRunner(options: {
     }
     answerAll(answers);
     if (run.held !== undefined) {
-      await run.held.catch(() => undefined);
       // Only after `answerAll`: the earlier picks wait for the answer of the pick of the relaunch.
       await run.earlierPicks;
+      await heldWritten(run);
       // Once the daemon stops, `pickNow` refuses the earlier picks. The run stays in a turn for `close()`.
       if (run.quiet || stopping.signal.aborted) return;
-      // The `user` event of the message can come after `openSession` took the texts.
-      if (opened.created) run.unsent = [...run.live.unanswered];
+      // The `user` event of a message can come after `openSession` took the texts.
+      if (opened.created) run.unsent = unsentOf(run.live.unanswered);
     }
     run.cancelReachesAgent = true;
     if (!run.cancelledEarly) return runTurn(run, session);
@@ -892,6 +967,18 @@ export function createChatRunner(options: {
     throw error;
   }
 
+  /** As `refuseIfStopping`, but a run with a turn in the log stays for `close()`, which interrupts it. */
+  function refuseJoinIfStopping(run: Run): void {
+    if (!stopping.signal.aborted) return;
+    const error = daemonStopping(run.live);
+    if (chatBusy(run.live.fold)) {
+      for (const pick of run.waiting.splice(0)) pick.reject(error);
+    } else {
+      silence(run, error);
+    }
+    throw error;
+  }
+
   /** A restart that the daemon stop or an `end` overtakes before its `user` event writes nothing more. */
   function refuseIfOvertaken(run: Run): void {
     refuseIfStopping(run);
@@ -909,22 +996,22 @@ export function createChatRunner(options: {
     const { live } = run;
     await ends.get(live);
     // The log cannot show which texts of a cancelled turn with no answer reached the agent; the last run knows.
-    run.unsent = [...(last?.unsent ?? live.unanswered)];
+    // A cancel during the wait drops them in a chat with an answer, as `LiveChat.unanswered` does.
+    run.unsent = run.earlyCancels > 0 && live.answered ? [] : [...(last?.unsent ?? unsentOf(live.unanswered))];
     refuseIfOvertaken(run);
     await haltOnFault(run, () => live.interrupt());
     refuseIfOvertaken(run);
   }
 
   /**
-   * Registered before the first await, so a second message is refused and
-   * `close()` sees the chat. Two processes never run on one session.
+   * Registered before the first await, so a second message joins the start
+   * and `close()` sees the chat. Two processes never run on one session.
    */
   async function restart(live: LiveChat, text: string, client: string): Promise<void> {
     const last = lastRuns.get(live);
     const run = register(live);
-    await reopen(run, last);
-    await record(run, { kind: "user", text, client });
-    run.unsent.push(text);
+    run.reopened = reopen(run, last);
+    await hold(run, text, client);
     void relaunch(run);
   }
 
@@ -949,36 +1036,66 @@ export function createChatRunner(options: {
     void relaunch(run);
   }
 
-  /** The part of a message that joins a pick relaunch, after the relaunch has interrupted the chat. */
-  async function hold(run: Run, text: string, client: string): Promise<void> {
-    await run.reopened;
-    refuseIfStopping(run);
-    // The relaunch ended in the step after its interrupt.
-    if (run.quiet) return message(run.live, { text, client });
-    await record(run, { kind: "user", text, client });
-    run.unsent.push(text);
+  /**
+   * The part of a message that joins the start of the agent: after the writes
+   * of the messages before it and the interrupt of the start, it writes its
+   * `user` event and puts its text in `unsent`. A cancel after the message
+   * drops the text in a chat with an answer, as `LiveChat.unanswered` does.
+   */
+  function hold(run: Run, text: string, client: string): Promise<void> {
+    run.cancelledEarly = false;
+    const cancels = run.earlyCancels;
+    const before = run.held;
+    const held = (async () => {
+      await before?.catch(() => undefined);
+      await run.reopened;
+      refuseJoinIfStopping(run);
+      // The run ended during the wait.
+      if (run.quiet) return message(run.live, { text, client });
+      await record(run, { kind: "user", text, client });
+      if (run.earlyCancels === cancels || !run.live.answered) run.unsent.push({ text });
+    })();
+    run.held = held;
+    return held;
   }
 
   async function message(live: LiveChat, { text, client }: ChatMessageInput): Promise<void> {
     if (ending.has(live)) throw endingForRestart(live);
-    const run = runs.get(live);
-    if (run?.turning && !run.pickRelaunch) throw turnRunning(live);
     if (stopping.signal.aborted) throw daemonStopping(live);
+    const run = runs.get(live);
     if (run === undefined) return restart(live, text, client);
     if (run.pickRelaunch) {
       run.pickRelaunch = false;
       run.cancelReachesAgent = false;
       run.earlierPicks = picks.get(live);
-      run.held = hold(run, text, client);
-      return run.held;
+      return hold(run, text, client);
     }
+    if (!run.turning) return startTurn(run, text, client);
+    if (!run.cancelReachesAgent) return hold(run, text, client);
+    return joinTurn(run, text, client);
+  }
+
+  /** A message to a turn whose prompt is sent. The agent gets the text by a steer, or else as the next prompt. */
+  async function joinTurn(run: Run, text: string, client: string): Promise<void> {
+    const entry = { text };
+    run.unsent.push(entry);
+    run.job = false;
+    run.ownTurn = false;
+    run.idle?.touch();
+    const written = record(run, { kind: "user", text, client });
+    if (!run.cancelAsked) steer(run, run.session!, entry);
+    await written;
+  }
+
+  /** A message to a run whose session is open and in no turn. */
+  async function startTurn(run: Run, text: string, client: string): Promise<void> {
     run.turning = true;
     run.job = false;
     run.ownTurn = false;
     run.ownTurnStopped = false;
     run.messages += 1;
     run.idle?.touch();
-    run.unsent.push(text);
+    run.unsent.push({ text });
     const written = record(run, { kind: "user", text, client });
     void runTurn(run, run.session!);
     await written;
@@ -1038,6 +1155,8 @@ export function createChatRunner(options: {
     const run = runs.get(live);
     if (run?.turning && run.cancelReachesAgent) {
       const turnEnd = waitForTurnEnd(run);
+      run.cancelAsked = true;
+      run.unsent = [];
       // ACP wants `session/cancel` before the cancelled responses.
       run.session!.cancel();
       await Promise.all([turnEnd, Promise.all(cancelOpen(run, client))]);
@@ -1104,8 +1223,6 @@ export function createChatRunner(options: {
 
     async cancel(live, { client }) {
       const run = runs.get(live);
-      // The prompt has returned, and a `session/cancel` with no prompt can lose the later report of a job.
-      if (run?.endCheck) return;
       if (run?.ownTurn && !run.turning) {
         run.ownTurnStopped = true;
         // ACP wants `session/cancel` before the cancelled responses.
@@ -1115,9 +1232,19 @@ export function createChatRunner(options: {
       }
       // A pick relaunch that no message joined has no turn of a message to cancel.
       if (!run?.turning || run.pickRelaunch) return;
-      // ACP wants `session/cancel` before the cancelled responses.
-      if (run.cancelReachesAgent) run.session!.cancel();
-      else run.cancelledEarly = true;
+      if (run.cancelReachesAgent) {
+        run.cancelAsked = true;
+        run.unsent = [];
+        // The prompt has returned, and a `session/cancel` with no prompt can lose the later report of a job.
+        if (run.endCheck) return;
+        // ACP wants `session/cancel` before the cancelled responses.
+        run.session!.cancel();
+      } else {
+        run.cancelledEarly = true;
+        run.earlyCancels += 1;
+        // As `LiveChat.unanswered` does at a cancelled turn end.
+        if (run.live.answered) run.unsent = [];
+      }
       await Promise.all(cancelOpen(run, client));
     },
 

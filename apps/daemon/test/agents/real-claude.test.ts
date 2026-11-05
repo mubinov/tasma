@@ -10,8 +10,11 @@ import { connect } from "node:net";
 import { delimiter, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it, onTestFinished } from "vitest";
+import type { AnyMessage } from "@agentclientprotocol/sdk";
 import { openAgentDefaults } from "@tasma/engine";
 import type { ChatEvent } from "@tasma/protocol";
+import { spawnAgent } from "../../src/agents/acp.js";
+import type { AgentProcess } from "../../src/agents/acp.js";
 import type { AgentAdapter, AgentEnv, AgentLaunch, LaunchResult } from "../../src/agents/adapter.js";
 import { claudeAdapter } from "../../src/agents/claude.js";
 import type { IdleLimit } from "../../src/chats/idle.js";
@@ -42,7 +45,7 @@ function launched(launch: LaunchResult): AgentLaunch {
 async function world(
   adapter: AgentAdapter,
   env: AgentEnv,
-  idleLimit?: IdleLimit,
+  { idleLimit, spawn }: { idleLimit?: IdleLimit; spawn?: (launch: AgentLaunch, folder: string) => AgentProcess } = {},
 ): Promise<{ runner: ChatRunner; folder: string; root: string }> {
   const root = await projectsRoot("ALPHA");
   const folder = await target();
@@ -52,9 +55,24 @@ async function world(
   onTestFinished(() => host.close());
   const chats = createChatRegistry({ root, host, writes: new WriteQueue() });
   const defaults = openAgentDefaults(root);
-  const runner = createChatRunner({ root, chats, adapters: [adapter], env, idleLimit, defaults });
+  const runner = createChatRunner({ root, chats, adapters: [adapter], env, idleLimit, defaults, spawn });
   onTestFinished(() => runner.close());
   return { runner, folder, root };
+}
+
+/** A spawn of the real agent that also gives each message of the agent to `seen`. */
+function tapped(seen: AnyMessage[]): (launch: AgentLaunch, folder: string) => AgentProcess {
+  return (launch, folder) => {
+    const agentProcess = spawnAgent(launch, folder);
+    const tap = new TransformStream<AnyMessage, AnyMessage>({
+      transform(message, controller) {
+        seen.push(message);
+        controller.enqueue(message);
+      },
+    });
+    const { readable, writable } = agentProcess.stream;
+    return { ...agentProcess, stream: { readable: readable.pipeThrough(tap), writable } };
+  };
 }
 
 function start(runner: ChatRunner): Promise<LiveChat> {
@@ -192,6 +210,34 @@ describe.skipIf(process.env.TASMA_REAL_CLAUDE !== "1")("a chat with the real Cla
     expect(stdout.toLowerCase()).toContain("pong");
   }, 3 * TURN_MS);
 
+  it("steers a running turn with a message, which the agent answers in the same turn", async () => {
+    const seen: AnyMessage[] = [];
+    const env = { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token() };
+    const { runner } = await world(claudeAdapter, env, { spawn: tapped(seen) });
+    const live = await runner.start({
+      tag: "ALPHA",
+      task: "ALPHA-1",
+      step: "dev:build",
+      agent: "claude",
+      text: "Write the numbers from 1 to 300, one number on each line, with no other text.",
+      client: "test",
+    });
+    const working = async () => answerText(await logOf(live)).length > 0;
+    expect(await within(TURN_MS, working)).toBe(true);
+
+    await runner.message(live, { text: "Stop the list now, and reply with the single word: lantern", client: "test" });
+    const log = await turnsEnded(live, 1);
+
+    const user = log.findIndex((event) => event.kind === "user" && event.client === "test" && event.text.startsWith("Stop"));
+    const ends = log.flatMap((event, index) => (event.kind === "turn-end" ? [index] : []));
+    expect(ends).toHaveLength(1);
+    expect(user).toBeGreaterThan(0);
+    expect(user).toBeLessThan(ends[0]!);
+    expect(answerText(log.slice(user)).toLowerCase()).toContain("lantern");
+    expect(seen.some((message) => "result" in message && (message.result as { outcome?: unknown }).outcome === "injected"))
+      .toBe(true);
+  }, 2 * TURN_MS);
+
   it("stops a background command with the agent, and keeps the conversation at the next message", async () => {
     const { runner } = await world(claudeAdapter, { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token() });
     const background = `sleep ${String(4000 + Math.floor(Math.random() * 5000))}`;
@@ -227,7 +273,7 @@ describe.skipIf(process.env.TASMA_REAL_CLAUDE !== "1")("a chat with the real Cla
     const word = `finished-${String(Math.floor(Math.random() * 1_000_000))}`;
     const env = { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token() };
     const limitMs = 15_000;
-    const { runner } = await world(claudeAdapter, env, async () => limitMs);
+    const { runner } = await world(claudeAdapter, env, { idleLimit: async () => limitMs });
     const live = await runner.start({
       tag: "ALPHA",
       task: "ALPHA-1",

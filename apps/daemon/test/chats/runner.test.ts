@@ -489,67 +489,6 @@ describe("createChatRunner.message", () => {
     ]);
   });
 
-  describe("refuses with turn-running", () => {
-    it("during the first turn, before the session starts", async () => {
-      const { runner } = await world({ script: { newSession: forever } });
-      const live = await runner.start(START);
-
-      await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "turn-running" });
-    });
-
-    it("during a later turn", async () => {
-      const { script, finish } = heldTurns();
-      const { runner, processes } = await world({ script });
-      const live = await runner.start(START);
-      await until(() => processes[0]?.prompts.length === 1, "the first turn started");
-      finish();
-      await logUntil(live, "turn-end");
-      await runner.message(live, NEXT);
-
-      await expect(runner.message(live, { ...NEXT, client: "app" })).rejects.toMatchObject({ code: "turn-running" });
-      expect((await logOf(live)).filter((event) => event.kind === "user")).toHaveLength(2);
-    });
-
-    it("while a permission request waits", async () => {
-      const { runner } = await world({
-        script: {
-          async prompt(_params, agent) {
-            void agent.permission().catch(() => undefined);
-            return forever();
-          },
-        },
-      });
-      const live = await runner.start(START);
-      await logUntil(live, "permission");
-
-      expect(live.chat.state).toBe("needs-you");
-      await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "turn-running" });
-    });
-
-    it("after a cancel, until the cancelled turn ends", async () => {
-      const { runner, processes } = await world({ script: { prompt: forever } });
-      const live = await runner.start(START);
-      await until(() => processes[0]?.prompts.length === 1, "the turn started");
-
-      await runner.cancel(live, { client: "web" });
-
-      await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "turn-running" });
-    });
-  });
-
-  it("accepts one of two messages sent in one synchronous step, and prompts the agent once", async () => {
-    const { runner, processes } = await world();
-    const live = await runner.start(START);
-    await logUntil(live, "turn-end");
-
-    const sent = await Promise.allSettled([runner.message(live, NEXT), runner.message(live, { ...NEXT, client: "app" })]);
-
-    expect(sent).toMatchObject([{ status: "fulfilled" }, { status: "rejected", reason: { code: "turn-running" } }]);
-    await logUntil(live, "turn-end");
-    expect(processes[0]?.prompts).toHaveLength(2);
-    expect((await logOf(live)).filter((event) => event.kind === "user")).toEqual([USER, { kind: "user", ...NEXT }]);
-  });
-
   it("accepts a message at once after the prompt result, and writes it after the turn end", async () => {
     const { runner } = await world();
     const live = await runner.start(START);

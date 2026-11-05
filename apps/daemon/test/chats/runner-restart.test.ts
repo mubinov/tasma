@@ -29,6 +29,8 @@ import type { World } from "./runner-world.js";
 /** An idle limit that each chat reaches within a test. */
 const SHORT_IDLE: IdleLimit = async () => 30;
 
+const LATER = { text: "And the tests", client: "app" } as const;
+
 /** Chat 1 of ALPHA-1, which the registry created with its first message and which no agent ever ran. */
 async function chatWithNoRun(setup: World, folder = setup.folder, agent: ChatAgent = "claude"): Promise<LiveChat> {
   return setup.chats.create("ALPHA", "ALPHA-1", { step: START.step, agent, folder }, { text: START.text, client: START.client });
@@ -171,7 +173,7 @@ describe("createChatRunner.message to a chat with no process", () => {
   });
 
   for (const cause of ["an idle stop", "a failure"] as const) {
-    it(`waits for the end of the last process after ${cause}, and refuses a second message meanwhile`, async () => {
+    it(`waits for the end of the last process after ${cause}, and sends a second message meanwhile with the first prompt`, async () => {
       let prompts = 0;
       let firstEnded = false;
       const spawnedAfterEnd: boolean[] = [];
@@ -194,14 +196,38 @@ describe("createChatRunner.message to a chat with no process", () => {
       await endedByRunner(processes[0]);
 
       const sent = runner.message(live, NEXT);
-      await expect(runner.message(live, { ...NEXT, client: "app" })).rejects.toMatchObject({ code: "turn-running" });
+      await runner.message(live, LATER);
       await sent;
 
       expect(firstEnded).toBe(true);
-      expect((await logUntil(live, "turn-end")).filter((event) => event.kind === "user")).toEqual([USER, { kind: "user", ...NEXT }]);
+      expect((await logUntil(live, "turn-end")).filter((event) => event.kind === "user")).toEqual([
+        USER,
+        { kind: "user", ...NEXT },
+        { kind: "user", ...LATER },
+      ]);
       expect(spawnedAfterEnd).toEqual([false, true]);
+      expect(processes[1]?.prompts.map((prompt) => prompt.prompt)).toEqual([[{ type: "text", text: `${NEXT.text}\n\n${LATER.text}` }]]);
     });
   }
+
+  it("sends two messages with one prompt of one process when the launch of the restart waits a macrotask", async () => {
+    const { runner, processes } = await world({
+      idleLimit: () => new Promise((resolve) => setImmediate(() => resolve(60_000))),
+    });
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+    await runner.stop(live);
+
+    await Promise.all([runner.message(live, NEXT), runner.message(live, LATER)]);
+
+    expect((await logUntil(live, "turn-end")).slice(-3)).toEqual([
+      { kind: "user", ...NEXT },
+      { kind: "user", ...LATER },
+      { kind: "turn-end", stopReason: "end_turn" },
+    ]);
+    expect(processes).toHaveLength(2);
+    expect(processes[1]?.prompts.map((prompt) => prompt.prompt)).toEqual([[{ type: "text", text: `${NEXT.text}\n\n${LATER.text}` }]]);
+  });
 
   it("makes a failed chat working, and resumes its session", async () => {
     const { runner, processes, feed } = await world();
@@ -320,13 +346,14 @@ describe("createChatRunner.message to a chat with no process", () => {
     await runner.message(live, NEXT);
     await until(() => release !== undefined, "the resume is held");
 
-    await expect(runner.message(live, NEXT)).rejects.toMatchObject({ code: "turn-running" });
+    await runner.message(live, LATER);
     await runner.cancel(live, { client: "web" });
     release?.();
 
     expect(await logUntil(live, "turn-end")).toEqual([
       ...log,
       { kind: "user", ...NEXT },
+      { kind: "user", ...LATER },
       { kind: "turn-end", stopReason: "cancelled" },
     ]);
     expect(processes[1]?.prompts).toEqual([]);
@@ -355,6 +382,24 @@ describe("createChatRunner.message to a chat with no process", () => {
     await runner.close();
 
     expect(processes).toHaveLength(1);
+    expect(await logOf(live)).toEqual([...log, { kind: "user", ...NEXT }, { kind: "interrupted" }]);
+  });
+
+  it("sends no prompt when the daemon stop begins while the session of the restart opens, and the close interrupts the chat", async () => {
+    const resume = gate();
+    const { runner, processes } = await world({ script: { resume: () => resume.opened.then(() => ({})) } });
+    const live = await runner.start(START);
+    const log = await logUntil(live, "turn-end");
+    await runner.stop(live);
+    await runner.message(live, NEXT);
+    await until(() => processes[1]?.resumes.length === 1, "the restart resumes the session");
+
+    runner.stopStarts();
+    resume.open();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(processes[1]?.prompts).toEqual([]);
+    await runner.close();
+
     expect(await logOf(live)).toEqual([...log, { kind: "user", ...NEXT }, { kind: "interrupted" }]);
   });
 

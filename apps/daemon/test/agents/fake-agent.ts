@@ -6,6 +6,7 @@ import { agent, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk"
 import type {
   AgentContext,
   CancelNotification,
+  ContentBlock,
   CreateElicitationRequest,
   InitializeRequest,
   JsonRpcId,
@@ -25,6 +26,12 @@ import type { AgentEnd, AgentProcess } from "../../src/agents/acp.js";
 import type { AgentLaunch } from "../../src/agents/adapter.js";
 
 export const SESSION = "session-1";
+
+/** The params of a `_session/steering` request. */
+export type SteerRequest = { sessionId: string; prompt: ContentBlock[]; _meta?: Record<string, unknown> };
+
+/** The answer of the adapter of Claude to a steering request. */
+export type SteerResponse = { outcome: string; reason?: string };
 
 /** One direction of a pipe: what the writer side writes, the reader side reads. */
 function pipe() {
@@ -68,6 +75,8 @@ export type FakeProcess = AgentProcess & {
   promptIds: JsonRpcId[];
   /** The params of each `session/cancel` notification. */
   cancels: CancelNotification[];
+  /** The params of each `_session/steering` request. */
+  steers: SteerRequest[];
   /** The params of each `session/set_config_option`. */
   configSets: SetSessionConfigOptionRequest[];
   /** The config options of the session, which `configOptions` of the script starts and each accepted set changes. */
@@ -96,6 +105,8 @@ export type Script = {
   prompt?(params: PromptRequest, fake: FakeProcess): Promise<PromptResponse>;
   /** Runs at each `session/cancel`, for example to end the running prompt with `cancelled`. */
   cancel?(params: CancelNotification, fake: FakeProcess): void;
+  /** Without it, every steering request answers `injected`. */
+  steer?(params: SteerRequest, fake: FakeProcess): Promise<SteerResponse>;
   /** The options that a new and a resumed session answer with, when the script has no hook for them. */
   configOptions?: SessionConfigOption[];
   /** Without it, the set acts as `actAsAdapter` does. */
@@ -215,6 +226,7 @@ export function fakeAgent(script: Script = {}): {
       prompts: [],
       promptIds: [],
       cancels: [],
+      steers: [],
       configSets: [],
       configOptions: script.configOptions ?? [],
       endCalls: 0,
@@ -282,6 +294,10 @@ export function fakeAgent(script: Script = {}): {
       .onNotification("session/cancel", ({ params }) => {
         fake.cancels.push(params);
         script.cancel?.(params, fake);
+      })
+      .onRequest("_session/steering", (params) => params as SteerRequest, ({ params }) => {
+        fake.steers.push(params);
+        return script.steer?.(params, fake) ?? { outcome: "injected" };
       })
       .connect(ndJsonStream(toClient.writable, toAgent.readable));
 

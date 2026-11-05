@@ -6,6 +6,7 @@ import {
   useExternalStoreRuntime,
   useThreadViewport,
   type AppendMessage,
+  type QueueItemState,
 } from "@assistant-ui/react";
 import { Thread, type ThreadComponents } from "@kit/components/assistant-ui/elements/thread.aui";
 import { useQuery } from "@tanstack/react-query";
@@ -20,7 +21,7 @@ import { chatAgentName, chatStateText, chatThreadMessage, isChatMissing } from "
 import { WarningIcon, XIcon } from "../lib/icons";
 import { CHAT_HEADING_MARK, focusInView } from "../lib/focus-in-view";
 import { useChatModePick, type ChatModePick } from "../lib/use-chat-mode-pick";
-import { chatOpenMessageId, useChatScroll, type ChatScrollInput } from "../lib/use-chat-scroll";
+import { chatOpenMessageId, chatUserSeq, useChatScroll, type ChatScrollInput } from "../lib/use-chat-scroll";
 import { useChatSeen, type SeenWatch } from "../lib/use-chat-seen";
 import { useChatWrites } from "../lib/use-chat-writes";
 import { focusDropped, useFocusLost } from "../lib/use-focus-lost";
@@ -57,7 +58,7 @@ type SeenInput = Omit<SeenWatch, "viewport">;
 type ChatOpening = Pick<ChatScrollInput, "openId" | "lastId">;
 
 /** What the transcript knows of `ChatScrollInput`. The scroll component reads the rest from the kit. */
-type ScrollInput = ChatOpening & Pick<ChatScrollInput, "turn" | "ownTurn" | "onFollow">;
+type ScrollInput = ChatOpening & Pick<ChatScrollInput, "userSeq" | "ownTurn" | "onFollow">;
 
 /** What `ChatTranscript` gives the composer slot through `extras` of the runtime, from the ready view on. */
 type ComposerExtras = ChatModePick & {
@@ -94,9 +95,9 @@ const KIT_SEND = '[aria-label="Send message"]';
 const KIT_INPUT = 'textarea[aria-label="Message input"]';
 
 /**
- * An own turn changes Send to Stop, or Stop to Send, and removes the action bars
- * of the messages, with no action of the user, and a sent draft disables Send. A
- * key press meant for one button must not operate the other. The move is in a
+ * An own turn adds Stop and removes the action bars of the messages, and the end
+ * of a turn removes Stop, with no action of the user; a sent draft disables Send.
+ * A key press meant for Stop must not send the draft. The move is in a
  * layout effect body, because React gives the focus back to an element that stays
  * in the page at the end of its mutations. The last element with focus comes from
  * React events: they also come from a portal, such as a menu of a message, and
@@ -179,6 +180,8 @@ const THREAD_COMPONENTS: ThreadComponents = {
 };
 
 const NO_MESSAGES: readonly ChatMessage[] = [];
+
+const NO_QUEUE_ITEMS: readonly QueueItemState[] = [];
 
 function messageText(message: AppendMessage): string {
   return message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
@@ -393,7 +396,7 @@ function ChatTranscript(
 ): ReactNode {
   const { view, ready: caughtUp, failures, resets } = useChatLog(client, tag, task, chat, record.seq);
   const ready = caughtUp && resets === 0;
-  const { status, turn, ownTurn } = view.fold;
+  const { status, ownTurn } = view.fold;
   const running = turnRuns(view.fold);
   const statusKey = JSON.stringify(status);
   const busy = chatBusy(view.fold);
@@ -411,13 +414,17 @@ function ChatTranscript(
   }
 
   const writes = useChatWrites({ tag, task, chat });
+  // The message shows from its `user` event; a failed send puts its text back in the draft.
+  const sendQueued = (message: AppendMessage) => {
+    writes.send(messageText(message)).catch(() => undefined);
+  };
   const modePick = useChatModePick({ tag, task, chat, view, agent, ready, write: writes.pick });
   const extras: ComposerExtras | undefined = opening === null
     ? undefined
     : {
         ...modePick,
         seenWatch: { tag, task, chat, seq: view.seq, seen: record.seen, busy },
-        scroll: { ...opening, turn, ownTurn, onFollow: setAutoScroll },
+        scroll: { ...opening, userSeq: chatUserSeq(view.messages), ownTurn, onFollow: setAutoScroll },
         onFocusLost: () => {
           focusInView(headingRef.current);
         },
@@ -427,10 +434,18 @@ function ChatTranscript(
     // message that the thread first sees as running shows its text only after the open scroll.
     messages: ready ? view.messages : NO_MESSAGES,
     convertMessage: (message: ChatMessage) => chatThreadMessage(message, folder),
-    // The whole turn, also while it waits at a request: the kit shows Stop and no Send. A job wait keeps Send.
+    // The whole turn, also while it waits at a request: the kit shows Stop. A job wait shows no Stop.
     isRunning: ready && running,
-    // The kit `canSend` does not read `isRunning`, and the daemon refuses a message during a turn.
-    isSendDisabled: running,
+    // With a queue, the kit sends each message here and never to `onNew`, also during a turn.
+    queue: {
+      items: NO_QUEUE_ITEMS,
+      steerItems: NO_QUEUE_ITEMS,
+      enqueue: sendQueued,
+      steer: sendQueued,
+      move: () => undefined,
+      edit: () => undefined,
+      remove: () => undefined,
+    },
     onNew: (message) => writes.send(messageText(message)),
     onCancel: () => writes.cancel(),
     onRespondToToolApproval: (options) => writes.answer(chatRequestOf(view, options.approvalId), options),

@@ -134,9 +134,8 @@ describe("chatFailure", () => {
     expect(chatFailure(PLACE, "message").line(new WriteError(cause))).toBe(line);
   });
 
-  it("tells to send a message refused with turn-running when the turn ends", () => {
-    expect(chatFailure(PLACE, "message").line(new WriteError(turnRunning)))
-      .toBe("The agent is working on a turn. Send the message when the turn ends.");
+  it("gives a message refused with turn-running the restart line", () => {
+    expect(chatFailure(PLACE, "message").line(new WriteError(turnRunning))).toBe(chatRestartingLine(PLACE));
   });
 
   it("gives an answer refused with turn-running the line of a refusal", () => {

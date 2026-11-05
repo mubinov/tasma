@@ -35,10 +35,12 @@ import {
   optionsUpdate,
   PERMISSION_LOG,
   permissionRequest,
+  permissionResolved,
   QUESTION_LOG,
   questionRequest,
   REFUSAL_LOG,
   textChunk,
+  toolCall,
   turnEnd,
   userMessage,
 } from "../chat-fixtures";
@@ -291,6 +293,99 @@ describe("chatAnnouncements", () => {
     ]);
 
     expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude asks a question"]);
+  });
+
+  it("tells that the agent reads a message sent while a permission request is open after the answer", () => {
+    const [before, after] = views([userMessage("Build."), permissionRequest("r1", { toolCallId: "t1", title: "pnpm build" }, [])], [
+      userMessage("Use the other script."),
+    ]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude reads the message after you answer the request"]);
+  });
+
+  it("tells that the agent reads a message sent while a question is open after the answer", () => {
+    const [before, after] = views([userMessage("Pick a colour."), questionRequest("q1", { message: "Which colour?", requestedSchema: {} })], [
+      userMessage("Blue is fine."),
+    ]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude reads the message after you answer the question"]);
+  });
+
+  it("tells that the agent reads a message after the answer when a permission request and the message come in one change", () => {
+    const [before, after] = views([userMessage("Build.")], [
+      permissionRequest("r1", { toolCallId: "t1", title: "pnpm build" }, []),
+      userMessage("Use the other script."),
+    ]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual([
+      "Claude asks for permission: pnpm build",
+      "Claude reads the message after you answer the request",
+    ]);
+  });
+
+  it("tells that the agent reads a message after the answer when a question and the message come in one change", () => {
+    const [before, after] = views([userMessage("Pick a colour.")], [
+      questionRequest("q1", { message: "Which colour?", requestedSchema: {} }),
+      userMessage("Blue is fine."),
+    ]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual([
+      "Claude asks a question",
+      "Claude reads the message after you answer the question",
+    ]);
+  });
+
+  it("tells nothing of a message when the request that was open when it came closed in the same change", () => {
+    const [before, after] = views([userMessage("Build."), permissionRequest("r1", { toolCallId: "t1", title: "pnpm build" }, [])], [
+      userMessage("Use the other script."),
+      permissionResolved("r1", { outcome: "selected", optionId: "allow-once" }),
+    ]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual([]);
+  });
+
+  it("tells nothing again of a message that came before the change", () => {
+    const [before, after] = views([
+      userMessage("Build."),
+      permissionRequest("r1", { toolCallId: "t1", title: "pnpm build" }, []),
+      userMessage("Use the other script."),
+    ], [textChunk("Waiting.")]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual([]);
+  });
+
+  it("tells nothing of a message sent while no request is open", () => {
+    const [before, after] = views([userMessage("Build."), textChunk("Building.")], [userMessage("Use the other script.")]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual([]);
+  });
+
+  it("tells nothing of a message for a request that opened after it", () => {
+    const [before, after] = views([userMessage("Build.")], [
+      userMessage("Use the other script."),
+      permissionRequest("r1", { toolCallId: "t1", title: "pnpm build" }, []),
+    ]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude asks for permission: pnpm build"]);
+  });
+
+  it("tells nothing of a message for a request of a tool that started before it", () => {
+    const [before, after] = views([userMessage("Build."), toolCall({ toolCallId: "t1", title: "pnpm build", status: "pending" })], [
+      userMessage("Use the other script."),
+      permissionRequest("r1", { toolCallId: "t1" }, []),
+    ]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude asks for permission: pnpm build"]);
+  });
+
+  it("tells nothing of a message when the request that was open closed and a new one opened after it", () => {
+    const [before, after] = views([userMessage("Build."), permissionRequest("r1", { toolCallId: "t1", title: "pnpm build" }, [])], [
+      userMessage("Use the other script."),
+      permissionResolved("r1", { outcome: "selected", optionId: "allow-once" }),
+      permissionRequest("r2", { toolCallId: "t2", title: "pnpm test" }, []),
+    ]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual(["Claude asks for permission: pnpm test"]);
   });
 
   it("does not announce a request that was open before", () => {

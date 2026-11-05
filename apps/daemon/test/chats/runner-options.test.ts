@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { RequestError } from "@agentclientprotocol/sdk";
-import type { PromptRequest, SessionConfigOption } from "@agentclientprotocol/sdk";
+import type { SessionConfigOption } from "@agentclientprotocol/sdk";
 import { TaskStoreError } from "@tasma/engine";
 import type { ChatEvent } from "@tasma/protocol";
 import type { LiveChat } from "../../src/chats/registry.js";
@@ -18,6 +18,7 @@ import {
   NEXT,
   optionsUpdate,
   PICK,
+  promptText,
   slowEnd,
   START,
   USER,
@@ -32,6 +33,8 @@ const TURN_END: ChatEvent = { kind: "turn-end", stopReason: "end_turn" };
 const NEXT_USER: ChatEvent = { kind: "user", ...NEXT };
 
 const LATER = { text: "And the tests", client: "web" } as const;
+
+const LATER_USER: ChatEvent = { kind: "user", ...LATER };
 
 const STOPPING = { code: "chat-not-running", message: "chat 1 of ALPHA-1 cannot run: the daemon is stopping" };
 
@@ -52,10 +55,6 @@ async function plantDefaults(root: string, value: unknown): Promise<void> {
 
 async function storedDefaults(root: string): Promise<unknown> {
   return JSON.parse(await readFile(defaultsFile(root), "utf8"));
-}
-
-function promptText(params: PromptRequest): string {
-  return params.prompt.map((block) => (block.type === "text" ? block.text : "")).join("");
 }
 
 /**
@@ -778,26 +777,43 @@ describe("a pick on a chat with no agent process", () => {
     expect(processes).toHaveLength(2);
   });
 
-  it("takes a message while it starts the agent, refuses a second one, and sends the first after the pick", async () => {
+  it("takes two messages while it starts the agent, and sends both with one prompt after the pick", async () => {
     const { runner, live, log, resume, seen, picked } = await pickInResume();
 
     await runner.message(live, NEXT);
-    expect(await logOf(live)).toEqual([...log, NEXT_USER]);
-    await expect(runner.message(live, LATER)).rejects.toMatchObject({
-      code: "turn-running",
-      message: "a turn of chat 1 of ALPHA-1 is running",
-    });
+    await runner.message(live, LATER);
+    expect(await logOf(live)).toEqual([...log, NEXT_USER, LATER_USER]);
     resume.open();
 
     await expect(picked).resolves.toEqual([]);
     expect((await logUntil(live, "turn-end")).slice(log.length)).toEqual([
       NEXT_USER,
+      LATER_USER,
       optionsUpdate(OPTIONS),
       modeUpdate("acceptEdits"),
       optionsUpdate([modeOption("acceptEdits"), modelOption()]),
       TURN_END,
     ]);
-    expect(seen).toEqual([`prompt ${START.text}`, "mode=acceptEdits", `prompt ${NEXT.text}`]);
+    expect(seen).toEqual([`prompt ${START.text}`, "mode=acceptEdits", `prompt ${NEXT.text}\n\n${LATER.text}`]);
+  });
+
+  it("sends a message that comes while the start waits for a pick before the first message with the first prompt, once", async () => {
+    const auto = holdingAuto();
+    const { runner, live, log, resume, seen } = await pickInResume({
+      script: { setConfigOption: auto.setConfigOption },
+    });
+    const second = runner.setOption(live, { ...PICK, value: "auto" });
+    await runner.message(live, NEXT);
+    resume.open();
+    await until(() => seen.includes("mode=auto"), "the agent got the second pick");
+
+    await runner.message(live, LATER);
+    auto.open();
+
+    await expect(second).resolves.toEqual([]);
+    const users = (await logUntil(live, "turn-end")).slice(log.length).filter((event) => event.kind === "user");
+    expect(users).toEqual([NEXT_USER, LATER_USER]);
+    expect(seen).toEqual([`prompt ${START.text}`, "mode=acceptEdits", "mode=auto", `prompt ${NEXT.text}\n\n${LATER.text}`]);
   });
 
   it("sends the prompt of a message after a pick that came before the message", async () => {
@@ -890,7 +906,7 @@ describe("a pick on a chat with no agent process", () => {
     expect(seen).toEqual([`prompt ${START.text}`, "mode=acceptEdits", `prompt ${NEXT.text}`]);
   });
 
-  it("refuses a message during a turn that starts after a start with no message", async () => {
+  it("steers a turn that starts after a start with no message", async () => {
     const turns = heldTurns();
     const { runner, processes } = await world({ script: { ...turns.script, configOptions: OPTIONS } });
     const live = await runner.start(START);
@@ -899,13 +915,16 @@ describe("a pick on a chat with no agent process", () => {
     await logUntil(live, "turn-end");
     await runner.stop(live);
     await runner.setOption(live, PICK);
-
     await runner.message(live, NEXT);
-
-    await expect(runner.message(live, LATER)).rejects.toMatchObject({ code: "turn-running" });
     await until(() => processes[1]?.prompts.length === 1, "the agent got the prompt of the message");
+
+    await runner.message(live, LATER);
+
+    await until(() => processes[1]?.steers.length === 1, "the agent got the steer");
+    expect(processes[1]?.steers.map((steer) => steer.prompt)).toEqual([[{ type: "text", text: LATER.text }]]);
     turns.finish();
-    await logUntil(live, "turn-end");
+    expect((await logUntil(live, "turn-end")).slice(-3)).toEqual([NEXT_USER, LATER_USER, TURN_END]);
+    expect(processes[1]?.prompts.map(promptText)).toEqual([NEXT.text]);
   });
 
   it("sends one prompt with every text of the chat for a lost session that never answered", async () => {

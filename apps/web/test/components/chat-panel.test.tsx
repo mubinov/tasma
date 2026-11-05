@@ -1267,23 +1267,28 @@ it("puts a refused message back in the composer, and opens its notice", async ()
     expect.objectContaining({
       form: "failure",
       title: "The message to chat 2 of SAGA-3 was not sent.",
-      line: "The agent is working on a turn. Send the message when the turn ends.",
+      line: "Chat 2 stops for a restart. Write to the new chat when it opens.",
       words: ["daemon/turn-running · refused: turn-running"],
     }),
   ]);
 });
 
+/** The labels of Stop and Send of the composer, in page order. */
+function composerButtons(): (string | null)[] {
+  return screen.queryAllByRole("button", { name: /^(Stop generating|Send message)$/ }).map((one) => one.getAttribute("aria-label"));
+}
+
 it.each<[string, readonly ChatEntry[]]>([
   ["runs", chatEntries([userMessage("Build.")])],
   ["waits at a request", PERMISSION_LOG.slice(0, 5)],
-])("shows Stop and no Send while a turn %s, and Stop posts the cancel", async (_name, entries) => {
+])("shows Stop and then Send while a turn %s, and Stop posts the cancel", async (_name, entries) => {
   const user = userEvent.setup();
   const log = writableLogOf(entries, CANCEL_PATH);
   await renderPanel(log);
 
   await user.click(await screen.findByRole("button", { name: "Stop generating" }));
 
-  expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
+  expect(composerButtons()).toEqual(["Stop generating", "Send message"]);
   await waitFor(() => {
     expect(posts(log)).toEqual([{ method: "POST", path: CANCEL_PATH, body: { client: CHAT_CLIENT } }]);
   });
@@ -1296,15 +1301,16 @@ function ownTurnStarts(log: ChatLogStub, after: number): void {
 describe("with a background job and an own turn", () => {
   const ENDED = [userMessage("Build."), turnEnd()];
 
-  it.each<[string, readonly ChatEvent[], string, string, string]>([
-    ["a job wait", [userMessage("Build."), background({ job: true }), turnEnd()], "Agent works", "Send message", "Stop generating"],
-    ["an own turn", [...ENDED, background({ job: true, ownTurn: true })], "Agent works", "Stop generating", "Send message"],
-    ["the end of both", [...ENDED, background({ job: true, ownTurn: true }), background()], "Needs you", "Send message", "Stop generating"],
-  ])("shows the state and the button of %s", async (_case, events, state, shown, hidden) => {
+  it.each<[string, readonly ChatEvent[], string, readonly string[]]>([
+    ["a job wait", [userMessage("Build."), background({ job: true }), turnEnd()], "Agent works", ["Send message"]],
+    ["an own turn", [...ENDED, background({ job: true, ownTurn: true })], "Agent works", ["Stop generating", "Send message"]],
+    ["the end of both", [...ENDED, background({ job: true, ownTurn: true }), background()], "Needs you", ["Send message"]],
+  ])("shows the state and the buttons of %s", async (_case, events, state, buttons) => {
     await renderPanel(logOf(chatEntries(events)));
 
-    expect(await screen.findByRole("button", { name: shown })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: hidden })).toBeNull();
+    await waitFor(() => {
+      expect(composerButtons()).toEqual(buttons);
+    });
     expect(within(header()).getByText(state)).toBeTruthy();
   });
 
@@ -1360,9 +1366,9 @@ describe("with a background job and an own turn", () => {
     });
   });
 
-  it("moves focus from Send to the message input when an own turn starts, and Enter there sends nothing", async () => {
+  it("keeps focus on Send when an own turn starts, and Enter in the message input posts the message", async () => {
     const user = userEvent.setup();
-    const log = logOf(chatEntries(ENDED));
+    const log = writableLogOf(chatEntries(ENDED), MESSAGES_PATH);
     await renderPanel(log);
     await user.type(await findComposer(), "Then test it.");
     act(() => {
@@ -1372,9 +1378,14 @@ describe("with a background job and an own turn", () => {
     ownTurnStarts(log, 2);
 
     await screen.findByRole("button", { name: "Stop generating" });
-    expect(document.activeElement).toBe(composer());
+    expect(document.activeElement).toBe(button("Send message"));
+    act(() => {
+      composer().focus();
+    });
     await user.keyboard("{Enter}");
-    expect(posts(log)).toEqual([]);
+    await waitFor(() => {
+      expect(posts(log)).toEqual([{ method: "POST", path: MESSAGES_PATH, body: { text: "Then test it.", client: CHAT_CLIENT } }]);
+    });
   });
 
   it("moves focus from Stop to the heading when an own turn ends, and keeps the draft", async () => {
@@ -1388,7 +1399,9 @@ describe("with a background job and an own turn", () => {
 
     log.answer(3, { cursor: 4, entries: chatEntries([background()], 4) });
 
-    await screen.findByRole("button", { name: "Send message" });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Stop generating" })).toBeNull();
+    });
     expect(document.activeElement).toBe(heading());
     expect(composer().value).toBe("Then test it.");
   });
@@ -1502,7 +1515,7 @@ describe("with a background job and an own turn", () => {
     write.answer(WRITTEN);
   });
 
-  it("leaves focus in the message input when Send changes to Stop", async () => {
+  it("leaves focus in the message input when Stop shows next to Send", async () => {
     const user = userEvent.setup();
     const log = logOf(chatEntries(ENDED));
     await renderPanel(log);
@@ -1514,15 +1527,18 @@ describe("with a background job and an own turn", () => {
     expect(document.activeElement).toBe(composer());
   });
 
-  it("leaves focus in the message input when Stop changes to Send", async () => {
+  it("leaves focus in the message input when Stop leaves", async () => {
     const user = userEvent.setup();
     const log = logOf(chatEntries([...ENDED, background({ ownTurn: true })]));
     await renderPanel(log);
     await user.type(await findComposer(), "Then test it.");
+    await screen.findByRole("button", { name: "Stop generating" });
 
     log.answer(3, { cursor: 4, entries: chatEntries([background()], 4) });
 
-    await screen.findByRole("button", { name: "Send message" });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Stop generating" })).toBeNull();
+    });
     expect(document.activeElement).toBe(composer());
   });
 });
@@ -1545,21 +1561,45 @@ it("opens a notice when the daemon refuses Stop", async () => {
   });
 });
 
-it("keeps the text and sends nothing on Enter during a turn, and shows Send when the turn ends", async () => {
+it("posts the message on Enter during a turn, and clears the composer", async () => {
   const user = userEvent.setup();
-  const log = logOf(chatEntries([userMessage("Build.")]));
+  const log = writableLogOf(chatEntries([userMessage("Build.")]), MESSAGES_PATH);
   await renderPanel(log);
 
   await user.type(await findComposer(), "Then test it.{Enter}");
 
-  expect(composer().value).toBe("Then test it.\n");
-  expect(posts(log)).toEqual([]);
+  await waitFor(() => {
+    expect(posts(log)).toEqual([{ method: "POST", path: MESSAGES_PATH, body: { text: "Then test it.", client: CHAT_CLIENT } }]);
+  });
+  expect(composer().value).toBe("");
+});
+
+it("asks to queue another message during a turn, and to send a message after it", async () => {
+  const log = logOf(chatEntries([userMessage("Build.")]));
+  await renderPanel(log);
+  expect((await findComposer()).placeholder).toBe("Queue another message");
 
   log.answer(1, { cursor: 2, entries: chatEntries([turnEnd()], 2) });
 
-  expect(await screen.findByRole("button", { name: "Send message" })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Stop generating" })).toBeNull();
-  expect(composer().value).toBe("Then test it.\n");
+  await waitFor(() => {
+    expect(composer().placeholder).toBe("Send a message...");
+  });
+  expect(composerButtons()).toEqual(["Send message"]);
+});
+
+it("keeps a permission request open to an answer after a message that comes during it", async () => {
+  const user = userEvent.setup();
+  const log = writableLogOf(PERMISSION_LOG.slice(0, 5), PERMISSION_PATH);
+  await renderPanel(log);
+  await findPermissionOption("Yes");
+
+  log.answer(5, { cursor: 6, entries: chatEntries([userMessage("Use the other script.")], 6) });
+  expect(await screen.findByText("Use the other script.")).toBeTruthy();
+  await user.click(await findPermissionOption("Yes"));
+
+  await waitFor(() => {
+    expect(posts(log)).toEqual([{ method: "POST", path: PERMISSION_PATH, body: { optionId: "allow-once", client: CHAT_CLIENT } }]);
+  });
 });
 
 /** A host that shows chat 2 of SAGA-3, and chat 3 after a click on Other chat. */
@@ -2659,6 +2699,48 @@ it("scrolls a chat that opened at a message to the end at a run start, and follo
   scrollToContentEnd(box);
   growContent();
   expect(scrolls).toEqual([{ top: box.scrollHeight, behavior: "instant" }]);
+});
+
+describe("with a reader away from the end during a turn", () => {
+  async function renderAwayFromEnd() {
+    const layout = stubThreadLayout();
+    const log = logOf(RUNNING_TURN);
+
+    await renderPanel(log);
+    await waitForOpenScroll(layout.scrolls, CONTENT_HEIGHT);
+    await frame();
+    layout.box.scrollTop = 0;
+    act(() => {
+      threadViewport().dispatchEvent(new Event("scroll"));
+    });
+    layout.scrolls.length = 0;
+    return { ...layout, log };
+  }
+
+  it("scrolls to the end at a message of the user", async () => {
+    const { scrolls, box, log } = await renderAwayFromEnd();
+
+    log.answer(RUNNING_TURN.length, {
+      cursor: RUNNING_TURN.length + 1,
+      entries: chatEntries([userMessage("Run the tests.")], RUNNING_TURN.length + 1),
+    });
+
+    await waitFor(() => {
+      expect(scrolls).toContainEqual({ top: box.scrollHeight, behavior: "auto" });
+    });
+  });
+
+  it("keeps the place of the reader at more text of the agent", async () => {
+    const { scrolls, log } = await renderAwayFromEnd();
+
+    log.answer(RUNNING_TURN.length, {
+      cursor: RUNNING_TURN.length + 1,
+      entries: chatEntries([textChunk(" Now the tests.")], RUNNING_TURN.length + 1),
+    });
+
+    await screen.findByText(/Now the tests/);
+    expect(scrolls).toEqual([]);
+  });
 });
 
 it("keeps the place of the reader when an own turn starts", async () => {

@@ -1,7 +1,7 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "../../src/lib/chat-fold";
-import { chatOpenMessageId, useChatScroll } from "../../src/lib/use-chat-scroll";
+import { chatOpenMessageId, chatUserSeq, useChatScroll } from "../../src/lib/use-chat-scroll";
 import { atSeq } from "../chat-fixtures";
 import { stubFocusVisible } from "../helpers";
 
@@ -49,6 +49,19 @@ describe("chatOpenMessageId", () => {
   });
 });
 
+describe("chatUserSeq", () => {
+  it("gives the seq of the newest message of the user, also with agent messages after it", () => {
+    expect(chatUserSeq([userAt(1), agentAt(2), userAt(5), agentAt(6)])).toBe(5);
+  });
+
+  it.each<[string, readonly ChatMessage[]]>([
+    ["no messages", []],
+    ["only agent messages", [agentAt(2)]],
+  ])("gives 0 with %s", (_case, messages) => {
+    expect(chatUserSeq(messages)).toBe(0);
+  });
+});
+
 describe("useChatScroll", () => {
   type Box = { clientHeight: number; scrollHeight: number; scrollTop: number };
 
@@ -90,7 +103,7 @@ describe("useChatScroll", () => {
       openId: undefined,
       lastId: "a2",
       messages: [{ id: "u1" }, { id: "a2" }],
-      turn: false,
+      userSeq: 1,
       ownTurn: false,
       atEnd: true,
       scrollToBottom,
@@ -229,33 +242,53 @@ describe("useChatScroll", () => {
     });
   });
 
-  describe("the scroll at a turn of a message", () => {
-    const AT_START = { behavior: "auto" };
+  describe("the scroll at a message of the user", () => {
+    const AT_MESSAGE = { behavior: "auto" };
 
-    it("scrolls to the end when the turn starts, one time", () => {
+    function messageScrolls(): number {
+      return scrollToBottom.mock.calls.filter(([config]) => config.behavior === AT_MESSAGE.behavior).length;
+    }
+
+    it("scrolls to the end one time for a new message", () => {
       const { rerender } = mount();
 
-      rerender({ turn: true });
-      rerender({ turn: true, messages: [{ id: "u1" }, { id: "a2" }, { id: "u3" }] });
+      rerender({ userSeq: 3 });
+      rerender({ userSeq: 3, messages: [{ id: "u1" }, { id: "a2" }, { id: "u3" }] });
 
-      expect(scrollToBottom.mock.calls.filter(([config]) => config.behavior === "auto")).toHaveLength(1);
+      expect(messageScrolls()).toBe(1);
     });
 
-    it("does not scroll for a turn that runs at the mount, or when a turn ends", () => {
-      const { rerender } = mount({ turn: true });
+    it("scrolls again for each later message", () => {
+      const { rerender } = mount();
 
-      rerender({ turn: false });
+      rerender({ userSeq: 3 });
+      rerender({ userSeq: 5 });
 
-      expect(scrollToBottom).not.toHaveBeenCalledWith(AT_START);
+      expect(messageScrolls()).toBe(2);
     });
 
-    it("scrolls again for a later turn", () => {
-      const { rerender } = mount({ turn: true });
+    it("scrolls for the first message of a chat with none", () => {
+      const { rerender } = mount({ userSeq: 0, lastId: undefined, messages: [] });
 
-      rerender({ turn: false });
-      rerender({ turn: true });
+      rerender({ userSeq: 1, lastId: undefined, messages: [{ id: "u1" }] });
 
-      expect(scrollToBottom).toHaveBeenCalledWith(AT_START);
+      expect(messageScrolls()).toBe(1);
+    });
+
+    it("does not scroll for the message of the mount", () => {
+      const { rerender } = mount({ userSeq: 3 });
+
+      rerender({ userSeq: 3, messages: [{ id: "u1" }, { id: "a2" }, { id: "u3" }] });
+
+      expect(messageScrolls()).toBe(0);
+    });
+
+    it("does not scroll when a reset of the log takes the messages away", () => {
+      const { rerender } = mount({ userSeq: 3 });
+
+      rerender({ userSeq: 0, messages: [] });
+
+      expect(messageScrolls()).toBe(0);
     });
   });
 

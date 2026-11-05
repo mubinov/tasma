@@ -3,7 +3,7 @@
 
 import { join } from "node:path";
 import { expect, onTestFinished } from "vitest";
-import type { PromptResponse, SessionConfigOption } from "@agentclientprotocol/sdk";
+import type { ContentBlock, PromptResponse, SessionConfigOption } from "@agentclientprotocol/sdk";
 import { openAgentDefaults } from "@tasma/engine";
 import type { AcpObject, ChatEvent, FeedEvent } from "@tasma/protocol";
 import type { AgentProcess } from "../../src/agents/acp.js";
@@ -159,6 +159,11 @@ export function filtered(update: AcpObject): ChatEvent {
 
 export function chatState(state: "working" | "needs-you" | "failed"): FeedEvent {
   return { kind: "chat", tag: "ALPHA", task: "ALPHA-1", chat: 1, step: START.step, state };
+}
+
+/** The text of a prompt or a steering request that the agent got. */
+export function promptText({ prompt }: { prompt: readonly ContentBlock[] }): string {
+  return prompt.map((block) => (block.type === "text" ? block.text : "")).join("");
 }
 
 /** The id the daemon gave the open request of the log, which a resolution names. */

@@ -10,8 +10,8 @@ export type ChatScrollInput = {
   lastId: string | undefined;
   /** The messages that the kit thread holds now. */
   messages: readonly { id: string }[];
-  /** A turn that a message of the user started runs. */
-  turn: boolean;
+  /** The result of `chatUserSeq` for the view. */
+  userSeq: number;
   ownTurn: boolean;
   /** The kit last saw the reader at the end. A measure in an effect also holds the new content of its commit. */
   atEnd: boolean;
@@ -29,6 +29,11 @@ export function chatOpenMessageId(
     return undefined;
   }
   return messages.find(({ seq }) => seq > seen)?.id;
+}
+
+/** The `seq` of the newest message of the user, or 0 with none. */
+export function chatUserSeq(messages: readonly ChatMessage[]): number {
+  return messages.findLast(({ role }) => role === "user")?.seq ?? 0;
 }
 
 /** `offsetTop` leaves out the transform of the enter animation of a message, which `getBoundingClientRect` holds. */
@@ -86,7 +91,7 @@ function checkFocus(viewport: HTMLElement | null, setPaused: (paused: boolean) =
  * reads the place of the reader when the follow starts again.
  */
 export function useChatScroll(
-  { viewport, openId, lastId, messages, turn, ownTurn, atEnd, scrollToBottom, onFollow }: ChatScrollInput,
+  { viewport, openId, lastId, messages, userSeq, ownTurn, atEnd, scrollToBottom, onFollow }: ChatScrollInput,
 ): void {
   const [opened, setOpened] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -94,15 +99,15 @@ export function useChatScroll(
   const follow = (openId === undefined || opened) && !paused;
   const report = useEffectEvent(onFollow);
   const holdsLast = messages.some(({ id }) => id === lastId);
-  const lastTurnRef = useRef(turn);
+  const lastUserSeqRef = useRef(userSeq);
   const lastOwnTurnRef = useRef(ownTurn);
 
   useEffect(() => {
-    if (turn && !lastTurnRef.current) {
+    if (userSeq > lastUserSeqRef.current) {
       scrollToBottom({ behavior: "auto" });
     }
-    lastTurnRef.current = turn;
-  }, [turn, scrollToBottom]);
+    lastUserSeqRef.current = userSeq;
+  }, [userSeq, scrollToBottom]);
 
   // Layout effects, so the follow stops before the kit reports the size of the new content.
   useLayoutEffect(() => {

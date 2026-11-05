@@ -667,13 +667,32 @@ describe("the chat commands", () => {
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
   });
 
-  it("sends turn-running, chat-not-running and already-answered with 409, and a missing chat with 404", async () => {
-    const { live, server, chats, runner } = await running({ prompt: forever });
+  it("takes a message during a turn", async () => {
+    const { live, server } = await running({ prompt: forever });
     await until(() => live.chat.seq === 1 && live.chat.state === "working", "the turn runs");
+
+    const response = await send(server, "POST", `${CHATS}/1/messages`, { text: "Use the other parser", client: "web" });
+
+    expect(response.status).toBe(200);
+    expect((await logOf(live)).at(-1)).toEqual({ kind: "user", text: "Use the other parser", client: "web" });
+  });
+
+  it("sends turn-running, chat-not-running and already-answered with 409, and a missing chat with 404", async () => {
+    let prompted = false;
+    const { live, server, chats, runner } = await running({
+      prompt() {
+        prompted = true;
+        return forever();
+      },
+    });
+    await until(() => prompted, "the turn runs");
     const idle = await chats.create("ALPHA", "ALPHA-2", INPUT, MESSAGE);
     await idle.append(TURN_END);
+    // The end waits for the turn, which ends only at the daemon stop.
+    const ended = runner.end(live, { client: "web" }).catch(() => undefined);
     const turnRunning = await send(server, "POST", `${CHATS}/1/messages`, MESSAGE);
     runner.stopStarts();
+    await ended;
 
     const refusals = [
       [turnRunning, "turn-running", 409],

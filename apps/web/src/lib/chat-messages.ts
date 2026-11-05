@@ -301,6 +301,13 @@ export function chatAnnouncements(before: ChatView, after: ChatView, agent: Chat
   const words = after.fold.open
     .filter((request) => !before.fold.open.includes(request))
     .flatMap((request) => requestWords(after.messages, request, name));
+  // The agent gets a message only after the answer to a request that was open when the message came.
+  const waiting = after.messages
+    .flatMap((message) => (message.role === "user" && message.seq > before.seq ? (message.openRequests ?? []) : []))
+    .find((request) => after.fold.open.includes(request));
+  if (waiting !== undefined) {
+    words.push(`${name} reads the message after you answer the ${isQuestion(after.messages, waiting) ? "question" : "request"}`);
+  }
   const was = before.fold.status.state;
   const status = after.fold.status;
   const failed = status.state === "failed" && was !== "failed"
@@ -342,12 +349,19 @@ function requestWords(messages: readonly ChatMessage[], request: string, name: s
     if (part.type === "tool" && part.tool.permission?.request === request) {
       return [`${name} asks for permission: ${spoken(chatToolName(part.tool))}`];
     }
-    const question = part.type === "question" ? part.question : part.type === "tool" ? part.tool.question : undefined;
-    if (question?.request === request) {
+    if (partQuestion(part)?.request === request) {
       return [`${name} asks a question`];
     }
   }
   return [];
+}
+
+function partQuestion(part: ChatPart): { request: string } | undefined {
+  return part.type === "question" ? part.question : part.type === "tool" ? part.tool.question : undefined;
+}
+
+function isQuestion(messages: readonly ChatMessage[], request: string): boolean {
+  return agentParts(messages).some((part) => partQuestion(part)?.request === request);
 }
 
 function noticesOf(messages: readonly ChatMessage[]): ChatNotice[] {

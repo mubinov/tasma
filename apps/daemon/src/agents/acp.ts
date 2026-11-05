@@ -20,6 +20,9 @@ const REQUEST_CANCELLED = RequestError.requestCancelled().code;
 
 const RESOURCE_NOT_FOUND = RequestError.resourceNotFound().code;
 
+/** The steering extension of the adapter of Claude. */
+const STEER_METHOD = "_session/steering";
+
 export type AgentEnd = { code: number | null; signal: NodeJS.Signals | null } | { error: Error };
 
 export type AgentProcess = {
@@ -42,6 +45,12 @@ export type AgentSession = {
   /** Gives the full list after the change. A refusal of the agent rejects with its `RequestError`. */
   setConfigOption(configId: string, value: string): Promise<SessionConfigOption[]>;
   prompt(text: string): Promise<{ stopReason: string }>;
+  /**
+   * Gives the text to the turn that runs, which the agent reads at its next
+   * step. Gives `prompt-required`, and keeps nothing, when no turn runs.
+   * Rejects as `prompt` does.
+   */
+  steer(text: string): Promise<"injected" | "prompt-required">;
   /** Sends `session/cancel`. Never throws: a send that fails means that the connection closes. */
   cancel(): void;
 };
@@ -222,6 +231,16 @@ export function connectAgent(stream: Stream, handlers: AgentHandlers): AgentConn
           prompt: [{ type: "text", text }],
         }));
         return { stopReason };
+      },
+      async steer(text) {
+        const { outcome } = await call(connection.agent.request<{ outcome: unknown }>(STEER_METHOD, {
+          sessionId,
+          prompt: [{ type: "text", text }],
+          _meta: { steering: { idleBehavior: "promptRequired" } },
+        }));
+        if (outcome === "injected") return "injected";
+        if (outcome === "promptRequired") return "prompt-required";
+        throw new Error(`the agent answered a steer with the outcome ${String(outcome)}`);
       },
       cancel() {
         void connection.agent.notify("session/cancel", { sessionId }).catch(() => undefined);

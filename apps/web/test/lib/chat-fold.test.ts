@@ -119,6 +119,17 @@ describe("foldChatEntries: user", () => {
     expect(view.messages).toEqual([{ role: "user", id: "u1", seq: 1, at: atSeq(1), text: "Rename the parser." }]);
   });
 
+  it("keeps the requests that were open when the message came", () => {
+    const view = foldEvents([
+      permissionRequest("r1", { toolCallId: "t1" }, []),
+      questionRequest("q1", { message: "Which name?", requestedSchema: {} }),
+      permissionResolved("r1", { outcome: "selected", optionId: "allow-once" }),
+      userMessage("Go on."),
+    ]);
+
+    expect(view.messages.at(-1)).toEqual({ role: "user", id: "u4", seq: 4, at: atSeq(4), text: "Go on.", openRequests: ["q1"] });
+  });
+
   it("closes the open message before it adds the user message", () => {
     const view = foldEvents([textChunk("Ready."), userMessage("Go on."), textChunk("Working.")]);
 

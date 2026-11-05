@@ -76,8 +76,6 @@ const SKILL_INSTALL_FAILURE_LINES: Record<FailureKind, string> = {
   unsent: "Tasma could not send the request to the daemon.",
 };
 
-const TURN_RUNNING_LINE = "The agent is working on a turn. Send the message when the turn ends.";
-
 function chatName({ task, chat }: ChatPlace): string {
   return `chat ${String(chat)} of ${task}`;
 }
@@ -100,8 +98,9 @@ function chatFailureTitle(place: ChatPlace, kind: ChatFailureKind): string {
 export function chatFailure(place: ChatPlace, kind: ChatFailureKind): WriteFailure {
   return {
     title: chatFailureTitle(place, kind),
+    // A restart in progress is the only cause of a message refused with `turn-running`.
     line: (error) => kind === "message" && chatRefusalCode(error) === "turn-running"
-      ? TURN_RUNNING_LINE
+      ? chatRestartingLine(place)
       : CHAT_FAILURE_LINES[failureKind(error.cause)],
   };
 }
@@ -138,7 +137,7 @@ export function chatClosedNotice(place: ChatPlace): ClosedNotice {
   };
 }
 
-/** The line of a message refused with `turn-running` while this window restarts the task from the chat. */
+/** The line of a message refused with `turn-running`, which the daemon gives while the chat ends for a restart. */
 export function chatRestartingLine({ chat }: ChatPlace): string {
   return `Chat ${String(chat)} stops for a restart. Write to the new chat when it opens.`;
 }

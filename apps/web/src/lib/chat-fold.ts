@@ -24,7 +24,15 @@ export type ChatOptionValue = { value: string; name: string; description?: strin
 
 export type ChatMessage = ChatUserMessage | ChatAgentMessage;
 
-export type ChatUserMessage = { role: "user"; id: string; seq: number; at: string; text: string };
+export type ChatUserMessage = {
+  role: "user";
+  id: string;
+  seq: number;
+  at: string;
+  text: string;
+  /** The requests of the agent that were open when the message came, when there are any. */
+  openRequests?: readonly string[];
+};
 
 export type ChatAgentMessage = {
   role: "assistant";
@@ -140,9 +148,9 @@ export const CHAT_VIEW_START: ChatView = { seq: 0, fold: CHAT_START, messages: [
 
 /**
  * One entry as the fold applies it: the list it changes, whether a turn ran
- * before it, whether that turn was an own turn, and whether a request was open.
+ * before it, whether that turn was an own turn, and the requests that were open.
  */
-type Step = { messages: ChatMessage[]; entry: ChatEntry; running: boolean; ownTurn: boolean; requestOpen: boolean };
+type Step = { messages: ChatMessage[]; entry: ChatEntry; running: boolean; ownTurn: boolean; open: readonly string[] };
 
 /** A part that a search found, with the value that the search took from it. */
 type Found<T> = { index: number; message: ChatAgentMessage; position: number; part: ChatPart; value: T };
@@ -173,7 +181,7 @@ export function foldChatEntries(view: ChatView, entries: readonly ChatEntry[]): 
       continue;
     }
     messages ??= [...view.messages];
-    applyEvent({ messages, entry, running: turnRuns(fold), ownTurn: fold.ownTurn, requestOpen: fold.open.length > 0 });
+    applyEvent({ messages, entry, running: turnRuns(fold), ownTurn: fold.ownTurn, open: fold.open });
     options = foldOptions(options, entry.event);
     fold = foldChat(fold, entry.event);
     seq = entry.seq;
@@ -241,7 +249,14 @@ function applyEvent(step: Step): void {
   switch (event.kind) {
     case "user":
       closeOpen(messages);
-      messages.push({ role: "user", id: `u${entry.seq}`, seq: entry.seq, at: entry.at, text: event.text });
+      messages.push({
+        role: "user",
+        id: `u${entry.seq}`,
+        seq: entry.seq,
+        at: entry.at,
+        text: event.text,
+        ...(step.open.length > 0 ? { openRequests: step.open } : {}),
+      });
       break;
     case "update":
       if (isRecord(event.update)) {
@@ -273,7 +288,7 @@ function applyEvent(step: Step): void {
       // The event before the turn end of a turn of a message leaves the message for the notice of that turn end.
       if (step.ownTurn && !event.ownTurn) {
         // A background subagent outlives the own turn, and still waits for the answer to its request.
-        if (step.requestOpen) {
+        if (step.open.length > 0) {
           closeOpen(messages);
         } else {
           endTurn(messages);
