@@ -78,6 +78,7 @@ function fakeAdapter(skillsAgent: string): AgentAdapter {
     skillsAgent,
     notLoggedIn: "Log in to the agent first",
     sessionGone: "The agent lost the chat",
+    projectSessionGone: "The agent lost the project chat",
     filterUpdate: (update) => update,
   };
 }

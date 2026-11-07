@@ -1,26 +1,53 @@
 // The live chats of the daemon: one handle for each chat, loaded on first use,
 // which holds the one open log of the chat, the fold of that log, and the hold
-// that a long-poll read of the log waits on.
+// that a long-poll read of the log waits on. A chat is a chat of a task, or a
+// chat of a project with no task and no step.
 //
-// Every write and every load of a chat runs in the turns of its project tag and
-// of its task in the daemon's one write queue. A rename or a delete of the
-// project and a delete of the task take one of these turns too, so none of them
-// runs in the middle of a chat write or a chat load, and each calls its hook
-// here inside its own turn.
+// Every write and every load of a chat of a task runs in the turns of its
+// project tag and of its task in the daemon's one write queue. Every write and
+// every load of a chat of a project runs in the turn of its tag alone. A rename
+// or a delete of the project and a delete of the task take one of these turns
+// too, so none of them runs in the middle of a chat write or a chat load, and
+// each calls its hook here inside its own turn.
 
 import {
   chatFinding,
   chatPath,
   createChat,
+  createProjectChat as createProjectChatRecord,
   listChats,
   openChatLog,
+  openProjectChatLog,
   readChat,
+  readProjectChat,
   TaskStoreError,
   updateChat,
+  updateProjectChat,
 } from "@tasma/engine";
-import type { ChatChange, ChatInput, ChatLog, ChatRecord, TaskStoreErrorCode } from "@tasma/engine";
+import type {
+  ChatChange,
+  ChatInput,
+  ChatLog,
+  ChatLogEntry,
+  ChatRecord,
+  ProjectChatInput,
+  ProjectChatLog,
+  ProjectChatRecord,
+  ProjectOptions,
+  TaskStoreErrorCode,
+} from "@tasma/engine";
 import { CHAT_START, chatBusy, DAEMON_NAME, foldChat, printable } from "@tasma/protocol";
-import type { AcpObject, Chat, ChatEntry, ChatEvent, ChatFold, ChatStatus, Diagnostic } from "@tasma/protocol";
+import type {
+  AcpObject,
+  Chat,
+  ChatEntry,
+  ChatEvent,
+  ChatFold,
+  ChatStatus,
+  Diagnostic,
+  FeedEvent,
+  ProjectChat,
+} from "@tasma/protocol";
 import type { Publish } from "../events/feed.js";
 import { createHold, HOLD_MS } from "../events/hold.js";
 import type { Hold } from "../events/hold.js";
@@ -45,9 +72,13 @@ export function resolution(kind: RequestKind, request: string, result: AcpObject
     : { kind: "question-resolved", request, answer: result, ...by };
 }
 
-/** The line on the error output for a fault of a chat. */
+function faultText(name: string, error: unknown): string {
+  return `${DAEMON_NAME}: ${printable(`${name}: ${causeOf(error)}`)}\n`;
+}
+
+/** The line on the error output for a fault of a chat of a task. */
 export function faultLine(chat: { task: string; chat: number }, error: unknown): string {
-  return `${DAEMON_NAME}: ${printable(`chat ${chat.chat} of ${chat.task}: ${causeOf(error)}`)}\n`;
+  return faultText(`chat ${chat.chat} of ${chat.task}`, error);
 }
 
 /**
@@ -55,10 +86,10 @@ export function faultLine(chat: { task: string; chat: number }, error: unknown):
  * rename of its project, and refuses with `chat-not-found` after a delete of its
  * project or its task, and once a write finds its chat gone.
  */
-export type LiveChat = {
+export type LiveChat<C extends Chat | ProjectChat = Chat> = {
   /** The tag of the project of the chat; a rename of the project changes it. */
   readonly tag: string;
-  readonly chat: Chat;
+  readonly chat: C;
   readonly fold: ChatFold;
   /** What the open of the log found; an append adds nothing to it. */
   readonly diagnostics: Diagnostic[];
@@ -83,8 +114,8 @@ export type LiveChat = {
   setOptions(options: Record<string, string>): Promise<void>;
   /**
    * Moves `seen` forward to `seq`, at most to the last `seq` of the log, and
-   * publishes a `chat` event when it moves. Writes in call order with the
-   * other writes of the chat.
+   * publishes the feed event of the chat when it moves. Writes in call order
+   * with the other writes of the chat.
    */
   setSeen(seq: number): Promise<void>;
   /** Resolves when every write called on the handle before it has ended, whether it failed or not. */
@@ -98,6 +129,27 @@ export type LiveChat = {
   wait(): Promise<void>;
 };
 
+/** The handle of a chat of either kind. `isProjectChat` narrows it in both branches. */
+export type AnyLiveChat = LiveChat | LiveChat<ProjectChat>;
+
+/** Whether the handle is of a project chat. */
+export function isProjectChat(live: LiveChat<Chat | ProjectChat>): live is LiveChat<ProjectChat> {
+  return !("task" in live.chat);
+}
+
+/** `chat N of TASK` for a task chat, `chat N of project TAG` for a project chat, with the current tag. */
+export function chatName(live: LiveChat<Chat | ProjectChat>): string {
+  const { chat } = live;
+  return "task" in chat ? `chat ${chat.chat} of ${chat.task}` : `chat ${chat.chat} of project ${live.tag}`;
+}
+
+/** The line on the error output for a fault of the chat of the handle, with the name of `chatName`. */
+export function chatFault(live: LiveChat<Chat | ProjectChat>, error: unknown): string {
+  return faultText(chatName(live), error);
+}
+
+type Message = { text: string; client: string };
+
 /**
  * The hooks run inside the turn of the route that calls them, after the engine
  * call, and take no turn themselves. No method that takes turns may be called
@@ -105,10 +157,13 @@ export type LiveChat = {
  */
 export type ChatRegistry = {
   /** Creates a chat together with its first message, so a new chat is `working` from its first `chat` event. */
-  create(tag: string, task: string, input: ChatInput, message: { text: string; client: string }): Promise<LiveChat>;
+  create(tag: string, task: string, input: ChatInput, message: Message): Promise<LiveChat>;
   get(tag: string, task: string, chat: number): Promise<LiveChat>;
   /** The chats of a task in number order. A chat that cannot be loaded is left out and reported. */
   list(tag: string, task: string): Promise<{ chats: LiveChat[]; diagnostics: Diagnostic[] }>;
+  /** Creates a project chat with its first message, so the chat is `working` from its first `project-chat` event. */
+  createProjectChat(tag: string, input: ProjectChatInput, message: Message): Promise<LiveChat<ProjectChat>>;
+  getProjectChat(tag: string, chat: number): Promise<LiveChat<ProjectChat>>;
   projectRenamed(from: string, to: string): void;
   projectRemoved(tag: string): void;
   taskRemoved(tag: string, task: string): void;
@@ -116,21 +171,50 @@ export type ChatRegistry = {
   close(): void;
 };
 
-type Context = {
+/** The types of one kind of chat: its record on disk, its chat as a handle gives it, and its log. */
+type ChatKind = { record: ChatRecord | ProjectChatRecord; chat: Chat | ProjectChat; log: ChatLog | ProjectChatLog };
+
+type TaskKind = { record: ChatRecord; chat: Chat; log: ChatLog };
+
+type ProjectKind = { record: ProjectChatRecord; chat: ProjectChat; log: ProjectChatLog };
+
+/** The parts of a handle that depend on the kind of its chat. */
+type Place<K extends ChatKind> = {
+  open(options: ProjectOptions, record: K["record"], onEntry: (entry: ChatLogEntry) => void): Promise<K["log"]>;
+  write(options: ProjectOptions, record: K["record"], change: ChatChange): Promise<K["record"]>;
+  view(record: K["record"], seq: number, stateSeq: number, status: ChatStatus): K["chat"];
+  /** The key of the handle in the map of the loaded handles of its kind. */
+  key(tag: string, record: K["record"]): string;
+  turns(tag: string, record: K["record"]): string[];
+  event(tag: string, record: K["record"], status: ChatStatus): FeedEvent;
+  /** The record after `log` moved to a new tag. */
+  relocated(record: K["record"], log: K["log"]): K["record"];
+};
+
+type Context<K extends ChatKind> = {
   root: string | undefined;
   holdMs: number;
   writes: WriteQueue;
   publish: Publish | undefined;
+  place: Place<K>;
   /** Takes a handle out of the registry for good. */
-  forget: (live: Live) => void;
+  forget: (live: Live<K>) => void;
 };
+
+/**
+ * The loaded handles of one kind, by the place each one stands for now. Only
+ * `keep` adds one, always inside the turn of its tag. A load looks here first,
+ * so two requests for one chat load it one time and a load that waited behind
+ * a rename gives the moved handle.
+ */
+type Loaded<K extends ChatKind> = { context: Context<K>; handles: Map<string, Live<K>> };
 
 /** The kind of each open request of a fold, in open order. */
 type Asked = Map<string, RequestKind>;
 
 type Answers = { answered: boolean; unanswered: string[] };
 
-type Opened = { log: ChatLog; fold: ChatFold; stateSeq: number; asked: Asked; answers: Answers };
+type Opened<L> = { log: L; fold: ChatFold; stateSeq: number; asked: Asked; answers: Answers };
 
 /** The kinds of update that an agent sends only while it works on a prompt. */
 const WORK_UPDATES: ReadonlySet<unknown> = new Set([
@@ -191,9 +275,34 @@ function chatKey(tag: string, task: string, chat: number): string {
   return `${tag}\u0000${task}\u0000${chat}`;
 }
 
+function projectChatKey(tag: string, chat: number): string {
+  return `${tag}\u0000${chat}`;
+}
+
 function turnsOf(tag: string, task: string): string[] {
   return [tag, taskKey(tag, task)];
 }
+
+const TASK_PLACE: Place<TaskKind> = {
+  open: (options, record, onEntry) => openChatLog(options, record.task, record.chat, onEntry),
+  write: (options, record, change) => updateChat(options, record.task, record.chat, change),
+  view: (record, seq, stateSeq, status) => ({ ...record, seq, stateSeq, ...status }),
+  key: (tag, record) => chatKey(tag, record.task, record.chat),
+  turns: (tag, record) => turnsOf(tag, record.task),
+  event: (tag, { task, chat, step }, status) => ({ kind: "chat", tag, task, chat, step, ...status }),
+  relocated: (record, log) => ({ ...record, task: log.task }),
+};
+
+const PROJECT_PLACE: Place<ProjectKind> = {
+  open: (options, record, onEntry) => openProjectChatLog(options, record.chat, onEntry),
+  write: (options, record, change) => updateProjectChat(options, record.chat, change),
+  view: (record, seq, stateSeq, status) => ({ ...record, seq, stateSeq, ...status }),
+  key: (tag, record) => projectChatKey(tag, record.chat),
+  turns: (tag) => [tag],
+  event: (tag, { chat }, status) => ({ kind: "project-chat", tag, chat, ...status }),
+  // The record of a project chat holds no tag.
+  relocated: (record) => record,
+};
 
 function whereOf(status: ChatStatus): string | undefined {
   return status.state === "continued-outside" ? status.where : undefined;
@@ -217,12 +326,16 @@ function trackAsked(asked: Asked, fold: ChatFold, event: ChatEvent): void {
 }
 
 /** Opens the log of a chat and folds it in the same read. */
-async function openFolded(root: string | undefined, tag: string, record: ChatRecord): Promise<Opened> {
+async function openFolded<K extends ChatKind>(
+  context: Context<K>,
+  tag: string,
+  record: K["record"],
+): Promise<Opened<K["log"]>> {
   let fold = CHAT_START;
   let stateSeq = 0;
   const asked: Asked = new Map();
   const answers: Answers = { answered: false, unanswered: [] };
-  const log = await openChatLog({ project: tag, root }, record.task, record.chat, (entry) => {
+  const log = await context.place.open({ project: tag, root: context.root }, record, (entry) => {
     const event = entry.event as ChatEvent;
     const next = foldChat(fold, event);
     if (movesStateSeq(fold, next, event)) stateSeq = entry.seq;
@@ -233,13 +346,13 @@ async function openFolded(root: string | undefined, tag: string, record: ChatRec
   return { log, fold, stateSeq, asked, answers };
 }
 
-class Live implements LiveChat {
+class Live<K extends ChatKind> implements LiveChat<K["chat"]> {
   removed = false;
   readonly hold: Hold;
-  readonly #context: Context;
+  readonly #context: Context<K>;
   #tag: string;
-  #record: ChatRecord;
-  #log: ChatLog;
+  #record: K["record"];
+  #log: K["log"];
   #fold: ChatFold;
   #stateSeq: number;
   #asked: Asked;
@@ -248,7 +361,7 @@ class Live implements LiveChat {
   #stale = false;
   #writes: Promise<unknown> = Promise.resolve();
 
-  constructor(context: Context, tag: string, record: ChatRecord, opened: Opened) {
+  constructor(context: Context<K>, tag: string, record: K["record"], opened: Opened<K["log"]>) {
     this.#context = context;
     this.#tag = tag;
     this.#record = record;
@@ -265,11 +378,11 @@ class Live implements LiveChat {
   }
 
   get key(): string {
-    return chatKey(this.#tag, this.#record.task, this.#record.chat);
+    return this.#context.place.key(this.#tag, this.#record);
   }
 
-  get chat(): Chat {
-    return { ...this.#record, seq: this.#log.last, stateSeq: this.#stateSeq, ...this.#fold.status };
+  get chat(): K["chat"] {
+    return this.#context.place.view(this.#record, this.#log.last, this.#stateSeq, this.#fold.status);
   }
 
   get fold(): ChatFold {
@@ -385,7 +498,7 @@ class Live implements LiveChat {
   relocate(tag: string): void {
     this.#log.relocate(tag);
     this.#tag = tag;
-    this.#record = { ...this.#record, task: this.#log.task };
+    this.#record = this.#context.place.relocated(this.#record, this.#log);
   }
 
   #update(change: ChatChange): Promise<void> {
@@ -396,8 +509,8 @@ class Live implements LiveChat {
   }
 
   async #writeRecord(change: ChatChange): Promise<void> {
-    const { task, chat } = this.#record;
-    this.#record = await updateChat({ project: this.#tag, root: this.#context.root }, task, chat, change);
+    const { place, root } = this.#context;
+    this.#record = await place.write({ project: this.#tag, root }, this.#record, change);
   }
 
   /**
@@ -419,7 +532,7 @@ class Live implements LiveChat {
   async #inTurns<T>(work: () => Promise<T>): Promise<T> {
     for (;;) {
       const tag = this.#tag;
-      const done = await this.#context.writes.runAll(turnsOf(tag, this.#record.task), async () =>
+      const done = await this.#context.writes.runAll(this.#context.place.turns(tag, this.#record), async () =>
         tag === this.#tag ? { value: await this.#forgetIfGone(work) } : undefined);
       if (done !== undefined) return done.value;
     }
@@ -435,13 +548,13 @@ class Live implements LiveChat {
   }
 
   /**
-   * A new open reads what a failed append left on disk, and publishes a `chat`
-   * event when it finds `stateSeq` changed.
+   * A new open reads what a failed append left on disk, and publishes the feed
+   * event of the chat when it finds `stateSeq` changed.
    */
   async #reopen(): Promise<void> {
     const before = this.#stateSeq;
     const last = this.#log.last;
-    const opened = await openFolded(this.#context.root, this.#tag, this.#record);
+    const opened = await openFolded(this.#context, this.#tag, this.#record);
     this.#log = opened.log;
     this.#fold = opened.fold;
     this.#stateSeq = opened.stateSeq;
@@ -452,14 +565,16 @@ class Live implements LiveChat {
     if (this.#log.last !== last) this.hold.notify();
   }
 
-  /** Publishes a `chat` event when `stateSeq` is not `before`. A log can become shorter, so a lower one counts. */
+  /**
+   * Publishes the feed event of the chat when `stateSeq` is not `before`. A log
+   * can become shorter, so a lower one counts.
+   */
   #announce(before: number): void {
     if (this.#stateSeq !== before) this.#publish();
   }
 
   #publish(): void {
-    const { task, chat, step } = this.#record;
-    this.#context.publish?.({ kind: "chat", tag: this.#tag, task, chat, step, ...this.#fold.status });
+    this.#context.publish?.(this.#context.place.event(this.#tag, this.#record, this.#fold.status));
   }
 
   #assertPresent(): void {
@@ -472,9 +587,9 @@ export function createChatRegistry(options: {
   host: ProjectHost;
   writes: WriteQueue;
   /**
-   * Receives a `chat` event at the create of a chat, at each change of its
-   * status, at each new permission request or question, and when its `seen`
-   * moves forward.
+   * Receives the `chat` event of a task chat or the `project-chat` event of a
+   * project chat at its create, at each change of its status, at each new
+   * permission request or question, and when its `seen` moves forward.
    */
   publish?: Publish;
   holdMs?: number;
@@ -485,36 +600,52 @@ export function createChatRegistry(options: {
   const holdMs = options.holdMs ?? HOLD_MS;
   const stderr = options.stderr ?? process.stderr;
   let closed = false;
-  /**
-   * The loaded handles, by the place each one stands for now. Only `keep` adds
-   * one, always inside the turn of its tag. A load looks here first, so two
-   * requests for one chat load it one time and a load that waited behind a
-   * rename gives the moved handle.
-   */
-  const loaded = new Map<string, Live>();
 
-  function forget(live: Live): void {
-    live.removed = true;
-    live.hold.close();
-    if (loaded.get(live.key) === live) loaded.delete(live.key);
+  function loadedOf<K extends ChatKind>(place: Place<K>): Loaded<K> {
+    const handles = new Map<string, Live<K>>();
+    const forget = (live: Live<K>): void => {
+      live.removed = true;
+      live.hold.close();
+      if (handles.get(live.key) === live) handles.delete(live.key);
+    };
+    return { context: { root, holdMs, writes, publish, place, forget }, handles };
   }
 
-  /** Puts a handle in the map. A handle it takes the place of stands for a chat that is gone. */
-  function keep(live: Live): void {
-    const replaced = loaded.get(live.key);
-    if (replaced !== undefined) forget(replaced);
+  const tasks = loadedOf(TASK_PLACE);
+  const projects = loadedOf(PROJECT_PLACE);
+
+  /** Puts a handle in its map. A handle it takes the place of stands for a chat that is gone. */
+  function keep<K extends ChatKind>({ context, handles }: Loaded<K>, live: Live<K>): void {
+    const replaced = handles.get(live.key);
+    if (replaced !== undefined) context.forget(replaced);
     if (closed) live.hold.close();
-    loaded.set(live.key, live);
+    handles.set(live.key, live);
   }
 
-  const context: Context = { root, holdMs, writes, publish, forget };
-
-  async function load(tag: string, record: ChatRecord): Promise<Live> {
-    const present = loaded.get(chatKey(tag, record.task, record.chat));
+  async function load<K extends ChatKind>(loaded: Loaded<K>, tag: string, record: K["record"]): Promise<Live<K>> {
+    const { context, handles } = loaded;
+    const present = handles.get(context.place.key(tag, record));
     if (present !== undefined) return present;
-    const live = new Live(context, tag, record, await openFolded(root, tag, record));
+    const live = new Live(context, tag, record, await openFolded(context, tag, record));
     await recover(live);
-    keep(live);
+    keep(loaded, live);
+    return live;
+  }
+
+  /** The handle of a chat just created, with its first message; the caller holds the turns of the chat. */
+  async function created<K extends ChatKind>(
+    loaded: Loaded<K>,
+    tag: string,
+    record: K["record"],
+    message: Message,
+  ): Promise<Live<K>> {
+    const live = new Live(loaded.context, tag, record, await openFolded(loaded.context, tag, record));
+    try {
+      await live.appendInHeldTurns({ kind: "user", text: message.text, client: message.client });
+    } catch (error) {
+      if (!await live.reopenAfterFailedAppend()) throw error;
+    }
+    keep(loaded, live);
     return live;
   }
 
@@ -523,54 +654,57 @@ export function createChatRegistry(options: {
    * runs only the chats it created or got from here. So a turn, a job or a
    * request that its log leaves open ended with an earlier daemon.
    */
-  async function recover(live: Live): Promise<void> {
+  async function recover<K extends ChatKind>(live: Live<K>): Promise<void> {
     try {
       await live.interruptInHeldTurns();
     } catch (error) {
-      stderr.write(faultLine(live.chat, error));
+      stderr.write(chatFault(live, error));
     }
   }
 
-  function forgetWhere(test: (live: Live) => boolean): void {
-    for (const live of [...loaded.values()]) {
-      if (test(live)) forget(live);
+  function relocateAll<K extends ChatKind>(loaded: Loaded<K>, from: string, to: string): void {
+    for (const [key, live] of [...loaded.handles]) {
+      if (live.tag !== from) continue;
+      loaded.handles.delete(key);
+      live.relocate(to);
+      keep(loaded, live);
+      // A wait under the old tag reads again, and finds no project of that tag.
+      live.hold.notify();
+    }
+  }
+
+  function forgetWhere<K extends ChatKind>({ context, handles }: Loaded<K>, test: (live: Live<K>) => boolean): void {
+    for (const live of [...handles.values()]) {
+      if (test(live)) context.forget(live);
     }
   }
 
   return {
     async create(tag, task, input, message) {
       await host.open(tag);
-      return writes.runAll(turnsOf(tag, task), async () => {
-        const record = await createChat({ project: tag, root }, task, input);
-        const live = new Live(context, tag, record, await openFolded(root, tag, record));
-        try {
-          await live.appendInHeldTurns({ kind: "user", text: message.text, client: message.client });
-        } catch (error) {
-          if (!await live.reopenAfterFailedAppend()) throw error;
-        }
-        keep(live);
-        return live;
-      });
+      return writes.runAll(turnsOf(tag, task), async () =>
+        created(tasks, tag, await createChat({ project: tag, root }, task, input), message));
     },
 
     async get(tag, task, chat) {
       await host.open(tag);
       // A malformed chat number gives chat-not-found also for a missing task; the engine checks the task first.
       assertChatNumber(chat);
-      return loaded.get(chatKey(tag, task, chat))
+      const key = chatKey(tag, task, chat);
+      return tasks.handles.get(key)
         ?? writes.runAll(turnsOf(tag, task), async () =>
-          loaded.get(chatKey(tag, task, chat)) ?? load(tag, await readChat({ project: tag, root }, task, chat)));
+          tasks.handles.get(key) ?? load(tasks, tag, await readChat({ project: tag, root }, task, chat)));
     },
 
     async list(tag, task) {
       await host.open(tag);
       return writes.runAll(turnsOf(tag, task), async () => {
         const listed = await listChats({ project: tag, root }, task);
-        const chats: Live[] = [];
+        const chats: LiveChat[] = [];
         const diagnostics = [...listed.diagnostics];
         for (const record of listed.chats) {
           try {
-            const live = await load(tag, record);
+            const live = await load(tasks, tag, record);
             chats.push(live);
             diagnostics.push(...live.diagnostics);
           } catch (error) {
@@ -581,28 +715,38 @@ export function createChatRegistry(options: {
       });
     },
 
+    async createProjectChat(tag, input, message) {
+      await host.open(tag);
+      return writes.runAll([tag], async () =>
+        created(projects, tag, await createProjectChatRecord({ project: tag, root }, input), message));
+    },
+
+    async getProjectChat(tag, chat) {
+      await host.open(tag);
+      assertChatNumber(chat);
+      const key = projectChatKey(tag, chat);
+      return projects.handles.get(key)
+        ?? writes.runAll([tag], async () =>
+          projects.handles.get(key) ?? load(projects, tag, await readProjectChat({ project: tag, root }, chat)));
+    },
+
     projectRenamed(from, to) {
-      for (const [key, live] of [...loaded]) {
-        if (live.tag !== from) continue;
-        loaded.delete(key);
-        live.relocate(to);
-        keep(live);
-        // A wait under the old tag reads again, and finds no project of that tag.
-        live.hold.notify();
-      }
+      relocateAll(tasks, from, to);
+      relocateAll(projects, from, to);
     },
 
     projectRemoved(tag) {
-      forgetWhere((live) => live.tag === tag);
+      forgetWhere(tasks, (live) => live.tag === tag);
+      forgetWhere(projects, (live) => live.tag === tag);
     },
 
     taskRemoved(tag, task) {
-      forgetWhere((live) => live.tag === tag && live.chat.task === task);
+      forgetWhere(tasks, (live) => live.tag === tag && live.chat.task === task);
     },
 
     close() {
       closed = true;
-      for (const live of loaded.values()) live.hold.close();
+      for (const live of [...tasks.handles.values(), ...projects.handles.values()]) live.hold.close();
     },
   };
 }

@@ -23,6 +23,7 @@ import type {
   ChatOptionChange,
   Diagnostic,
   PermissionAnswer,
+  ProjectChat,
   QuestionAnswer,
 } from "@tasma/protocol";
 import { AgentClosed, connectAgent, SessionNotFound, spawnAgent } from "../agents/acp.js";
@@ -31,11 +32,19 @@ import type { AgentAdapter, AgentEnv, AgentLaunch, BackgroundCommands, Backgroun
 import { readShellEnv } from "../agents/shell-env.js";
 import type { ShellEnv } from "../agents/shell-env.js";
 import { causeOf, DaemonError } from "../http/failure.js";
-import { AGENT_STEP_IDLE_MS, holdReason, idleTimer, JOB_HOLD_MS, ownTurnReason, stopNote } from "./idle.js";
+import {
+  AGENT_STEP_IDLE_MS,
+  holdReason,
+  idleTimer,
+  JOB_HOLD_MS,
+  ownTurnReason,
+  PROJECT_CHAT_IDLE_MS,
+  stopNote,
+} from "./idle.js";
 import type { IdleLimit, IdleTimer } from "./idle.js";
 import { applyPlan, foldOptions, isHidden, offering, optionFiles, optionsEvent, wanted } from "./options.js";
-import { CANCELLED, faultLine, resolution } from "./registry.js";
-import type { ChatRegistry, LiveChat, RequestKind } from "./registry.js";
+import { CANCELLED, chatFault, chatName, isProjectChat, resolution } from "./registry.js";
+import type { AnyLiveChat, ChatRegistry, LiveChat, RequestKind } from "./registry.js";
 
 const AUTH_REQUIRED = RequestError.authRequired().code;
 
@@ -68,7 +77,7 @@ export type OpenRequest = {
 };
 
 export type RunningChat = {
-  live: LiveChat;
+  live: AnyLiveChat;
   /** Set at the spawn. A restart has none while it waits for the last process of the chat and while it launches. */
   process: AgentProcess | undefined;
   /** Set once the agent has opened the session. */
@@ -99,7 +108,18 @@ export type ChatRunner = {
     text: string;
     client: string;
   }): Promise<LiveChat>;
-  running(live: LiveChat): RunningChat | undefined;
+  /**
+   * As `start`, for a project chat in the folder of the project. The agent
+   * gets `text` as its first prompt. The chat stores `title` as it is given.
+   */
+  startProjectChat(input: {
+    tag: string;
+    title: string;
+    agent: ChatAgent;
+    text: string;
+    client: string;
+  }): Promise<LiveChat<ProjectChat>>;
+  running(live: AnyLiveChat): RunningChat | undefined;
   /**
    * Writes the `user` event and starts a turn with the text, and with the
    * earlier texts of the chat that the agent has still to get. A chat with no
@@ -117,7 +137,7 @@ export type ChatRunner = {
    * chat ends for a restart, and with `chat-not-running` once `stopStarts()`
    * was called.
    */
-  message(live: LiveChat, input: ChatMessageInput): Promise<void>;
+  message(live: AnyLiveChat, input: ChatMessageInput): Promise<void>;
   /**
    * Cancels the turn that runs, also an own turn, and resolves its open requests
    * in the name of `client`. Each text of a message that the agent has not got
@@ -127,9 +147,9 @@ export type ChatRunner = {
    * and while a pick starts the agent again and no message has joined that
    * start.
    */
-  cancel(live: LiveChat, input: ChatCancelInput): Promise<void>;
-  answerPermission(live: LiveChat, request: string, answer: PermissionAnswer): Promise<void>;
-  answerQuestion(live: LiveChat, request: string, answer: QuestionAnswer): Promise<void>;
+  cancel(live: AnyLiveChat, input: ChatCancelInput): Promise<void>;
+  answerPermission(live: AnyLiveChat, request: string, answer: PermissionAnswer): Promise<void>;
+  answerQuestion(live: AnyLiveChat, request: string, answer: QuestionAnswer): Promise<void>;
   /**
    * Sets one config option on the agent of the chat. An accepted value is
    * saved in the chat and, unless `AGENT_OPTION_RULES` lists it as unsaved, as
@@ -141,14 +161,14 @@ export type ChatRunner = {
    * offer or does not take the value, and with `turn-running` while the chat
    * ends for a restart.
    */
-  setOption(live: LiveChat, change: ChatOptionChange): Promise<Diagnostic[]>;
+  setOption(live: AnyLiveChat, change: ChatOptionChange): Promise<Diagnostic[]>;
   /**
    * Ends the agent of the chat, and resolves when every process of the chat
    * has ended. The only event is a `background` event that clears a job or an
    * own turn. Refused with `turn-running` while a turn runs or a request of the
    * agent is open.
    */
-  stop(live: LiveChat): Promise<void>;
+  stop(live: AnyLiveChat): Promise<void>;
   /**
    * Cancels the turn that runs, as `cancel` does, waits up to `endGraceMs` for
    * the turn to end, and then ends the agent of the chat. A turn that does not
@@ -313,36 +333,32 @@ function offers(params: AcpObject, optionId: string): boolean {
   return (params as RequestPermissionRequest).options.some((option) => option.optionId === optionId);
 }
 
-function nameOf(live: LiveChat): string {
-  return `chat ${live.chat.chat} of ${live.chat.task}`;
+function notRunning(live: AnyLiveChat): DaemonError {
+  return new DaemonError("chat-not-running", `${chatName(live)} has no agent process`);
 }
 
-function notRunning(live: LiveChat): DaemonError {
-  return new DaemonError("chat-not-running", `${nameOf(live)} has no agent process`);
+function daemonStopping(live: AnyLiveChat): DaemonError {
+  return new DaemonError("chat-not-running", `${chatName(live)} cannot run: the daemon is stopping`);
 }
 
-function daemonStopping(live: LiveChat): DaemonError {
-  return new DaemonError("chat-not-running", `${nameOf(live)} cannot run: the daemon is stopping`);
+function turnRunning(live: AnyLiveChat): DaemonError {
+  return new DaemonError("turn-running", `a turn of ${chatName(live)} is running`);
 }
 
-function turnRunning(live: LiveChat): DaemonError {
-  return new DaemonError("turn-running", `a turn of ${nameOf(live)} is running`);
+function endingForRestart(live: AnyLiveChat): DaemonError {
+  return new DaemonError("turn-running", `${chatName(live)} is ending for a restart`);
 }
 
-function endingForRestart(live: LiveChat): DaemonError {
-  return new DaemonError("turn-running", `${nameOf(live)} is ending for a restart`);
+function couldNotRun(live: AnyLiveChat, reason: string): DaemonError {
+  return new DaemonError("chat-not-running", `${chatName(live)} has no agent process: ${reason}`);
 }
 
-function couldNotRun(live: LiveChat, reason: string): DaemonError {
-  return new DaemonError("chat-not-running", `${nameOf(live)} has no agent process: ${reason}`);
+function notOffered(live: AnyLiveChat, configId: string, value: string): DaemonError {
+  return new DaemonError("option-refused", `the agent of ${chatName(live)} offers no value "${value}" for "${configId}"`);
 }
 
-function notOffered(live: LiveChat, configId: string, value: string): DaemonError {
-  return new DaemonError("option-refused", `the agent of ${nameOf(live)} offers no value "${value}" for "${configId}"`);
-}
-
-function refusedBy(live: LiveChat, configId: string, value: string, reason: string): DaemonError {
-  return new DaemonError("option-refused", `the agent of ${nameOf(live)} refused "${value}" for "${configId}": ${reason}`);
+function refusedBy(live: AnyLiveChat, configId: string, value: string, reason: string): DaemonError {
+  return new DaemonError("option-refused", `the agent of ${chatName(live)} refused "${value}" for "${configId}": ${reason}`);
 }
 
 function answerAll(answers: PickAnswer[]): void {
@@ -353,7 +369,7 @@ function jobRuns(state: BackgroundState | undefined): boolean {
   return state?.running.some((command) => command.mark === "job") === true;
 }
 
-function newRun(live: LiveChat): Run {
+function newRun(live: AnyLiveChat): Run {
   return {
     live,
     process: undefined,
@@ -398,8 +414,10 @@ export function createChatRunner(options: {
   spawn?: (launch: AgentLaunch, folder: string) => AgentProcess;
   /** Reads the environment of the login shell, for an agent binary that is not on the `PATH` of `env`. */
   shellEnv?: (signal: AbortSignal) => Promise<ShellEnv>;
-  /** How long an agent with no turn and no open request runs before it is ended. */
+  /** How long an agent of a task chat with no turn and no open request runs before it is ended. */
   idleLimit?: IdleLimit;
+  /** How long an agent of a project chat with no turn and no open request runs before it is ended. */
+  projectIdleMs?: number;
   /** Where a fault of a chat log is reported. */
   stderr?: { write(text: string): unknown };
   /** The config option defaults of each agent. */
@@ -415,21 +433,22 @@ export function createChatRunner(options: {
   const spawn = options.spawn ?? spawnAgent;
   const shellEnv = options.shellEnv ?? ((signal) => readShellEnv(env, { signal }));
   const idleLimit = options.idleLimit ?? (() => Promise.resolve(AGENT_STEP_IDLE_MS));
+  const projectIdleMs = options.projectIdleMs ?? PROJECT_CHAT_IDLE_MS;
   const stderr = options.stderr ?? process.stderr;
   const files = optionFiles({ root, defaults, stderr });
-  const runs = new Map<LiveChat, Run>();
+  const runs = new Map<AnyLiveChat, Run>();
   /** Every agent process that has not exited, also of a chat that no longer runs. */
   const alive = new Set<AgentProcess>();
   /** For the last agent process of each chat: its `ended`, and the handling of its exit. */
-  const ends = new WeakMap<LiveChat, Promise<unknown>>();
+  const ends = new WeakMap<AnyLiveChat, Promise<unknown>>();
   /** The last run of each chat in this daemon. */
-  const lastRuns = new WeakMap<LiveChat, Run>();
+  const lastRuns = new WeakMap<AnyLiveChat, Run>();
   /** The end of the last pick of each chat that has not ended, which the next pick of the chat waits for. */
-  const picks = new WeakMap<LiveChat, Promise<void>>();
+  const picks = new WeakMap<AnyLiveChat, Promise<void>>();
   /** The chats whose `end` has not settled. */
-  const ending = new WeakSet<LiveChat>();
+  const ending = new WeakSet<AnyLiveChat>();
   /** The text that the next prompt of each chat begins with, after an idle stop ended background commands. */
-  const notes = new WeakMap<LiveChat, string>();
+  const notes = new WeakMap<AnyLiveChat, string>();
   const stopping = new AbortController();
   /** The last shell environment in which an agent binary was found. */
   let kept: AgentEnv | undefined;
@@ -464,12 +483,12 @@ export function createChatRunner(options: {
     return launch;
   }
 
-  function report(live: LiveChat, error: unknown): void {
+  function report(live: AnyLiveChat, error: unknown): void {
     if (error instanceof TaskStoreError && GONE.has(error.code)) return;
-    stderr.write(faultLine(live.chat, error));
+    stderr.write(chatFault(live, error));
   }
 
-  function register(live: LiveChat): Run {
+  function register(live: AnyLiveChat): Run {
     const run = newRun(live);
     runs.set(live, run);
     lastRuns.set(live, run);
@@ -594,7 +613,7 @@ export function createChatRunner(options: {
       (error: unknown) => {
         // The exit of the process reports a closed connection.
         if (error instanceof AgentClosed) return;
-        stderr.write(faultLine(run.live.chat, `the steer of a message failed: ${errorReason(run.adapter!, error)}`));
+        stderr.write(chatFault(run.live, `the steer of a message failed: ${errorReason(run.adapter!, error)}`));
       },
     );
     run.steering.add(answered);
@@ -710,7 +729,7 @@ export function createChatRunner(options: {
       if (resumed === undefined) return undefined;
       if (resumed !== "lost") return { session: resumed, created: false };
       if (live.answered) {
-        await fail(run, run.adapter!.sessionGone);
+        await fail(run, isProjectChat(live) ? run.adapter!.projectSessionGone : run.adapter!.sessionGone);
         return undefined;
       }
     }
@@ -810,7 +829,7 @@ export function createChatRunner(options: {
       } catch {
         return answers;
       }
-      if (reason !== undefined) stderr.write(faultLine(live.chat, `the agent refused "${value}" for "${configId}": ${reason}`));
+      if (reason !== undefined) stderr.write(chatFault(live, `the agent refused "${value}" for "${configId}": ${reason}`));
     }
     for (let pick = run.waiting[0]; pick !== undefined; pick = run.waiting[0]) {
       if (!(await applyPick(run, session, pick, answers))) return answers;
@@ -920,7 +939,7 @@ export function createChatRunner(options: {
     const agentProcess = spawn(launch, folder);
     run.process = agentProcess;
     run.adapter = adapter;
-    run.background = adapter.backgroundCommands?.((cause) => stderr.write(faultLine(run.live.chat, cause)));
+    run.background = adapter.backgroundCommands?.((cause) => stderr.write(chatFault(run.live, cause)));
     const idle = idleTimer({
       limitMs,
       busy: () => run.turning || run.open.size > 0,
@@ -941,14 +960,15 @@ export function createChatRunner(options: {
   /** The background part of a restart, after its `user` event is written. */
   async function relaunch(run: Run): Promise<void> {
     const { live } = run;
-    const { agent, folder, task, step } = live.chat;
+    const { agent, folder } = live.chat;
     const adapter = adapters.find((one) => one.agent === agent);
     if (adapter === undefined) return fail(run, `Tasma cannot run ${agent} yet`);
     if (!(await isDirectory(folder))) {
-      return fail(run, `The folder of this chat no longer exists: ${folder}. Start a new chat for this step.`);
+      const next = isProjectChat(live) ? "Start a new chat." : "Start a new chat for this step.";
+      return fail(run, `The folder of this chat no longer exists: ${folder}. ${next}`);
     }
     const launch = await launchOf(adapter);
-    const limitMs = await idleLimit(live.tag, task, step);
+    const limitMs = isProjectChat(live) ? projectIdleMs : await idleLimit(live.tag, live.chat.task, live.chat.step);
     // The run stays in a turn, so `close()` interrupts it.
     if (stopping.signal.aborted) {
       for (const pick of run.waiting.splice(0)) pick.reject(daemonStopping(live));
@@ -1007,7 +1027,7 @@ export function createChatRunner(options: {
    * Registered before the first await, so a second message joins the start
    * and `close()` sees the chat. Two processes never run on one session.
    */
-  async function restart(live: LiveChat, text: string, client: string): Promise<void> {
+  async function restart(live: AnyLiveChat, text: string, client: string): Promise<void> {
     const last = lastRuns.get(live);
     const run = register(live);
     run.reopened = reopen(run, last);
@@ -1021,7 +1041,7 @@ export function createChatRunner(options: {
    * has the pick. A message that joins it adds its `user` event and a turn, as
    * `restart` does.
    */
-  async function relaunchForPick(live: LiveChat, pick: WaitingPick): Promise<void> {
+  async function relaunchForPick(live: AnyLiveChat, pick: WaitingPick): Promise<void> {
     const last = lastRuns.get(live);
     const run = register(live);
     run.pickRelaunch = true;
@@ -1059,7 +1079,7 @@ export function createChatRunner(options: {
     return held;
   }
 
-  async function message(live: LiveChat, { text, client }: ChatMessageInput): Promise<void> {
+  async function message(live: AnyLiveChat, { text, client }: ChatMessageInput): Promise<void> {
     if (ending.has(live)) throw endingForRestart(live);
     if (stopping.signal.aborted) throw daemonStopping(live);
     const run = runs.get(live);
@@ -1101,7 +1121,7 @@ export function createChatRunner(options: {
     await written;
   }
 
-  async function pickNow(live: LiveChat, { configId, value }: ChatOptionChange): Promise<Diagnostic[]> {
+  async function pickNow(live: AnyLiveChat, { configId, value }: ChatOptionChange): Promise<Diagnostic[]> {
     if (ending.has(live)) throw endingForRestart(live);
     if (stopping.signal.aborted) throw daemonStopping(live);
     const run = runs.get(live);
@@ -1171,47 +1191,71 @@ export function createChatRunner(options: {
   }
 
   /** The open request an answer takes. The caller takes it out of `open` in the same synchronous step. */
-  function pending(live: LiveChat, request: string, kind: RequestKind): { run: Run; open: OpenRequest } {
+  function pending(live: AnyLiveChat, request: string, kind: RequestKind): { run: Run; open: OpenRequest } {
     const run = runs.get(live);
     const open = run?.open.get(request);
     if (run === undefined && live.fold.open.includes(request)) throw notRunning(live);
     if (run === undefined || open === undefined) {
-      throw new DaemonError("already-answered", `request ${request} of ${nameOf(live)} is not open`);
+      throw new DaemonError("already-answered", `request ${request} of ${chatName(live)} is not open`);
     }
     if (open.kind !== kind) {
       throw new DaemonError(
         "malformed-request",
-        `request ${request} of ${nameOf(live)} is a ${KIND_NAME[open.kind]}, not a ${KIND_NAME[kind]}`,
+        `request ${request} of ${chatName(live)} is a ${KIND_NAME[open.kind]}, not a ${KIND_NAME[kind]}`,
       );
     }
     return { run, open };
   }
 
+  /** The adapter and the folder of a new chat, or the `ChatStartRefusal` of the start. */
+  async function startSetup(tag: string, agent: ChatAgent): Promise<{ adapter: AgentAdapter; path: string }> {
+    const adapter = adapters.find((one) => one.agent === agent);
+    if (adapter === undefined) throw new ChatStartRefusal("agent-not-supported", `Tasma cannot run ${agent} yet`);
+    const { path } = await readProjectDeclaration({ project: tag, root });
+    if (path === undefined || !(await isDirectory(path))) {
+      throw new ChatStartRefusal("project-has-no-folder", `project ${tag} has no folder for an agent to work in`);
+    }
+    return { adapter, path };
+  }
+
+  /** Starts the agent of a chat just created, unless the daemon stops or the launch failed. */
+  async function launchCreated(
+    live: AnyLiveChat,
+    adapter: AgentAdapter,
+    launch: AgentLaunch | { failed: string },
+    folder: string,
+    limitMs: number,
+  ): Promise<void> {
+    // After `stopStarts()`, the chat stays with no agent, as a daemon stop leaves every other chat.
+    if (stopping.signal.aborted) return;
+    if ("failed" in launch) {
+      try {
+        await live.append({ kind: "failed", reason: launch.failed });
+      } catch (error) {
+        report(live, error);
+      }
+      return;
+    }
+
+    const run = register(live);
+    void begin(run, spawnRun(run, adapter, launch, folder, limitMs));
+  }
+
   return {
     async start({ tag, task, step, agent, text, client }) {
-      const adapter = adapters.find((one) => one.agent === agent);
-      if (adapter === undefined) throw new ChatStartRefusal("agent-not-supported", `Tasma cannot run ${agent} yet`);
-      const { path } = await readProjectDeclaration({ project: tag, root });
-      if (path === undefined || !(await isDirectory(path))) {
-        throw new ChatStartRefusal("project-has-no-folder", `project ${tag} has no folder for an agent to work in`);
-      }
-
+      const { adapter, path } = await startSetup(tag, agent);
       const launch = await launchOf(adapter);
       const limitMs = await idleLimit(tag, task, step);
       const live = await chats.create(tag, task, { step, agent, folder: path }, { text, client });
-      // After `stopStarts()`, the chat stays with no agent, as a daemon stop leaves every other chat.
-      if (stopping.signal.aborted) return live;
-      if ("failed" in launch) {
-        try {
-          await live.append({ kind: "failed", reason: launch.failed });
-        } catch (error) {
-          report(live, error);
-        }
-        return live;
-      }
+      await launchCreated(live, adapter, launch, path, limitMs);
+      return live;
+    },
 
-      const run = register(live);
-      void begin(run, spawnRun(run, adapter, launch, path, limitMs));
+    async startProjectChat({ tag, title, agent, text, client }) {
+      const { adapter, path } = await startSetup(tag, agent);
+      const launch = await launchOf(adapter);
+      const live = await chats.createProjectChat(tag, { title, agent, folder: path }, { text, client });
+      await launchCreated(live, adapter, launch, path, projectIdleMs);
       return live;
     },
 
@@ -1251,7 +1295,7 @@ export function createChatRunner(options: {
     async answerPermission(live, request, { optionId, client }) {
       const { run, open } = pending(live, request, "permission");
       if (!offers(open.params, optionId)) {
-        throw new DaemonError("malformed-request", `permission request ${request} of ${nameOf(live)} offers no option "${optionId}"`);
+        throw new DaemonError("malformed-request", `permission request ${request} of ${chatName(live)} offers no option "${optionId}"`);
       }
       await settle(run, request, open, { outcome: "selected", optionId }, client);
     },
@@ -1282,7 +1326,7 @@ export function createChatRunner(options: {
       const run = runs.get(live);
       if (run?.turning) throw turnRunning(live);
       if (run !== undefined) {
-        if (run.open.size > 0) throw new DaemonError("turn-running", `${nameOf(live)} has a request open`);
+        if (run.open.size > 0) throw new DaemonError("turn-running", `${chatName(live)} has a request open`);
         const cleared = setBackground(run, false, false);
         void quit(run);
         await cleared;

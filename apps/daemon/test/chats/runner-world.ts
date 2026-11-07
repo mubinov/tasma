@@ -42,6 +42,7 @@ export function fakeAdapter(launch: AgentLaunch | { failed: string } = LAUNCH) {
     skillsAgent: "fake-agent",
     notLoggedIn: "Log in to the agent first",
     sessionGone: "The agent lost the chat",
+    projectSessionGone: "The agent lost the project chat",
     filterUpdate: (update) => ({ ...update, filtered: true }),
   };
   return { adapter, envs };
@@ -75,6 +76,8 @@ export type WorldOptions = {
   shellEnv?: ((signal: AbortSignal) => Promise<ShellEnv>) | null;
   /** Without it, the runner uses its default limit, which no test reaches. */
   idleLimit?: IdleLimit;
+  /** Without it, the runner uses its default limit of a project chat, which no test reaches. */
+  projectIdleMs?: number;
   /** Without it, the runner uses its default wait of `end`. */
   endGraceMs?: number;
   /** Without it, the runner uses its default hold of a running job. */
@@ -118,6 +121,7 @@ export async function world(options: WorldOptions = {}): Promise<World> {
     }),
     shellEnv: options.shellEnv === null ? undefined : (options.shellEnv ?? unexpected),
     idleLimit: options.idleLimit,
+    projectIdleMs: options.projectIdleMs,
     endGraceMs: options.endGraceMs,
     jobHoldMs: options.jobHoldMs,
     stderr: { write: (line: string) => errors.push(line) },

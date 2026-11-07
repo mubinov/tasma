@@ -8,12 +8,13 @@ import type {
   SessionConfigSelectOption,
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
-import { chatRecordPath } from "@tasma/engine";
+import { chatRecordPath, projectChatRecordPath } from "@tasma/engine";
 import type { AgentDefaultsStore } from "@tasma/engine";
 import { AGENT_OPTION_RULES, DAEMON_NAME, printable } from "@tasma/protocol";
 import type { AcpObject, ChatAgent, ChatEvent, Diagnostic } from "@tasma/protocol";
 import { causeOf } from "../http/failure.js";
-import type { LiveChat } from "./registry.js";
+import { isProjectChat } from "./registry.js";
+import type { AnyLiveChat } from "./registry.js";
 
 type OptionValues = Readonly<Record<string, readonly string[]>>;
 
@@ -110,7 +111,7 @@ export type OptionFiles = {
    * unless the rules leave it unsaved. Gives a diagnostic for each file that a
    * write missed.
    */
-  save(live: LiveChat, configId: string, value: string): Promise<Diagnostic[]>;
+  save(live: AnyLiveChat, configId: string, value: string): Promise<Diagnostic[]>;
 };
 
 export function optionFiles(options: {
@@ -122,6 +123,12 @@ export function optionFiles(options: {
 
   function fileLine(path: string, message: string): void {
     stderr.write(`${DAEMON_NAME}: ${printable(`${path}: ${message}`)}\n`);
+  }
+
+  function recordPathOf(live: AnyLiveChat): string {
+    const options = { project: live.tag, root };
+    if (isProjectChat(live)) return projectChatRecordPath(options, live.chat.chat);
+    return chatRecordPath(options, live.chat.task, live.chat.chat);
   }
 
   function notSaved(configId: string, value: string, where: string, path: string, error: unknown): Diagnostic {
@@ -148,12 +155,12 @@ export function optionFiles(options: {
     },
 
     async save(live, configId, value) {
-      const { agent, task, chat } = live.chat;
+      const { agent } = live.chat;
       const diagnostics: Diagnostic[] = [];
       try {
         await live.setOptions({ ...live.chat.options, [configId]: value });
       } catch (error) {
-        diagnostics.push(notSaved(configId, value, "in this chat", chatRecordPath({ project: live.tag, root }, task, chat), error));
+        diagnostics.push(notSaved(configId, value, "in this chat", recordPathOf(live), error));
       }
       if (isUnsaved(agent, configId, value)) return diagnostics;
       try {

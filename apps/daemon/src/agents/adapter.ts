@@ -53,6 +53,8 @@ export type AgentAdapter = {
   notLoggedIn: string;
   /** The reason a chat fails with when the agent no longer has the session of the chat. */
   sessionGone: string;
+  /** The reason a project chat fails with when the agent no longer has the session of the chat. */
+  projectSessionGone: string;
   /** Gives the update as the log keeps it: a new object when it changes anything. */
   filterUpdate(update: AcpObject): AcpObject;
   /** The `_meta` of `session/new` and `session/resume`. */

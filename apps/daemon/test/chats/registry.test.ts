@@ -3,9 +3,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { MockInstance } from "vitest";
 import { createChat, TaskStoreError } from "@tasma/engine";
-import type { ChatLogEntry } from "@tasma/engine";
+import type { ChatLog, ChatLogEntry, ProjectChatLog } from "@tasma/engine";
 import type { ChatEntry, ChatEvent, FeedEvent } from "@tasma/protocol";
-import { createChatRegistry } from "../../src/chats/registry.js";
+import { createChatRegistry, isProjectChat } from "../../src/chats/registry.js";
 import type { ChatRegistry, LiveChat } from "../../src/chats/registry.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import type { ProjectHost } from "../../src/projects/host.js";
@@ -16,6 +16,9 @@ import {
   chatFolder,
   logFile,
   plant,
+  plantProjectChat,
+  projectChatFolder,
+  projectLogFile,
   projectsRoot,
   send,
   startTestServer,
@@ -45,25 +48,29 @@ const engineLog = vi.hoisted(() => {
 vi.mock("@tasma/engine", async (importActual) => {
   const actual = await importActual<typeof import("@tasma/engine")>();
 
+  async function watched<L extends ChatLog | ProjectChatLog>(open: () => Promise<L>): Promise<L> {
+    engineLog.opens += 1;
+    const { openFault } = engineLog;
+    if (openFault !== undefined) {
+      engineLog.openFault = undefined;
+      throw openFault;
+    }
+    const log = await open();
+    const append = log.append.bind(log);
+    log.append = async (event) => {
+      await engineLog.appendsWait;
+      const instead = engineLog.nextAppend;
+      engineLog.nextAppend = undefined;
+      return instead === undefined ? append(event) : instead(() => append(event));
+    };
+    return log;
+  }
+
   return {
     ...actual,
-    async openChatLog(...args: Parameters<typeof actual.openChatLog>) {
-      engineLog.opens += 1;
-      const { openFault } = engineLog;
-      if (openFault !== undefined) {
-        engineLog.openFault = undefined;
-        throw openFault;
-      }
-      const log = await actual.openChatLog(...args);
-      const append = log.append.bind(log);
-      log.append = async (event) => {
-        await engineLog.appendsWait;
-        const instead = engineLog.nextAppend;
-        engineLog.nextAppend = undefined;
-        return instead === undefined ? append(event) : instead(() => append(event));
-      };
-      return log;
-    },
+    openChatLog: (...args: Parameters<typeof actual.openChatLog>) => watched(() => actual.openChatLog(...args)),
+    openProjectChatLog: (...args: Parameters<typeof actual.openProjectChatLog>) =>
+      watched(() => actual.openProjectChatLog(...args)),
   };
 });
 
@@ -1148,5 +1155,204 @@ describe("waiting for the next entry of a chat", () => {
     expect(await stillPending(live.wait())).toBe(false);
     const later = await chats.get("ALPHA", "ALPHA-2", 1);
     expect(await stillPending(later.wait())).toBe(false);
+  });
+});
+
+describe("a project chat", () => {
+  const PROJECT_INPUT = { title: "Plan the release", agent: "claude", folder: "/srv/alpha" } as const;
+
+  const PERMISSION: ChatEvent = { kind: "permission", request: "r-1", permission: { toolCall: { toolCallId: "c-1" } } };
+
+  function projectChatEvent(chat: number, state: "working" | "needs-you", tag = "ALPHA"): FeedEvent {
+    return { kind: "project-chat", tag, chat, state };
+  }
+
+  async function record(root: string, chat: number): Promise<unknown> {
+    return JSON.parse(await readFile(join(projectChatFolder(root, "ALPHA", chat), "chat.json"), "utf8"));
+  }
+
+  it("is created as chat 1 and then 2 under chats/project, each with its user entry, and publishes project-chat", async () => {
+    const root = await tree();
+    const { chats, events } = await world(root);
+
+    const first = await chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE);
+    const second = await chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE);
+
+    expect(first.chat).toEqual({
+      chat: 1,
+      ...PROJECT_INPUT,
+      created: first.chat.created,
+      seq: 1,
+      stateSeq: 1,
+      state: "working",
+    });
+    expect(first.tag).toBe("ALPHA");
+    expect(second.chat.chat).toBe(2);
+    for (const chat of [1, 2]) {
+      expect((await logEntries(projectLogFile(root, "ALPHA", chat))).map((entry) => entry.event)).toEqual([
+        { kind: "user", ...MESSAGE },
+      ]);
+    }
+    expect(events).toEqual([projectChatEvent(1, "working"), projectChatEvent(2, "working")]);
+  });
+
+  it("gives chats 1 and 2 to two creates at one time", async () => {
+    const { chats } = await world(await tree());
+
+    const created = await Promise.all([
+      chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE),
+      chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE),
+    ]);
+
+    expect(created.map((live) => live.chat.chat).sort()).toEqual([1, 2]);
+  });
+
+  it("takes the turn of its tag alone for its create, its writes and its load", async () => {
+    const root = await tree();
+    const { chats, writes } = await world(root);
+    const asked = watchTurns(writes);
+
+    const live = await chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE);
+    await live.append(TURN_END);
+    await live.setSeen(2);
+    const restarted = await world(root);
+    const askedAfterRestart = watchTurns(restarted.writes);
+    await restarted.chats.getProjectChat("ALPHA", 1);
+
+    expect(asked()).toEqual([["ALPHA"], ["ALPHA"], ["ALPHA"]]);
+    expect(askedAfterRestart()).toEqual([["ALPHA"]]);
+  });
+
+  it("is a handle apart from the chat of a task with the same number", async () => {
+    const { chats } = await world(await tree());
+
+    const taskChat = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    const projectChat = await chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE);
+
+    expect(projectChat.chat.chat).toBe(1);
+    expect(projectChat).not.toBe(taskChat);
+    expect(isProjectChat(projectChat)).toBe(true);
+    expect(isProjectChat(taskChat)).toBe(false);
+    await expect(chats.getProjectChat("ALPHA", 1)).resolves.toBe(projectChat);
+    await expect(chats.get("ALPHA", "ALPHA-1", 1)).resolves.toBe(taskChat);
+  });
+
+  it("is the same handle for two gets, and is loaded from disk after a restart", async () => {
+    const root = await tree();
+    const before = await world(root);
+    const live = await before.chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE);
+    await live.append(TURN_END);
+    await expect(before.chats.getProjectChat("ALPHA", 1)).resolves.toBe(live);
+
+    const { chats } = await world(root);
+    const [one, other] = await Promise.all([chats.getProjectChat("ALPHA", 1), chats.getProjectChat("ALPHA", 1)]);
+
+    expect(one).toBe(other);
+    expect(one).not.toBe(live);
+    expect(one.chat).toEqual({ ...live.chat });
+    await expect(chats.getProjectChat("ALPHA", 1)).resolves.toBe(one);
+  });
+
+  it("refuses a malformed or missing chat number with chat-not-found, and a tag of no project", async () => {
+    const { chats } = await world(await tree());
+
+    await expect(chats.getProjectChat("ALPHA", 0)).rejects.toMatchObject({ code: "chat-not-found" });
+    await expect(chats.getProjectChat("ALPHA", 4)).rejects.toMatchObject({ code: "chat-not-found" });
+    await expect(chats.getProjectChat("NOPE", 1)).rejects.toMatchObject({ code: "project-not-found" });
+    await expect(chats.createProjectChat("NOPE", PROJECT_INPUT, MESSAGE)).rejects.toMatchObject({ code: "project-not-found" });
+    await expect(chats.createProjectChat("ALPHA", { ...PROJECT_INPUT, title: "" }, MESSAGE))
+      .rejects.toMatchObject({ code: "field-required" });
+  });
+
+  it("resolves an open request as cancelled and interrupts an open turn at its load, and publishes the state", async () => {
+    const root = await tree();
+    await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, [{ kind: "user", ...MESSAGE }, PERMISSION]);
+    const { chats, events } = await world(root);
+
+    const live = await chats.getProjectChat("ALPHA", 1);
+
+    expect(live.chat.state).toBe("needs-you");
+    expect((await logEntries(projectLogFile(root, "ALPHA", 1))).map((entry) => entry.event)).toEqual([
+      { kind: "user", ...MESSAGE },
+      PERMISSION,
+      { kind: "permission-resolved", request: "r-1", outcome: { outcome: "cancelled" } },
+      { kind: "interrupted" },
+    ]);
+    expect(events.at(-1)).toEqual(projectChatEvent(1, "needs-you"));
+  });
+
+  it("keeps the chat as on disk when the write of its recovery fails, and reports the fault with the project", async () => {
+    const root = await tree();
+    await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, [{ kind: "user", ...MESSAGE }]);
+    const errors: string[] = [];
+    const { chats } = await world(root, (host) => host, { write: (text: string) => errors.push(text) });
+    failNextAppend();
+
+    const live = await chats.getProjectChat("ALPHA", 1);
+
+    expect(live.chat.state).toBe("working");
+    expect(errors).toEqual(["tasma-daemon: chat 1 of project ALPHA: the disk is gone\n"]);
+  });
+
+  it("writes its session, its options and its seen to its record, and publishes project-chat when seen moves", async () => {
+    const root = await tree();
+    const { chats, events } = await world(root);
+    const live = await chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE);
+
+    await live.setSession("session-7");
+    await live.setOptions({ mode: "plan" });
+    await live.setSeen(1);
+
+    const written = { ...PROJECT_INPUT, session: "session-7", options: { mode: "plan" }, seen: 1 };
+    expect(await record(root, 1)).toMatchObject(written);
+    expect(live.chat).toMatchObject(written);
+    expect(events).toEqual([projectChatEvent(1, "working"), projectChatEvent(1, "working")]);
+  });
+
+  it("keeps its handle through a rename of the project, which appends into the moved log under the new tag", async () => {
+    const root = await tree();
+    const { chats, events, server } = await world(root);
+    const live = await chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE);
+
+    expect((await send(server, "POST", "/projects/ALPHA/rename", { tag: "BETA" })).status).toBe(200);
+    await live.append(TURN_END);
+
+    expect(live.tag).toBe("BETA");
+    expect(live.chat).toMatchObject({ chat: 1, title: PROJECT_INPUT.title, seq: 2, state: "needs-you" });
+    expect((await logEntries(projectLogFile(root, "BETA", 1))).map((entry) => entry.seq)).toEqual([1, 2]);
+    expect(events.at(-1)).toEqual(projectChatEvent(1, "needs-you", "BETA"));
+    await expect(chats.getProjectChat("BETA", 1)).resolves.toBe(live);
+    await expect(chats.getProjectChat("ALPHA", 1)).rejects.toMatchObject({ code: "project-not-found" });
+  });
+
+  it("refuses with chat-not-found after a delete of its project", async () => {
+    const { chats, server } = await world(await tree());
+    const live = await chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE);
+
+    expect((await send(server, "DELETE", "/projects/ALPHA")).status).toBe(200);
+
+    await expect(live.append(UPDATE)).rejects.toMatchObject({ code: "chat-not-found" });
+  });
+
+  it("keeps working after a delete of a task whose chat has its number", async () => {
+    const { chats, server } = await world(await tree());
+    const taskChat = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    const projectChat = await chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE);
+
+    expect((await send(server, "DELETE", "/projects/ALPHA/tasks/ALPHA-1")).status).toBe(200);
+
+    await expect(taskChat.append(UPDATE)).rejects.toMatchObject({ code: "chat-not-found" });
+    await expect(projectChat.append(UPDATE)).resolves.toMatchObject({ seq: 2 });
+  });
+
+  it("ends its waits at a close of the registry", async () => {
+    const { chats } = await world(await tree());
+    const live = await chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE);
+    await new Promise((resolve) => setImmediate(resolve));
+    const waited = live.wait();
+
+    chats.close();
+
+    expect(await stillPending(waited)).toBe(false);
   });
 });

@@ -10,7 +10,7 @@ import { expect, onTestFinished } from "vitest";
 import type { IndexedProject } from "@tasma/engine";
 import { DAEMON_RECORD_FILE } from "@tasma/protocol";
 import type { ChatEvent, DaemonRecord, Diagnostic, Failure } from "@tasma/protocol";
-import type { LiveChat } from "../src/chats/registry.js";
+import type { AnyLiveChat } from "../src/chats/registry.js";
 import { DaemonError } from "../src/http/failure.js";
 import type { RouteEntry } from "../src/http/router.js";
 import { createDaemonServer } from "../src/http/server.js";
@@ -161,6 +161,14 @@ export function logFile(root: string, tag: string, digits: string, chat: number)
   return join(chatFolder(root, tag, digits, chat), "events.jsonl");
 }
 
+export function projectChatFolder(root: string, tag: string, chat: number): string {
+  return join(projectDir(root, tag), "chats", "project", String(chat));
+}
+
+export function projectLogFile(root: string, tag: string, chat: number): string {
+  return join(projectChatFolder(root, tag, chat), "events.jsonl");
+}
+
 /** Writes a file, creating the directories above it. */
 export async function plant(path: string, text: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
@@ -177,8 +185,23 @@ export async function plantChat(
   const { tag, digits, chat } = place;
   const stored = { step: "dev:build", agent: "claude", folder: "/srv/alpha", created: TIMESTAMP, ...record };
   await plant(join(chatFolder(root, tag, digits, chat), "chat.json"), JSON.stringify(stored));
-  const lines = events.map((event, at) => `${JSON.stringify({ seq: at + 1, at: TIMESTAMP, event })}\n`);
-  await plant(logFile(root, tag, digits, chat), lines.join(""));
+  await plant(logFile(root, tag, digits, chat), logLines(events));
+}
+
+/** A project chat as the engine writes one: its record, and a log of the events in order. */
+export async function plantProjectChat(
+  root: string,
+  place: { tag: string; chat: number },
+  events: ChatEvent[] = [],
+): Promise<void> {
+  const { tag, chat } = place;
+  const stored = { title: "Planted", agent: "claude", folder: "/srv/alpha", created: TIMESTAMP };
+  await plant(join(projectChatFolder(root, tag, chat), "chat.json"), JSON.stringify(stored));
+  await plant(projectLogFile(root, tag, chat), logLines(events));
+}
+
+function logLines(events: ChatEvent[]): string {
+  return events.map((event, at) => `${JSON.stringify({ seq: at + 1, at: TIMESTAMP, event })}\n`).join("");
 }
 
 // The workflow planters below carry the names the engine's own test helpers
@@ -352,12 +375,12 @@ export async function untilGone(out: string, ...names: string[]): Promise<void> 
   await until(() => !pids.some(alive), `processes ${pids.join(", ")} are gone`);
 }
 
-export async function logOf(live: LiveChat): Promise<ChatEvent[]> {
+export async function logOf(live: AnyLiveChat): Promise<ChatEvent[]> {
   return (await live.read(0)).map((entry) => entry.event);
 }
 
 /** Waits until the log of the chat ends with an event of `kind`, and gives the events. */
-export async function logUntil(live: LiveChat, kind: ChatEvent["kind"]): Promise<ChatEvent[]> {
+export async function logUntil(live: AnyLiveChat, kind: ChatEvent["kind"]): Promise<ChatEvent[]> {
   let seen: ChatEvent[] = [];
   await until(() => seen.at(-1)?.kind === kind, `the log ends with ${kind}`, async () => {
     seen = await logOf(live);

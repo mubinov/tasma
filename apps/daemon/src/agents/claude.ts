@@ -181,6 +181,7 @@ export function createClaudeAdapter(
     backgroundCommands: (log) => claudeBackground({ log, lsof, timeoutMs: lsofTimeoutMs }),
     notLoggedIn: 'Claude is not logged in. Run "claude /login" in a terminal.',
     sessionGone: "Claude no longer has the conversation of this chat. Start a new chat for this step.",
+    projectSessionGone: "Claude no longer has the conversation of this chat. Start a new chat.",
     launch(env): LaunchResult {
       const path = childPath(env.PATH);
       const claude = findClaude(path);

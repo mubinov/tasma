@@ -1,6 +1,16 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { AGENT_STEP_IDLE_MS, holdReason, HUMAN_STEP_IDLE_MS, idleLimit, idleTimer, JOB_HOLD_MS, ownTurnReason, stopNote } from "../../src/chats/idle.js";
+import {
+  AGENT_STEP_IDLE_MS,
+  holdReason,
+  HUMAN_STEP_IDLE_MS,
+  idleLimit,
+  idleTimer,
+  JOB_HOLD_MS,
+  ownTurnReason,
+  PROJECT_CHAT_IDLE_MS,
+  stopNote,
+} from "../../src/chats/idle.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import { onWorkflow, plant, plantWorkflow, projectsRoot, taskFile, taskText, workflowDir } from "../helpers.js";
 
@@ -46,6 +56,13 @@ describe("idleLimit", () => {
       limit("ALPHA", "ALPHA-9", "plan"),
       limit("BETA", "BETA-1", "plan"),
     ])).toEqual(Array<number>(5).fill(AGENT_STEP_IDLE_MS));
+  });
+});
+
+describe("PROJECT_CHAT_IDLE_MS", () => {
+  it("is the limit of a step that a person owns, 1 hour", () => {
+    expect(PROJECT_CHAT_IDLE_MS).toBe(HUMAN_STEP_IDLE_MS);
+    expect(PROJECT_CHAT_IDLE_MS).toBe(60 * 60 * 1000);
   });
 });
 

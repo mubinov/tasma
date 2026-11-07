@@ -1,6 +1,6 @@
 // The idle stop of the agent of a chat: the time limit, which depends on the
-// owner of the step of the chat, the timer that measures it, and the texts of
-// a stop that ends background commands.
+// owner of the step of a task chat and is fixed for a project chat, the timer
+// that measures it, and the texts of a stop that ends background commands.
 
 import { openTreeWorkflows } from "@tasma/engine";
 import type { StepOwner } from "@tasma/engine";
@@ -10,6 +10,9 @@ import type { ProjectHost } from "../projects/host.js";
 export const HUMAN_STEP_IDLE_MS = 60 * 60 * 1000;
 
 export const AGENT_STEP_IDLE_MS = 10 * 60 * 1000;
+
+/** A person reads and writes in a project chat, as in a `human` step. */
+export const PROJECT_CHAT_IDLE_MS = HUMAN_STEP_IDLE_MS;
 
 const HOUR_MS = 60 * 60 * 1000;
 
