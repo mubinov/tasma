@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { RequestError } from "@agentclientprotocol/sdk";
 import type { ChatEvent, FeedEvent } from "@tasma/protocol";
+import type { AgentAdapter } from "../../src/agents/adapter.js";
 import { ChatStartRefusal } from "../../src/chats/runner.js";
 import { logOf, logUntil, projectChatFolder, send, target, until } from "../helpers.js";
 import { forever, modeOption, PERMISSION, QUESTION, SESSION, text } from "../agents/fake-agent.js";
@@ -229,6 +230,50 @@ describe("a project chat fails", () => {
       reason: `The folder of this chat no longer exists: ${gone}. Start a new chat.`,
     });
     expect(processes).toEqual([]);
+  });
+});
+
+describe("the session meta of a project chat", () => {
+  const metaOf = (tag: string) => ({ systemPrompt: { append: `The project is ${tag}.` } });
+
+  function withProjectMeta(): AgentAdapter {
+    return { ...fakeAdapter().adapter, sessionMeta: { systemPrompt: { append: "A step chat." } }, projectSessionMeta: metaOf };
+  }
+
+  it("opens the session with the meta of the tag, and resumes it with the same meta in the next process", async () => {
+    const { runner, processes, folder } = await world({ adapter: withProjectMeta() });
+    const live = await runner.startProjectChat(PROJECT_START);
+    await logUntil(live, "turn-end");
+
+    await runner.stop(live);
+    await runner.message(live, NEXT);
+    await until(() => processes[1]?.prompts.length === 1, "the agent got the message");
+
+    expect(processes[0]?.newSession).toEqual({ cwd: folder, mcpServers: [], _meta: metaOf("ALPHA") });
+    expect(processes[1]?.resumes).toEqual([{ sessionId: SESSION, cwd: folder, mcpServers: [], _meta: metaOf("ALPHA") }]);
+  });
+
+  it("resumes with the new tag after a rename of the project", async () => {
+    const { runner, processes, folder, server } = await world({ adapter: withProjectMeta() });
+    const live = await runner.startProjectChat(PROJECT_START);
+    await logUntil(live, "turn-end");
+
+    await runner.stop(live);
+    expect((await send(server, "POST", "/projects/ALPHA/rename", { tag: "BETA" })).status).toBe(200);
+    await runner.message(live, NEXT);
+    await until(() => processes[1]?.prompts.length === 1, "the agent got the message");
+
+    expect(processes[1]?.resumes).toEqual([{ sessionId: SESSION, cwd: folder, mcpServers: [], _meta: metaOf("BETA") }]);
+  });
+
+  it("opens the session with no meta when the adapter has no meta of a project chat", async () => {
+    const { runner, processes, folder } = await world({
+      adapter: { ...fakeAdapter().adapter, sessionMeta: { systemPrompt: { append: "A step chat." } } },
+    });
+    const live = await runner.startProjectChat(PROJECT_START);
+    await logUntil(live, "turn-end");
+
+    expect(processes[0]?.newSession).toEqual({ cwd: folder, mcpServers: [] });
   });
 });
 

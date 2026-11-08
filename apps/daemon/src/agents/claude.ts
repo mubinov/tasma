@@ -165,6 +165,14 @@ async function skillListed(env: AgentEnv, signal: AbortSignal, timeoutMs: number
   return stdout === undefined ? undefined : skillPluginOf(stdout);
 }
 
+function projectChatContext(tag: string): string {
+  return `This chat runs in the Tasma app, a local task manager. The chat belongs to the Tasma project with the tag ${tag}, and your working directory is the folder of this project. The chat has no task and no workflow step.
+
+Before you act on a request about tasks, comments, projects or workflows, load the tasma skill. If the skill is not available, use \`tasma --help\`.
+
+Treat each message as a direct request, and do what the user asks. Do not start a task, set a step or run a workflow step unless the user asks for it.`;
+}
+
 /** The options are for the tests alone. */
 export function createClaudeAdapter(
   options: { host?: ClaudeHost; commandTimeoutMs?: number; lsof?: string; lsofTimeoutMs?: number } = {},
@@ -178,6 +186,7 @@ export function createClaudeAdapter(
   return {
     agent: "claude",
     sessionMeta: { systemPrompt: { append: BACKGROUND_RULE } },
+    projectSessionMeta: (tag) => ({ systemPrompt: { append: `${BACKGROUND_RULE}\n\n${projectChatContext(tag)}` } }),
     backgroundCommands: (log) => claudeBackground({ log, lsof, timeoutMs: lsofTimeoutMs }),
     notLoggedIn: 'Claude is not logged in. Run "claude /login" in a terminal.',
     sessionGone: "Claude no longer has the conversation of this chat. Start a new chat for this step.",

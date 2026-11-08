@@ -48,7 +48,7 @@ fi
 
 ## When the agent runs
 
-- Tasma stops the agent of a chat 10 minutes after its last answer, or 1 hour after it in a step whose owner is `human`. Commands that the agent started in the background stop with it. A program that runs as a daemon, for example a Docker container, keeps running.
+- Tasma stops the agent of a chat 10 minutes after its last answer, or 1 hour after it in a step whose owner is `human` or in a chat with no task. Commands that the agent started in the background stop with it. A program that runs as a daemon, for example a Docker container, keeps running.
 - Tasma tells Claude to start the description of each command that it runs in the background with a mark: `[job]` for a command that ends by itself, for example tests or a build, and `[service]` for a command that runs until something stops it, for example a dev server. While a `[job]` runs, Tasma does not stop the agent, so that the agent can report the result of the job. After the job ends, the agent gets one more period of 10 minutes, or 1 hour. A `[service]` and a command with no mark stop with the agent.
 - A `[job]` keeps the agent for at most 2 hours after the last activity in the chat, and the time that the Mac sleeps does not count. Then the chat fails.
 - The next message starts the agent again, and the agent keeps the conversation.
@@ -56,7 +56,7 @@ fi
 
 ## Errors
 
-A chat that cannot run its agent, or whose agent Tasma stops after a long job, fails with one of these texts. After you correct the cause, send a message in the chat. Tasma starts the agent again.
+A chat that cannot run its agent, or whose agent Tasma stops after a long job, fails with one of these texts. After you correct the cause, send a message in the chat. Tasma starts the agent again. In a chat with no task, `Start a new chat for this step.` reads `Start a new chat.`, and you start a new chat of the project.
 
 | Text | What to do |
 |---|---|

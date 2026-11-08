@@ -57,8 +57,10 @@ export type AgentAdapter = {
   projectSessionGone: string;
   /** Gives the update as the log keeps it: a new object when it changes anything. */
   filterUpdate(update: AcpObject): AcpObject;
-  /** The `_meta` of `session/new` and `session/resume`. */
+  /** The `_meta` of `session/new` and `session/resume` of a step chat. */
   sessionMeta?: AcpObject;
+  /** The `_meta` of `session/new` and `session/resume` of a project chat. */
+  projectSessionMeta?(tag: string): AcpObject;
   /** The background commands of one agent process. `log` takes each line for the log of the daemon. */
   backgroundCommands?(log: (cause: string) => void): BackgroundCommands;
 };

@@ -73,6 +73,7 @@ function backgroundAdapter(): { adapter: AgentAdapter; control: Control } {
   const adapter: AgentAdapter = {
     ...fakeAdapter().adapter,
     sessionMeta: META,
+    projectSessionMeta: () => ({ systemPrompt: { append: "Only a project chat gets this." } }),
     backgroundCommands(log) {
       control.logs.push(log);
       return {

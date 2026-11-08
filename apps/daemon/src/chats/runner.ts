@@ -720,7 +720,7 @@ export function createChatRunner(options: {
   ): Promise<{ session: AgentSession; created: boolean } | undefined> {
     const { live } = run;
     const { folder, session: stored } = live.chat;
-    const meta = run.adapter!.sessionMeta;
+    const meta = isProjectChat(live) ? run.adapter!.projectSessionMeta?.(live.tag) : run.adapter!.sessionMeta;
     if (stored !== undefined) {
       const resumed = await send(run, () => connection.resume(folder, stored, meta).catch((error: unknown) => {
         if (error instanceof SessionNotFound) return "lost" as const;

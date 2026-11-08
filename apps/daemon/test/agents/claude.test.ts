@@ -9,6 +9,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AcpObject } from "@tasma/protocol";
 import type { AgentLaunch } from "../../src/agents/adapter.js";
 import { claudeAdapter, createClaudeAdapter } from "../../src/agents/claude.js";
+import { BACKGROUND_RULE } from "../../src/agents/claude-background.js";
 import { CLAUDE_SESSION_VARIABLES } from "../../src/agents/process.js";
 import { target, untilGone, untilPid } from "../helpers.js";
 
@@ -571,6 +572,22 @@ describe("claudeAdapter.skillListed", () => {
 
   it("gives undefined for a signal cancelled before the call with no claude on PATH", async () => {
     await expect(claudeAdapter.skillListed({ PATH: await target() }, AbortSignal.abort())).resolves.toBeUndefined();
+  });
+});
+
+describe("claudeAdapter.projectSessionMeta", () => {
+  it("appends the rule, a blank line and the context of the project to the system prompt of a project chat", () => {
+    expect(claudeAdapter.projectSessionMeta?.("ALPHA")).toEqual({
+      systemPrompt: {
+        append: `${BACKGROUND_RULE}\n\n`
+          + "This chat runs in the Tasma app, a local task manager. The chat belongs to the Tasma project with the tag "
+          + "ALPHA, and your working directory is the folder of this project. The chat has no task and no workflow step.\n\n"
+          + "Before you act on a request about tasks, comments, projects or workflows, load the tasma skill. If the skill "
+          + "is not available, use `tasma --help`.\n\n"
+          + "Treat each message as a direct request, and do what the user asks. Do not start a task, set a step or run a "
+          + "workflow step unless the user asks for it.",
+      },
+    });
   });
 });
 
