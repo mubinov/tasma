@@ -1,9 +1,18 @@
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { PromptResponse } from "@agentclientprotocol/sdk";
 import { openAgentDefaults } from "@tasma/engine";
-import type { Chat, ChatEntry, ChatEvent, ChatEventsReply, ChatStart, FeedEvent } from "@tasma/protocol";
+import type {
+  Chat,
+  ChatEntry,
+  ChatEvent,
+  ChatEventsReply,
+  ChatStart,
+  FeedEvent,
+  ProjectChat,
+  ProjectChatStart,
+} from "@tasma/protocol";
 import type { AgentAdapter } from "../../src/agents/adapter.js";
 import { createChatRegistry } from "../../src/chats/registry.js";
 import type { ChatRegistry, LiveChat } from "../../src/chats/registry.js";
@@ -16,7 +25,8 @@ import { projectRoutes } from "../../src/projects/routes.js";
 import { taskRoutes } from "../../src/tasks/routes.js";
 import { WriteQueue } from "../../src/tasks/serialize.js";
 import { fakeAgent, forever, modeOption } from "../agents/fake-agent.js";
-import type { Script } from "../agents/fake-agent.js";
+import type { FakeProcess, Script } from "../agents/fake-agent.js";
+import { promptText } from "./runner-world.js";
 import {
   bearer,
   chatFolder,
@@ -28,6 +38,7 @@ import {
   onWorkflow,
   plant,
   plantSteps,
+  projectChatFolder,
   projectConfig,
   projectsRoot,
   requestsOf,
@@ -76,7 +87,13 @@ const ADAPTER: AgentAdapter = {
   filterUpdate: (update) => update,
 };
 
-type World = { chats: ChatRegistry; runner: ChatRunner; server: TestServer; events: FeedEvent[] };
+type World = {
+  chats: ChatRegistry;
+  runner: ChatRunner;
+  server: TestServer;
+  events: FeedEvent[];
+  processes: FakeProcess[];
+};
 
 /** A tree holding project ALPHA with the tasks ALPHA-1 and ALPHA-2. */
 async function tree(): Promise<string> {
@@ -99,7 +116,7 @@ async function world(
   const events: FeedEvent[] = [];
   const publish = (event: FeedEvent) => events.push(event);
   const chats = createChatRegistry({ root, host, writes, publish, holdMs: options.holdMs ?? LONG_HOLD_MS });
-  const { spawn } = fakeAgent(options.script);
+  const { spawn, processes } = fakeAgent(options.script);
   const runner = createChatRunner({
     root,
     chats,
@@ -118,16 +135,23 @@ async function world(
     ...taskRoutes(host, { writes, chats }),
     ...chatRoutes(chats, runner, createStepChats({ root, host, chats, runner })),
   ]);
-  return { chats, runner, server, events };
+  return { chats, runner, server, events, processes };
 }
 
-/** A daemon whose project ALPHA has a folder, with chat 1 of ALPHA-1 started through the runner. */
-async function running(script?: Script): Promise<World & { live: LiveChat; root: string }> {
+/** A daemon whose project ALPHA has a folder. */
+async function projectWorld(
+  options: { script?: Script; adapters?: AgentAdapter[] } = {},
+): Promise<World & { root: string }> {
   const root = await tree();
   await plant(projectConfig(root, "ALPHA"), `path: ${await target()}\n`);
-  const started = await world(root, { script });
+  return { ...(await world(root, options)), root };
+}
+
+/** `projectWorld`, with chat 1 of ALPHA-1 started through the runner. */
+async function running(script?: Script): Promise<World & { live: LiveChat; root: string }> {
+  const started = await projectWorld({ script });
   const live = await started.runner.start({ tag: "ALPHA", task: "ALPHA-1", step: "dev:build", agent: "claude", ...MESSAGE });
-  return { ...started, live, root };
+  return { ...started, live };
 }
 
 /** A turn that asks a permission request and a question, and stays open until a cancel ends it. */
@@ -836,5 +860,310 @@ describe("the chat commands", () => {
     expect((await logOf(live)).filter((event) => event.kind === "permission-resolved")).toEqual([
       { kind: "permission-resolved", request: permission, outcome: { outcome: "selected", optionId: "allow" }, client: winner },
     ]);
+  });
+});
+
+const PROJECT_CHATS = "/projects/ALPHA/chats";
+
+const FIRST_MESSAGE = { text: "Plan the release", client: "app" };
+
+/** `projectWorld`, with chat 1 of the project started through the route. */
+async function projectChat(script?: Script): Promise<World & { root: string; live: LiveChat<ProjectChat> }> {
+  const started = await projectWorld({ script });
+  const response = await send(started.server, "POST", PROJECT_CHATS, FIRST_MESSAGE);
+  expect(response.status).toBe(200);
+  return { ...started, live: await started.chats.getProjectChat("ALPHA", 1) };
+}
+
+describe("POST /projects/{project}/chats", () => {
+  it("starts a chat with no task and no step, whose agent gets the text as typed", async () => {
+    const text = "  Plan the release\n\nThen ship it";
+    const { server, chats, processes } = await projectWorld();
+
+    const response = await send(server, "POST", PROJECT_CHATS, { text, client: "app" });
+
+    expect(response.status).toBe(200);
+    const { data, diagnostics } = await success<ProjectChatStart>(response);
+    expect(data.chat).toMatchObject({ chat: 1, title: "Plan the release", agent: "claude" });
+    expect(data.chat).not.toHaveProperty("task");
+    expect(data.chat).not.toHaveProperty("step");
+    expect(diagnostics).toEqual([]);
+    await logUntil(await chats.getProjectChat("ALPHA", 1), "turn-end");
+    expect(processes[0]?.prompts.map(promptText)).toEqual([text]);
+  });
+
+  it("makes a new chat at each start", async () => {
+    const { server } = await projectWorld();
+
+    const first = await success<ProjectChatStart>(await send(server, "POST", PROJECT_CHATS, FIRST_MESSAGE));
+    const second = await success<ProjectChatStart>(await send(server, "POST", PROJECT_CHATS, FIRST_MESSAGE));
+
+    expect([first.data.chat.chat, second.data.chat.chat]).toEqual([1, 2]);
+  });
+
+  it.each([
+    ["the first of two lines", "Plan the release\nThen ship it", "Plan the release"],
+    ["the first line with text, after blank lines and whitespace", "\n  \n\t  Plan the release  \nThen ship it", "Plan the release"],
+    ["a line that ends with \\r\\n", "Plan the release\r\nThen ship it", "Plan the release"],
+    ["a line that ends with \\r", "Plan the release\rThen ship it", "Plan the release"],
+    ["a line of more than 200 characters", "a".repeat(250), "a".repeat(200)],
+    ["a line with a surrogate pair at characters 200 and 201", `${"a".repeat(199)}😀b`, `${"a".repeat(199)}😀`],
+  ])("stores as the title %s", async (_case, text, title) => {
+    const { server, root } = await projectWorld();
+
+    const response = await send(server, "POST", PROJECT_CHATS, { text, client: "app" });
+
+    expect((await success<ProjectChatStart>(response)).data.chat.title).toBe(title);
+    const stored: unknown = JSON.parse(await readFile(join(projectChatFolder(root, "ALPHA", 1), "chat.json"), "utf8"));
+    expect(stored).toMatchObject({ title });
+  });
+
+  it.each([
+    ["a body that is not an object", ["Plan"]],
+    ["no body", undefined],
+    ["no text", { client: "app" }],
+    ["a text that is not a string", { text: 7, client: "app" }],
+    ["an empty text", { text: "", client: "app" }],
+    ["a text of whitespace only", { text: " \n\t", client: "app" }],
+    ["no client", { text: "Plan" }],
+    ["a client of 101 characters", { text: "Plan", client: LONG_CLIENT }],
+    ["an extra key", { text: "Plan", client: "app", restart: true }],
+  ])("refuses %s with 400 before it reads the project", async (_case, body) => {
+    const { server } = await projectWorld();
+
+    const response = await send(server, "POST", "/projects/OMEGA/chats", body);
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+  });
+
+  it("refuses a query with 400", async () => {
+    const { server } = await projectWorld();
+
+    const response = await send(server, "POST", `${PROJECT_CHATS}?now=1`, FIRST_MESSAGE);
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+  });
+
+  it("refuses a project with no folder with 409", async () => {
+    const { server } = await world(await tree());
+
+    const response = await send(server, "POST", PROJECT_CHATS, FIRST_MESSAGE);
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "project-has-no-folder" });
+  });
+
+  it("refuses an agent that Tasma cannot run with 409, before it checks the folder", async () => {
+    const { server } = await world(await tree(), { adapters: [] });
+
+    const response = await send(server, "POST", PROJECT_CHATS, FIRST_MESSAGE);
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "agent-not-supported" });
+  });
+
+  it.each(["BETA", "alpha"])("refuses the tag %s with project-not-found and 404", async (tag) => {
+    const { server } = await projectWorld();
+
+    const response = await send(server, "POST", `/projects/${tag}/chats`, FIRST_MESSAGE);
+
+    expect(response.status).toBe(404);
+    await expect(failure(response)).resolves.toMatchObject({ code: "project-not-found" });
+  });
+
+  it("answers a launch that fails with the chat, whose log holds the failure", async () => {
+    const adapter: AgentAdapter = { ...ADAPTER, launch: () => ({ failed: "No agent here" }) };
+    const { server, chats } = await projectWorld({ adapters: [adapter] });
+
+    const response = await send(server, "POST", PROJECT_CHATS, FIRST_MESSAGE);
+
+    expect(response.status).toBe(200);
+    expect((await success<ProjectChatStart>(response)).data.chat).toMatchObject({ chat: 1 });
+    expect(await logOf(await chats.getProjectChat("ALPHA", 1))).toEqual([
+      { kind: "user", ...FIRST_MESSAGE },
+      { kind: "failed", reason: "No agent here" },
+    ]);
+  });
+});
+
+describe("the per-chat routes of a project chat", () => {
+  const PROJECT_CHAT = `${PROJECT_CHATS}/1`;
+
+  it("reads the chat, with the findings of its log", async () => {
+    const { server, live, root } = await projectChat();
+    await logUntil(live, "turn-end");
+    await appendFile(join(projectChatFolder(root, "ALPHA", 1), "events.jsonl"), "not an entry\n");
+    const { server: restarted } = await world(root);
+
+    const fresh = await success<ProjectChat>(await get(restarted, PROJECT_CHAT));
+
+    expect(fresh.data).toMatchObject({ chat: 1, title: FIRST_MESSAGE.text, state: "needs-you" });
+    expect(fresh.data).not.toHaveProperty("task");
+    expect(fresh.diagnostics).toMatchObject([{ code: "chat-file-unreadable" }]);
+    expect((await success<ProjectChat>(await get(server, PROJECT_CHAT))).data).toEqual(live.chat);
+  });
+
+  it("reads the log after a cursor, and ends a long-poll at a new entry", async () => {
+    const { server, live } = await projectChat();
+    await logUntil(live, "turn-end");
+    const all = await live.read(0);
+
+    await expect(readLog(server, 0, `${PROJECT_CHAT}/events`)).resolves.toEqual({ cursor: 2, entries: all });
+
+    const held = readLog(server, 2, `${PROJECT_CHAT}/events`);
+    expect(await stillPending(held)).toBe(true);
+    const entry = await live.append(UPDATE);
+    await expect(held).resolves.toEqual({ cursor: 3, entries: [entry] });
+  });
+
+  it("releases a held read with the old tag at a rename, and holds a read with the new tag until an append", async () => {
+    const { server, live } = await projectChat();
+    await logUntil(live, "turn-end");
+    const old = get(server, `${PROJECT_CHAT}/events?after=2`);
+
+    expect(await stillPending(old)).toBe(true);
+    expect((await send(server, "POST", "/projects/ALPHA/rename", { tag: "BETA" })).status).toBe(200);
+
+    const response = await old;
+    expect(response.status).toBe(404);
+    await expect(failure(response)).resolves.toMatchObject({ code: "project-not-found" });
+
+    const renamed = readLog(server, 2, "/projects/BETA/chats/1/events");
+    expect(await stillPending(renamed)).toBe(true);
+    const entry = await live.append(UPDATE);
+    await expect(renamed).resolves.toEqual({ cursor: 3, entries: [entry] });
+  });
+
+  it("answers a message with the chat, which is then working", async () => {
+    const { server, live, processes } = await projectChat();
+    await logUntil(live, "turn-end");
+
+    const response = await send(server, "POST", `${PROJECT_CHAT}/messages`, { text: "Now the printer", client: "web" });
+
+    expect(response.status).toBe(200);
+    const { data, diagnostics } = await success<ProjectChat>(response);
+    expect(data).toMatchObject({ chat: 1, title: FIRST_MESSAGE.text, state: "working", seq: 3 });
+    expect(diagnostics).toEqual([]);
+    expect((await logOf(live))[2]).toEqual({ kind: "user", text: "Now the printer", client: "web" });
+    await until(() => processes[0]?.prompts.length === 2, "the agent got the message");
+  });
+
+  it("answers a permission answer, a question answer and a cancel with the chat", async () => {
+    const { server, live } = await projectChat(asking());
+    const [permission, question] = requestsOf(await logUntil(live, "question"));
+
+    const answered = await send(server, "POST", `${PROJECT_CHAT}/permissions/${permission}`, { optionId: "allow", client: "web" });
+    expect(answered.status).toBe(200);
+    expect((await success<ProjectChat>(answered)).data).toMatchObject({ chat: 1, title: FIRST_MESSAGE.text, state: "needs-you" });
+
+    const replied = await send(server, "POST", `${PROJECT_CHAT}/questions/${question}`, {
+      action: "accept",
+      content: { parser: "peg" },
+      client: "web",
+    });
+    expect(replied.status).toBe(200);
+    expect((await success<ProjectChat>(replied)).data).toMatchObject({ chat: 1, title: FIRST_MESSAGE.text, state: "working" });
+
+    const cancelled = await send(server, "POST", `${PROJECT_CHAT}/cancel`, { client: "app" });
+    expect(cancelled.status).toBe(200);
+    expect((await success<ProjectChat>(cancelled)).data).toMatchObject({ chat: 1, title: FIRST_MESSAGE.text });
+    expect((await logUntil(live, "turn-end")).slice(-3)).toEqual([
+      { kind: "permission-resolved", request: permission, outcome: { outcome: "selected", optionId: "allow" }, client: "web" },
+      { kind: "question-resolved", request: question, answer: { action: "accept", content: { parser: "peg" } }, client: "web" },
+      { kind: "turn-end", stopReason: "cancelled" },
+    ]);
+  });
+
+  it("answers a pick with the chat, which holds the pick", async () => {
+    const { server, live } = await projectChat({ configOptions: [modeOption()] });
+    await logUntil(live, "turn-end");
+
+    const response = await send(server, "POST", `${PROJECT_CHAT}/options`, { configId: "mode", value: "acceptEdits", client: "web" });
+
+    expect(response.status).toBe(200);
+    const { data } = await success<ProjectChat>(response);
+    expect(data).toMatchObject({ chat: 1, title: FIRST_MESSAGE.text, options: { mode: "acceptEdits" } });
+  });
+
+  it("answers a seen with the chat, which holds it", async () => {
+    const { server, live } = await projectChat();
+    await logUntil(live, "turn-end");
+
+    const response = await send(server, "POST", `${PROJECT_CHAT}/seen`, { seq: 2, client: "web" });
+
+    expect(response.status).toBe(200);
+    expect((await success<ProjectChat>(response)).data).toMatchObject({ chat: 1, title: FIRST_MESSAGE.text, seen: 2 });
+    expect((await success<ProjectChat>(await get(server, PROJECT_CHAT))).data.seen).toBe(2);
+  });
+
+  it("names the project chat in a refusal of the runner", async () => {
+    const { server, live, runner } = await projectChat();
+    await logUntil(live, "turn-end");
+    runner.stopStarts();
+
+    const response = await send(server, "POST", `${PROJECT_CHAT}/messages`, MESSAGE);
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toMatchObject({
+      code: "chat-not-running",
+      message: "chat 1 of project ALPHA cannot run: the daemon is stopping",
+    });
+  });
+
+  it.each([
+    ["an unknown project", "/projects/OMEGA/chats/1", "project-not-found"],
+    ["an unknown project and a malformed chat number", "/projects/OMEGA/chats/x/events", "project-not-found"],
+    ["a missing chat", `${PROJECT_CHATS}/7`, "chat-not-found"],
+    ["a missing chat in a read of its log", `${PROJECT_CHATS}/7/events`, "chat-not-found"],
+    ["chat 0", `${PROJECT_CHATS}/0`, "chat-not-found"],
+    ["a chat number with a leading zero", `${PROJECT_CHATS}/01`, "chat-not-found"],
+    ["a chat number that is a word", `${PROJECT_CHATS}/x`, "chat-not-found"],
+  ])("gives 404 for a read of %s", async (_case, path, code) => {
+    const { server } = await projectChat();
+
+    const response = await get(server, path);
+
+    expect(response.status).toBe(404);
+    await expect(failure(response)).resolves.toMatchObject({ code });
+  });
+
+  it.each([
+    ["an unknown project", "/projects/OMEGA/chats/1/cancel", "project-not-found"],
+    ["a missing chat", `${PROJECT_CHATS}/7/cancel`, "chat-not-found"],
+    ["a malformed chat number", `${PROJECT_CHATS}/x/cancel`, "chat-not-found"],
+  ])("gives 404 for a command on %s", async (_case, path, code) => {
+    const { server } = await projectChat();
+
+    const response = await send(server, "POST", path, { client: "web" });
+
+    expect(response.status).toBe(404);
+    await expect(failure(response)).resolves.toMatchObject({ code });
+  });
+
+  it("refuses a bad body with 400 before it reads the chat", async () => {
+    const { server } = await projectChat();
+
+    const response = await send(server, "POST", `${PROJECT_CHATS}/7/messages`, { text: "Build" });
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+  });
+
+  it("keeps a project chat and a task chat with the same number apart", async () => {
+    const { server, live, runner } = await projectChat();
+    await logUntil(live, "turn-end");
+    const taskChat = await runner.start({ tag: "ALPHA", task: "ALPHA-1", step: "dev:build", agent: "claude", ...MESSAGE });
+    await logUntil(taskChat, "turn-end");
+    const before = await logOf(taskChat);
+
+    const response = await send(server, "POST", `${PROJECT_CHAT}/messages`, { text: "Only the project chat", client: "web" });
+
+    expect(response.status).toBe(200);
+    expect(taskChat.chat.chat).toBe(live.chat.chat);
+    expect((await logOf(live)).at(2)).toEqual({ kind: "user", text: "Only the project chat", client: "web" });
+    expect(await logOf(taskChat)).toEqual(before);
+    expect(entriesOf(await readLog(server, 0, `${CHATS}/1/events`)).map((entry) => entry.event)).toEqual(before);
   });
 });

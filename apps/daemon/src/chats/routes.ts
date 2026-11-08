@@ -1,7 +1,8 @@
-// The routes over the chats of one task: the list, the start of the chat of
-// the current step, one chat, a long-poll read of the log of one chat after a
-// cursor, and the commands of a client on a chat: a message, a cancel, an
-// answer, a pick of a config option and a move of `seen`.
+// The routes over the chats of one task and the project chats of one project:
+// the list of the chats of a task, the start of the chat of the current step,
+// the start of a project chat, one chat, a long-poll read of the log of one
+// chat after a cursor, and the commands of a client on a chat: a message, a
+// cancel, an answer, a pick of a config option and a move of `seen`.
 
 import { routes } from "@tasma/protocol";
 import type {
@@ -15,14 +16,17 @@ import type {
   ChatStartInput,
   Diagnostic,
   PermissionAnswer,
+  ProjectChat,
+  ProjectChatStart,
   QuestionAnswer,
   QuestionValue,
+  Route,
   Success,
 } from "@tasma/protocol";
 import { DaemonError } from "../http/failure.js";
 import type { HandlerRequest, RouteEntry } from "../http/router.js";
 import { assertNoQuery, readChatEventsQuery } from "../tasks/filter.js";
-import type { ChatRegistry, LiveChat } from "./registry.js";
+import type { AnyLiveChat, ChatRegistry } from "./registry.js";
 import type { ChatRunner } from "./runner.js";
 import type { StepChats } from "./start.js";
 
@@ -56,6 +60,13 @@ const OPTION_KEYS = Object.keys(
 );
 
 const SEEN_KEYS = Object.keys({ seq: true, client: true } satisfies Record<keyof ChatSeenInput, true>);
+
+type FindChat = (request: HandlerRequest) => Promise<AnyLiveChat>;
+
+type PerChatRoutes = Record<
+  "read" | "events" | "message" | "cancel" | "permission" | "question" | "option" | "seen",
+  Route
+>;
 
 /** The chat a path names. Any other text is 0, which `assertChatNumber` refuses as no chat. */
 export function chatOf(segment: string): number {
@@ -170,15 +181,11 @@ function readSeenInput(raw: unknown): ChatSeenInput {
  * `seq` and the start of the wait run in one synchronous step, so an append
  * between them is never lost.
  */
-async function readAfter(
-  chats: ChatRegistry,
-  place: { tag: string; task: string; chat: number },
-  after: number,
-): Promise<ChatEventsReply> {
-  let live = await chats.get(place.tag, place.task, place.chat);
+async function readAfter(find: () => Promise<AnyLiveChat>, after: number): Promise<ChatEventsReply> {
+  let live = await find();
   if (after === live.chat.seq) {
     await live.wait();
-    live = await chats.get(place.tag, place.task, place.chat);
+    live = await find();
   }
   const { seq } = live.chat;
   if (after > seq) return { reset: true, cursor: 0 };
@@ -189,21 +196,68 @@ async function readAfter(
 }
 
 export function chatRoutes(chats: ChatRegistry, runner: ChatRunner, starts: StepChats): RouteEntry[] {
-  /**
-   * Checks the query and the body before it gets the chat, and answers the
-   * chat after the command, with the diagnostics that the command gives.
-   */
-  function command<T>(
-    read: (body: unknown) => T,
-    run: (live: LiveChat, input: T, request: HandlerRequest) => Promise<Diagnostic[] | void>,
-  ) {
-    return async (request: HandlerRequest): Promise<Success<Chat>> => {
-      assertNoQuery(request.query);
-      const input = read(request.body);
-      const live = await chats.get(request.params.project!, request.params.id!, chatOf(request.params.chat!));
-      const diagnostics = (await run(live, input, request)) ?? [];
-      return { data: live.chat, diagnostics };
-    };
+  function perChatRoutes(find: FindChat, names: PerChatRoutes): RouteEntry[] {
+    /**
+     * Checks the query and the body before it gets the chat, and answers the
+     * chat after the command, with the diagnostics that the command gives.
+     */
+    function command<T>(
+      read: (body: unknown) => T,
+      run: (live: AnyLiveChat, input: T, request: HandlerRequest) => Promise<Diagnostic[] | void>,
+    ) {
+      return async (request: HandlerRequest): Promise<Success<Chat | ProjectChat>> => {
+        assertNoQuery(request.query);
+        const input = read(request.body);
+        const live = await find(request);
+        const diagnostics = (await run(live, input, request)) ?? [];
+        return { data: live.chat, diagnostics };
+      };
+    }
+
+    return [
+      {
+        route: names.read,
+        handler: async (request): Promise<Success<Chat | ProjectChat>> => {
+          assertNoQuery(request.query);
+          const live = await find(request);
+          return { data: live.chat, diagnostics: live.diagnostics };
+        },
+      },
+      {
+        route: names.events,
+        // No diagnostics, so a long-poll loop does not get the same finding at each reply.
+        handler: async (request): Promise<Success<ChatEventsReply>> => {
+          const { after } = readChatEventsQuery(request.query);
+          return { data: await readAfter(() => find(request), after), diagnostics: [] };
+        },
+      },
+      {
+        route: names.message,
+        handler: command(readMessage, (live, input) => runner.message(live, input)),
+      },
+      {
+        route: names.cancel,
+        handler: command(readCancel, (live, input) => runner.cancel(live, input)),
+      },
+      {
+        route: names.permission,
+        handler: command(readPermissionAnswer, (live, answer, request) =>
+          runner.answerPermission(live, request.params.request!, answer)),
+      },
+      {
+        route: names.question,
+        handler: command(readQuestionAnswer, (live, answer, request) =>
+          runner.answerQuestion(live, request.params.request!, answer)),
+      },
+      {
+        route: names.option,
+        handler: command(readOptionChange, (live, change) => runner.setOption(live, change)),
+      },
+      {
+        route: names.seen,
+        handler: command(readSeenInput, (live, input) => live.setSeen(input.seq)),
+      },
+    ];
   }
 
   return [
@@ -226,47 +280,39 @@ export function chatRoutes(chats: ChatRegistry, runner: ChatRunner, starts: Step
       },
     },
     {
-      route: routes.readChat,
-      handler: async (request): Promise<Success<Chat>> => {
+      route: routes.startProjectChat,
+      handler: async (request): Promise<Success<ProjectChatStart>> => {
         assertNoQuery(request.query);
-        const live = await chats.get(request.params.project!, request.params.id!, chatOf(request.params.chat!));
-        return { data: live.chat, diagnostics: live.diagnostics };
+        const input = readMessage(request.body);
+        const live = await starts.startProject(request.params.project!, input);
+        return { data: { chat: live.chat }, diagnostics: live.diagnostics };
       },
     },
-    {
-      route: routes.readChatEvents,
-      // No diagnostics, so a long-poll loop does not get the same finding at each reply.
-      handler: async (request): Promise<Success<ChatEventsReply>> => {
-        const { after } = readChatEventsQuery(request.query);
-        const place = { tag: request.params.project!, task: request.params.id!, chat: chatOf(request.params.chat!) };
-        return { data: await readAfter(chats, place, after), diagnostics: [] };
+    ...perChatRoutes(
+      (request) => chats.get(request.params.project!, request.params.id!, chatOf(request.params.chat!)),
+      {
+        read: routes.readChat,
+        events: routes.readChatEvents,
+        message: routes.sendChatMessage,
+        cancel: routes.cancelChatTurn,
+        permission: routes.answerChatPermission,
+        question: routes.answerChatQuestion,
+        option: routes.setChatOption,
+        seen: routes.markChatSeen,
       },
-    },
-    {
-      route: routes.sendChatMessage,
-      handler: command(readMessage, (live, input) => runner.message(live, input)),
-    },
-    {
-      route: routes.cancelChatTurn,
-      handler: command(readCancel, (live, input) => runner.cancel(live, input)),
-    },
-    {
-      route: routes.answerChatPermission,
-      handler: command(readPermissionAnswer, (live, answer, request) =>
-        runner.answerPermission(live, request.params.request!, answer)),
-    },
-    {
-      route: routes.answerChatQuestion,
-      handler: command(readQuestionAnswer, (live, answer, request) =>
-        runner.answerQuestion(live, request.params.request!, answer)),
-    },
-    {
-      route: routes.setChatOption,
-      handler: command(readOptionChange, (live, change) => runner.setOption(live, change)),
-    },
-    {
-      route: routes.markChatSeen,
-      handler: command(readSeenInput, (live, input) => live.setSeen(input.seq)),
-    },
+    ),
+    ...perChatRoutes(
+      (request) => chats.getProjectChat(request.params.project!, chatOf(request.params.chat!)),
+      {
+        read: routes.readProjectChat,
+        events: routes.readProjectChatEvents,
+        message: routes.sendProjectChatMessage,
+        cancel: routes.cancelProjectChatTurn,
+        permission: routes.answerProjectChatPermission,
+        question: routes.answerProjectChatQuestion,
+        option: routes.setProjectChatOption,
+        seen: routes.markProjectChatSeen,
+      },
+    ),
   ];
 }

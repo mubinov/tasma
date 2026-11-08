@@ -2,6 +2,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { TaskStoreError } from "@tasma/engine";
+import type { ProjectChat } from "@tasma/protocol";
 import { createChatRegistry } from "../../src/chats/registry.js";
 import type { ChatRegistry, LiveChat } from "../../src/chats/registry.js";
 import { ChatStartRefusal } from "../../src/chats/runner.js";
@@ -28,21 +29,29 @@ import {
 
 type StartInput = Parameters<ChatRunner["start"]>[0];
 
+type ProjectStartInput = Parameters<ChatRunner["startProjectChat"]>[0];
+
 type World = {
   root: string;
   chats: ChatRegistry;
   starts: StepChats;
   /** Each call of `start` of the runner, in call order. */
   calls: StartInput[];
+  /** Each call of `startProjectChat` of the runner, in call order. */
+  projectCalls: ProjectStartInput[];
   /** The chat and the client of each call of `end` of the runner, in call order. */
   ends: { chat: number; client: string }[];
   /** The name of each call of the runner, in call order. */
-  order: ("start" | "end")[];
+  order: ("start" | "end" | "startProjectChat")[];
   /**
    * Replaces what the next calls of the runner do. Without it, a start
    * creates the chat with its first message, and an end does nothing.
    */
-  next: { start?: (input: StartInput) => Promise<LiveChat>; end?: (live: LiveChat) => Promise<void> };
+  next: {
+    start?: (input: StartInput) => Promise<LiveChat>;
+    end?: (live: LiveChat) => Promise<void>;
+    startProjectChat?: (input: ProjectStartInput) => Promise<LiveChat<ProjectChat>>;
+  };
 };
 
 /**
@@ -65,10 +74,11 @@ async function world(): Promise<World> {
     await host.close();
   });
   const calls: StartInput[] = [];
+  const projectCalls: ProjectStartInput[] = [];
   const ends: World["ends"] = [];
   const order: World["order"] = [];
   const next: World["next"] = {};
-  const runner: Pick<ChatRunner, "start" | "end"> = {
+  const runner: Pick<ChatRunner, "start" | "end" | "startProjectChat"> = {
     start(input) {
       calls.push(input);
       order.push("start");
@@ -81,8 +91,16 @@ async function world(): Promise<World> {
       order.push("end");
       await next.end?.(live);
     },
+    startProjectChat(input) {
+      projectCalls.push(input);
+      order.push("startProjectChat");
+      if (next.startProjectChat !== undefined) return next.startProjectChat(input);
+      const { tag, title, agent, text, client } = input;
+      return chats.createProjectChat(tag, { title, agent, folder: "/srv/alpha" }, { text, client });
+    },
   };
-  return { root, chats, starts: createStepChats({ root, host, chats, runner }), calls, ends, order, next };
+  const starts = createStepChats({ root, host, chats, runner });
+  return { root, chats, starts, calls, projectCalls, ends, order, next };
 }
 
 /** The refusal a start rejects with. */
@@ -474,5 +492,56 @@ describe("a start that restarts the step", () => {
       expect.objectContaining({ path: userConfig(root) }),
     ]);
     expect(diagnostics.filter((diagnostic) => diagnostic.path?.startsWith(chatFolder(root, "ALPHA", "1", 2)))).toHaveLength(1);
+  });
+});
+
+describe("a start of a project chat", () => {
+  const INPUT = { text: "Plan the release\nThen ship it", client: "app" };
+
+  it("gives the runner the agent claude, the title, the text as typed and the client", async () => {
+    const { starts, projectCalls, calls } = await world();
+
+    const live = await starts.startProject("ALPHA", INPUT);
+
+    expect(live.chat).toMatchObject({ chat: 1, title: "Plan the release", agent: "claude" });
+    expect(projectCalls).toEqual([{
+      tag: "ALPHA",
+      title: "Plan the release",
+      agent: "claude",
+      text: INPUT.text,
+      client: "app",
+    }]);
+    expect(calls).toEqual([]);
+  });
+
+  it.each(["project-has-no-folder", "agent-not-supported"] as const)(
+    "turns the runner refusal %s into a refusal of the daemon with the same code and message",
+    async (code) => {
+      const { starts, next } = await world();
+      next.startProjectChat = () => Promise.reject(new ChatStartRefusal(code, `refused with ${code}`));
+
+      const error = await refusal(starts.startProject("ALPHA", INPUT));
+
+      expect(error).toBeInstanceOf(DaemonError);
+      expect(error).toMatchObject({ code, message: `refused with ${code}` });
+    },
+  );
+
+  it("passes any other fault of the runner through", async () => {
+    const { starts, next } = await world();
+    const fault = new Error("the disk is full");
+    next.startProjectChat = () => Promise.reject(fault);
+
+    await expect(starts.startProject("ALPHA", INPUT)).rejects.toBe(fault);
+  });
+
+  it.each(["BETA", "alpha"])("refuses the tag %s with project-not-found, and calls no runner", async (tag) => {
+    const { starts, projectCalls } = await world();
+
+    const error = await refusal(starts.startProject(tag, INPUT));
+
+    expect(error).toBeInstanceOf(TaskStoreError);
+    expect(error).toMatchObject({ code: "project-not-found" });
+    expect(projectCalls).toEqual([]);
   });
 });

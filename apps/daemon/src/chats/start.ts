@@ -1,9 +1,10 @@
 // The start of the chat of the current step of a task: the rule that gives
 // back the chat the step already has, starts a new one or restarts the step,
-// and the lock that runs the starts of one task one after the other.
+// and the lock that runs the starts of one task one after the other. Also the
+// start of a project chat, with the title that its first message gives.
 
 import { openWorkflows, TaskStoreError } from "@tasma/engine";
-import type { ChatAgent, Diagnostic } from "@tasma/protocol";
+import type { ChatAgent, Diagnostic, ProjectChat, ProjectChatStartInput } from "@tasma/protocol";
 import { DaemonError } from "../http/failure.js";
 import type { ProjectHost } from "../projects/host.js";
 import { taskKey } from "../tasks/serialize.js";
@@ -12,6 +13,8 @@ import { ChatStartRefusal } from "./runner.js";
 import type { ChatRunner } from "./runner.js";
 
 const AGENT: ChatAgent = "claude";
+
+const TITLE_LENGTH = 200;
 
 export type StepChats = {
   /**
@@ -29,10 +32,27 @@ export type StepChats = {
     started: boolean;
     diagnostics: Diagnostic[];
   }>;
+  /** Each call makes a new chat, whose agent gets `input.text` as its first prompt. */
+  startProject(tag: string, input: ProjectChatStartInput): Promise<LiveChat<ProjectChat>>;
 };
 
 function firstMessage(task: string): string {
   return `Run the current step of Tasma task ${task}.`;
+}
+
+/** The first line with text, cut at `TITLE_LENGTH` code points so a cut never splits a surrogate pair. */
+function titleOf(text: string): string {
+  const line = text.trimStart().split(/[\r\n]/, 1)[0]!.trimEnd();
+  return Array.from(line).slice(0, TITLE_LENGTH).join("");
+}
+
+async function withDaemonRefusal<T>(start: Promise<T>): Promise<T> {
+  try {
+    return await start;
+  } catch (error) {
+    if (error instanceof ChatStartRefusal) throw new DaemonError(error.code, error.message);
+    throw error;
+  }
 }
 
 function continues(live: LiveChat, step: string): boolean {
@@ -53,7 +73,7 @@ export function createStepChats(options: {
   root?: string;
   host: ProjectHost;
   chats: ChatRegistry;
-  runner: Pick<ChatRunner, "start" | "end">;
+  runner: Pick<ChatRunner, "start" | "end" | "startProjectChat">;
 }): StepChats {
   const { root, host, chats, runner } = options;
   /** The last start of each task that runs or waits. */
@@ -97,13 +117,8 @@ export function createStepChats(options: {
     return { step, diagnostics };
   }
 
-  async function launch(tag: string, task: string, step: string, client: string): Promise<LiveChat> {
-    try {
-      return await runner.start({ tag, task, step, agent: AGENT, text: firstMessage(task), client });
-    } catch (error) {
-      if (error instanceof ChatStartRefusal) throw new DaemonError(error.code, error.message);
-      throw error;
-    }
+  function launch(tag: string, task: string, step: string, client: string): Promise<LiveChat> {
+    return withDaemonRefusal(runner.start({ tag, task, step, agent: AGENT, text: firstMessage(task), client }));
   }
 
   async function startOf(tag: string, task: string, client: string, restart = false): ReturnType<StepChats["start"]> {
@@ -128,5 +143,11 @@ export function createStepChats(options: {
 
   return {
     start: (tag, task, client, restart) => locked(taskKey(tag, task), () => startOf(tag, task, client, restart)),
+
+    async startProject(tag, { text, client }) {
+      // The runner answers `project-invalid` for a tag with an invalid form.
+      await host.open(tag);
+      return withDaemonRefusal(runner.startProjectChat({ tag, title: titleOf(text), agent: AGENT, text, client }));
+    },
   };
 }
