@@ -51,6 +51,7 @@ export const daemonKeys = {
   chats: () => [...daemonKeys.all, "chats"] as const,
   chatList: (filter: ChatFilter) => [...daemonKeys.chats(), filter] as const,
   chatItem: (id: string, chat: number) => [...daemonKeys.chats(), id, chat] as const,
+  agentState: () => [...daemonKeys.chats(), "state"] as const,
   setup: () => [...daemonKeys.all, "setup"] as const,
 };
 
@@ -138,6 +139,13 @@ export function chatItemQuery(client: Client, id: string, chat: number) {
   return queryOptions({
     queryKey: daemonKeys.chatItem(id, chat),
     queryFn: () => client.readChatItem(id, chat),
+  });
+}
+
+export function agentStateQuery(client: Client) {
+  return queryOptions({
+    queryKey: daemonKeys.agentState(),
+    queryFn: () => client.readAgentState(),
   });
 }
 

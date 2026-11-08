@@ -70,7 +70,7 @@ it("opens the requested route on a complete setup, with one start read and no fu
   const router = await renderWithRouter("/", transport);
 
   expect(router.state.location.pathname).toBe("/");
-  expect(screen.getByRole("heading", { level: 1, name: "Dashboard" })).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1, name: "Chats" })).toBeTruthy();
   expect(paths.filter((path) => path.startsWith("/setup"))).toEqual([START]);
 });
 
@@ -107,7 +107,7 @@ it("goes on to the route when the daemon refuses the start read", async () => {
   const router = await renderWithRouter("/", transport);
 
   expect(router.state.location.pathname).toBe("/");
-  expect(screen.getByRole("heading", { level: 1, name: "Dashboard" })).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1, name: "Chats" })).toBeTruthy();
 });
 
 it("shows the failure of the route with Retry when the start read fails, and Retry reads again", async () => {
@@ -131,7 +131,7 @@ it("shows the failure of the route with Retry when the start read fails, and Ret
   await advance(100);
 
   await waitFor(() => {
-    expect(screen.getByRole("heading", { level: 1, name: "Dashboard" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Chats" })).toBeTruthy();
   });
   expect(stub.paths.filter((path) => path === START)).toHaveLength(1);
 });
@@ -211,7 +211,7 @@ it("shows no loader for a start under 300 ms", async () => {
   answer(completeSetup());
   await advance(1000);
 
-  expect(screen.getByRole("heading", { level: 1, name: "Dashboard" })).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1, name: "Chats" })).toBeTruthy();
   expect(screen.queryByText("Checking the setup")).toBeNull();
 });
 
@@ -234,7 +234,7 @@ it("shows the loader after 300 ms, and for at least 600 ms", async () => {
   await advance(400);
 
   expect(screen.queryByText("Checking the setup")).toBeNull();
-  expect(screen.getByRole("heading", { level: 1, name: "Dashboard" })).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1, name: "Chats" })).toBeTruthy();
 });
 
 it("keeps one loader through the data of the first screen", async () => {
@@ -255,7 +255,7 @@ it("keeps one loader through the data of the first screen", async () => {
   await advance(100);
 
   expect(screen.queryByText("Checking the setup")).toBeNull();
-  expect(screen.getByRole("heading", { level: 1, name: "Dashboard" })).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1, name: "Chats" })).toBeTruthy();
 });
 
 it("renders the loader with no main, so a task link waits for the board", async () => {
@@ -314,5 +314,5 @@ it("shows no loader when only the data of the first screen is slow", async () =>
   projects.answer(successReply([]));
   await advance(100);
 
-  expect(screen.getByRole("heading", { level: 1, name: "Dashboard" })).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1, name: "Chats" })).toBeTruthy();
 });

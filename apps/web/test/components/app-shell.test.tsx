@@ -40,7 +40,7 @@ it("opens the main content with the page's only h1", async () => {
 it("keeps the sidebar mounted across a route change", async () => {
   const router = await renderWithRouter();
   const sidebar = screen.getByRole("navigation");
-  expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Dashboard");
+  expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Chats");
 
   await act(async () => {
     await router.navigate({ to: "/tasks" });
@@ -111,7 +111,7 @@ it("keeps room below the main content for the notice stack", async () => {
 // show, so it has to follow the screen rather than name the app alone.
 it("names the document after the screen it shows", async () => {
   const router = await renderWithRouter();
-  expect(document.title).toBe("Dashboard · tasma");
+  expect(document.title).toBe("Chats · tasma");
 
   await act(async () => {
     await router.navigate({ to: "/settings" });

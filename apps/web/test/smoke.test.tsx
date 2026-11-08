@@ -75,7 +75,7 @@ it("mounts the shell into #root without throwing", async () => {
   });
 
   expect(screen.getByRole("navigation")).toBeTruthy();
-  expect(screen.getByRole("heading", { level: 1, name: "Dashboard" })).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1, name: "Chats" })).toBeTruthy();
   expect(document.documentElement.classList.contains("dark")).toBe(true);
 });
 

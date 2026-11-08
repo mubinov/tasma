@@ -3,7 +3,7 @@ import { chmod, link, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { openTreeWorkflows, TaskStoreError } from "@tasma/engine";
-import type { ChatEvent, ChatListItem, ChatListPage, Diagnostic, FeedEvent } from "@tasma/protocol";
+import type { AgentState, AgentStateReply, ChatEvent, ChatListItem, ChatListPage, Diagnostic, FeedEvent } from "@tasma/protocol";
 import { chatListRoutes } from "../../src/chats/list-routes.js";
 import { createChatRegistry } from "../../src/chats/registry.js";
 import type { ChatRegistry } from "../../src/chats/registry.js";
@@ -614,6 +614,107 @@ describe("GET /chats", () => {
       "a task event of BETA-1",
       () => plantTask(root, "BETA-1", `Parse the board ${Date.now()}`),
     );
+  });
+});
+
+describe("GET /chats/state", () => {
+  async function stateOf(server: TestServer): Promise<{ state: AgentState; diagnostics: Diagnostic[] }> {
+    const response = await get(server, "/chats/state");
+    expect(response.status).toBe(200);
+    const { data, diagnostics } = await success<AgentStateReply>(response);
+    return { state: data.state, diagnostics };
+  }
+
+  it("answers off with no chats", async () => {
+    const { server } = await world(await projectsRoot("ALPHA"));
+
+    expect(await stateOf(server)).toEqual({ state: "off", diagnostics: [] });
+  });
+
+  /** A log read from disk holds no running turn, so only a loaded chat can be working. */
+  async function startTurn(chats: ChatRegistry, task: string, chat: number): Promise<void> {
+    await (await chats.get(task.slice(0, task.indexOf("-")), task, chat)).append(USER);
+  }
+
+  it("answers running for one working chat", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantTask(root, "ALPHA-1");
+    await plantChat(root, at("ALPHA-1", 1));
+    const { server, chats } = await world(root);
+    await startTurn(chats, "ALPHA-1", 1);
+
+    expect((await stateOf(server)).state).toBe("running");
+  });
+
+  it("answers needs-you for a chat that needs you beside a working one, across projects", async () => {
+    const root = await projectsRoot("ALPHA", "BETA");
+    await plantTask(root, "ALPHA-1");
+    await plantChat(root, at("ALPHA-1", 1));
+    await plantTask(root, "BETA-1");
+    await plantChat(root, at("BETA-1", 1), {}, [USER, TURN_END]);
+    const { server, chats } = await world(root);
+    await startTurn(chats, "ALPHA-1", 1);
+
+    expect((await stateOf(server)).state).toBe("needs-you");
+  });
+
+  it("counts a failed chat as needs-you", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantTask(root, "ALPHA-1");
+    await plantChat(root, at("ALPHA-1", 1), {}, [USER, FAILED]);
+    const { server } = await world(root);
+
+    expect((await stateOf(server)).state).toBe("needs-you");
+  });
+
+  it("does not count a chat of a task with a final status", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantTask(root, "ALPHA-1", "Planted", "Done");
+    await plantChat(root, at("ALPHA-1", 1), {}, [USER]);
+    const { server } = await world(root);
+
+    expect((await stateOf(server)).state).toBe("off");
+  });
+
+  it("does not count a chat that is not the latest chat of its task", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantTask(root, "ALPHA-1");
+    await plantChat(root, at("ALPHA-1", 1));
+    await plantChat(root, at("ALPHA-1", 2), {}, [USER, { kind: "continued-outside", where: "terminal" }]);
+    const { server, chats } = await world(root);
+    await startTurn(chats, "ALPHA-1", 1);
+
+    expect((await stateOf(server)).state).toBe("off");
+  });
+
+  it("agrees with the Active group of the list", async () => {
+    const { server } = await world(await markedTasks());
+
+    expect((await page(server)).data.active).toBe(3);
+    expect((await stateOf(server)).state).toBe("needs-you");
+  });
+
+  it("answers with the diagnostics of the listings", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantTask(root, "ALPHA-1");
+    await plantChat(root, at("ALPHA-1", 1));
+    await plant(join(chatFolder(root, "ALPHA", "1", 2), "chat.json"), "{");
+    const { server, chats } = await world(root);
+    await startTurn(chats, "ALPHA-1", 1);
+
+    const { state, diagnostics } = await stateOf(server);
+
+    expect(state).toBe("running");
+    expect(diagnostics).toMatchObject([{ code: "chat-file-unreadable" }]);
+  });
+
+  it("refuses a query", async () => {
+    const { server } = await world(await projectsRoot("ALPHA"));
+
+    const response = await get(server, "/chats/state?project=ALPHA");
+
+    expect(response.status).toBe(400);
+    expect(await failure(response)).toMatchObject({ code: "malformed-request" });
   });
 });
 

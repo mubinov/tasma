@@ -156,10 +156,10 @@ export function stubIntersectionObserver() {
  * holds back.
  *
  * The default map answers `/health`, a complete start read of the setup, an
- * empty `/projects`, an empty `/workflows` and an empty `/chats`, which is what
- * every test that only mounts the tree needs. A caller's entries extend it, and
- * override by key. The map is returned too: an entry set later answers the next
- * request.
+ * empty `/projects`, an empty `/workflows`, an empty `/chats` and the `off`
+ * agent state, which is what every test that only mounts the tree needs. A
+ * caller's entries extend it, and override by key. The map is returned too: an
+ * entry set later answers the next request.
  */
 export function stubTransport(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
   const paths: string[] = [];
@@ -170,6 +170,7 @@ export function stubTransport(replies: Record<string, TransportReply | Promise<T
     "/projects": successReply([]),
     "/workflows": successReply([]),
     "/chats": successReply({ items: [], total: 0, active: 0 }),
+    "/chats/state": successReply({ state: "off" }),
     ...replies,
   };
 

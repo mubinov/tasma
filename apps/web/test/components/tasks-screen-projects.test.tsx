@@ -171,7 +171,7 @@ describe("the address", () => {
     await renderWithRouter("/tasks?projects=SAGA,..", transport);
 
     expect(screen.getByRole("main").textContent).toContain("names nothing the application can show");
-    expect(paths).toEqual(["/setup?mode=start"]);
+    expect(paths).toEqual(["/setup?mode=start", "/chats/state"]);
   });
 
   it("shows the other project and a note with the daemon's words for a project whose read is refused", async () => {

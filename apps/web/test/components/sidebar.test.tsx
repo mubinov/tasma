@@ -1,15 +1,21 @@
-import { cleanup, screen } from "@testing-library/react";
+import type { AgentState } from "@tasma/protocol";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { daemonKeys } from "../../src/api/queries";
 import { FOOTER_NAVIGATION, PRIMARY_NAVIGATION } from "../../src/navigation";
+import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
-import { renderWithRouter } from "../helpers";
+import { openWithFeed, refusalReply, renderWithRouter, stubTransport, successReply } from "../helpers";
 
 const LABELS = [...PRIMARY_NAVIGATION, ...FOOTER_NAVIGATION].map((entry) => entry.label);
+
+const NEEDS_YOU_WORDS = "A chat needs you";
 
 beforeEach(() => {
   window.localStorage.clear();
   useUiStore.setState({ sidebarCollapsed: false });
+  useNoticeStore.setState({ announced: [] });
 });
 
 afterEach(() => {
@@ -61,23 +67,23 @@ it("marks the current destination, and only that one", async () => {
   await renderWithRouter();
 
   const current = screen.getAllByRole("link").filter((link) => link.getAttribute("aria-current") === "page");
-  expect(current.map((link) => link.textContent)).toEqual(["Dashboard"]);
+  expect(current.map((link) => link.textContent)).toEqual(["Chats"]);
 });
 
-// Every path starts with "/", so a prefix match leaves Dashboard current on
+// Every path starts with "/", so a prefix match leaves Chats current on
 // every screen. Its link is the one that matches exactly.
-it("does not leave Dashboard current on another screen", async () => {
+it("does not leave Chats current on another screen", async () => {
   await renderWithRouter("/tasks");
 
   const current = screen.getAllByRole("link").filter((link) => link.getAttribute("aria-current") === "page");
   expect(current.map((link) => link.textContent)).toEqual(["Tasks"]);
 });
 
-it("keeps Dashboard current while the address of the dashboard names a chat", async () => {
+it("keeps Chats current while the address of the page names a chat", async () => {
   await renderWithRouter("/?task=SAGA-3&chat=2");
 
   const current = screen.getAllByRole("link").filter((link) => link.getAttribute("aria-current") === "page");
-  expect(current.map((link) => link.textContent)).toEqual(["Dashboard"]);
+  expect(current.map((link) => link.textContent)).toEqual(["Chats"]);
 });
 
 it("marks Settings current on its own screen", async () => {
@@ -213,4 +219,254 @@ it("keeps the toggle out of the navigation landmark", async () => {
   const toggle = screen.getByRole("button", { name: "Collapse sidebar" });
   expect(screen.getByRole("navigation").contains(toggle)).toBe(false);
   expect(toggle.getAttribute("aria-current")).toBeNull();
+});
+
+describe("the agent state on the Chats link", () => {
+  type Router = Awaited<ReturnType<typeof renderWithRouter>>;
+  type Stub = ReturnType<typeof stubTransport>;
+
+  const PROJECTS = [{ tag: "SAGA", name: "Saga", path: "/invented/saga" }];
+
+  function stateReply(state: AgentState) {
+    return successReply({ state });
+  }
+
+  function daemon(state: AgentState): Stub {
+    return stubTransport({ "/chats/state": stateReply(state), "/projects": successReply(PROJECTS) });
+  }
+
+  async function open(path: string, stub: Stub): Promise<Router> {
+    return renderWithRouter(path, stub.transport);
+  }
+
+  /** The query tells its observers one timer after the read ends. */
+  async function readAgain(router: Router): Promise<void> {
+    await act(async () => {
+      await router.options.context.queryClient.invalidateQueries({ queryKey: daemonKeys.agentState() });
+      await new Promise((resolve) => {
+        setTimeout(resolve);
+      });
+    });
+  }
+
+  async function changeState(router: Router, stub: Stub, state: AgentState): Promise<void> {
+    stub.replies["/chats/state"] = stateReply(state);
+    await readAgain(router);
+  }
+
+  function chatsLink(): HTMLElement {
+    return screen.getByRole("link", { name: /^Chats/ });
+  }
+
+  function iconOf(link: HTMLElement): HTMLElement {
+    return link.querySelector("[aria-hidden='true']")!;
+  }
+
+  function moving(link: HTMLElement): boolean {
+    return [...iconOf(link).querySelectorAll("*")].some((layer) => [...layer.classList].some((name) => name.startsWith("animate-")));
+  }
+
+  /** Each announcement lands one animation frame after its call. */
+  async function spoken(): Promise<string[]> {
+    await act(async () => {
+      await new Promise((resolve) => {
+        requestAnimationFrame(resolve);
+      });
+    });
+    return useNoticeStore.getState().announced.map((message) => message.words);
+  }
+
+  it.each<[AgentState, string, string]>([
+    ["off", "Chats", "text-graphic"],
+    ["running", "Chats, agent works", "text-running"],
+    ["needs-you", "Chats, needs you", "text-signal"],
+  ])("names the link and colours the icon for %s", async (state, name, colour) => {
+    await open("/settings", daemon(state));
+
+    await waitFor(() => {
+      expect(chatsLink().textContent).toBe(name);
+    });
+    expect(screen.getByRole("link", { name })).toBe(chatsLink());
+    expect(iconOf(chatsLink()).classList.contains(colour)).toBe(true);
+  });
+
+  it("gives the Chats icon no fill on its current page", async () => {
+    await open("/", daemon("off"));
+
+    expect(chatsLink().getAttribute("aria-current")).toBe("page");
+    expect(chatsLink().querySelector("svg")).toBeNull();
+    expect(iconOf(chatsLink()).querySelector(".bg-current")).toBeNull();
+  });
+
+  it("reads the state again on a chat event of the feed", async () => {
+    const stub = daemon("off");
+    const { feed } = await openWithFeed("/settings", stub);
+
+    stub.replies["/chats/state"] = stateReply("running");
+    await feed.send([{ kind: "chat", tag: "SAGA", task: "SAGA-3", chat: 1, step: "dev:test", state: "working" }]);
+
+    await waitFor(() => {
+      expect(chatsLink().textContent).toBe("Chats, agent works");
+    });
+  });
+
+  it("shows off with no motion before the first answer", async () => {
+    const stub = daemon("running");
+    stub.replies["/chats/state"] = new Promise(() => {});
+    await open("/settings", stub);
+
+    expect(chatsLink().textContent).toBe("Chats");
+    expect(iconOf(chatsLink()).classList.contains("text-graphic")).toBe(true);
+    expect(moving(chatsLink())).toBe(false);
+  });
+
+  it("keeps the last known state after a failed read, and plays no motion when the read recovers", async () => {
+    const stub = daemon("running");
+    const router = await open("/settings", stub);
+    await waitFor(() => {
+      expect(moving(chatsLink())).toBe(true);
+    });
+    const [ring] = iconOf(chatsLink()).children;
+
+    stub.replies["/chats/state"] = refusalReply(500, { kind: "store", code: "chat-unreadable", message: "broken" });
+    await readAgain(router);
+    expect(chatsLink().textContent).toBe("Chats, agent works");
+    expect(iconOf(chatsLink()).children[0]).toBe(ring);
+
+    await changeState(router, stub, "running");
+    expect(chatsLink().textContent).toBe("Chats, agent works");
+    expect(iconOf(chatsLink()).children[0]).toBe(ring);
+  });
+
+  describe("the announcement", () => {
+    async function afterFirstAnswer(path: string, state: AgentState) {
+      const stub = daemon(state);
+      const router = await open(path, stub);
+      await waitFor(() => {
+        expect(chatsLink().textContent).toBe(state === "off" ? "Chats" : "Chats, agent works");
+      });
+      await spoken();
+      useNoticeStore.setState({ announced: [] });
+      return { stub, router };
+    }
+
+    it("says it one time on a change into needs-you on another page", async () => {
+      const { stub, router } = await afterFirstAnswer("/settings", "running");
+
+      await changeState(router, stub, "needs-you");
+      await changeState(router, stub, "needs-you");
+
+      expect((await spoken()).filter((words) => words === NEEDS_YOU_WORDS)).toHaveLength(1);
+    });
+
+    it.each(["/?q=parser", "/?project=SAGA"])("says it on the filtered Chats page %s", async (path) => {
+      const { stub, router } = await afterFirstAnswer(path, "off");
+
+      await changeState(router, stub, "needs-you");
+
+      expect(await spoken()).toContain(NEEDS_YOU_WORDS);
+    });
+
+    it.each(["/", "/?task=SAGA-3&chat=2", "/?q=%20%20", "/?project=NOPE", "/?project=lowercase"])(
+      "says nothing on the Chats page with no filter or search at %s, whose list says it",
+      async (path) => {
+        const { stub, router } = await afterFirstAnswer(path, "off");
+
+        await changeState(router, stub, "needs-you");
+
+        expect(await spoken()).not.toContain(NEEDS_YOU_WORDS);
+      },
+    );
+
+    it.each(["/", "/settings", "/?q=parser"])("says it for a first answer of needs-you at %s", async (path) => {
+      await open(path, daemon("needs-you"));
+
+      await waitFor(() => {
+        expect(chatsLink().textContent).toBe("Chats, needs you");
+      });
+      expect(await spoken()).toContain(NEEDS_YOU_WORDS);
+    });
+
+    it.each<AgentState>(["running", "off"])("says nothing for a change into %s", async (state) => {
+      const { stub, router } = await afterFirstAnswer("/settings", state === "off" ? "running" : "off");
+
+      await changeState(router, stub, state);
+
+      expect(await spoken()).not.toContain(NEEDS_YOU_WORDS);
+    });
+
+    it("says it again when the state comes back into needs-you", async () => {
+      const { stub, router } = await afterFirstAnswer("/settings", "running");
+
+      await changeState(router, stub, "needs-you");
+      await spoken();
+      await changeState(router, stub, "running");
+      await changeState(router, stub, "needs-you");
+
+      expect((await spoken()).filter((words) => words === NEEDS_YOU_WORDS)).toHaveLength(2);
+    });
+  });
+
+  describe("the stop of the motion", () => {
+    async function moved(state: AgentState) {
+      const stub = daemon(state);
+      const router = await open("/settings", stub);
+      await waitFor(() => {
+        expect(moving(chatsLink())).toBe(true);
+      });
+      return { router, stub };
+    }
+
+    it("stops on pointer enter, and stays stopped when the pointer leaves", async () => {
+      await moved("running");
+
+      fireEvent.pointerEnter(chatsLink());
+      expect(moving(chatsLink())).toBe(false);
+
+      fireEvent.pointerLeave(chatsLink());
+      expect(moving(chatsLink())).toBe(false);
+    });
+
+    it("stops on focus, and stays stopped when the focus leaves", async () => {
+      await moved("needs-you");
+
+      fireEvent.focus(chatsLink());
+      expect(moving(chatsLink())).toBe(false);
+
+      fireEvent.blur(chatsLink());
+      expect(moving(chatsLink())).toBe(false);
+    });
+
+    it("plays the motion of the next change of state, also back to a value that was stopped", async () => {
+      const { router, stub } = await moved("needs-you");
+      fireEvent.pointerEnter(chatsLink());
+
+      await changeState(router, stub, "running");
+      expect(moving(chatsLink())).toBe(true);
+
+      fireEvent.pointerEnter(chatsLink());
+      expect(moving(chatsLink())).toBe(false);
+
+      await changeState(router, stub, "needs-you");
+      expect(moving(chatsLink())).toBe(true);
+    });
+
+    it("stays stopped when a read gives the same state again", async () => {
+      const { router, stub } = await moved("running");
+      fireEvent.pointerEnter(chatsLink());
+
+      await changeState(router, stub, "running");
+
+      expect(moving(chatsLink())).toBe(false);
+    });
+
+    it("leaves the motion alone on another link", async () => {
+      await moved("running");
+
+      fireEvent.pointerEnter(screen.getByRole("link", { name: "Settings" }));
+      fireEvent.focus(screen.getByRole("link", { name: "Settings" }));
+
+      expect(moving(chatsLink())).toBe(true);
+    });
+  });
 });

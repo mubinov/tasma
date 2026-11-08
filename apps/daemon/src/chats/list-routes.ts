@@ -15,8 +15,8 @@ import {
   TaskStoreError,
 } from "@tasma/engine";
 import type { ChatRecord, IndexEntry, TaskStoreErrorCode } from "@tasma/engine";
-import { chatMark, currentStep, isActiveChat, routes } from "@tasma/protocol";
-import type { ChatListItem, ChatListPage, Diagnostic, Success, Workflow } from "@tasma/protocol";
+import { agentState, chatMark, currentStep, isActiveChat, routes } from "@tasma/protocol";
+import type { AgentStateReply, ChatListItem, ChatListPage, Diagnostic, Success, Workflow } from "@tasma/protocol";
 import { causeOf, DaemonError } from "../http/failure.js";
 import type { RouteEntry } from "../http/router.js";
 import type { ProjectHost } from "../projects/host.js";
@@ -43,6 +43,8 @@ type Candidate = { item: ChatListItem; text: string; stateful: boolean; frontmat
 type Found<T> = { found: T; diagnostics: Diagnostic[] };
 
 type Row = { item: ChatListItem; key: SortKey; diagnostics: Diagnostic[] };
+
+type StatedChats = { listings: Found<Candidate[]>[]; stated: Found<ChatListItem>[] };
 
 /** The reads of the workflows of one request, by workflow name. */
 type WorkflowReads = Map<string, Promise<Pick<Workflow, "steps"> | null>>;
@@ -200,19 +202,25 @@ export function chatListRoutes(options: { root?: string; host: ProjectHost; chat
     }
   }
 
+  /** The state is read only for the chats that `q` keeps. */
+  async function statedChats(project?: string, q?: string): Promise<StatedChats> {
+    const listings = await mapLimited(await host.tags(project), candidatesOf);
+    const terms = words(q);
+    const matched = listings
+      .flatMap((listing) => listing.found)
+      .filter((candidate) => terms.every((term) => candidate.text.includes(term)));
+    const reads: WorkflowReads = new Map();
+    const stated = await mapLimited(matched, (candidate) => withState(candidate, reads));
+    return { listings, stated };
+  }
+
   return [
     {
       route: routes.listAllChats,
       handler: async (request): Promise<Success<ChatListPage>> => {
         const query = readChatListQuery(request.query);
         const after = query.after === undefined ? undefined : keyOf(query.after);
-        const listings = await mapLimited(await host.tags(query.project), candidatesOf);
-        const terms = words(query.q);
-        const matched = listings
-          .flatMap((listing) => listing.found)
-          .filter((candidate) => terms.every((term) => candidate.text.includes(term)));
-        const reads: WorkflowReads = new Map();
-        const stated = await mapLimited(matched, (candidate) => withState(candidate, reads));
+        const { listings, stated } = await statedChats(query.project, query.q);
         const rows = stated
           .map(({ found, diagnostics }): Row => ({ item: found, key: sortKeyOf(found), diagnostics }))
           .sort((one, other) => compareKeys(one.key, other.key));
@@ -223,6 +231,15 @@ export function chatListRoutes(options: { root?: string; host: ProjectHost; chat
         if (start + PAGE_SIZE < rows.length) data.next = cursorOf(shown.at(-1)!.key);
         const diagnostics = [...listings, ...shown].flatMap((one) => one.diagnostics);
         return { data, diagnostics };
+      },
+    },
+    {
+      route: routes.readAgentState,
+      handler: async (request): Promise<Success<AgentStateReply>> => {
+        assertNoQuery(request.query);
+        const { listings, stated } = await statedChats();
+        const state = agentState(stated.map(({ found }) => found.status));
+        return { data: { state }, diagnostics: listings.flatMap((listing) => listing.diagnostics) };
       },
     },
     {

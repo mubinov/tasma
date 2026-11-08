@@ -40,6 +40,7 @@ export const routes = {
   setChatOption: { method: "POST", template: "/projects/{project}/tasks/{id}/chats/{chat}/options" },
   markChatSeen: { method: "POST", template: "/projects/{project}/tasks/{id}/chats/{chat}/seen" },
   listAllChats: { method: "GET", template: "/chats" },
+  readAgentState: { method: "GET", template: "/chats/state" },
   readChatItem: { method: "GET", template: "/chats/{id}/{chat}" },
   startProjectChat: { method: "POST", template: "/projects/{project}/chats" },
   readProjectChat: { method: "GET", template: "/projects/{project}/chats/{chat}" },

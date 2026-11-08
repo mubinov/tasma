@@ -92,6 +92,11 @@ export type ChatListItem = {
   status?: ChatStatus;
 };
 
+/** `needs-you` also stands for a failed chat, because a person must act on it. */
+export type AgentState = "off" | "running" | "needs-you";
+
+export type AgentStateReply = { state: AgentState };
+
 /** One chat of a project in the list of the chats of all projects. */
 export type ProjectChatListItem = {
   tag: string;
@@ -293,4 +298,15 @@ export function chatMark(
 /** Whether a row of the chat list with this mark is in the Active group. */
 export function isActiveChat(status: ChatStatus | undefined): boolean {
   return status?.state === "working" || status?.state === "needs-you" || status?.state === "failed";
+}
+
+/** The state of the agents of all projects, from the marks of the rows of the chat list. */
+export function agentState(statuses: Iterable<ChatStatus | undefined>): AgentState {
+  let state: AgentState = "off";
+  for (const status of statuses) {
+    if (!isActiveChat(status)) continue;
+    if (status?.state !== "working") return "needs-you";
+    state = "running";
+  }
+  return state;
 }

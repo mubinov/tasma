@@ -319,6 +319,6 @@ it.each([{ segment: ".." }, { segment: "." }, { segment: "%5C" }])(
     await renderWithRouter(`/projects/${segment}`, transport);
 
     expect(screen.getByRole("main").textContent).toContain("names nothing the application can show");
-    expect(paths).toEqual(["/setup?mode=start"]);
+    expect(paths).toEqual(["/setup?mode=start", "/chats/state"]);
   },
 );

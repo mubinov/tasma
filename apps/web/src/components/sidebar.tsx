@@ -1,8 +1,11 @@
 import { Link } from "@tanstack/react-router";
+import type { AgentState } from "@tasma/protocol";
 import type { ReactNode } from "react";
 import { SidebarSimpleIcon } from "../lib/icons";
+import { useAgentSignal, type AgentSignal } from "../lib/use-agent-signal";
 import { FOOTER_NAVIGATION, PRIMARY_NAVIGATION, type NavigationEntry } from "../navigation";
 import { useUiStore } from "../store/ui";
+import { ChatsStateIcon } from "./chats-state-icon";
 import { CollapsingLabel, ICON_BOX_CLASS, IDLE_TEXT_CLASS, ROW_CLASS, TIMING_CLASS } from "./sidebar-row";
 import { UpdateItem } from "./update-item";
 
@@ -15,14 +18,23 @@ const RAIL_WIDTH_CLASS = "w-[max(--spacing(16),var(--title-controls))] [html:has
 
 const FULL_WIDTH_CLASS = "sm:w-[max(--spacing(60),var(--title-controls))] sm:[html:has(&)]:scroll-pl-[max(--spacing(60),var(--title-controls))]";
 
-function SidebarLink({ entry, collapsed }: { entry: NavigationEntry; collapsed: boolean }): ReactNode {
+const AGENT_STATE_WORDS: Record<AgentState, string> = {
+  "off": "",
+  "running": ", agent works",
+  "needs-you": ", needs you",
+};
+
+type SidebarLinkProps = { entry: NavigationEntry; collapsed: boolean; signal: AgentSignal };
+
+function SidebarLink({ entry, collapsed, signal }: SidebarLinkProps): ReactNode {
   const Icon = entry.icon;
+  const stopMotion = Icon === "agent-state" ? signal.stopMotion : undefined;
 
   return (
     <li>
       <Link
         to={entry.path}
-        // Every path starts with "/", so prefix matching would leave Dashboard
+        // Every path starts with "/", so prefix matching would leave Chats
         // marked current on every screen. The search of an address does not
         // change the screen.
         activeOptions={{ exact: entry.path === "/", includeSearch: false }}
@@ -31,17 +43,23 @@ function SidebarLink({ entry, collapsed }: { entry: NavigationEntry; collapsed: 
         // same property are settled by the generated stylesheet's order.
         activeProps={{ className: "bg-surface text-text" }}
         inactiveProps={{ className: IDLE_TEXT_CLASS }}
+        onPointerEnter={stopMotion}
+        onFocus={stopMotion}
       >
         {({ isActive }) => (
           <>
             <span className={ICON_BOX_CLASS}>
               {/* The fill is the active mark that survives forced-colors mode,
-                  where both colours are dropped. */}
-              <Icon size={20} weight={isActive ? "fill" : "regular"} aria-hidden="true" />
+                  where both colours are dropped. On the agent state icon the
+                  fill of the lamp means the state, so that icon has no such mark. */}
+              {Icon === "agent-state"
+                ? <ChatsStateIcon state={signal.state} still={signal.still} />
+                : <Icon size={20} weight={isActive ? "fill" : "regular"} aria-hidden="true" />}
             </span>
             <CollapsingLabel collapsed={collapsed} className="text-sm">
               {entry.label}
             </CollapsingLabel>
+            {Icon === "agent-state" && <span className="sr-only">{AGENT_STATE_WORDS[signal.state]}</span>}
           </>
         )}
       </Link>
@@ -52,6 +70,7 @@ function SidebarLink({ entry, collapsed }: { entry: NavigationEntry; collapsed: 
 export function Sidebar(): ReactNode {
   const collapsed = useUiStore((state) => state.sidebarCollapsed);
   const setCollapsed = useUiStore((state) => state.setSidebarCollapsed);
+  const signal = useAgentSignal();
 
   return (
     // The header holds the width in the row; its content is fixed, since a
@@ -84,13 +103,13 @@ export function Sidebar(): ReactNode {
           <nav className="flex flex-1 flex-col">
             <ul className={LIST_CLASS}>
               {PRIMARY_NAVIGATION.map((entry) => (
-                <SidebarLink key={entry.path} entry={entry} collapsed={collapsed} />
+                <SidebarLink key={entry.path} entry={entry} collapsed={collapsed} signal={signal} />
               ))}
             </ul>
             <ul className={`${LIST_CLASS} mt-auto border-t border-line`}>
               <UpdateItem collapsed={collapsed} />
               {FOOTER_NAVIGATION.map((entry) => (
-                <SidebarLink key={entry.path} entry={entry} collapsed={collapsed} />
+                <SidebarLink key={entry.path} entry={entry} collapsed={collapsed} signal={signal} />
               ))}
             </ul>
           </nav>

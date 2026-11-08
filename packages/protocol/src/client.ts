@@ -1,4 +1,5 @@
 import type {
+  AgentStateReply,
   Chat,
   ChatCancelInput,
   ChatEventsReply,
@@ -197,6 +198,8 @@ export type Client = {
   ): Promise<Success<ChatOf<Id>>>;
   /** One page of the chats of all projects, the active chats first and each group newest first. */
   listAllChats(query?: ChatListQuery): Promise<Success<ChatListPage>>;
+  /** The one state of the agents of all projects, from the Active group of `listAllChats`. */
+  readAgentState(): Promise<Success<AgentStateReply>>;
   /** One chat as `listAllChats` gives it, by the id of its task. */
   readChatItem(id: string, chat: number): Promise<Success<ChatListItem>>;
   /** Starts a new chat of the project, with `text` as its first message. Each call makes a new chat. */
@@ -398,6 +401,7 @@ export function createClient(transport: Transport): Client {
     markChatSeen: (tag, id, chat, input) =>
       callChat<ChatOf<typeof id>>(routes.markChatSeen, routes.markProjectChatSeen, tag, id, { chat }, { body: input }),
     listAllChats: (query) => call<ChatListPage>(routes.listAllChats, {}, { query }),
+    readAgentState: () => call<AgentStateReply>(routes.readAgentState, {}),
     readChatItem: (id, chat) => call<ChatListItem>(routes.readChatItem, { id, chat }),
     startProjectChat: (tag, input) =>
       call<ProjectChatStart>(routes.startProjectChat, { project: tag }, { body: input }),

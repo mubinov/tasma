@@ -171,7 +171,7 @@ describe("the address", () => {
     await renderWithRouter("/tasks?projects=..", transport);
 
     expect(screen.getByRole("main").textContent).toContain("names nothing the application can show");
-    expect(paths).toEqual(["/setup?mode=start"]);
+    expect(paths).toEqual(["/setup?mode=start", "/chats/state"]);
   });
 
   it("hands a tag no project carries to the failure panel", async () => {
@@ -1269,7 +1269,7 @@ describe("the board a card was opened from", () => {
     expect(useUiStore.getState().boardRestorePending).toBe(false);
   });
 
-  it("comes back filtered, scrolled and focused through the Dashboard and the sidebar Tasks link", async () => {
+  it("comes back filtered, scrolled and focused through Chats and the sidebar Tasks link", async () => {
     const user = userEvent.setup();
     const scrollTo = watchScroll();
     const { transport } = boardDaemon();
@@ -1277,7 +1277,7 @@ describe("the board a card was opened from", () => {
     const sidebar = within(screen.getByRole("navigation"));
 
     await user.click(cardLink("Task 2"));
-    await user.click(sidebar.getByRole("link", { name: "Dashboard" }));
+    await user.click(sidebar.getByRole("link", { name: "Chats" }));
     expect(router.state.location.pathname).toBe("/");
     await user.click(sidebar.getByRole("link", { name: "Tasks" }));
 

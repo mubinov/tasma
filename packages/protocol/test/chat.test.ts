@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { agentActive, CHAT_START, chatBusy, chatMark, currentStep, foldChat, isActiveChat, turnRuns } from "@tasma/protocol";
-import type { Chat, ChatEvent, ChatFold, ChatStatus, Workflow } from "@tasma/protocol";
+import { agentActive, agentState, CHAT_START, chatBusy, chatMark, currentStep, foldChat, isActiveChat, turnRuns } from "@tasma/protocol";
+import type { AgentState, Chat, ChatEvent, ChatFold, ChatStatus, Workflow } from "@tasma/protocol";
 
 const USER: ChatEvent = { kind: "user", text: "Start", client: "app" };
 
@@ -320,6 +320,32 @@ describe("isActiveChat", () => {
     ["no mark", undefined, false],
   ])("counts a row with the mark %s as active: %s", (_case, status, active) => {
     expect(isActiveChat(status)).toBe(active);
+  });
+});
+
+describe("agentState", () => {
+  const WORKING: ChatStatus = { state: "working" };
+  const NEEDS_YOU: ChatStatus = { state: "needs-you" };
+  const FAILED: ChatStatus = { state: "failed" };
+  const OUTSIDE: ChatStatus = { state: "continued-outside", where: "terminal" };
+
+  it.each<[string, (ChatStatus | undefined)[], AgentState]>([
+    ["no rows", [], "off"],
+    ["a row with no mark", [undefined], "off"],
+    ["a chat continued outside", [OUTSIDE], "off"],
+    ["a working row", [WORKING], "running"],
+    ["a working row beside rows out of the Active group", [undefined, OUTSIDE, WORKING], "running"],
+    ["a needs-you row", [NEEDS_YOU], "needs-you"],
+    ["a failed row", [FAILED], "needs-you"],
+    ["a working row before a needs-you row", [WORKING, NEEDS_YOU], "needs-you"],
+    ["a needs-you row before a working row", [NEEDS_YOU, WORKING], "needs-you"],
+    ["a working row before a failed row", [WORKING, FAILED], "needs-you"],
+  ])("gives %s the state of the Active group", (_case, statuses, state) => {
+    expect(agentState(statuses)).toBe(state);
+  });
+
+  it("reads any iterable", () => {
+    expect(agentState(new Set([WORKING]))).toBe("running");
   });
 });
 

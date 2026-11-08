@@ -12,7 +12,6 @@ import { DotsThreeVerticalIcon } from "@phosphor-icons/react/DotsThreeVertical";
 import { FlowArrowIcon } from "@phosphor-icons/react/FlowArrow";
 import { FoldersIcon } from "@phosphor-icons/react/Folders";
 import { GearIcon } from "@phosphor-icons/react/Gear";
-import { HouseIcon } from "@phosphor-icons/react/House";
 import { InfoIcon } from "@phosphor-icons/react/Info";
 import { ListChecksIcon } from "@phosphor-icons/react/ListChecks";
 import { MagnifyingGlassIcon } from "@phosphor-icons/react/MagnifyingGlass";
@@ -43,7 +42,6 @@ export {
   FlowArrowIcon,
   FoldersIcon,
   GearIcon,
-  HouseIcon,
   InfoIcon,
   ListChecksIcon,
   MagnifyingGlassIcon,
@@ -60,4 +58,4 @@ export {
   XIcon,
 };
 
-export type IconComponent = typeof HouseIcon;
+export type IconComponent = typeof GearIcon;

@@ -1,9 +1,10 @@
-import { FlowArrowIcon, FoldersIcon, GearIcon, HouseIcon, ListChecksIcon, type IconComponent } from "./lib/icons";
+import { FlowArrowIcon, FoldersIcon, GearIcon, ListChecksIcon, type IconComponent } from "./lib/icons";
 
 export type NavigationEntry = {
   path: string;
   label: string;
-  icon: IconComponent;
+  /** `agent-state` is the icon that shows the state of the agents, which the sidebar draws. */
+  icon: IconComponent | "agent-state";
 };
 
 // `as const` keeps each path a literal type, so a typo in a route or a link
@@ -11,8 +12,8 @@ export type NavigationEntry = {
 export const PRIMARY_NAVIGATION = [
   {
     path: "/",
-    label: "Dashboard",
-    icon: HouseIcon,
+    label: "Chats",
+    icon: "agent-state",
   },
   {
     path: "/tasks",

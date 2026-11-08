@@ -1039,7 +1039,7 @@ describe("a failed load", () => {
     await renderWithRouter("/tasks/SAGA/%5C", transport);
 
     expect(screen.getByRole("main").textContent).toContain("names nothing the application can show");
-    expect(paths).toEqual(["/setup?mode=start"]);
+    expect(paths).toEqual(["/setup?mode=start", "/chats/state"]);
   });
 
   it.each<{ case: string; path: string; replies: Record<string, TransportReply>; words: string[] }>([

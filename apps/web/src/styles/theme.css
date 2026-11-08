@@ -149,6 +149,70 @@
   /* The start loader: a light that runs along the six marks. */
   --animate-step-mark: step-mark 1500ms ease-in-out infinite;
   --animate-step-light: step-light 1500ms ease-in-out infinite;
+  /* The Chats icon. In a list the later animation wins, so a settle after its ripple shows the ring again. */
+  --animate-chats-ripple-outer: ripple 2.5s ease-out 12 forwards, settle-outer 0.8s ease-out 30s forwards;
+  --animate-chats-ripple-inner: ripple 2.5s ease-out 1.25s 11 both, settle-inner 0.8s ease-out 30s forwards;
+  --animate-chats-breathe: breathe 1.5s ease-in-out 20;
+  --animate-chats-glow: glow 1.5s ease-in-out 20;
+
+  @keyframes ripple {
+    from {
+      opacity: 0.8;
+      transform: scale(0.45);
+    }
+
+    to {
+      opacity: 0;
+      transform: scale(1.05);
+    }
+  }
+
+  /* The `to` is written out: an implicit one takes the opacity 0 that the fill of `ripple` leaves. */
+  @keyframes settle-outer {
+    from {
+      opacity: 0;
+      transform: scale(1);
+    }
+
+    to {
+      opacity: var(--ring-outer);
+      transform: scale(1);
+    }
+  }
+
+  @keyframes settle-inner {
+    from {
+      opacity: 0;
+      transform: scale(1);
+    }
+
+    to {
+      opacity: var(--ring-inner);
+      transform: scale(1);
+    }
+  }
+
+  @keyframes breathe {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+
+    50% {
+      transform: scale(1.25);
+    }
+  }
+
+  @keyframes glow {
+    0%,
+    100% {
+      opacity: var(--ring-inner);
+    }
+
+    50% {
+      opacity: 0.8;
+    }
+  }
 
   @keyframes step-done {
     from {

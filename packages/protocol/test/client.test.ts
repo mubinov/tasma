@@ -343,6 +343,12 @@ const invocations: Invocation[] = [
     path: "/chats/SAGA-3/2",
   },
   {
+    name: "readAgentState",
+    send: (client) => client.readAgentState(),
+    method: "GET",
+    path: "/chats/state",
+  },
+  {
     name: "startProjectChat",
     send: (client) => client.startProjectChat("SAGA", { text: "Plan the parser", client: "app" }),
     method: "POST",

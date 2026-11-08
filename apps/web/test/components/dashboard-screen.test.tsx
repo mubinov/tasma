@@ -49,6 +49,16 @@ type Router = Awaited<ReturnType<typeof renderDashboard>>;
 
 const OPEN_PATH = "/?task=SAGA-3&chat=2";
 
+/** The reads of the list of the load, without the read of the agent state of the sidebar. */
+function listReads(paths: readonly string[]): string[] {
+  return pathsBeforeFeed(paths).filter((path) => path === "/chats" || path.startsWith("/chats?"));
+}
+
+/** The link of the open chat back to the list, which has the name of the sidebar link. */
+function backLink(): HTMLElement {
+  return within(screen.getByRole("main")).getByRole("link", { name: "Chats" });
+}
+
 const LIST_EVENT: FeedEvent = { kind: "chat", tag: "ACME", task: "ACME-7", chat: 1, step: "dev:test", state: "needs-you" };
 
 beforeEach(() => {
@@ -141,13 +151,13 @@ function scrollableList() {
 }
 
 describe("the screen", () => {
-  it("opens with a hidden h1 and names the document Dashboard", async () => {
+  it("opens with a hidden h1 and names the document Chats", async () => {
     await renderDashboard(stubDashboard());
 
     const heading = screen.getByRole("heading", { level: 1 });
-    expect(heading.textContent).toBe("Dashboard");
+    expect(heading.textContent).toBe("Chats");
     expect(heading.classList.contains("sr-only")).toBe(true);
-    expect(document.title).toBe("Dashboard · tasma");
+    expect(document.title).toBe("Chats · tasma");
     expect(screen.getByRole("heading", { level: 2, name: "Chats" }).classList.contains("sr-only")).toBe(true);
   });
 
@@ -619,7 +629,7 @@ describe("the header", () => {
     expect(line.textContent).toBe("Claude · dev:review · Chat 2Needs you");
     expect(screen.getByRole("link", { name: "Open task" }).getAttribute("href")).toBe("/tasks/SAGA/SAGA-3");
     expect(screen.queryByRole("button", { name: "Close the chat" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Chats" })).toBeNull();
+    expect(within(screen.getByRole("main")).queryByRole("link", { name: "Chats" })).toBeNull();
   });
 
   it("shows no state for an item that has none", async () => {
@@ -1134,7 +1144,7 @@ describe("the narrow window", () => {
       expect(screen.queryByRole("list", { name: "Chats" })).toBeNull();
     });
     expect(document.activeElement).toBe(chatHeading());
-    expect(screen.getByRole("link", { name: "Chats" })).toBeTruthy();
+    expect(backLink()).toBeTruthy();
   });
 
   it("shows the list again from Chats, in place of the address entry, with the focus on the item of the chat", async () => {
@@ -1143,7 +1153,7 @@ describe("the narrow window", () => {
     const router = await renderDashboard(stubDashboard(), OPEN_PATH);
     const entries = router.history.length;
 
-    await user.click(screen.getByRole("link", { name: "Chats" }));
+    await user.click(backLink());
 
     await waitFor(() => {
       expect(document.activeElement).toBe(itemLink("SAGA-3", 2));
@@ -1158,7 +1168,7 @@ describe("the narrow window", () => {
     const stub = stubDashboard({ "/chats/SAGA-9/4": successReply(listItem("SAGA-9", 4, 3000)) });
     await renderDashboard(stub, "/?task=SAGA-9&chat=4");
 
-    await user.click(screen.getByRole("link", { name: "Chats" }));
+    await user.click(backLink());
 
     await waitFor(() => {
       expect(document.activeElement).toBe(itemLink("ACME-7", 1));
@@ -1171,7 +1181,7 @@ describe("the narrow window", () => {
     const stub = stubDashboard({ "/chats": pageReply([]), "/chats/SAGA-3/2": successReply(OPEN) });
     await renderDashboard(stub, OPEN_PATH);
 
-    await user.click(screen.getByRole("link", { name: "Chats" }));
+    await user.click(backLink());
 
     await waitFor(() => {
       expect(document.activeElement).toBe(searchField());
@@ -1183,7 +1193,7 @@ describe("the narrow window", () => {
     const user = userEvent.setup();
     const stub = stubDashboard({ "/chats": pageReply([]), "/chats/SAGA-3/2": successReply(OPEN) });
     await renderDashboard(stub, OPEN_PATH);
-    await user.click(screen.getByRole("link", { name: "Chats" }));
+    await user.click(backLink());
     await waitFor(() => {
       expect(document.activeElement).toBe(searchField());
     });
@@ -1202,7 +1212,7 @@ describe("the narrow window", () => {
     stubWindowWidth("narrow");
     const user = userEvent.setup();
     const router = await renderDashboard(stubDashboard(), OPEN_PATH);
-    await user.click(screen.getByRole("link", { name: "Chats" }));
+    await user.click(backLink());
     await waitFor(() => {
       expect(document.activeElement).toBe(itemLink("SAGA-3", 2));
     });
@@ -1221,7 +1231,7 @@ describe("the narrow window", () => {
     const router = await renderDashboard(stubDashboard(), OPEN_PATH);
 
     await user.keyboard("{Meta>}");
-    await user.click(screen.getByRole("link", { name: "Chats" }));
+    await user.click(backLink());
     await user.keyboard("{/Meta}");
     expect(router.state.location.search).toEqual({ task: "SAGA-3", chat: "2" });
     (document.activeElement as HTMLElement).blur();
@@ -1236,14 +1246,14 @@ describe("the narrow window", () => {
     stubWindowWidth("narrow");
     await renderDashboard(stubDashboard(), OPEN_PATH);
 
-    expect(screen.getByRole("link", { name: "Chats" }).hasAttribute("aria-current")).toBe(false);
+    expect(backLink().hasAttribute("aria-current")).toBe(false);
   });
 
   it("takes no focus in a later mount of the list that a resize causes", async () => {
     const width = stubWindowWidth("narrow");
     const user = userEvent.setup();
     await renderDashboard(stubDashboard(), OPEN_PATH);
-    await user.click(screen.getByRole("link", { name: "Chats" }));
+    await user.click(backLink());
     await waitFor(() => {
       expect(document.activeElement).toBe(itemLink("SAGA-3", 2));
     });
@@ -1262,11 +1272,11 @@ describe("the narrow window", () => {
   it("moves the focus from Chats to the heading when the window becomes wide", async () => {
     const width = stubWindowWidth("narrow");
     await renderDashboard(stubDashboard(), OPEN_PATH);
-    screen.getByRole("link", { name: "Chats" }).focus();
+    backLink().focus();
 
     width.set("wide");
 
-    expect(screen.queryByRole("link", { name: "Chats" })).toBeNull();
+    expect(within(screen.getByRole("main")).queryByRole("link", { name: "Chats" })).toBeNull();
     expect(document.activeElement).toBe(chatHeading());
   });
 
@@ -1300,7 +1310,7 @@ describe("the search and the project in the address", () => {
     expect(searchField().value).toBe("parser");
     expect(projectFilter().textContent).toContain("Saga");
     expect(screen.getByRole("button", { name: "Project: Saga SAGA" })).toBe(projectFilter());
-    expect(pathsBeforeFeed(stub.paths).filter((path) => path.startsWith("/chats"))).toEqual(["/chats?project=SAGA&q=parser"]);
+    expect(listReads(stub.paths)).toEqual(["/chats?project=SAGA&q=parser"]);
     expect(itemLinks().map((link) => link.getAttribute("data-chat-key"))).toEqual(["SAGA-3/2", "SAGA-3/1"]);
   });
 
@@ -1312,7 +1322,7 @@ describe("the search and the project in the address", () => {
     const router = await renderDashboard(stub, path);
 
     expect(screen.getByRole("button", { name: "Project: All projects" })).toBe(projectFilter());
-    expect(pathsBeforeFeed(stub.paths).filter((sent) => sent.startsWith("/chats"))).toEqual(["/chats"]);
+    expect(listReads(stub.paths)).toEqual(["/chats"]);
     expect(itemLinks()).toHaveLength(3);
     expect(router.state.location.search).toEqual({ project });
   });
@@ -1322,7 +1332,7 @@ describe("the search and the project in the address", () => {
     await renderDashboard(stub, "/?q=%20%20");
 
     expect(searchField().value).toBe("  ");
-    expect(pathsBeforeFeed(stub.paths).filter((path) => path.startsWith("/chats"))).toEqual(["/chats"]);
+    expect(listReads(stub.paths)).toEqual(["/chats"]);
   });
 
   it("keeps the search and the project when an item opens its chat", async () => {
@@ -1341,7 +1351,7 @@ describe("the search and the project in the address", () => {
     const user = userEvent.setup();
     const router = await renderDashboard(stubDashboard(), "/?project=SAGA&q=parser&task=SAGA-3&chat=2");
 
-    await user.click(screen.getByRole("link", { name: "Chats" }));
+    await user.click(backLink());
 
     await waitFor(() => {
       expect(router.state.location.search).toEqual({ project: "SAGA", q: "parser" });
