@@ -503,6 +503,9 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
                       // tasma-edit: a message during a run goes into that run
                       placeholder={isRunning ? "Queue another message" : "Send a message..."}
                       // tasma-edit end
+                      // tasma-edit: Escape in the message field never stops a turn
+                      cancelOnEscape={false}
+                      // tasma-edit end
                       className="aui-composer-input caret-primary placeholder:text-muted-foreground/60 max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none"
                       rows={1}
                       autoFocus={autoFocus}

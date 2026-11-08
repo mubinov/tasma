@@ -1336,6 +1336,20 @@ it.each<[string, readonly ChatEntry[]]>([
   });
 });
 
+it("posts no cancel and keeps the text when Escape is pressed in the composer during a turn", async () => {
+  const user = userEvent.setup();
+  const log = writableLogOf(chatEntries([userMessage("Build.")]), CANCEL_PATH);
+  await renderPanel(log);
+  await screen.findByRole("button", { name: "Stop generating" });
+
+  await user.type(composer(), "Split the lexer.{Escape}");
+  await act(async () => {});
+
+  expect(posts(log)).toEqual([]);
+  expect(composer().value).toBe("Split the lexer.");
+  expect(composerButtons()).toEqual(["Stop generating", "Send message"]);
+});
+
 function ownTurnStarts(log: ChatLogStub, after: number): void {
   log.answer(after, { cursor: after + 1, entries: chatEntries([background({ ownTurn: true })], after + 1) });
 }
