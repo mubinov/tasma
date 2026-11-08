@@ -14,6 +14,7 @@ import {
   CHAT_CLIENT,
   chatFailureKey,
   chatRefusalCode,
+  chatSeenOptions,
   chatStartKey,
   chatWriteKey,
   chatWriteOptions,
@@ -23,10 +24,14 @@ import {
   type ChatWrite,
   type StartChat,
 } from "../../../src/api/mutations";
+import { daemonKeys, type ChatPlace } from "../../../src/api/queries";
 import { useNoticeStore } from "../../../src/store/notices";
+import { projectChatPath, projectChatRecord } from "../../chat-daemon";
 import { heldBack, refusalReply, stubTransport, successReply } from "../../helpers";
 
 const PLACE = { tag: "SAGA", task: "SAGA-3", chat: 2 };
+
+const PROJECT_PLACE: ChatPlace = { tag: "SAGA", task: undefined, chat: 2 };
 
 const CHAT_PATH = "/projects/SAGA/tasks/SAGA-3/chats/2";
 
@@ -65,11 +70,11 @@ const NOT_SAVED: Diagnostic[] = [
   { code: "option-not-saved", message: "the value \"auto\" of \"mode\" is not saved in this chat: disk full" },
 ];
 
-function setup(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
+function setup(replies: Record<string, TransportReply | Promise<TransportReply>> = {}, place: ChatPlace = PLACE) {
   const stub = stubTransport(replies);
   const queryClient = createAppQueryClient();
   const client = createClient(stub.transport);
-  const observer = new MutationObserver(queryClient, chatWriteOptions(queryClient, client, PLACE));
+  const observer = new MutationObserver(queryClient, chatWriteOptions(queryClient, client, place));
 
   return { ...stub, queryClient, client, observer };
 }
@@ -122,6 +127,36 @@ describe("chatWriteOptions", () => {
 
     expect(options.mutationKey).toEqual(chatWriteKey(PLACE));
     expect(chatWriteKey(PLACE)).toEqual(["daemon", "projects", "SAGA", "tasks", "SAGA-3", "chats", 2, "write"]);
+  });
+
+  it.each<[string, ChatWrite, string]>([
+    ["a message", MESSAGE, "messages"],
+    ["a cancel", CANCEL, "cancel"],
+    ["a permission answer", PERMISSION, "permissions/r1"],
+    ["a question answer", QUESTION, "questions/r2"],
+    ["an option", OPTION, "options"],
+  ])("posts %s to a chat of a project on its project route, with the body of the task route", async (_name, write, route) => {
+    const task = setup({ [`POST ${CHAT_PATH}/${route}`]: RECORD });
+    const project = setup({ [`POST ${projectChatPath()}/${route}`]: successReply(projectChatRecord()) }, PROJECT_PLACE);
+
+    await task.observer.mutate(write);
+    await project.observer.mutate(write);
+
+    const sent = writes(task.requests);
+    expect(sent).toHaveLength(1);
+    expect(writes(project.requests)).toEqual([{ ...sent[0], path: `${projectChatPath()}/${route}` }]);
+  });
+
+  it("keys the writes of a chat of a project under the record of the chat", () => {
+    const options = chatWriteOptions(createAppQueryClient(), createClient(stubTransport().transport), PROJECT_PLACE);
+
+    expect(options.mutationKey).toEqual(chatWriteKey(PROJECT_PLACE));
+    expect(chatWriteKey(PROJECT_PLACE)).toEqual(["daemon", "projects", "SAGA", "chats", 2, "write"]);
+  });
+
+  it("keys the failure notices of a chat of a project apart from those of the task chat with the same number", () => {
+    expect(chatFailureKey(PLACE, "message")).toBe("chat-write-failure:SAGA/SAGA-3/2:message");
+    expect(chatFailureKey(PROJECT_PLACE, "message")).toBe("chat-write-failure:SAGA/2:message");
   });
 
   it("opens a failure notice for a refusal, with its title, its line and the words of the daemon", async () => {
@@ -286,6 +321,14 @@ describe("chatWriteOptions", () => {
 
     expect(writes(requests)).toHaveLength(1);
     expect(notices()).toEqual([expect.objectContaining({ line: "line of unanswered" })]);
+  });
+});
+
+describe("chatSeenOptions", () => {
+  it("keys the seen write of a chat of a project under the record of the chat", () => {
+    const options = chatSeenOptions(createClient(stubTransport().transport), PROJECT_PLACE);
+
+    expect(options.mutationKey).toEqual([...daemonKeys.projectChat("SAGA", 2), "seen"]);
   });
 });
 

@@ -78,8 +78,8 @@ const SKILL_INSTALL_FAILURE_LINES: Record<FailureKind, string> = {
   unsent: "Tasma could not send the request to the daemon.",
 };
 
-function chatName({ task, chat }: ChatPlace): string {
-  return `chat ${String(chat)} of ${task}`;
+function chatName({ tag, task, chat }: ChatPlace): string {
+  return `chat ${String(chat)} of ${task ?? tag}`;
 }
 
 /** An option write names its option, so its texts come from `chatOptionFailure`. */

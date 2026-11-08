@@ -18,8 +18,8 @@ import { APP_PATH_PREFIX } from "./paths";
 /** The chats the dashboard lists. A field that is absent is left out, so the filter of all chats is `{}`. */
 export type ChatFilter = Omit<ChatListQuery, "after">;
 
-/** One chat: the tag of its project, the id of its task and its number. */
-export type ChatPlace = { tag: string; task: string; chat: number };
+/** One chat: the tag of its project, the id of its task or `undefined` for a chat of a project, and its number. */
+export type ChatPlace = { tag: string; task: string | undefined; chat: number };
 
 /**
  * Two properties a new key has to keep: every key descends from `all`, so one
@@ -40,6 +40,7 @@ export const daemonKeys = {
   // Under the task, but an exact invalidation of the task does not reach them.
   taskChats: (tag: string, id: string) => [...daemonKeys.task(tag, id), "chats"] as const,
   chat: (tag: string, id: string, chat: number) => [...daemonKeys.taskChats(tag, id), chat] as const,
+  projectChat: (tag: string, chat: number) => [...daemonKeys.project(tag), "chats", chat] as const,
   // "search" is no task id, which is always `<TAG>-<number>`.
   taskSearches: (tag: string) => [...daemonKeys.tasks(tag), "search"] as const,
   taskSearch: (tag: string, q: string) => [...daemonKeys.taskSearches(tag), q] as const,
@@ -52,6 +53,16 @@ export const daemonKeys = {
   chatItem: (id: string, chat: number) => [...daemonKeys.chats(), id, chat] as const,
   setup: () => [...daemonKeys.all, "setup"] as const,
 };
+
+/** The key of the record read of a chat: under its task, or under its project when it has no task. */
+export function chatRecordKey({ tag, task, chat }: ChatPlace) {
+  return task === undefined ? daemonKeys.projectChat(tag, chat) : daemonKeys.chat(tag, task, chat);
+}
+
+/** One text for each chat, for the keys of a map: `<tag>/<task>/<chat>`, or `<tag>/<chat>` for a chat of a project. */
+export function chatPlaceText({ tag, task, chat }: ChatPlace): string {
+  return task === undefined ? `${tag}/${String(chat)}` : `${tag}/${task}/${String(chat)}`;
+}
 
 /**
  * The query function returns the whole `Success<T>`: unwrapping to `.data` here
@@ -106,9 +117,10 @@ export function taskChatsQuery(client: Client, tag: string, id: string) {
   });
 }
 
-export function chatQuery(client: Client, tag: string, id: string, chat: number) {
+/** `id` is the id of the task, or `undefined` for a chat of the project. */
+export function chatQuery<Id extends string | undefined>(client: Client, tag: string, id: Id, chat: number) {
   return queryOptions({
-    queryKey: daemonKeys.chat(tag, id, chat),
+    queryKey: chatRecordKey({ tag, task: id, chat }),
     queryFn: () => client.readChat(tag, id, chat),
   });
 }

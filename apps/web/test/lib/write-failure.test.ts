@@ -181,6 +181,25 @@ describe("chatOptionFailure", () => {
   });
 });
 
+describe("the texts of a chat of a project", () => {
+  const PLACE = { tag: "SAGA", task: undefined, chat: 2 };
+
+  it.each([
+    ["message", "The message to chat 2 of SAGA was not sent."],
+    ["cancel", "The turn of chat 2 of SAGA did not stop."],
+    ["permission", "The answer to chat 2 of SAGA was not sent."],
+    ["question", "The answer to chat 2 of SAGA was not sent."],
+  ] as const)("name the chat with its project in the failure of a %s write", (kind, title) => {
+    expect(chatFailure(PLACE, kind).title).toBe(title);
+  });
+
+  it("name the chat with its project in the option texts and the closed notice", () => {
+    expect(chatOptionFailure(PLACE, "Mode").title).toBe("Mode of chat 2 of SAGA did not change.");
+    expect(chatOptionSavedNotice(PLACE, "Mode").title).toBe("Mode of chat 2 of SAGA changed, but it is not saved.");
+    expect(chatClosedNotice(PLACE).title).toBe("Your answer to chat 2 of SAGA was not used.");
+  });
+});
+
 describe("chatStartFailure", () => {
   const LINES: Record<FailureKind, string> = {
     refused: "The daemon refused to start the chat. Its own words are below.",

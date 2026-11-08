@@ -11,7 +11,7 @@ import {
 import { Thread, type ThreadComponents } from "@kit/components/assistant-ui/elements/thread.aui";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { chatBusy, turnRuns, type Chat, type ChatStatus, type Client } from "@tasma/protocol";
+import { chatBusy, turnRuns, type Chat, type ChatStatus, type Client, type ProjectChat } from "@tasma/protocol";
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type DOMAttributes, type ReactNode, type RefObject } from "react";
 import { useChatLog } from "../api/chat-log";
 import { chatQuery, type ChatPlace } from "../api/queries";
@@ -50,6 +50,8 @@ type RoundProps = ChatPlace & {
   onLog: (log: LogState) => void;
   onReset: () => void;
 };
+
+type TranscriptProps = RoundProps & { client: Client; record: Chat | ProjectChat };
 
 /** What the transcript knows of `SeenWatch`. The tracker reads the viewport. */
 type SeenInput = Omit<SeenWatch, "viewport">;
@@ -392,7 +394,7 @@ function ChatRound(props: RoundProps): ReactNode {
 }
 
 function ChatTranscript(
-  { client, tag, task, chat, record, headingRef, onLog, onReset }: RoundProps & { client: Client; record: Chat },
+  { client, tag, task, chat, record, headingRef, onLog, onReset }: TranscriptProps,
 ): ReactNode {
   const { view, ready: caughtUp, failures, resets } = useChatLog(client, tag, task, chat, record.seq);
   const ready = caughtUp && resets === 0;

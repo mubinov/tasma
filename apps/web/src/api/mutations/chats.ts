@@ -6,13 +6,14 @@ import {
   type ChatStart,
   type Client,
   type Diagnostic,
+  type ProjectChat,
   type QuestionValue,
   type Success,
 } from "@tasma/protocol";
 import { CHAT_HEADING_SELECTOR, focusChatHeading } from "../../lib/focus-in-view";
 import { latestOnTask, STEP_ACTION_SELECTOR } from "../../lib/step-action";
 import { useNoticeStore } from "../../store/notices";
-import { daemonKeys, type ChatPlace } from "../queries";
+import { chatPlaceText, chatRecordKey, daemonKeys, type ChatPlace } from "../queries";
 import { openWriteNotice, refusalWords, usePendingVariables, WriteError, type WriteFailure } from "./notices";
 
 /** The texts of the warning notice after `already-answered`. */
@@ -50,13 +51,13 @@ export const CHAT_CLIENT = `app-${[...crypto.getRandomValues(new Uint8Array(4))]
   .map((byte) => byte.toString(16).padStart(2, "0"))
   .join("")}`;
 
-export function chatWriteKey({ tag, task, chat }: ChatPlace) {
-  return [...daemonKeys.chat(tag, task, chat), "write"] as const;
+export function chatWriteKey(place: ChatPlace) {
+  return [...chatRecordKey(place), "write"] as const;
 }
 
 /** One notice for each chat and kind of write, so a new failure replaces the last one. */
-export function chatFailureKey({ tag, task, chat }: ChatPlace, kind: ChatWrite["kind"]): string {
-  return `${CHAT_FAILURE_KEY_PREFIX}${tag}/${task}/${String(chat)}:${kind}`;
+export function chatFailureKey(place: ChatPlace, kind: ChatWrite["kind"]): string {
+  return `${CHAT_FAILURE_KEY_PREFIX}${chatPlaceText(place)}:${kind}`;
 }
 
 /** The code of the refusal that a write failed with, also inside a `WriteError`. */
@@ -69,7 +70,7 @@ async function send(
   client: Client,
   { tag, task, chat }: ChatPlace,
   write: ChatWrite,
-): Promise<Success<Chat> | undefined> {
+): Promise<Success<Chat | ProjectChat> | undefined> {
   const body = { client: CHAT_CLIENT };
 
   switch (write.kind) {
@@ -111,7 +112,7 @@ function restartPending(queryClient: QueryClient, { tag, task, chat }: ChatPlace
  * puts the commands of one chat in order.
  */
 export function chatWriteOptions(queryClient: QueryClient, client: Client, place: ChatPlace) {
-  return mutationOptions<Success<Chat> | undefined, WriteError, ChatWrite>({
+  return mutationOptions<Success<Chat | ProjectChat> | undefined, WriteError, ChatWrite>({
     mutationKey: chatWriteKey(place),
     mutationFn: async (write) => {
       try {
@@ -150,13 +151,16 @@ export function chatWriteOptions(queryClient: QueryClient, client: Client, place
 }
 
 /**
- * A move of `seen` of one chat to a `seq`. The `chat` feed event of the move
- * makes the lists read again, so the write changes no cache and shows no
- * notice. Its key is not under `chatWriteKey`, so no pending write shows it.
+ * A move of `seen` of one chat to a `seq`. The `chat` or `project-chat` feed
+ * event of the move makes the lists read again, so the write changes no cache
+ * and shows no notice. Its key is not under `chatWriteKey`, so no pending write
+ * shows it.
  */
-export function chatSeenOptions(client: Client, { tag, task, chat }: ChatPlace) {
-  return mutationOptions<Success<Chat>, Error, number>({
-    mutationKey: [...daemonKeys.chat(tag, task, chat), "seen"],
+export function chatSeenOptions(client: Client, place: ChatPlace) {
+  const { tag, task, chat } = place;
+
+  return mutationOptions<Success<Chat | ProjectChat>, Error, number>({
+    mutationKey: [...chatRecordKey(place), "seen"],
     mutationFn: (seq) => client.markChatSeen(tag, task, chat, { seq, client: CHAT_CLIENT }),
     retry: 0,
   });

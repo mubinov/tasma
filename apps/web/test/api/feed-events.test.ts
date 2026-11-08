@@ -189,6 +189,26 @@ describe("FEED_MAPPINGS", () => {
     ]);
   });
 
+  describe("the record read of a chat of a project", () => {
+    const records = {
+      record: daemonKeys.projectChat("SAGA", 2),
+      otherRecord: daemonKeys.projectChat("ACME", 2),
+    };
+
+    it("reads again on a project event of its project, and not of another project", () => {
+      expect(keysMatched({ kind: "project", tag: "SAGA", change: "changed" }, records)).toEqual(["record"]);
+    });
+
+    it.each<[string, FeedEvent]>([
+      ["a chat", { kind: "chat", tag: "SAGA", task: "SAGA-1", chat: 2, step: "build", state: "working" }],
+      ["a project-chat", { kind: "project-chat", tag: "SAGA", chat: 2, state: "working" }],
+      ["a changed task", { kind: "task", tag: "SAGA", id: "SAGA-1", change: "changed" }],
+      ["a deleted task", { kind: "task", tag: "SAGA", id: "SAGA-1", change: "deleted" }],
+    ])("does not read again on %s event", (_name, event) => {
+      expect(keysMatched(event, records)).toEqual([]);
+    });
+  });
+
   it("makes a project event refresh the chats of all projects, their items, and the chats and record reads of the project", () => {
     expect(keysMatched({ kind: "project", tag: "SAGA", change: "deleted" }, chatSample)).toEqual([
       "chatList",

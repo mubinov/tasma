@@ -20,6 +20,17 @@ describe("useChatDraftStore", () => {
     expect(chatDraft({ ...PLACE, task: "SAGA-4" })).toBe("Fix the lexer.");
   });
 
+  it("keeps the draft of a chat of a project apart from the draft of the task chat with the same number", () => {
+    const project = { ...PLACE, task: undefined };
+
+    useChatDraftStore.getState().setDraft(PLACE, "Build the app.");
+    useChatDraftStore.getState().setDraft(project, "Plan the release.");
+
+    expect(chatDraft(PLACE)).toBe("Build the app.");
+    expect(chatDraft(project)).toBe("Plan the release.");
+    expect([...useChatDraftStore.getState().drafts.keys()]).toEqual(["SAGA/SAGA-3/2", "SAGA/2"]);
+  });
+
   it("gives an empty draft for a chat with none", () => {
     expect(chatDraft(PLACE)).toBe("");
   });

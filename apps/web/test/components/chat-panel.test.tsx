@@ -10,15 +10,24 @@ import {
 import type { Chat, ChatEntry, ChatEvent, Diagnostic, TransportRequest } from "@tasma/protocol";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { CHAT_CLIENT } from "../../src/api/mutations";
 import { daemonKeys } from "../../src/api/queries";
-import { ChatPanel } from "../../src/components/chat-panel";
+import { ChatBody, ChatPanel } from "../../src/components/chat-panel";
 import type { RouterContext } from "../../src/routes";
 import { useChatDraftStore } from "../../src/store/chat-drafts";
 import { useNoticeStore } from "../../src/store/notices";
-import { chatPath, chatRecord, eventsPath, stubChatLog, type ChatLogStub } from "../chat-daemon";
+import {
+  chatPath,
+  chatRecord,
+  eventsPath,
+  projectChatPath,
+  projectChatRecord,
+  projectEventsPath,
+  stubChatLog,
+  type ChatLogStub,
+} from "../chat-daemon";
 import {
   agentUpdate,
   background,
@@ -1249,6 +1258,39 @@ it("posts the message of the composer with the client of the window, and clears 
     ]);
   });
   expect(composer().value).toBe("");
+});
+
+it("shows the log of a chat of a project in the body, and posts a message to the route of the project", async () => {
+  const user = userEvent.setup();
+  const messagesPath = `${projectChatPath()}/messages`;
+  const log = stubChatLog({
+    [projectChatPath()]: successReply(projectChatRecord({ seq: TEXT_LOG.length })),
+    [`POST ${messagesPath}`]: successReply(projectChatRecord({ seq: TEXT_LOG.length + 1 })),
+  }, projectEventsPath);
+  log.serve(0, { cursor: TEXT_LOG.length, entries: [...TEXT_LOG] });
+
+  function Host(): ReactNode {
+    const headingRef = useRef<HTMLHeadingElement>(null);
+    return (
+      <section>
+        <h2 ref={headingRef} tabIndex={-1}>Plan the release</h2>
+        <ChatBody tag="SAGA" task={undefined} chat={2} headingRef={headingRef} />
+      </section>
+    );
+  }
+
+  await renderPanel(log, { host: <Host /> });
+  expect(await screen.findByText("Rename the parser module.")).toBeTruthy();
+  await user.type(await findComposer(), "Split the lexer.{Enter}");
+
+  await waitFor(() => {
+    expect(posts(log)).toEqual([
+      { method: "POST", path: messagesPath, body: { text: "Split the lexer.", client: CHAT_CLIENT } },
+    ]);
+  });
+  expect(log.readsOf(projectChatPath())).toBeGreaterThan(0);
+  expect(log.readsOf(projectEventsPath(0))).toBe(1);
+  expect(log.paths.filter((path) => path.includes("/tasks/"))).toEqual([]);
 });
 
 it("puts a refused message back in the composer, and opens its notice", async () => {

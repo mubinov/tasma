@@ -20,7 +20,7 @@ export type ChatLog = {
 /** A chat log with the inputs of the loop that reads it. */
 type KeyedLog = ChatLog & { client: Client; key: string };
 
-function keyOf(tag: string, task: string, chat: number): string {
+function keyOf(tag: string, task: string | undefined, chat: number): string {
   return JSON.stringify([tag, task, chat]);
 }
 
@@ -32,9 +32,15 @@ function startOf(client: Client, key: string, ready: boolean): KeyedLog {
  * The live log of one chat, folded into messages. It reads the log from the
  * start when the component mounts or the chat or the client changes, and stops
  * when the component unmounts. `since` is the `seq` of the log that the caller
- * knows, `Chat.seq` of the chat record.
+ * knows, the `seq` of the chat record.
  */
-export function useChatLog(client: Client, tag: string, task: string, chat: number, since: number): ChatLog {
+export function useChatLog(
+  client: Client,
+  tag: string,
+  task: string | undefined,
+  chat: number,
+  since: number,
+): ChatLog {
   const key = keyOf(tag, task, chat);
   const [state, setState] = useState(() => startOf(client, key, since === 0));
   const reaches = useEffectEvent((seq: number) => seq >= since);

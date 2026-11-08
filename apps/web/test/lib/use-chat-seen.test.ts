@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CHAT_CLIENT } from "../../src/api/mutations";
 import { endInView, useChatSeen, type SeenWatch } from "../../src/lib/use-chat-seen";
 import { refusalReply, routerWrapper, stubTransport, successReply } from "../helpers";
-import { chatRecord } from "../chat-daemon";
+import { chatRecord, projectChatPath, projectChatRecord } from "../chat-daemon";
 
 const SEEN_PATH = "/projects/SAGA/tasks/SAGA-3/chats/2/seen";
 
@@ -57,9 +57,16 @@ describe("useChatSeen", () => {
     vi.useRealTimers();
   });
 
-  /** The hook for chat 2 of SAGA-3 under a router over the stub daemon, at `seq` 5 with an end in view. */
-  function watch(input: Partial<SeenWatch> = {}, reply: TransportReply = successReply(chatRecord({ seen: 5 }))) {
-    const stub = stubTransport({ [`POST ${SEEN_PATH}`]: reply });
+  /**
+   * The hook for chat 2 of SAGA-3 under a router over the stub daemon, at `seq`
+   * 5 with an end in view. `path` is the route of the seen write.
+   */
+  function watch(
+    input: Partial<SeenWatch> = {},
+    reply: TransportReply = successReply(chatRecord({ seen: 5 })),
+    path = SEEN_PATH,
+  ) {
+    const stub = stubTransport({ [`POST ${path}`]: reply });
     const box = { ...AT_END };
     const initialProps: SeenWatch = {
       tag: "SAGA",
@@ -80,7 +87,7 @@ describe("useChatSeen", () => {
       rerender: (next: Partial<SeenWatch>) => {
         hook.rerender({ ...initialProps, ...next });
       },
-      sent: () => stub.requests.filter(({ path }) => path === SEEN_PATH).map(({ body }) => body),
+      sent: () => stub.requests.filter((request) => request.path === path).map(({ body }) => body),
     };
   }
 
@@ -184,5 +191,14 @@ describe("useChatSeen", () => {
 
     expect(sent()).toHaveLength(1);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("writes the seq of a chat of a project to the seen route of the project", async () => {
+    const path = `${projectChatPath()}/seen`;
+    const { sent } = watch({ task: undefined }, successReply(projectChatRecord({ seen: 5 })), path);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(sent()).toEqual([{ seq: 5, client: CHAT_CLIENT }]);
   });
 });

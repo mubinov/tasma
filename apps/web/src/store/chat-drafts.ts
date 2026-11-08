@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ChatPlace } from "../api/queries";
+import { chatPlaceText, type ChatPlace } from "../api/queries";
 
 type ChatDraftState = {
   /** The text in the composer of each chat, by `draftKey`. */
@@ -10,8 +10,8 @@ type ChatDraftState = {
   returnToDraft: (place: ChatPlace, text: string) => void;
 };
 
-function draftKey({ tag, task, chat }: ChatPlace): string {
-  return `${tag}/${task}/${String(chat)}`;
+function draftKey(place: ChatPlace): string {
+  return chatPlaceText(place);
 }
 
 // Not persisted: a restart of the app removes the drafts.

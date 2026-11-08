@@ -2,8 +2,9 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useChatLog } from "../../src/api/chat-log";
 import { CHAT_VIEW_START, foldChatEntries } from "../../src/lib/chat-fold";
-import { eventsPath, stubChatLog, type ChatLogStub } from "../chat-daemon";
+import { eventsPath, projectEventsPath, stubChatLog, type ChatLogStub } from "../chat-daemon";
 import { TEXT_LOG } from "../chat-fixtures";
+import { heldBack } from "../helpers";
 
 type Props = { client: ChatLogStub["client"]; chat: number; since: number };
 
@@ -261,4 +262,34 @@ it("drops the view of the old chat at once, and reads the new chat from the star
   expect(result.current).toEqual({ view: CHAT_VIEW_START, ready: false, failures: 0, resets: 0 });
   await readStarted(log, eventsPath(0, 3));
   expect(log.requests[1]?.signal?.aborted).toBe(true);
+});
+
+it("reads the log of a chat of a project through the route of the project", async () => {
+  const log = stubChatLog({}, projectEventsPath);
+  const { result } = renderHook(() => useChatLog(log.client, "SAGA", undefined, 2, 3));
+  await readStarted(log, projectEventsPath(0));
+
+  log.answer(0, { cursor: 3, entries: TEXT_LOG.slice(0, 3) });
+
+  await waitFor(() => {
+    expect(result.current.view).toEqual(foldChatEntries(CHAT_VIEW_START, TEXT_LOG.slice(0, 3)));
+  });
+  await readStarted(log, projectEventsPath(3));
+});
+
+it("starts a new read when the chat of a task changes to the chat of its project with the same number", async () => {
+  const log = stubChatLog();
+  log.replies[projectEventsPath(0)] = heldBack().reply;
+  const initialProps: { task: string | undefined } = { task: "SAGA-3" };
+  const { result, rerender } = renderHook(({ task }) => useChatLog(log.client, "SAGA", task, 2, 3), { initialProps });
+  await readStarted(log, eventsPath(0));
+  log.answer(0, { cursor: 3, entries: TEXT_LOG.slice(0, 3) });
+  await waitFor(() => {
+    expect(result.current.ready).toBe(true);
+  });
+
+  rerender({ task: undefined });
+
+  expect(result.current).toEqual({ view: CHAT_VIEW_START, ready: false, failures: 0, resets: 0 });
+  await readStarted(log, projectEventsPath(0));
 });

@@ -1,13 +1,23 @@
 import { onlineManager, QueryClient } from "@tanstack/react-query";
-import { createClient, ProtocolError, TransportError, type Transport } from "@tasma/protocol";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  createClient,
+  ProtocolError,
+  TransportError,
+  type Chat,
+  type ProjectChat,
+  type Success,
+  type Transport,
+} from "@tasma/protocol";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createAppQueryClient, createDaemonClient, shouldRetry } from "../../src/api/client";
 import { APP_PATH_PREFIX, DAEMON_PATH_PREFIX } from "../../src/api/paths";
 import {
   appKeys,
   chatItemQuery,
   chatListQuery,
+  chatPlaceText,
   chatQuery,
+  chatRecordKey,
   daemonKeys,
   healthQuery,
   projectQuery,
@@ -203,6 +213,52 @@ it("asks for the chats of a task", async () => {
 it("nests the chats of a task inside the task, and each chat inside them, apart from the exact key of the task", () => {
   expect(daemonKeys.taskChats("SAGA", "SAGA-1")).toEqual([...daemonKeys.task("SAGA", "SAGA-1"), "chats"]);
   expect(daemonKeys.chat("SAGA", "SAGA-1", 2)).toEqual([...daemonKeys.taskChats("SAGA", "SAGA-1"), 2]);
+});
+
+it("asks for one chat of a project, and caches it under the key of its project", async () => {
+  const chat = { chat: 2, title: "Plan the release", agent: "claude", folder: "/repos/saga", seq: 4, stateSeq: 1, state: "working" };
+  const paths = stubDaemon(chat);
+  const queryClient = createAppQueryClient();
+
+  const success = await queryClient.query({
+    ...chatQuery(createDaemonClient(), "SAGA", undefined, 2),
+    staleTime: "static",
+  });
+
+  expect(paths).toEqual([`${DAEMON_PATH_PREFIX}/projects/SAGA/chats/2`]);
+  expect(success).toEqual({ data: chat, diagnostics: [] });
+  expect(queryClient.getQueryData(daemonKeys.projectChat("SAGA", 2))).toEqual({ data: chat, diagnostics: [] });
+});
+
+it("gives the data of chatQuery the type of the chat that its id selects", () => {
+  const client = createDaemonClient();
+  const queryClient = new QueryClient();
+  const task = "SAGA-1" as string | undefined;
+
+  expectTypeOf(queryClient.getQueryData(chatQuery(client, "SAGA", "SAGA-1", 2).queryKey))
+    .toEqualTypeOf<Success<Chat> | undefined>();
+  expectTypeOf(queryClient.getQueryData(chatQuery(client, "SAGA", undefined, 2).queryKey))
+    .toEqualTypeOf<Success<ProjectChat> | undefined>();
+  expectTypeOf(queryClient.getQueryData(chatQuery(client, "SAGA", task, 2).queryKey))
+    .toEqualTypeOf<Success<Chat | ProjectChat> | undefined>();
+});
+
+it("nests the record of a chat of a project in the project, beside its tasks", () => {
+  expect(daemonKeys.projectChat("SAGA", 2)).toEqual([...daemonKeys.project("SAGA"), "chats", 2]);
+});
+
+describe("chatRecordKey", () => {
+  it("keys the record of a chat of a task under its task, and of a chat of a project under its project", () => {
+    expect(chatRecordKey({ tag: "SAGA", task: "SAGA-1", chat: 2 })).toEqual(daemonKeys.chat("SAGA", "SAGA-1", 2));
+    expect(chatRecordKey({ tag: "SAGA", task: undefined, chat: 2 })).toEqual(daemonKeys.projectChat("SAGA", 2));
+  });
+});
+
+describe("chatPlaceText", () => {
+  it("gives the tag, the task and the number of a chat of a task, and the tag and the number of a chat of a project", () => {
+    expect(chatPlaceText({ tag: "SAGA", task: "SAGA-3", chat: 2 })).toBe("SAGA/SAGA-3/2");
+    expect(chatPlaceText({ tag: "SAGA", task: undefined, chat: 2 })).toBe("SAGA/2");
+  });
 });
 
 it("nests the list of the chats of all projects and one item of it under one prefix", () => {
