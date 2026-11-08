@@ -30,7 +30,6 @@ import { DAEMON_PATH_PREFIX } from "./src/api/paths.ts";
  * would also admit an injected <style> element, which is the overlay and
  * control-spoofing primitive. form-action is listed because it does not fall
  * back to default-src, so without it injected markup can post anywhere.
- * data: images is the empty favicon.
  */
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'none'",

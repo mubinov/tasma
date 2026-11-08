@@ -60,6 +60,12 @@ describe("the built bundle", () => {
     expect(indexHtml).not.toContain('="/assets/');
   });
 
+  it("links the favicon by a relative path and copies the file unchanged to the root of the build", () => {
+    expect(indexHtml).toContain('<link rel="icon" type="image/svg+xml" href="./favicon.svg"');
+    expect(indexHtml).not.toContain('href="data:,"');
+    expect(readFileSync(join(outDir, "favicon.svg"))).toEqual(readFileSync(join(root, "public", "favicon.svg")));
+  });
+
   // No HTTP layer will ever exist to send the header: a shell serves this
   // document from a custom protocol or from file://. The policy also has to
   // precede the scripts it governs.
