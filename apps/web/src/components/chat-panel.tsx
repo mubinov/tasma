@@ -97,13 +97,16 @@ const KIT_SEND = '[aria-label="Send message"]';
 const KIT_INPUT = 'textarea[aria-label="Message input"]';
 
 /**
- * An own turn adds Stop and removes the action bars of the messages, and the end
- * of a turn removes Stop, with no action of the user; a sent draft disables Send.
- * A key press meant for Stop must not send the draft. The move is in a
- * layout effect body, because React gives the focus back to an element that stays
- * in the page at the end of its mutations. The last element with focus comes from
- * React events: they also come from a portal, such as a menu of a message, and
- * React sends none for an element that leaves in its commit.
+ * An own turn removes the action bars of the messages with no action of the user.
+ * A send puts Stop in the place of Send, or disables Send, so the focus goes to the
+ * message input: a second key press must not stop the turn. Text that comes back
+ * into the input during a turn puts Send in the place of Stop, so the focus goes to
+ * the heading: a key press meant for Stop must not send that text. The heading is
+ * the target for every other element that leaves. The move is in a layout effect
+ * body, because React gives the focus back to an element that stays in the page at
+ * the end of its mutations. The last element with focus comes from React events:
+ * they also come from a portal, such as a menu of a message, and React sends none
+ * for an element that leaves in its commit.
  */
 function useChatThreadFocus(
   threadRef: RefObject<HTMLElement | null>,
@@ -436,7 +439,8 @@ function ChatTranscript(
     // message that the thread first sees as running shows its text only after the open scroll.
     messages: ready ? view.messages : NO_MESSAGES,
     convertMessage: (message: ChatMessage) => chatThreadMessage(message, folder),
-    // The whole turn, also while it waits at a request: the kit shows Stop. A job wait shows no Stop.
+    // The whole turn, also while it waits at a request: the kit shows Stop when the message input is empty.
+    // A job wait shows no Stop.
     isRunning: ready && running,
     // With a queue, the kit sends each message here and never to `onNew`, also during a turn.
     queue: {

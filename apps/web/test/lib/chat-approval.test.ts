@@ -135,7 +135,7 @@ describe("permissionAnswer", () => {
 
   it.each([true, false])("refuses an answer with no option, approved %s", (approved) => {
     expect(() => permissionAnswer({ approvalId: "r1", approved })).toThrow(
-      "This request has no options to choose. To end it, stop the turn with the Stop generating button.",
+      "This request has no option for this answer. To end it, stop the turn with the Stop generating button. The button shows when the message field is empty.",
     );
   });
 });

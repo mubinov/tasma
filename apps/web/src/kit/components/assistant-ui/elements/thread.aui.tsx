@@ -541,10 +541,11 @@ const ComposerAction: FC = () => {
             <ComposerPrimitive.StopDictation render={<TooltipIconButton tooltip="Stop dictation" side="bottom" type="button" variant="ghost" size="icon" className="aui-composer-stop-dictation text-destructive size-7 rounded-full" aria-label="Stop voice input" />}><SquareIcon className="aui-composer-stop-dictation-icon size-3.5 animate-pulse fill-current" /></ComposerPrimitive.StopDictation>
           </AuiIf>
         </AuiIf>
-        {/* tasma-edit: with a queue, Send also shows during a run, and Stop comes first, so Send keeps its place at the right end */}
+        {/* tasma-edit: one button, Stop while a run goes and the field is empty, else Send */}
         <AuiIf
           condition={(s) =>
             s.composer.canCancel &&
+            s.composer.isEmpty &&
             (s.thread.voice === undefined ||
               s.composer.submission !== undefined)
           }
@@ -554,7 +555,7 @@ const ComposerAction: FC = () => {
         <AuiIf
           condition={(s) =>
             !s.composer.canCancel ||
-            s.thread.capabilities.queue ||
+            !s.composer.isEmpty ||
             (s.thread.voice !== undefined &&
               s.composer.submission === undefined)
           }

@@ -36,7 +36,7 @@ const CUSTOM_SUFFIX = "_custom";
 
 const NUMBER = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
 
-const NO_OPTIONS = "This request has no options to choose. To end it, stop the turn with the Stop generating button.";
+const NO_OPTIONS = "This request has no option for this answer. To end it, stop the turn with the Stop generating button. The button shows when the message field is empty.";
 
 const ACCEPT_OPTION_ID = "accept";
 

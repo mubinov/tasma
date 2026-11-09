@@ -1320,17 +1320,21 @@ function composerButtons(): (string | null)[] {
   return screen.queryAllByRole("button", { name: /^(Stop generating|Send message)$/ }).map((one) => one.getAttribute("aria-label"));
 }
 
+const TURN_PLACEHOLDER = "Queue another message";
+
+const IDLE_PLACEHOLDER = "Send a message...";
+
 it.each<[string, readonly ChatEntry[]]>([
   ["runs", chatEntries([userMessage("Build.")])],
   ["waits at a request", PERMISSION_LOG.slice(0, 5)],
-])("shows Stop and then Send while a turn %s, and Stop posts the cancel", async (_name, entries) => {
+])("shows only Stop while a turn %s and the message input is empty, and Stop posts the cancel", async (_name, entries) => {
   const user = userEvent.setup();
   const log = writableLogOf(entries, CANCEL_PATH);
   await renderPanel(log);
 
   await user.click(await screen.findByRole("button", { name: "Stop generating" }));
 
-  expect(composerButtons()).toEqual(["Stop generating", "Send message"]);
+  expect(composerButtons()).toEqual(["Stop generating"]);
   await waitFor(() => {
     expect(posts(log)).toEqual([{ method: "POST", path: CANCEL_PATH, body: { client: CHAT_CLIENT } }]);
   });
@@ -1347,7 +1351,105 @@ it("posts no cancel and keeps the text when Escape is pressed in the composer du
 
   expect(posts(log)).toEqual([]);
   expect(composer().value).toBe("Split the lexer.");
-  expect(composerButtons()).toEqual(["Stop generating", "Send message"]);
+  expect(composerButtons()).toEqual(["Send message"]);
+  expect(composer().placeholder).toBe(TURN_PLACEHOLDER);
+});
+
+const SPACES_AND_NEW_LINE = "  {Shift>}{Enter}{/Shift}";
+
+it.each<[string, readonly ChatEntry[], string, string, string, boolean]>([
+  ["an idle chat and an empty input", TEXT_LOG, IDLE_PLACEHOLDER, "", "Send message", true],
+  ["an idle chat and a text", TEXT_LOG, IDLE_PLACEHOLDER, "Then test it.", "Send message", false],
+  ["an idle chat and only spaces", TEXT_LOG, IDLE_PLACEHOLDER, "   ", "Send message", true],
+  ["a turn and an empty input", chatEntries([userMessage("Build.")]), TURN_PLACEHOLDER, "", "Stop generating", false],
+  ["a turn and a text", chatEntries([userMessage("Build.")]), TURN_PLACEHOLDER, "Then test it.", "Send message", false],
+  ["a turn and only spaces and a new line", chatEntries([userMessage("Build.")]), TURN_PLACEHOLDER, SPACES_AND_NEW_LINE, "Stop generating", false],
+  ["a turn at a request and an empty input", PERMISSION_LOG.slice(0, 5), TURN_PLACEHOLDER, "", "Stop generating", false],
+  ["a turn at a request and a text", PERMISSION_LOG.slice(0, 5), TURN_PLACEHOLDER, "Then test it.", "Send message", false],
+])("shows one button for %s", async (_case, entries, placeholder, typed, label, disabled) => {
+  const user = userEvent.setup();
+  await renderPanel(logOf(entries));
+  await waitFor(() => {
+    expect(composer().placeholder).toBe(placeholder);
+  });
+
+  if (typed !== "") {
+    await user.type(composer(), typed);
+  }
+
+  expect(composerButtons()).toEqual([label]);
+  expect(button(label).disabled).toBe(disabled);
+});
+
+it("changes Stop to Send at the first character during a turn, and back when the character is deleted", async () => {
+  const user = userEvent.setup();
+  await renderPanel(logOf(chatEntries([userMessage("Build.")])));
+  await screen.findByRole("button", { name: "Stop generating" });
+
+  await user.type(composer(), "T");
+
+  expect(composerButtons()).toEqual(["Send message"]);
+  expect(button("Send message").disabled).toBe(false);
+
+  await user.keyboard("{Backspace}");
+
+  expect(composerButtons()).toEqual(["Stop generating"]);
+});
+
+it("does nothing on Enter in an empty message input during a turn", async () => {
+  const user = userEvent.setup();
+  const log = writableLogOf(chatEntries([userMessage("Build.")]), CANCEL_PATH, MESSAGES_PATH);
+  await renderPanel(log);
+  await screen.findByRole("button", { name: "Stop generating" });
+
+  await user.type(composer(), "{Enter}");
+  await act(async () => {});
+
+  expect(posts(log)).toEqual([]);
+  expect(composer().value).toBe("");
+  expect(composerButtons()).toEqual(["Stop generating"]);
+});
+
+it("moves focus from Send to the message input when a key press on Send sends the text during a turn", async () => {
+  const user = userEvent.setup();
+  const log = writableLogOf(chatEntries([userMessage("Build.")]), MESSAGES_PATH);
+  await renderPanel(log);
+  await screen.findByRole("button", { name: "Stop generating" });
+  await user.type(composer(), "Then test it.");
+  act(() => {
+    button("Send message").focus();
+  });
+
+  await user.keyboard("{Enter}");
+
+  await waitFor(() => {
+    expect(posts(log)).toEqual([{ method: "POST", path: MESSAGES_PATH, body: { text: "Then test it.", client: CHAT_CLIENT } }]);
+  });
+  expect(composer().value).toBe("");
+  expect(composerButtons()).toEqual(["Stop generating"]);
+  expect(document.activeElement).toBe(composer());
+});
+
+it("moves focus from Stop to the heading when a refused send puts its text back during a turn", async () => {
+  const user = userEvent.setup();
+  const log = logOf(chatEntries([userMessage("Build.")]));
+  const write = heldBack();
+  log.replies[`POST ${MESSAGES_PATH}`] = write.reply;
+  await renderPanel(log);
+  await screen.findByRole("button", { name: "Stop generating" });
+  await user.type(composer(), "Then test it.{Enter}");
+  const stop = await screen.findByRole("button", { name: "Stop generating" });
+  act(() => {
+    stop.focus();
+  });
+
+  write.answer(refused(409, "turn-running"));
+
+  await waitFor(() => {
+    expect(composer().value).toBe("Then test it.");
+  });
+  expect(composerButtons()).toEqual(["Send message"]);
+  expect(document.activeElement).toBe(heading());
 });
 
 function ownTurnStarts(log: ChatLogStub, after: number): void {
@@ -1359,7 +1461,7 @@ describe("with a background job and an own turn", () => {
 
   it.each<[string, readonly ChatEvent[], string, readonly string[]]>([
     ["a job wait", [userMessage("Build."), background({ job: true }), turnEnd()], "Agent works", ["Send message"]],
-    ["an own turn", [...ENDED, background({ job: true, ownTurn: true })], "Agent works", ["Stop generating", "Send message"]],
+    ["an own turn", [...ENDED, background({ job: true, ownTurn: true })], "Agent works", ["Stop generating"]],
     ["the end of both", [...ENDED, background({ job: true, ownTurn: true }), background()], "Needs you", ["Send message"]],
   ])("shows the state and the buttons of %s", async (_case, events, state, buttons) => {
     await renderPanel(logOf(chatEntries(events)));
@@ -1433,7 +1535,10 @@ describe("with a background job and an own turn", () => {
 
     ownTurnStarts(log, 2);
 
-    await screen.findByRole("button", { name: "Stop generating" });
+    await waitFor(() => {
+      expect(composer().placeholder).toBe(TURN_PLACEHOLDER);
+    });
+    expect(composerButtons()).toEqual(["Send message"]);
     expect(document.activeElement).toBe(button("Send message"));
     act(() => {
       composer().focus();
@@ -1444,13 +1549,12 @@ describe("with a background job and an own turn", () => {
     });
   });
 
-  it("moves focus from Stop to the heading when an own turn ends, and keeps the draft", async () => {
-    const user = userEvent.setup();
+  it("moves focus from Stop to the heading when an own turn ends", async () => {
     const log = logOf(chatEntries([...ENDED, background({ ownTurn: true })]));
     await renderPanel(log);
-    await user.type(await findComposer(), "Then test it.");
+    const stop = await screen.findByRole("button", { name: "Stop generating" });
     act(() => {
-      button("Stop generating").focus();
+      stop.focus();
     });
 
     log.answer(3, { cursor: 4, entries: chatEntries([background()], 4) });
@@ -1459,7 +1563,28 @@ describe("with a background job and an own turn", () => {
       expect(screen.queryByRole("button", { name: "Stop generating" })).toBeNull();
     });
     expect(document.activeElement).toBe(heading());
+    expect(composerButtons()).toEqual(["Send message"]);
+  });
+
+  it("keeps the text, an enabled Send and the focus on Send when an own turn ends", async () => {
+    const user = userEvent.setup();
+    const log = logOf(chatEntries([...ENDED, background({ ownTurn: true })]));
+    await renderPanel(log);
+    await screen.findByRole("button", { name: "Stop generating" });
+    await user.type(composer(), "Then test it.");
+    act(() => {
+      button("Send message").focus();
+    });
+
+    log.answer(3, { cursor: 4, entries: chatEntries([background()], 4) });
+
+    await waitFor(() => {
+      expect(composer().placeholder).toBe(IDLE_PLACEHOLDER);
+    });
     expect(composer().value).toBe("Then test it.");
+    expect(composerButtons()).toEqual(["Send message"]);
+    expect(button("Send message").disabled).toBe(false);
+    expect(document.activeElement).toBe(button("Send message"));
   });
 
   it("moves focus from a control of a message to the heading when an own turn removes it", async () => {
@@ -1571,11 +1696,13 @@ describe("with a background job and an own turn", () => {
     write.answer(WRITTEN);
   });
 
-  it("leaves focus in the message input when Stop shows next to Send", async () => {
-    const user = userEvent.setup();
+  it("leaves focus in the empty message input when Stop takes the place of Send", async () => {
     const log = logOf(chatEntries(ENDED));
     await renderPanel(log);
-    await user.type(await findComposer(), "Then test it.");
+    const input = await findComposer();
+    act(() => {
+      input.focus();
+    });
 
     ownTurnStarts(log, 2);
 
@@ -1583,12 +1710,13 @@ describe("with a background job and an own turn", () => {
     expect(document.activeElement).toBe(composer());
   });
 
-  it("leaves focus in the message input when Stop leaves", async () => {
-    const user = userEvent.setup();
+  it("leaves focus in the empty message input when Stop leaves", async () => {
     const log = logOf(chatEntries([...ENDED, background({ ownTurn: true })]));
     await renderPanel(log);
-    await user.type(await findComposer(), "Then test it.");
     await screen.findByRole("button", { name: "Stop generating" });
+    act(() => {
+      composer().focus();
+    });
 
     log.answer(3, { cursor: 4, entries: chatEntries([background()], 4) });
 
@@ -1633,12 +1761,12 @@ it("posts the message on Enter during a turn, and clears the composer", async ()
 it("asks to queue another message during a turn, and to send a message after it", async () => {
   const log = logOf(chatEntries([userMessage("Build.")]));
   await renderPanel(log);
-  expect((await findComposer()).placeholder).toBe("Queue another message");
+  expect((await findComposer()).placeholder).toBe(TURN_PLACEHOLDER);
 
   log.answer(1, { cursor: 2, entries: chatEntries([turnEnd()], 2) });
 
   await waitFor(() => {
-    expect(composer().placeholder).toBe("Send a message...");
+    expect(composer().placeholder).toBe(IDLE_PLACEHOLDER);
   });
   expect(composerButtons()).toEqual(["Send message"]);
 });
@@ -1843,7 +1971,7 @@ it("shows the kit Deny of a request with no reject option, and writes nothing fo
   await user.click(within(group).getByRole("button", { name: "Deny" }));
 
   expect((await within(group).findByRole("alert")).textContent).toBe(
-    "This request has no options to choose. To end it, stop the turn with the Stop generating button.",
+    "This request has no option for this answer. To end it, stop the turn with the Stop generating button. The button shows when the message field is empty.",
   );
   expect(posts(log)).toEqual([]);
 });
