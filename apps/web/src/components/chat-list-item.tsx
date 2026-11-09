@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import type { ChatListItem as Item } from "@tasma/protocol";
+import type { AnyChatListItem as Item } from "@tasma/protocol";
 import type { ReactNode } from "react";
 import { chatKey } from "../lib/chat-list-announcements";
 import { chatStateText } from "../lib/chat-messages";
@@ -14,7 +14,7 @@ type ChatListItemProps = {
   selected: boolean;
   now: number;
   tabIndex: number | undefined;
-  /** The words of the search, which the id, the title and the step mark. */
+  /** The words of the search, which the id or the tag, the title and the step mark. */
   words: readonly string[];
   /** The heading of the group that starts at the item, above it. */
   band?: Band;
@@ -70,8 +70,15 @@ function Marked({ text, words }: { text: string; words: readonly string[] }): Re
 }
 
 export function ChatListItem({ item, selected, now, tabIndex, words, band }: ChatListItemProps): ReactNode {
-  const { task, title, chat, step, created, status } = item;
-  const label = [`${task} ${title}`, step, ...(status === undefined ? [] : [chatStateText(status)]), fullChatTime(created)];
+  const { tag, title, chat, created, status } = item;
+  const ofTask = "task" in item;
+  const owner = ofTask ? item.task : tag;
+  const label = [
+    `${owner} ${title}`,
+    ofTask ? item.step : `Chat ${String(chat)}`,
+    ...(status === undefined ? [] : [chatStateText(status)]),
+    fullChatTime(created),
+  ];
 
   return (
     <>
@@ -79,7 +86,11 @@ export function ChatListItem({ item, selected, now, tabIndex, words, band }: Cha
       <Link
         from="/"
         to="/"
-        search={(previous) => ({ ...previous, task, chat: String(chat) })}
+        search={(previous) => ({
+          ...previous,
+          ...(ofTask ? { task: item.task, tag: undefined } : { task: undefined, tag }),
+          chat: String(chat),
+        })}
         replace
         resetScroll={false}
         tabIndex={tabIndex}
@@ -89,12 +100,13 @@ export function ChatListItem({ item, selected, now, tabIndex, words, band }: Cha
         className={`relative block border-b border-line py-2.5 pr-3 pl-3.5 text-text hover:bg-surface-2 focus-visible:-outline-offset-2 ${band === undefined ? ROW_CLASS : BANDED_ROW_CLASS} ${selected ? SELECTED_ROW_CLASS : ""}`}
       >
         <span className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 font-mono text-xs text-dim wrap-anywhere"><Marked text={task} words={words} /></span>
+          <span className="min-w-0 font-mono text-xs text-dim wrap-anywhere"><Marked text={owner} words={words} /></span>
           <time dateTime={created} className="ml-auto shrink-0 text-xs text-dim">{shortChatTime(created, now)}</time>
         </span>
         <span className="mt-0.5 block truncate text-sm font-medium text-text"><Marked text={title} words={words} /></span>
-        <span className="mt-0.5 flex min-w-0 items-center gap-2">
-          <span className="min-w-0 truncate text-xs text-subtle"><Marked text={step} words={words} /></span>
+        {/* The minimum height keeps a row with no step and no mark at three lines. */}
+        <span className="mt-0.5 flex min-h-(--text-xs--line-height) min-w-0 items-center gap-2">
+          {ofTask && <span className="min-w-0 truncate text-xs text-subtle"><Marked text={item.step} words={words} /></span>}
           {status !== undefined && (
             <span className="ml-auto flex shrink-0 text-xs">
               <StateMark status={status} />

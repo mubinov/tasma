@@ -1,8 +1,8 @@
 import { Menu } from "@base-ui/react/menu";
 import { useQuery, useSuspenseInfiniteQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
-import type { ChatListItem } from "@tasma/protocol";
-import { useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import type { AnyChatListItem } from "@tasma/protocol";
+import { useId, useReducer, useRef, useState, type ReactNode, type RefObject } from "react";
 import { usePendingChatStart } from "../api/mutations";
 import { chatItemQuery, chatListQuery, taskChatsQuery, taskQuery, workflowQuery, type ChatFilter } from "../api/queries";
 import { opensHere, tagOf } from "../lib/board";
@@ -97,21 +97,26 @@ type RestartAsk = { tag: string; id: string; step: string; chat: number; open: b
 type ChatSideProps = Omit<DashboardChatProps, "open" | "filter"> & {
   open: OpenChat;
   /** The item of the open chat in the loaded pages. */
-  listed: ChatListItem | undefined;
+  listed: AnyChatListItem | undefined;
 };
+
+function chatLine(item: AnyChatListItem): string {
+  return [chatAgentName(item.agent), ...("task" in item ? [item.step] : []), `Chat ${String(item.chat)}`].join(" · ");
+}
 
 function ChatSide({ open, listed, wide, headingRef, onBack }: ChatSideProps): ReactNode {
   const { client } = route.useRouteContext();
   const { task, chat } = open;
-  const tag = tagOf(task);
-  const read = useQuery({ ...chatItemQuery(client, task, chat), enabled: listed === undefined });
+  const tag = open.task === undefined ? open.tag : tagOf(open.task);
+  const read = useQuery({ ...chatItemQuery(client, tag, task, chat), enabled: listed === undefined });
   const missing = isChatMissing(read.error);
   const found = listed ?? (missing ? undefined : read.data?.data);
   // Kept while the item is read again, so the header does not lose its lines.
   const [lastFound, setLastFound] = useState(found);
   const headingId = useId();
   const pendingFocus = usePendingFocus();
-  const menu = useChatMenu(tag, task, chat);
+  // The menu can go away in a render of `TaskChatMenu` alone, and a pending focus runs only in a commit of this one.
+  const [, commitAgain] = useReducer((commits: number) => commits + 1, 0);
   const menuRef = useRef<HTMLButtonElement>(null);
   const [restartAsk, setRestartAsk] = useState<RestartAsk | null>(null);
   const restartFocusRef = useRef<FinalFocus>(null);
@@ -141,26 +146,32 @@ function ChatSide({ open, listed, wide, headingRef, onBack }: ChatSideProps): Re
           <div className="min-w-0 flex-1">
             {!wide && <ChatsLink onBack={onBack} onFocusLost={focusHeading} />}
             <h2 ref={headingRef} id={headingId} tabIndex={-1} {...CHAT_HEADING_MARK} className="font-chrome text-base font-semibold">
-              <span className="font-mono text-xs font-normal text-dim wrap-anywhere">{task}</span>
+              <span className="font-mono text-xs font-normal text-dim wrap-anywhere">{task ?? tag}</span>
               {item !== undefined && ` ${item.title}`}
             </h2>
             {item !== undefined && (
               <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                <span className="text-subtle">{`${chatAgentName(item.agent)} · ${item.step} · Chat ${String(chat)}`}</span>
+                <span className="text-subtle">{chatLine(item)}</span>
                 {item.status !== undefined && <StateMark status={item.status} />}
               </p>
             )}
           </div>
-          {item !== undefined && <OpenTaskLink tag={tag} task={task} onFocusLost={focusHeading} />}
-          {menu !== null && (
-            <ChatMenu
-              key={chatKey(open)}
-              {...menu}
+          {item !== undefined && task !== undefined && (
+            <OpenTaskLink tag={tag} task={task} onFocusLost={focusHeading} />
+          )}
+          {task !== undefined && (
+            <TaskChatMenu
+              tag={tag}
+              task={task}
+              chat={chat}
               buttonRef={menuRef}
-              onRestart={() => {
-                setRestartAsk({ tag, id: task, step: menu.step, chat, open: true });
+              onRestart={(step) => {
+                setRestartAsk({ tag, id: task, step, chat, open: true });
               }}
-              onFocusLost={focusHeading}
+              onFocusLost={() => {
+                focusHeading();
+                commitAgain();
+              }}
             />
           )}
         </div>
@@ -176,6 +187,32 @@ function ChatSide({ open, listed, wide, headingRef, onBack }: ChatSideProps): Re
         />
       )}
     </section>
+  );
+}
+
+type TaskChatMenuProps = {
+  tag: string;
+  task: string;
+  chat: number;
+  buttonRef: RefObject<HTMLButtonElement | null>;
+  onRestart: (step: string) => void;
+  onFocusLost: () => void;
+};
+
+/** Its own component so that a chat of a project reads no task, no workflow and no chat list of a task. */
+function TaskChatMenu({ tag, task, chat, buttonRef, onRestart, onFocusLost }: TaskChatMenuProps): ReactNode {
+  const menu = useChatMenu(tag, task, chat);
+
+  return menu !== null && (
+    <ChatMenu
+      key={chatKey({ task, chat })}
+      {...menu}
+      buttonRef={buttonRef}
+      onRestart={() => {
+        onRestart(menu.step);
+      }}
+      onFocusLost={onFocusLost}
+    />
   );
 }
 
@@ -269,7 +306,7 @@ function ChatsLink({ onBack, onFocusLost }: { onBack: () => void; onFocusLost: (
       ref={ref}
       from="/"
       to="/"
-      search={(previous) => ({ ...previous, task: undefined, chat: undefined })}
+      search={(previous) => ({ ...previous, task: undefined, tag: undefined, chat: undefined })}
       // A partial match is active on every address of the dashboard.
       activeOptions={{ exact: true }}
       replace

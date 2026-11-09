@@ -268,6 +268,7 @@ it("nests the list of the chats of all projects and one item of it under one pre
   expect(daemonKeys.chatList({})).toEqual([...chats, {}]);
   expect(daemonKeys.chatList({ project: "SAGA", q: "plan" })).toEqual([...chats, { project: "SAGA", q: "plan" }]);
   expect(daemonKeys.chatItem("SAGA-1", 2)).toEqual([...chats, "SAGA-1", 2]);
+  expect(daemonKeys.projectChatItem("SAGA", 2)).toEqual([...chats, "SAGA", 2]);
 });
 
 describe("chatListQuery", () => {
@@ -311,12 +312,27 @@ it("asks for one chat of the list by the id of its task", async () => {
   const { transport, paths } = stubTransport({ "/chats/SAGA-1/2": successReply(CHAT_ITEM) });
 
   const success = await createAppQueryClient().query({
-    ...chatItemQuery(createClient(transport), "SAGA-1", 2),
+    ...chatItemQuery(createClient(transport), "SAGA", "SAGA-1", 2),
     staleTime: "static",
   });
 
   expect(paths).toEqual(["/chats/SAGA-1/2"]);
   expect(success).toEqual({ data: CHAT_ITEM, diagnostics: [] });
+});
+
+it("asks for one chat of the list by its project, with no task id", async () => {
+  const item = { tag: "SAGA", title: "Plan the release", chat: 2, agent: "claude", created: "2026-10-22T10:00:00.000Z" };
+  const { transport, paths } = stubTransport({ "/projects/SAGA/chats/2/item": successReply(item) });
+  const queryClient = createAppQueryClient();
+
+  const success = await queryClient.query({
+    ...chatItemQuery(createClient(transport), "SAGA", undefined, 2),
+    staleTime: "static",
+  });
+
+  expect(paths).toEqual(["/projects/SAGA/chats/2/item"]);
+  expect(success).toEqual({ data: item, diagnostics: [] });
+  expect(queryClient.getQueryData(daemonKeys.projectChatItem("SAGA", 2))).toEqual(success);
 });
 
 it("asks for the tasks of one project, with no filter", async () => {

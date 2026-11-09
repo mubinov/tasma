@@ -15,6 +15,7 @@ export type {
   AcpObject,
   AgentState,
   AgentStateReply,
+  AnyChatListItem,
   Chat,
   ChatAgent,
   ChatCancelInput,

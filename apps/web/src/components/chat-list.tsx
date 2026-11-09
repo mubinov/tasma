@@ -1,7 +1,7 @@
 import { Button } from "@base-ui/react/button";
 import { useSuspenseInfiniteQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
-import { isActiveChat, type ChatListItem as Item, type ProjectSummary } from "@tasma/protocol";
+import { isActiveChat, type AnyChatListItem as Item, type ProjectSummary } from "@tasma/protocol";
 import { useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { chatListQuery, type ChatFilter } from "../api/queries";
 import { chatKey, chatListItems } from "../lib/chat-list-announcements";

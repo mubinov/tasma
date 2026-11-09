@@ -2,8 +2,10 @@ import {
   buildPath,
   isActiveChat,
   routes,
+  type AnyChatListItem,
   type ChatListItem,
   type ChatListPage,
+  type ProjectChatListItem,
   type ProjectSummary,
   type Transport,
   type TransportReply,
@@ -11,7 +13,7 @@ import {
 import { screen, within } from "@testing-library/react";
 import { vi } from "vitest";
 import { tagOf } from "../src/lib/board";
-import { chatPath, chatRecord, stubChatLog } from "./chat-daemon";
+import { chatPath, chatRecord, stubChatLog, type eventsPath } from "./chat-daemon";
 import { renderWithRouter, stubFeed, successReply } from "./helpers";
 import { daemon } from "./task-screen-fixtures";
 
@@ -42,9 +44,26 @@ export function listItem(
   };
 }
 
+/** A chat of a project in the list, created `minutes` before now. */
+export function projectItem(
+  tag: string,
+  chat: number,
+  minutes: number,
+  fields: Partial<ProjectChatListItem> = {},
+): ProjectChatListItem {
+  return {
+    tag,
+    title: `Question ${String(chat)} about ${tag}`,
+    chat,
+    agent: "claude",
+    created: minutesAgo(minutes),
+    ...fields,
+  };
+}
+
 /** A page of the list. `active` counts the active items of this page by default. */
 export function pageReply(
-  items: readonly ChatListItem[],
+  items: readonly AnyChatListItem[],
   next?: string,
   total = items.length,
   active = items.filter((item) => isActiveChat(item.status)).length,
@@ -91,14 +110,17 @@ function filterItems(items: readonly ChatListItem[], { project, q }: Filter): Ch
  * first page of a filter that has no reply of its own holds the items of
  * `ITEMS` that the filter keeps.
  */
-export function stubDashboard(replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
+export function stubDashboard(
+  replies: Record<string, TransportReply | Promise<TransportReply>> = {},
+  logPath?: typeof eventsPath,
+) {
   const log = stubChatLog({
     ...daemon().replies,
     "/projects": successReply(PROJECTS),
     "/chats": pageReply(ITEMS),
     [chatPath()]: successReply(chatRecord({ step: "dev:review" })),
     ...replies,
-  });
+  }, logPath);
   const feed = stubFeed(log);
   const transport: Transport = (request) => {
     const url = new URL(request.path, "http://stub");

@@ -1,6 +1,6 @@
 import { useSuspenseInfiniteQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
-import type { ChatListItem } from "@tasma/protocol";
+import type { AnyChatListItem } from "@tasma/protocol";
 import { useDeferredValue, useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 import { chatListQuery, projectsQuery } from "../api/queries";
 import { chatKey, chatListAnnouncements, chatListItems, knownChats, resultCountWords, type KnownChats, type OpenChat } from "../lib/chat-list-announcements";
@@ -23,6 +23,13 @@ function announce(words: string): void {
   useNoticeStore.getState().announce(words);
 }
 
+function openChatOf(task: string | undefined, tag: string | undefined, chat: string | undefined): OpenChat | undefined {
+  if (task !== undefined && chat !== undefined) {
+    return { task, chat: Number(chat) };
+  }
+  return tag !== undefined && chat !== undefined ? { tag, chat: Number(chat) } : undefined;
+}
+
 /**
  * The chats of all projects in a list, and the open chat beside it. A narrow
  * window shows one of the two.
@@ -30,10 +37,7 @@ function announce(words: string): void {
 export function DashboardScreen(): ReactNode {
   const { client } = route.useRouteContext();
   const search = route.useSearch();
-  const { task, chat } = search;
-  const open: OpenChat | undefined = task === undefined || chat === undefined
-    ? undefined
-    : { task, chat: Number(chat) };
+  const open = openChatOf(search.task, search.tag, search.chat);
   const openKey = open === undefined ? undefined : chatKey(open);
   const { data: { data: projects } } = useSuspenseQuery(projectsQuery(client));
   const { requested, applied: latestApplied, failures, announceFailure, failed, failedFields, retry }
@@ -43,7 +47,7 @@ export function DashboardScreen(): ReactNode {
   const wide = useWide();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const pendingFocus = usePendingFocus();
-  const lastResultRef = useRef<{ key: string; items: readonly ChatListItem[]; known: KnownChats } | null>(null);
+  const lastResultRef = useRef<{ key: string; items: readonly AnyChatListItem[]; known: KnownChats } | null>(null);
   // The chat that "Chats" closed, for the one mount of the list that follows.
   const [returnKey, setReturnKey] = useState<string>();
   const [shownKey, setShownKey] = useState(openKey);
@@ -56,7 +60,7 @@ export function DashboardScreen(): ReactNode {
   }
 
   // The first result after a mount announces nothing, and a result of a new filter its count.
-  const announceChanges = useEffectEvent((items: readonly ChatListItem[], total: number) => {
+  const announceChanges = useEffectEvent((items: readonly AnyChatListItem[], total: number) => {
     const before = lastResultRef.current;
     const key = filterKey(applied);
     lastResultRef.current = { key, items, known: knownChats(items, before?.key === key ? before.known : undefined) };

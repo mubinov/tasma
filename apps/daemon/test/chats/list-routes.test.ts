@@ -45,6 +45,9 @@ const FAILED: ChatEvent = { kind: "failed", reason: "the agent stopped" };
 
 type World = { server: TestServer; chats: ChatRegistry; events: FeedEvent[] };
 
+/** The daemon lists only the chats of tasks. */
+type TaskChatPage = Omit<ChatListPage, "items"> & { items: ChatListItem[] };
+
 async function plantTask(root: string, id: string, title?: string, status?: string): Promise<void> {
   await plant(taskFile(root, id.slice(0, id.indexOf("-")), id), taskText(id, title, status));
 }
@@ -69,10 +72,10 @@ async function world(root: string, open?: (host: ProjectHost) => ProjectHost["op
   return { server, chats, events };
 }
 
-async function page(server: TestServer, query = ""): Promise<{ data: ChatListPage; diagnostics: Diagnostic[] }> {
+async function page(server: TestServer, query = ""): Promise<{ data: TaskChatPage; diagnostics: Diagnostic[] }> {
   const response = await get(server, `/chats${query}`);
   expect(response.status).toBe(200);
-  return success<ChatListPage>(response);
+  return success<TaskChatPage>(response);
 }
 
 async function item(server: TestServer, path: string): Promise<{ data: ChatListItem; diagnostics: Diagnostic[] }> {
@@ -85,7 +88,7 @@ function places(items: ChatListItem[]): string[] {
   return items.map((listed) => `${listed.task}/${listed.chat}`);
 }
 
-async function allPages(server: TestServer): Promise<ChatListPage[]> {
+async function allPages(server: TestServer): Promise<TaskChatPage[]> {
   const pages = [(await page(server)).data];
   while (pages.at(-1)!.next !== undefined) {
     pages.push((await page(server, `?after=${pages.at(-1)!.next}`)).data);

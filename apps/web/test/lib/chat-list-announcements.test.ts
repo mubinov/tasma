@@ -1,7 +1,7 @@
-import type { ChatListItem, ChatStatus } from "@tasma/protocol";
+import type { AnyChatListItem, ChatListItem, ChatStatus, ProjectChatListItem } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
 import { tagOf } from "../../src/lib/board";
-import { chatListAnnouncements, chatListItems, knownChats, resultCountWords } from "../../src/lib/chat-list-announcements";
+import { chatKey, chatListAnnouncements, chatListItems, knownChats, resultCountWords, sameChat } from "../../src/lib/chat-list-announcements";
 
 function item(task: string, chat: number, minute: number, status?: ChatStatus): ChatListItem {
   return {
@@ -10,6 +10,17 @@ function item(task: string, chat: number, minute: number, status?: ChatStatus): 
     title: `Title of ${task}`,
     chat,
     step: "build",
+    agent: "claude",
+    created: new Date(Date.UTC(2026, 9, 1, 10, minute)).toISOString(),
+    ...(status === undefined ? {} : { status }),
+  };
+}
+
+function projectItem(tag: string, chat: number, minute: number, status?: ChatStatus): ProjectChatListItem {
+  return {
+    tag,
+    title: `Question ${String(chat)} about ${tag}`,
+    chat,
     agent: "claude",
     created: new Date(Date.UTC(2026, 9, 1, 10, minute)).toISOString(),
     ...(status === undefined ? {} : { status }),
@@ -269,7 +280,81 @@ describe("chatListAnnouncements", () => {
   });
 });
 
+describe("chatListAnnouncements of a chat of a project", () => {
+  const other = item("ACME-3", 1, 1);
+
+  it("names the chat by its number and its tag", () => {
+    const before = [projectItem("SAGA", 2, 5, WORKING), projectItem("SAGA", 1, 4, WORKING), other];
+    const after = [projectItem("SAGA", 2, 5, NEEDS_YOU), projectItem("SAGA", 1, 4, FAILED), other];
+
+    expect(chatListAnnouncements(before, after, undefined)).toEqual(["Chat 2 of SAGA needs you", "Chat 1 of SAGA failed"]);
+  });
+
+  it("announces nothing for the open chat of a project", () => {
+    const before = [projectItem("SAGA", 2, 5, WORKING), other];
+    const after = [projectItem("SAGA", 2, 5, FAILED), other];
+
+    expect(chatListAnnouncements(before, after, { tag: "SAGA", chat: 2 })).toEqual([]);
+  });
+
+  it("does not take a chat of a task with the same number for the open chat, in either direction", () => {
+    const before = [projectItem("SAGA", 2, 5, WORKING), item("SAGA-3", 2, 4, WORKING), other];
+    const after = [projectItem("SAGA", 2, 5, FAILED), item("SAGA-3", 2, 4, NEEDS_YOU), other];
+
+    expect(chatListAnnouncements(before, after, { task: "SAGA-3", chat: 2 })).toEqual(["Chat 2 of SAGA failed"]);
+    expect(chatListAnnouncements(before, after, { tag: "SAGA", chat: 2 })).toEqual(["SAGA-3 needs you"]);
+  });
+
+  it.each<[string, AnyChatListItem, AnyChatListItem, string]>([
+    ["a chat of a task with its time and tag", projectItem("SAGA", 1, 4), item("SAGA-9", 9, 4), "Chat 1 of SAGA failed"],
+    ["a chat of the project with a lower number", projectItem("SAGA", 3, 4), projectItem("SAGA", 2, 4), "Chat 3 of SAGA failed"],
+  ])("counts a chat of a project as newer than %s", (_name, newer, older, words) => {
+    const working = { ...newer, status: WORKING };
+    const failed = { ...newer, status: FAILED };
+
+    expect(chatListAnnouncements([{ ...older, status: WORKING }], [failed, older], undefined)).toEqual([words]);
+    expect(chatListAnnouncements([working], [working, { ...older, status: FAILED }], undefined)).toEqual([]);
+  });
+
+  it("announces nothing for a chat that a rename of its project gives a new tag", () => {
+    const failed = projectItem("DUNE", 2, 5, FAILED);
+
+    expect(chatListAnnouncements([failed, other], [{ ...failed, tag: "ACME" }, other], undefined)).toEqual([]);
+  });
+
+  it("keeps the state of a chat of a project apart from a chat of a task with the same number, time and title", () => {
+    const failed = projectItem("DUNE", 2, 5, FAILED);
+    const task = { ...item("DUNE-3", 2, 5, WORKING), title: failed.title };
+    const known = knownChats([failed, task, other]);
+
+    expect(chatListAnnouncements([failed, task, other], [failed, task, other], undefined, known)).toEqual([]);
+  });
+});
+
+describe("chatKey", () => {
+  it("gives the task and the number for a chat of a task, and the tag and the number for a chat of a project", () => {
+    expect(chatKey({ task: "SAGA-3", chat: 2 })).toBe("SAGA-3/2");
+    expect(chatKey({ tag: "SAGA", chat: 2 })).toBe("SAGA/2");
+  });
+});
+
+describe("sameChat", () => {
+  it("tells a chat of a project from a chat of a task with the same number", () => {
+    expect(sameChat({ tag: "SAGA", chat: 2 }, projectItem("SAGA", 2, 5))).toBe(true);
+    expect(sameChat({ task: "SAGA-3", chat: 2 }, item("SAGA-3", 2, 5))).toBe(true);
+    expect(sameChat({ tag: "SAGA", chat: 2 }, item("SAGA-3", 2, 5))).toBe(false);
+    expect(sameChat({ tag: "SAGA", chat: 2 }, projectItem("SAGA", 1, 5))).toBe(false);
+  });
+});
+
 describe("chatListItems", () => {
+  it("keeps a chat of a project and a chat of a task with the same number as two items", () => {
+    const project = projectItem("SAGA", 2, 5);
+    const task = item("SAGA-3", 2, 4);
+
+    expect(chatListItems([{ data: { items: [project, task], total: 2, active: 0 } }])).toEqual([project, task]);
+  });
+
   it("gives the items of all pages in order, each chat one time at its first place", () => {
     const moved = item("SAGA-3", 1, 5, NEEDS_YOU);
     const pages = [

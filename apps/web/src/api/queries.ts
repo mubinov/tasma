@@ -3,6 +3,7 @@ import {
   buildPath,
   ProtocolError,
   routes,
+  type AnyChatListItem,
   type ChatListPage,
   type ChatListQuery,
   type Client,
@@ -51,6 +52,8 @@ export const daemonKeys = {
   chats: () => [...daemonKeys.all, "chats"] as const,
   chatList: (filter: ChatFilter) => [...daemonKeys.chats(), filter] as const,
   chatItem: (id: string, chat: number) => [...daemonKeys.chats(), id, chat] as const,
+  // A tag has no "-", so it is never the id of a task.
+  projectChatItem: (tag: string, chat: number) => [...daemonKeys.chats(), tag, chat] as const,
   agentState: () => [...daemonKeys.chats(), "state"] as const,
   setup: () => [...daemonKeys.all, "setup"] as const,
 };
@@ -135,10 +138,13 @@ export function chatListQuery(client: Client, filter: ChatFilter) {
   });
 }
 
-export function chatItemQuery(client: Client, id: string, chat: number) {
+/** `id` is the id of the task, or `undefined` for a chat of the project. */
+export function chatItemQuery(client: Client, tag: string, id: string | undefined, chat: number) {
   return queryOptions({
-    queryKey: daemonKeys.chatItem(id, chat),
-    queryFn: () => client.readChatItem(id, chat),
+    queryKey: id === undefined ? daemonKeys.projectChatItem(tag, chat) : daemonKeys.chatItem(id, chat),
+    queryFn: (): Promise<Success<AnyChatListItem>> => (
+      id === undefined ? client.readProjectChatItem(tag, chat) : client.readChatItem(id, chat)
+    ),
   });
 }
 

@@ -108,12 +108,15 @@ export type ProjectChatListItem = {
   status?: ChatStatus;
 };
 
+/** One item of the list of the chats of all projects: a chat of a task, or a chat of a project, which has no `task`. */
+export type AnyChatListItem = ChatListItem | ProjectChatListItem;
+
 /**
  * One page of the list of the chats of all projects: the active chats first,
  * then the others, each group newest first.
  */
 export type ChatListPage = {
-  items: ChatListItem[];
+  items: AnyChatListItem[];
   /** The count of all chats that match `project` and `q`, on all pages. */
   total: number;
   /** The count of the active chats that match `project` and `q`, on all pages. */
