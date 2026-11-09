@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { expandRoot, TAG_RULE } from "@tasma/engine";
@@ -99,7 +99,11 @@ const config = JSON.parse(readFileSync(join(CRATE, "tauri.conf.json"), "utf8")) 
   bundle: {
     targets: string[];
     externalBin: string[];
-    macOS: { minimumSystemVersion: string; entitlements: string };
+    macOS: {
+      minimumSystemVersion: string;
+      entitlements: string;
+      dmg: { background: string; windowSize: { width: number; height: number } };
+    };
   };
 };
 
@@ -540,6 +544,19 @@ describe("the release build", () => {
   // app:build makes no DMG. app:release asks for one on the command line.
   it("bundles the app alone by default", () => {
     expect(config.bundle.targets).toEqual(["app"]);
+  });
+
+  // A missing file stops the release only at the DMG step, after a full release compile.
+  it("has the DMG background in the crate", () => {
+    expect(existsSync(join(CRATE, config.bundle.macOS.dmg.background))).toBe(true);
+  });
+
+  // The icon positions are made for the image, and the image for the window.
+  it("draws the DMG background source at the window size", () => {
+    const source = readFileSync(join(CRATE, "dmg/background.svg"), "utf8");
+    const [, width, height] = /<svg\b[^>]*\swidth="(\d+)"[^>]*\sheight="(\d+)"/.exec(source) ?? [];
+
+    expect({ width: Number(width), height: Number(height) }).toEqual(config.bundle.macOS.dmg.windowSize);
   });
 });
 
