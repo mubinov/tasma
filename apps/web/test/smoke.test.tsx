@@ -1,7 +1,7 @@
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { setupStatus, stubSystemTheme } from "./helpers";
 
 // The entry keeps no handle on its root. A root that stays mounted keeps its
@@ -109,6 +109,59 @@ it("starts on the stored sidebar state", async () => {
   });
 
   expect(screen.getByRole("button", { name: "Expand sidebar" }).getAttribute("aria-expanded")).toBe("false");
+});
+
+/** Starts the entry with the Dock available or not. jsdom cannot take the scheme of the app. */
+async function startWithDock(available: boolean) {
+  vi.doMock("../src/api/dock", async (importOriginal) => ({
+    ...await importOriginal<typeof import("../src/api/dock")>(),
+    dockAvailable: () => available,
+  }));
+  onTestFinished(() => {
+    vi.doUnmock("../src/api/dock");
+  });
+
+  const posted: string[] = [];
+  let reads = 0;
+  const daemon = fetch;
+  vi.stubGlobal("fetch", (input: string, init?: RequestInit) => {
+    if (input.endsWith("/daemon/chats/state")) {
+      reads += 1;
+      return Promise.resolve(Response.json({ ok: true, data: { state: "running" }, diagnostics: [] }));
+    }
+
+    if (input.startsWith("/app/dock/")) {
+      posted.push(`${init?.method ?? "GET"} ${input}`);
+      return Promise.resolve(new Response(null, { status: 202 }));
+    }
+
+    return daemon(input, init);
+  });
+  document.body.innerHTML = '<div id="root"></div>';
+
+  await act(async () => {
+    await import("../src/main");
+  });
+
+  return { posted, reads: () => reads };
+}
+
+it("sends the state of the agents to the Dock in the macOS app", async () => {
+  const { posted } = await startWithDock(true);
+
+  await waitFor(() => {
+    expect(posted).toEqual(["POST /app/dock/running"]);
+  });
+});
+
+it("sends nothing to the Dock outside the macOS app", async () => {
+  const { posted, reads } = await startWithDock(false);
+
+  await waitFor(() => {
+    expect(reads()).toBeGreaterThan(0);
+  });
+
+  expect(posted).toEqual([]);
 });
 
 /*

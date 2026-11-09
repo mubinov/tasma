@@ -2,6 +2,8 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { dockAvailable } from "./api/dock";
+import { DockSync } from "./components/dock-sync";
 import { ErrorBoundary } from "./components/error-boundary";
 import { FeedSubscriber } from "./components/feed-subscriber";
 import { FindShortcut } from "./components/find-shortcut";
@@ -31,6 +33,11 @@ createRoot(container).render(
     <ThemeSync />
     <UpdateEvents queryClient={router.options.context.queryClient} />
     <FeedSubscriber queryClient={router.options.context.queryClient} client={router.options.context.client} />
+    {dockAvailable()
+      ? (
+          <DockSync queryClient={router.options.context.queryClient} client={router.options.context.client} />
+        )
+      : null}
     <FindShortcut router={router} />
     <ErrorBoundary>
       <QueryClientProvider client={router.options.context.queryClient}>

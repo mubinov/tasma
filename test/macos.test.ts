@@ -2,7 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { expandRoot, TAG_RULE } from "@tasma/engine";
-import { DAEMON_NAME, DAEMON_RECORD_FILE, DEFAULT_DAEMON_PORT } from "@tasma/protocol";
+import { DAEMON_NAME, DAEMON_RECORD_FILE, DEFAULT_DAEMON_PORT, type AgentState } from "@tasma/protocol";
 import { resolveConfig } from "vite";
 import { describe, expect, it } from "vitest";
 import { PROBE_BODY_LIMIT, PROBE_TIMEOUT_MS } from "../apps/cli/src/daemon/record.js";
@@ -13,6 +13,7 @@ import {
   APP_PATH_PREFIX,
   APP_SCHEME,
   DAEMON_PATH_PREFIX,
+  DOCK_ROUTE,
   FOLDER_ROUTE,
   UPDATE_EVENT,
 } from "../apps/web/src/api/paths.js";
@@ -152,6 +153,17 @@ describe("the macOS shell", () => {
 
   it("answers the folder route the board asks", () => {
     expect(rustConstant("folder.rs", "PATH")).toBe(FOLDER_ROUTE);
+  });
+
+  it("answers the Dock route the board asks", () => {
+    expect(rustConstant("dock.rs", "PATH")).toBe(DOCK_ROUTE);
+  });
+
+  it("names the states of the agents the daemon answers", () => {
+    const states = { "off": true, "running": true, "needs-you": true } satisfies Record<AgentState, true>;
+
+    expect(["OFF", "RUNNING", "NEEDS_YOU"].map((name) => rustConstant("dock.rs", name)).toSorted())
+      .toEqual(Object.keys(states).toSorted());
   });
 
   it("installs an update only of its own bundle identifier", () => {

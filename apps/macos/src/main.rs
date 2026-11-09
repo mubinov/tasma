@@ -14,6 +14,7 @@ mod command;
 mod daemon;
 mod daemon_stop;
 mod deeplink;
+mod dock;
 mod elevate;
 mod external;
 mod folder;
@@ -306,6 +307,7 @@ fn main() {
     tauri::Builder::default()
         .manage(shell)
         .manage(zoom::Level::default())
+        .manage(dock::Dock::default())
         .on_menu_event(|app, event| menu::dispatch(app, event.id()))
         // Asynchronous, so a daemon call never holds the main thread.
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |context, request, responder| {
@@ -397,6 +399,7 @@ fn main() {
             .build()?;
 
             window.set_background_color(Some(background(window.theme().ok())))?;
+            dock::restyle(app.handle(), window.theme().ok());
             titlebar::install(
                 MainThreadMarker::new().expect("setup runs on the main thread"),
                 &window,
@@ -409,6 +412,7 @@ fn main() {
                     // for it.
                     WindowEvent::ThemeChanged(theme) => {
                         let _ = window.set_background_color(Some(background(Some(*theme))));
+                        dock::restyle(window.app_handle(), Some(*theme));
                     }
                     WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
                         if matches!(event, WindowEvent::Resized(_)) {

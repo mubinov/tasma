@@ -21,5 +21,8 @@ export const APP_SCHEME = "tasma-app";
 /** The folder dialog's route under `APP_PATH_PREFIX`. */
 export const FOLDER_ROUTE = "/folder";
 
+/** The Dock icon's route under `APP_PATH_PREFIX`. */
+export const DOCK_ROUTE = "/dock";
+
 /** The event the macOS app dispatches on the window when the update changes. */
 export const UPDATE_EVENT = "tasma:update";

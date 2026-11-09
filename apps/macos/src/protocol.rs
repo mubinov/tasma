@@ -13,6 +13,7 @@ use tauri::http::{Request, Response, StatusCode, Uri};
 use tauri::{AppHandle, Runtime};
 
 use crate::daemon::Daemon;
+use crate::dock;
 use crate::folder;
 use crate::update::{self, Updater};
 
@@ -144,6 +145,7 @@ pub async fn serve<R: Runtime>(
     match route(request.uri()) {
         Target::Daemon(target) => daemon.forward(&target, &request).await,
         Target::App(path) if path == folder::PATH => folder::serve(app, request.method()).await,
+        Target::App(path) if dock::handles(&path) => dock::serve(app, request.method(), &path),
         Target::App(path) => update::serve(updater, request.method(), &path),
         Target::Asset(path) => asset(app, &path),
     }
@@ -439,20 +441,32 @@ mod tests {
         assert_eq!(answer.status(), StatusCode::BAD_GATEWAY);
     }
 
-    #[test]
-    fn the_folder_route_is_served_by_the_folder_panel() {
+    fn assert_a_get_is_refused_by_its_module(label: &str, uri: &str) {
         let app = app_holding(&[("index.html", b"<!doctype html>")]);
-        let daemon = crate::daemon::fixtures::daemon_on_a_dead_port("the-folder-route");
-        let updater = Arc::new(crate::update::fixtures::updater("the-folder-route"));
-        let request = Request::builder()
-            .uri("tasma-app://localhost/app/folder")
-            .body(Vec::new())
-            .unwrap();
+        let daemon = crate::daemon::fixtures::daemon_on_a_dead_port(label);
+        let updater = Arc::new(crate::update::fixtures::updater(label));
+        let request = Request::builder().uri(uri).body(Vec::new()).unwrap();
 
         let answer =
             tauri::async_runtime::block_on(serve(app.handle(), &daemon, &updater, request));
 
         // The update routes would answer a path they do not know with 404.
         assert_eq!(answer.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[test]
+    fn the_folder_route_is_served_by_the_folder_panel() {
+        assert_a_get_is_refused_by_its_module(
+            "the-folder-route",
+            "tasma-app://localhost/app/folder",
+        );
+    }
+
+    #[test]
+    fn the_dock_route_is_served_by_the_dock_module() {
+        assert_a_get_is_refused_by_its_module(
+            "the-dock-route",
+            "tasma-app://localhost/app/dock/running",
+        );
     }
 }
