@@ -295,6 +295,36 @@ export function chatMark(
   step: string | undefined,
 ): ChatStatus | undefined {
   if (chat.state !== "working" && chat.step !== step && (chat.seen ?? 0) >= chat.stateSeq) return undefined;
+  return statusOf(chat);
+}
+
+/** How long a project chat that needs nothing keeps its mark after its last event. */
+export const PROJECT_CHAT_ACTIVE_MS = 2 * 24 * 60 * 60 * 1000;
+
+/**
+ * Whether a project chat that is not busy has no mark: the user saw it up to
+ * `upTo`, and `PROJECT_CHAT_ACTIVE_MS` passed since `lastEvent`. A time that
+ * cannot be read is not old.
+ */
+export function projectChatSettled(seen: number | undefined, upTo: number, lastEvent: string, now: number): boolean {
+  return (seen ?? 0) >= upTo && now - Date.parse(lastEvent) >= PROJECT_CHAT_ACTIVE_MS;
+}
+
+/**
+ * The state that a list shows for a project chat, or undefined for no mark.
+ * `busy` is `chatBusy` of its fold.
+ */
+export function projectChatMark(
+  chat: Pick<ProjectChat, "stateSeq" | "seen"> & ChatStatus,
+  busy: boolean,
+  lastEvent: string,
+  now: number,
+): ChatStatus | undefined {
+  if (!busy && projectChatSettled(chat.seen, chat.stateSeq, lastEvent, now)) return undefined;
+  return statusOf(chat);
+}
+
+function statusOf(chat: ChatStatus): ChatStatus {
   return chat.state === "continued-outside" ? { state: chat.state, where: chat.where } : { state: chat.state };
 }
 

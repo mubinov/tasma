@@ -3,7 +3,17 @@ import { chmod, link, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { openTreeWorkflows, TaskStoreError } from "@tasma/engine";
-import type { AgentState, AgentStateReply, ChatEvent, ChatListItem, ChatListPage, Diagnostic, FeedEvent } from "@tasma/protocol";
+import type {
+  AgentState,
+  AgentStateReply,
+  AnyChatListItem,
+  ChatEvent,
+  ChatListItem,
+  ChatListPage,
+  Diagnostic,
+  FeedEvent,
+  ProjectChatListItem,
+} from "@tasma/protocol";
 import { chatListRoutes } from "../../src/chats/list-routes.js";
 import { createChatRegistry } from "../../src/chats/registry.js";
 import type { ChatRegistry } from "../../src/chats/registry.js";
@@ -18,9 +28,12 @@ import {
   onWorkflow,
   plant,
   plantChat,
+  plantProjectChat,
   plantSteps,
+  projectChatFolder,
   projectConfig,
   projectDir,
+  projectLogFile,
   projectsRoot,
   startTestServer,
   success,
@@ -43,10 +56,18 @@ const TURN_END: ChatEvent = { kind: "turn-end", stopReason: "end_turn" };
 
 const FAILED: ChatEvent = { kind: "failed", reason: "the agent stopped" };
 
+const PERMISSION: ChatEvent = { kind: "permission", request: "r-1", permission: { toolCall: { toolCallId: "c-1" } } };
+
+const HOUR = 60 * 60 * 1000;
+
 type World = { server: TestServer; chats: ChatRegistry; events: FeedEvent[] };
 
-/** The daemon lists only the chats of tasks. */
-type TaskChatPage = Omit<ChatListPage, "items"> & { items: ChatListItem[] };
+/** A page whose items are of `T`. */
+type Page<T extends AnyChatListItem> = Omit<ChatListPage, "items"> & { items: T[] };
+
+function hoursAgo(hours: number): string {
+  return new Date(Date.now() - hours * HOUR).toISOString();
+}
 
 async function plantTask(root: string, id: string, title?: string, status?: string): Promise<void> {
   await plant(taskFile(root, id.slice(0, id.indexOf("-")), id), taskText(id, title, status));
@@ -72,26 +93,33 @@ async function world(root: string, open?: (host: ProjectHost) => ProjectHost["op
   return { server, chats, events };
 }
 
-async function page(server: TestServer, query = ""): Promise<{ data: TaskChatPage; diagnostics: Diagnostic[] }> {
+async function page<T extends AnyChatListItem = ChatListItem>(
+  server: TestServer,
+  query = "",
+): Promise<{ data: Page<T>; diagnostics: Diagnostic[] }> {
   const response = await get(server, `/chats${query}`);
   expect(response.status).toBe(200);
-  return success<TaskChatPage>(response);
+  return success<Page<T>>(response);
 }
 
-async function item(server: TestServer, path: string): Promise<{ data: ChatListItem; diagnostics: Diagnostic[] }> {
+async function item<T extends AnyChatListItem = ChatListItem>(
+  server: TestServer,
+  path: string,
+): Promise<{ data: T; diagnostics: Diagnostic[] }> {
   const response = await get(server, path);
   expect(response.status).toBe(200);
-  return success<ChatListItem>(response);
+  return success<T>(response);
 }
 
-function places(items: ChatListItem[]): string[] {
-  return items.map((listed) => `${listed.task}/${listed.chat}`);
+/** `<task>/<chat>` for a task chat and `<tag>/<chat>` for a project chat. */
+function places(items: AnyChatListItem[]): string[] {
+  return items.map((listed) => `${"task" in listed ? listed.task : listed.tag}/${listed.chat}`);
 }
 
-async function allPages(server: TestServer): Promise<TaskChatPage[]> {
-  const pages = [(await page(server)).data];
+async function allPages<T extends AnyChatListItem = ChatListItem>(server: TestServer): Promise<Page<T>[]> {
+  const pages = [(await page<T>(server)).data];
   while (pages.at(-1)!.next !== undefined) {
-    pages.push((await page(server, `?after=${pages.at(-1)!.next}`)).data);
+    pages.push((await page<T>(server, `?after=${pages.at(-1)!.next}`)).data);
   }
   return pages;
 }
@@ -347,9 +375,11 @@ describe("GET /chats", () => {
   it.each([
     ["no base64url JSON", "not-a-cursor"],
     ["a JSON value of another shape", cursor([1, "ALPHA"])],
-    ["a key in the form without the group", cursor([1_767_225_600_000, "ALPHA", 1, "ALPHA-1", 1])],
-    ["a key with a group other than 0 and 1", cursor([2, 1_767_225_600_000, "ALPHA", 1, "ALPHA-1", 1])],
-    ["a key with a time that is no number", cursor([0, "x", "ALPHA", 1, "ALPHA-1", 1])],
+    ["a key in the form without the group", cursor([1_767_225_600_000, "ALPHA", 1, 1, "ALPHA-1", 1])],
+    ["a key in the form without the kind", cursor([0, 1_767_225_600_000, "ALPHA", 1, "ALPHA-1", 1])],
+    ["a key with a group other than 0 and 1", cursor([2, 1_767_225_600_000, "ALPHA", 1, 1, "ALPHA-1", 1])],
+    ["a key with a time that is no number", cursor([0, "x", "ALPHA", 1, 1, "ALPHA-1", 1])],
+    ["a key with a kind other than 0 and 1", cursor([0, 1_767_225_600_000, "ALPHA", 2, 1, "ALPHA-1", 1])],
   ])("refuses a cursor that holds %s with malformed-request", async (_name, after) => {
     const { server } = await world(await threeTasks());
 
@@ -582,6 +612,8 @@ describe("GET /chats", () => {
     async (code) => {
       const root = await threeTasks();
       await plant(join(chatFolder(root, "ALPHA", "1", 2), "chat.json"), "{");
+      await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, [USER, TURN_END], { seen: 2 });
+      await plant(join(projectChatFolder(root, "ALPHA", 2), "chat.json"), "{");
       const gone = async (): Promise<never> => {
         throw new TaskStoreError(code, "this project went away");
       };
@@ -591,9 +623,10 @@ describe("GET /chats", () => {
     },
   );
 
-  it("opens no index for a project with no chats", async () => {
+  it("opens no index for a project with no task chats, also when it has an old, seen project chat", async () => {
     const root = await threeTasks();
     await plantTask(root, "GAMMA-1");
+    await plantProjectChat(root, { tag: "GAMMA", chat: 1 }, [USER, TURN_END], { seen: 2 });
     const opened: string[] = [];
     const { server } = await world(root, (host) => (tag) => {
       opened.push(tag);
@@ -602,7 +635,7 @@ describe("GET /chats", () => {
 
     const { data } = await page(server);
 
-    expect(data.total).toBe(3);
+    expect(data.total).toBe(4);
     expect(opened.toSorted()).toEqual(["ALPHA", "BETA"]);
   });
 
@@ -617,6 +650,206 @@ describe("GET /chats", () => {
       "a task event of BETA-1",
       () => plantTask(root, "BETA-1", `Parse the board ${Date.now()}`),
     );
+  });
+});
+
+/**
+ * The chats of `threeTasks`, and two project chats seen to their end. The last
+ * event of ALPHA chat 1 is an hour old, and that of BETA chat 1 is more than 2
+ * days old.
+ */
+async function withProjectChats(): Promise<string> {
+  const root = await threeTasks();
+  await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, [USER, TURN_END], {
+    seen: 2,
+    title: "Plan the release",
+    created: "2026-01-01T09:30:00Z",
+    at: hoursAgo(1),
+  });
+  await plantProjectChat(root, { tag: "BETA", chat: 1 }, [USER, TURN_END], {
+    seen: 2,
+    title: "Draw the roadmap",
+    created: "2026-01-01T11:00:00Z",
+  });
+  return root;
+}
+
+/** The status of project chat 1 of ALPHA in the list and in the item, which agree. */
+async function projectStatusOf(server: TestServer): Promise<ProjectChatListItem["status"]> {
+  const { items } = (await page<AnyChatListItem>(server)).data;
+  const listed = items.find((one) => !("task" in one) && one.tag === "ALPHA" && one.chat === 1)!.status;
+  expect((await item<ProjectChatListItem>(server, "/projects/ALPHA/chats/1/item")).data.status).toEqual(listed);
+  return listed;
+}
+
+/** Makes `Date.now` of the daemon run `hours` ahead, until the test ends. */
+function later(hours: number): void {
+  const now = Date.now.bind(Date);
+  const moved = vi.spyOn(Date, "now").mockImplementation(() => now() + hours * HOUR);
+  onTestFinished(() => moved.mockRestore());
+}
+
+describe("GET /chats with project chats", () => {
+  it("lists the project chats with the task chats, each with its tag, title, agent, time and state", async () => {
+    const { server } = await world(await withProjectChats());
+
+    const { data, diagnostics } = await page<AnyChatListItem>(server);
+
+    expect(places(data.items)).toEqual(["ALPHA/1", "ALPHA-2/1", "BETA-1/1", "ALPHA-1/1", "BETA/1"]);
+    expect(data.items[0]).toEqual({
+      tag: "ALPHA",
+      title: "Plan the release",
+      chat: 1,
+      agent: "claude",
+      created: "2026-01-01T09:30:00Z",
+      status: { state: "needs-you" },
+    });
+    expect(data.items[4]).toEqual({ tag: "BETA", title: "Draw the roadmap", chat: 1, agent: "claude", created: "2026-01-01T11:00:00Z" });
+    expect([data.total, data.active]).toEqual([5, 4]);
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("serves pages across both kinds of chat, each chat in exactly one page", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantTask(root, "ALPHA-1", "Planted", "Done");
+    const planted: string[] = [];
+    for (let minute = 0; minute < 60; minute += 1) {
+      const created = `2026-01-01T00:${String(minute).padStart(2, "0")}:00Z`;
+      const chat = Math.floor(minute / 2) + 1;
+      if (minute % 2 === 0) await plantChat(root, at("ALPHA-1", chat), { created });
+      else await plantProjectChat(root, { tag: "ALPHA", chat }, [], { created });
+      planted.push(minute % 2 === 0 ? `ALPHA-1/${chat}` : `ALPHA/${chat}`);
+    }
+    const { server } = await world(root);
+
+    const pages = await allPages<AnyChatListItem>(server);
+
+    expect(pages.map((one) => [one.items.length, one.total, one.next !== undefined])).toEqual([
+      [50, 60, true],
+      [10, 60, false],
+    ]);
+    expect(pages.flatMap((one) => places(one.items))).toEqual(planted.toReversed());
+  });
+
+  it("puts a project chat before a task chat of one time and tag, and two project chats by chat number high first", async () => {
+    const root = await projectsRoot("ALPHA", "BETA");
+    await plantTask(root, "ALPHA-1", "Planted", "Done");
+    await plantChat(root, at("ALPHA-1", 1), { created: "2026-01-01T03:00:00+03:00" });
+    for (const [tag, chat] of [["BETA", 1], ["ALPHA", 1], ["ALPHA", 2]] as const) {
+      await plantProjectChat(root, { tag, chat }, [], { created: "2026-01-01T00:00:00Z" });
+    }
+    const { server } = await world(root);
+
+    const { data } = await page<AnyChatListItem>(server);
+
+    expect(places(data.items)).toEqual(["ALPHA/2", "ALPHA/1", "ALPHA-1/1", "BETA/1"]);
+  });
+
+  it.each([
+    ["project", "?project=BETA", ["BETA-1/1", "BETA/1"]],
+    ["q against the tag", "?q=alpha", ["ALPHA/1", "ALPHA-2/1", "ALPHA-1/1"]],
+    ["q against the title", "?q=ROADMAP", ["BETA/1"]],
+    ["q against the tag and the title", "?q=release%20alpha", ["ALPHA/1"]],
+    ["project and q", "?project=ALPHA&q=release", ["ALPHA/1"]],
+  ])("keeps the project chats that %s keeps", async (_name, query, expected) => {
+    const { server } = await world(await withProjectChats());
+
+    const { data } = await page<AnyChatListItem>(server, query);
+
+    expect(places(data.items)).toEqual(expected);
+  });
+
+  it.each<[string, ChatEvent[], { seen?: number; created?: string; at?: string }, ProjectChatListItem["status"]]>([
+    ["a seen answer less than 2 days after its last event", [USER, TURN_END], { seen: 2, at: hoursAgo(47) }, { state: "needs-you" }],
+    ["a seen answer 2 days after its last event", [USER, TURN_END], { seen: 2, at: hoursAgo(49) }, undefined],
+    ["an unseen answer 2 days after its last event", [USER, TURN_END], { seen: 1, at: hoursAgo(72) }, { state: "needs-you" }],
+    ["an answer nobody saw 2 days after its last event", [USER, TURN_END], { at: hoursAgo(72) }, { state: "needs-you" }],
+    ["a seen failed chat 2 days after its last event", [USER, FAILED], { seen: 2, at: hoursAgo(72) }, undefined],
+    ["an empty log less than 2 days after the chat was created", [], { created: hoursAgo(1) }, { state: "needs-you" }],
+    ["an empty log 2 days after the chat was created", [], { created: hoursAgo(72) }, undefined],
+  ])("gives the mark of %s", async (_name, events, fields, status) => {
+    const root = await projectsRoot("ALPHA");
+    await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, events, fields);
+    const { server } = await world(root);
+
+    expect(await projectStatusOf(server)).toEqual(status);
+  });
+
+  it("returns an old chat to the Active group at a new message, and not at a load", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, [USER, TURN_END], { seen: 2 });
+    const { server, chats } = await world(root);
+    expect(await projectStatusOf(server)).toBeUndefined();
+
+    const live = await chats.getProjectChat("ALPHA", 1);
+    expect(await projectStatusOf(server)).toBeUndefined();
+    await live.append(USER);
+    await live.append(TURN_END);
+    await live.setSeen(4);
+
+    expect(await projectStatusOf(server)).toEqual({ state: "needs-you" });
+    expect((await page(server)).data.active).toBe(1);
+  });
+
+  it("does not load an old, fully seen chat to list it", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, [USER, TURN_END], { seen: 2 });
+    const { server, chats } = await world(root);
+    const loads = vi.spyOn(chats, "getProjectChat");
+
+    expect(await projectStatusOf(server)).toBeUndefined();
+
+    expect(loads).not.toHaveBeenCalled();
+    expect(chats.loadedProjectChat("ALPHA", 1)).toBeUndefined();
+  });
+
+  it("keeps the mark of a chat in memory with a waiting request 2 days later, also when seen reaches the last seq", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, [USER, TURN_END]);
+    const { server, chats } = await world(root);
+    const live = await chats.getProjectChat("ALPHA", 1);
+    await live.append(PERMISSION);
+    await live.setSeen(3);
+    expect(live.chat).toMatchObject({ seen: 3, seq: 3, stateSeq: 3 });
+
+    later(72);
+
+    expect(await projectStatusOf(server)).toEqual({ state: "needs-you" });
+  });
+
+  it("gives no state to a project chat whose log does not open, and reports it on its page alone", async () => {
+    const root = await sixtyTasks();
+    await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, [USER, TURN_END], { created: "2026-01-01T00:30:00Z" });
+    await chmod(projectLogFile(root, "ALPHA", 1), 0o000);
+    onTestFinished(() => chmod(projectLogFile(root, "ALPHA", 1), 0o600));
+    const { server } = await world(root);
+
+    const first = await page<AnyChatListItem>(server);
+    const second = await page<AnyChatListItem>(server, `?after=${first.data.next}`);
+
+    expect(first.diagnostics).toEqual([]);
+    expect(places(second.data.items)).toEqual([...placesDown(5, 1), ...placesDown(60, 56), "ALPHA/1"]);
+    expect(second.data.items.at(-1)!.status).toBeUndefined();
+    expect(second.diagnostics).toMatchObject([{ code: "chat-file-unreadable", path: projectLogFile(root, "ALPHA", 1) }]);
+  });
+
+  it("keeps the project chats of a project whose index does not open, with no state for a chat that must load", async () => {
+    const root = await threeTasks();
+    await plantProjectChat(root, { tag: "BETA", chat: 1 }, [USER, TURN_END], { seen: 2 });
+    await plantProjectChat(root, { tag: "BETA", chat: 2 }, [USER, TURN_END], { at: hoursAgo(1) });
+    await chmod(tasksDir(root, "BETA"), 0o000);
+    onTestFinished(() => chmod(tasksDir(root, "BETA"), 0o700));
+    const { server } = await world(root);
+
+    const { data, diagnostics } = await page<AnyChatListItem>(server);
+
+    expect(data.items.map((listed) => [places([listed])[0], listed.status])).toEqual([
+      ["ALPHA-2/1", { state: "needs-you" }],
+      ["ALPHA-1/1", { state: "needs-you" }],
+      ["BETA/2", undefined],
+      ["BETA/1", undefined],
+    ]);
+    expect(diagnostics.map((one) => one.code)).toEqual(["project-unreadable", "chat-file-unreadable"]);
   });
 });
 
@@ -695,6 +928,27 @@ describe("GET /chats/state", () => {
 
     expect((await page(server)).data.active).toBe(3);
     expect((await stateOf(server)).state).toBe("needs-you");
+  });
+
+  it.each<[string, { seen?: number; at?: string }, AgentState, number]>([
+    ["counts a seen project chat less than 2 days after its last event as needs-you", { seen: 2, at: hoursAgo(1) }, "needs-you", 1],
+    ["does not count a seen project chat 2 days after its last event", { seen: 2 }, "off", 0],
+  ])("%s, as the Active group does", async (_name, fields, state, active) => {
+    const root = await projectsRoot("ALPHA");
+    await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, [USER, TURN_END], fields);
+    const { server } = await world(root);
+
+    expect((await stateOf(server)).state).toBe(state);
+    expect((await page(server)).data.active).toBe(active);
+  });
+
+  it("answers running for one working project chat", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantProjectChat(root, { tag: "ALPHA", chat: 1 });
+    const { server, chats } = await world(root);
+    await (await chats.getProjectChat("ALPHA", 1)).append(USER);
+
+    expect((await stateOf(server)).state).toBe("running");
   });
 
   it("answers with the diagnostics of the listings", async () => {
@@ -810,5 +1064,49 @@ describe("GET /chats/{id}/{chat}", () => {
     expect(response.status).toBe(422);
     expect(await failure(response)).toMatchObject({ code: "chat-unreadable" });
     expect((await page(server)).data.items).toEqual([]);
+  });
+});
+
+describe("GET /projects/{project}/chats/{chat}/item", () => {
+  it.each(["ALPHA", "BETA"])("gives chat 1 of %s as the list gives it", async (tag) => {
+    const { server } = await world(await withProjectChats());
+    const listed = (await page<AnyChatListItem>(server)).data.items
+      .find((one) => !("task" in one) && one.tag === tag && one.chat === 1);
+
+    const { data, diagnostics } = await item<ProjectChatListItem>(server, `/projects/${tag}/chats/1/item`);
+
+    expect(data).toEqual(listed);
+    expect(data.status === undefined).toBe(tag === "BETA");
+    expect(diagnostics).toEqual([]);
+  });
+
+  it.each([
+    ["an unknown project", "/projects/GAMMA/chats/1/item", 404, "project-not-found"],
+    ["a chat that does not exist", "/projects/ALPHA/chats/5/item", 404, "chat-not-found"],
+    ["a chat number of 0", "/projects/ALPHA/chats/0/item", 404, "chat-not-found"],
+    ["a chat number that is a word", "/projects/ALPHA/chats/last/item", 404, "chat-not-found"],
+    ["a query", "/projects/ALPHA/chats/1/item?full=true", 400, "malformed-request"],
+  ])("refuses %s", async (_name, path, status, code) => {
+    const { server } = await world(await withProjectChats());
+
+    const response = await get(server, path);
+
+    expect(response.status).toBe(status);
+    expect(await failure(response)).toMatchObject({ code });
+  });
+
+  it("refuses a chat with no event log with chat-unreadable, and the list leaves it out and reports it", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantProjectChat(root, { tag: "ALPHA", chat: 1 });
+    await rm(projectLogFile(root, "ALPHA", 1));
+    const { server } = await world(root);
+
+    const response = await get(server, "/projects/ALPHA/chats/1/item");
+    const { data, diagnostics } = await page<AnyChatListItem>(server);
+
+    expect(response.status).toBe(422);
+    expect(await failure(response)).toMatchObject({ code: "chat-unreadable" });
+    expect(data.items).toEqual([]);
+    expect(diagnostics).toMatchObject([{ code: "chat-file-unreadable", path: projectLogFile(root, "ALPHA", 1) }]);
   });
 });

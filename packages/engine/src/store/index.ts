@@ -13,7 +13,7 @@ export {
   updateChat,
 } from "./chat.js";
 export type { ChatAgent, ChatChange, ChatInput, ChatList, ChatRecord } from "./chat.js";
-export { openChatLog, openProjectChatLog } from "./chat-log.js";
+export { openChatLog, openProjectChatLog, readLastProjectChatEntry } from "./chat-log.js";
 export type { ChatLog, ChatLogEntry, ProjectChatLog } from "./chat-log.js";
 export { errnoOf, TaskStoreError } from "./errors.js";
 export type { TaskStoreErrorCode } from "./errors.js";

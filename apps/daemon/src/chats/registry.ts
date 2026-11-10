@@ -164,6 +164,8 @@ export type ChatRegistry = {
   /** Creates a project chat with its first message, so the chat is `working` from its first `project-chat` event. */
   createProjectChat(tag: string, input: ProjectChatInput, message: Message): Promise<LiveChat<ProjectChat>>;
   getProjectChat(tag: string, chat: number): Promise<LiveChat<ProjectChat>>;
+  /** The handle of a project chat that is already in memory. It takes no turn and does not read the disk. */
+  loadedProjectChat(tag: string, chat: number): LiveChat<ProjectChat> | undefined;
   projectRenamed(from: string, to: string): void;
   projectRemoved(tag: string): void;
   taskRemoved(tag: string, task: string): void;
@@ -728,6 +730,10 @@ export function createChatRegistry(options: {
       return projects.handles.get(key)
         ?? writes.runAll([tag], async () =>
           projects.handles.get(key) ?? load(projects, tag, await readProjectChat({ project: tag, root }, chat)));
+    },
+
+    loadedProjectChat(tag, chat) {
+      return projects.handles.get(projectChatKey(tag, chat));
     },
 
     projectRenamed(from, to) {

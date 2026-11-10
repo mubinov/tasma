@@ -2,7 +2,7 @@ import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { isRecord } from "../format/values.js";
 import { appendLine, type FileNode, nodeOf, openRegularEntry, sameNode } from "./atomic.js";
-import { chatDirectory, chatPath, LOG_FILE, openTaskChats, readRecord } from "./chat.js";
+import { assertChatDirectory, chatDirectory, chatPath, LOG_FILE, openTaskChats, readRecord } from "./chat.js";
 import { fail } from "./errors.js";
 import { openProjectChats, projectChatPath, projectInputFault } from "./project-chat.js";
 import { now } from "./store.js";
@@ -290,11 +290,10 @@ class TaskEventLog extends EventLog implements ChatLog {
   }
 }
 
-/** Opens and reads the log of the chat in `directory`, as `openChatLog` states. */
-async function loadLog<T>(
+/** The log of the chat in `directory`, open for `use`. `size` is the size of the log at the open. */
+async function withLog<T>(
   directory: string,
-  onEntry: ((entry: ChatLogEntry) => void) | undefined,
-  build: (file: LogFile, scanned: Scanned) => T,
+  use: (handle: FileHandle, file: LogFile, size: number) => Promise<T>,
 ): Promise<T> {
   const path = join(directory, LOG_FILE);
   const opened = await openRegularEntry(path);
@@ -303,11 +302,45 @@ async function loadLog<T>(
   try {
     // `appendLine` refuses a file with a second name, so no open takes one as the log of this chat.
     if (opened.entry.nlink !== 1) fail("chat-unreadable", NOT_ONE_FILE, path);
-    const file = { path, node: nodeOf(opened.entry) };
-    return build(file, await scanLog(opened.handle, path, onEntry));
+    return await use(opened.handle, { path, node: nodeOf(opened.entry) }, opened.entry.size);
   } finally {
     await opened.handle.close();
   }
+}
+
+/** Opens and reads the log of the chat in `directory`, as `openChatLog` states. */
+function loadLog<T>(
+  directory: string,
+  onEntry: ((entry: ChatLogEntry) => void) | undefined,
+  build: (file: LogFile, scanned: Scanned) => T,
+): Promise<T> {
+  return withLog(directory, async (handle, file) => build(file, await scanLog(handle, file.path, onEntry)));
+}
+
+/**
+ * The entry of the last line of the first `size` bytes that holds one. It reads
+ * backward in blocks and stops at that line.
+ */
+async function lastEntry(handle: FileHandle, path: string, size: number): Promise<ChatLogEntry | undefined> {
+  // The end of a line whose start is in a block not read yet.
+  let parts: Uint8Array[] = [];
+  for (let end = size; end > 0;) {
+    const start = Math.max(0, end - CHUNK);
+    const block = await readRange(handle, start, end);
+    if (block.length < end - start) fail("chat-unreadable", "the event log changed under this chat; open it again", path);
+    let to = block.length;
+    for (;;) {
+      const at = to === 0 ? -1 : block.lastIndexOf(NEWLINE, to - 1);
+      if (at === -1) break;
+      const entry = entryOf(Buffer.concat([block.subarray(at + 1, to), ...parts]), 0);
+      if (entry !== undefined) return entry;
+      parts = [];
+      to = at;
+    }
+    parts.unshift(block.subarray(0, to));
+    end = start;
+  }
+  return entryOf(Buffer.concat(parts), 0);
 }
 
 /**
@@ -338,4 +371,19 @@ export async function openProjectChatLog(
   await readRecord(directory, projectInputFault);
   const pathIn = (project: string): string => join(projectChatPath({ project, root: paths.root }, chat), LOG_FILE);
   return loadLog(directory, onEntry, (file, scanned) => new EventLog(chat, pathIn, file, scanned));
+}
+
+/**
+ * The last valid entry of the log of one project chat, or `undefined` for a log
+ * with none. It makes the checks of `openProjectChatLog` but does not read the
+ * record, and passes over a line that holds no entry without a finding.
+ */
+export async function readLastProjectChatEntry(
+  options: ProjectOptions,
+  chat: number,
+): Promise<ChatLogEntry | undefined> {
+  const { projectChats } = await openProjectChats(options);
+  const directory = chatDirectory(projectChats, chat);
+  await assertChatDirectory(directory);
+  return withLog(directory, (handle, file, size) => lastEntry(handle, file.path, size));
 }

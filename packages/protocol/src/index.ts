@@ -10,7 +10,21 @@ export {
   TREE_DIRNAME,
 } from "./address.js";
 export type { DaemonRecord } from "./address.js";
-export { agentActive, AGENT_OPTION_RULES, agentState, CHAT_START, chatBusy, chatMark, currentStep, foldChat, isActiveChat, turnRuns } from "./chat.js";
+export {
+  agentActive,
+  AGENT_OPTION_RULES,
+  agentState,
+  CHAT_START,
+  chatBusy,
+  chatMark,
+  currentStep,
+  foldChat,
+  isActiveChat,
+  PROJECT_CHAT_ACTIVE_MS,
+  projectChatMark,
+  projectChatSettled,
+  turnRuns,
+} from "./chat.js";
 export type {
   AcpObject,
   AgentState,

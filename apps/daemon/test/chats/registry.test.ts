@@ -1355,4 +1355,42 @@ describe("a project chat", () => {
 
     expect(await stillPending(waited)).toBe(false);
   });
+
+  describe("loadedProjectChat", () => {
+    it("gives nothing before a load and reads no log, and gives the handle after the load", async () => {
+      const root = await tree();
+      await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, [{ kind: "user", ...MESSAGE }, TURN_END]);
+      const { chats, writes } = await world(root);
+      const asked = watchTurns(writes);
+      const opens = engineLog.opens;
+
+      expect(chats.loadedProjectChat("ALPHA", 1)).toBeUndefined();
+      expect(engineLog.opens).toBe(opens);
+      expect(asked()).toEqual([]);
+
+      const live = await chats.getProjectChat("ALPHA", 1);
+
+      expect(chats.loadedProjectChat("ALPHA", 1)).toBe(live);
+      expect(chats.loadedProjectChat("ALPHA", 2)).toBeUndefined();
+    });
+
+    it("gives the handle under the new tag after a rename of the project", async () => {
+      const { chats, server } = await world(await tree());
+      const live = await chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE);
+
+      expect((await send(server, "POST", "/projects/ALPHA/rename", { tag: "BETA" })).status).toBe(200);
+
+      expect(chats.loadedProjectChat("BETA", 1)).toBe(live);
+      expect(chats.loadedProjectChat("ALPHA", 1)).toBeUndefined();
+    });
+
+    it("gives nothing after a delete of the project", async () => {
+      const { chats, server } = await world(await tree());
+      await chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE);
+
+      expect((await send(server, "DELETE", "/projects/ALPHA")).status).toBe(200);
+
+      expect(chats.loadedProjectChat("ALPHA", 1)).toBeUndefined();
+    });
+  });
 });

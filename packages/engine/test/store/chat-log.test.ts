@@ -1,4 +1,16 @@
-import { appendFile, chmod, link, mkdir, open as openFile, readFile, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  chmod,
+  link,
+  mkdir,
+  open as openFile,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
@@ -7,6 +19,7 @@ import {
   createProjectChat,
   openChatLog,
   openProjectChatLog,
+  readLastProjectChatEntry,
   renameProject,
 } from "@tasma/engine";
 import { isTimestamp } from "../../src/format/schema.js";
@@ -44,6 +57,24 @@ function line(seq: number, event: Record<string, unknown> = { kind: "user", text
 
 function seqs(entries: ChatLogEntry[]): number[] {
   return entries.map((entry) => entry.seq);
+}
+
+/** A tree holding one project chat with no task, and the path of its event log. */
+async function withProjectChat(): Promise<{ root: string; log: string }> {
+  const root = await tempRoot();
+  await createProjectChat({ project: PROJECT, root }, PROJECT_CHAT_INPUT);
+  return { root, log: join(projectChatDir(root, 1), "events.jsonl") };
+}
+
+/** A spy on the reads of every file handle, removed when the test ends, and the read it wraps. */
+async function spyOnReads(path: string) {
+  const probe = await openFile(path);
+  const prototype = Object.getPrototypeOf(probe) as { read: (...args: unknown[]) => Promise<unknown> };
+  await probe.close();
+  const originalRead = prototype.read;
+  const reads = vi.spyOn(prototype, "read");
+  onTestFinished(() => reads.mockRestore());
+  return { reads, originalRead };
 }
 
 describe("appending to a chat's event log", () => {
@@ -291,14 +322,11 @@ describe("an invalid line inside a log", () => {
     const { root, log } = await withChat();
     await writeFile(log, `${line(1)}\n${line(2)}\n${"x".repeat(100_000)}\n${line(4)}\n`);
     const opened = await open(root);
-    const probe = await openFile(log);
-    const reads = vi.spyOn(Object.getPrototypeOf(probe) as { read: () => unknown }, "read");
-    await probe.close();
-    onTestFinished(() => reads.mockRestore());
+    const { reads } = await spyOnReads(log);
 
     expect(seqs(await opened.read(0))).toEqual([1, 2, 4]);
 
-    const lengths = reads.mock.calls.map((call) => (call as unknown[])[2]);
+    const lengths = reads.mock.calls.map((call) => call[2]);
     expect(lengths).toEqual([Buffer.byteLength(`${line(1)}\n${line(2)}`), Buffer.byteLength(line(4))]);
   });
 });
@@ -384,13 +412,6 @@ describe("a chat that moved away", () => {
 });
 
 describe("the event log of a project chat", () => {
-  /** A tree holding one project chat with no task, and the path of its event log. */
-  async function withProjectChat(): Promise<{ root: string; log: string }> {
-    const root = await tempRoot();
-    await createProjectChat({ project: PROJECT, root }, PROJECT_CHAT_INPUT);
-    return { root, log: join(projectChatDir(root, 1), "events.jsonl") };
-  }
-
   it("appends and reads, and a second open replays it", async () => {
     const { root, log } = await withProjectChat();
     const opened = await openProjectChatLog({ project: PROJECT, root }, 1);
@@ -459,5 +480,125 @@ describe("the event log of a project chat", () => {
     await symlink(join(root, "outside"), join(chatsDir(root), "project"));
 
     expect((await storeError(openProjectChatLog({ project: PROJECT, root }, 1))).code).toBe("project-invalid");
+  });
+});
+
+describe("the last entry of the event log of a project chat", () => {
+  function last(root: string): Promise<ChatLogEntry | undefined> {
+    return readLastProjectChatEntry({ project: PROJECT, root }, 1);
+  }
+
+  it("gives the last entry of the log", async () => {
+    const { root } = await withProjectChat();
+    const opened = await openProjectChatLog({ project: PROJECT, root }, 1);
+    for (const text of ["one", "two", "three"]) await opened.append({ text });
+
+    await expect(last(root)).resolves.toEqual((await opened.read(2))[0]);
+  });
+
+  it("counts a valid last line with no newline", async () => {
+    const { root, log } = await withProjectChat();
+    await writeFile(log, `${line(1)}\n${line(2)}`);
+
+    await expect(last(root)).resolves.toMatchObject({ seq: 2 });
+  });
+
+  it.each([
+    ["a line an append did not finish", `${line(1)}\n${line(2)}\n${line(3).slice(0, 20)}`],
+    ["a terminated line that holds no entry", `${line(1)}\n${line(2)}\n{\n\n`],
+  ])("passes over %s at the end", async (_name, text) => {
+    const { root, log } = await withProjectChat();
+    await writeFile(log, text);
+
+    await expect(last(root)).resolves.toMatchObject({ seq: 2 });
+  });
+
+  it.each([
+    ["after a shorter line", (long: string) => `${line(1)}\n${long}\n`, 2],
+    ["as the first line of the log", (long: string) => long, 2],
+  ])("reads a last line longer than one block %s", async (_name, build, seq) => {
+    const { root, log } = await withProjectChat();
+    const text = "д".repeat(100_000);
+    await writeFile(log, build(line(seq, { text })));
+
+    const entry = await last(root);
+
+    expect(entry?.seq).toBe(seq);
+    expect(entry?.event.text).toBe(text);
+  });
+
+  it("reads only the end of a long log", async () => {
+    const { root, log } = await withProjectChat();
+    const lines = Array.from({ length: 2000 }, (_unused, at) => line(at + 1));
+    await writeFile(log, `${lines.join("\n")}\n`);
+    const { reads } = await spyOnReads(log);
+
+    await expect(last(root)).resolves.toMatchObject({ seq: 2000 });
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["an empty log", ""],
+    ["a log of lines that hold no entry", "{\n[1]\n"],
+    ["a log that starts with an empty line", "\n{\n"],
+  ])("gives nothing for %s", async (_name, text) => {
+    const { root, log } = await withProjectChat();
+    await writeFile(log, text);
+
+    await expect(last(root)).resolves.toBeUndefined();
+  });
+
+  it("does not read the record", async () => {
+    const { root, log } = await withProjectChat();
+    await writeFile(log, `${line(1)}\n`);
+    await writeFile(join(projectChatDir(root, 1), "chat.json"), "{");
+
+    await expect(last(root)).resolves.toMatchObject({ seq: 1 });
+  });
+
+  it.each([
+    ["no log", (log: string) => rm(log)],
+    ["a log with a second name", (log: string) => link(log, `${log}.copy`)],
+    ["a log that is a symbolic link", async (log: string) => {
+      await writeFile(`${log}.outside`, `${line(1)}\n`);
+      await rm(log);
+      await symlink(`${log}.outside`, log);
+    }],
+  ])("refuses %s with chat-unreadable", async (_name, build) => {
+    const { root, log } = await withProjectChat();
+    await build(log);
+
+    expect((await storeError(last(root))).code).toBe("chat-unreadable");
+  });
+
+  it.each([
+    ["a symbolic link", (directory: string) => symlink(`${directory}.outside`, directory)],
+    ["a file", (directory: string) => writeFile(directory, "no directory")],
+  ])("refuses a chat whose name holds %s with chat-unreadable", async (_name, build) => {
+    const { root, log } = await withProjectChat();
+    await writeFile(log, `${line(1)}\n`);
+    const directory = projectChatDir(root, 1);
+    await rename(directory, `${directory}.outside`);
+    await build(directory);
+
+    expect((await storeError(last(root))).code).toBe("chat-unreadable");
+  });
+
+  it("refuses a chat that does not exist with chat-not-found", async () => {
+    const { root } = await withProjectChat();
+
+    expect((await storeError(readLastProjectChatEntry({ project: PROJECT, root }, 2))).code).toBe("chat-not-found");
+  });
+
+  it("refuses a log that became shorter during the read with chat-unreadable", async () => {
+    const { root, log } = await withProjectChat();
+    await writeFile(log, `${line(1)}\n${line(2)}\n`);
+    const { reads, originalRead } = await spyOnReads(log);
+    reads.mockImplementationOnce(async function (this: unknown, ...args: unknown[]) {
+      await truncate(log, 0);
+      return originalRead.apply(this, args);
+    });
+
+    expect((await storeError(last(root))).code).toBe("chat-unreadable");
   });
 });

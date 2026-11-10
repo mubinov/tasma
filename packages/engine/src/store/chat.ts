@@ -148,15 +148,20 @@ export function chatRecordPath(options: ProjectOptions, task: string, chat: numb
   return join(chatPath(options, task, chat), RECORD_FILE);
 }
 
+/** Refuses a chat name that holds no directory, a symbolic link included. */
+export async function assertChatDirectory(directory: string): Promise<void> {
+  const entry = await entryAt(directory);
+  if (entry === undefined) fail("chat-not-found", "there is no chat here", directory);
+  if (!entry.isDirectory()) fail("chat-unreadable", "the name of this chat holds no directory", directory);
+}
+
 /**
  * The record of one chat as the file holds it, unknown keys included. A
  * directory with no record is what an interrupted create leaves, so it is no
  * chat.
  */
 export async function readRecord(directory: string, inputFault = taskInputFault): Promise<Record<string, unknown>> {
-  const entry = await entryAt(directory);
-  if (entry === undefined) fail("chat-not-found", "there is no chat here", directory);
-  if (!entry.isDirectory()) fail("chat-unreadable", "the name of this chat holds no directory", directory);
+  await assertChatDirectory(directory);
   const path = join(directory, RECORD_FILE);
   const read = await readRegularFile(path);
   if (read === "absent") fail("chat-not-found", "this chat has no record", path);

@@ -188,20 +188,25 @@ export async function plantChat(
   await plant(logFile(root, tag, digits, chat), logLines(events));
 }
 
-/** A project chat as the engine writes one: its record, and a log of the events in order. */
+/**
+ * A project chat as the engine writes one: its record, and a log of the events
+ * in order. `at` is the time of every entry.
+ */
 export async function plantProjectChat(
   root: string,
   place: { tag: string; chat: number },
   events: ChatEvent[] = [],
+  fields: { title?: string; created?: string; seen?: number; at?: string } = {},
 ): Promise<void> {
   const { tag, chat } = place;
-  const stored = { title: "Planted", agent: "claude", folder: "/srv/alpha", created: TIMESTAMP };
+  const { at, ...record } = fields;
+  const stored = { title: "Planted", agent: "claude", folder: "/srv/alpha", created: TIMESTAMP, ...record };
   await plant(join(projectChatFolder(root, tag, chat), "chat.json"), JSON.stringify(stored));
-  await plant(projectLogFile(root, tag, chat), logLines(events));
+  await plant(projectLogFile(root, tag, chat), logLines(events, at));
 }
 
-function logLines(events: ChatEvent[]): string {
-  return events.map((event, at) => `${JSON.stringify({ seq: at + 1, at: TIMESTAMP, event })}\n`).join("");
+function logLines(events: ChatEvent[], at = TIMESTAMP): string {
+  return events.map((event, index) => `${JSON.stringify({ seq: index + 1, at, event })}\n`).join("");
 }
 
 // The workflow planters below carry the names the engine's own test helpers

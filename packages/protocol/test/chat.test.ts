@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { agentActive, agentState, CHAT_START, chatBusy, chatMark, currentStep, foldChat, isActiveChat, turnRuns } from "@tasma/protocol";
-import type { AgentState, Chat, ChatEvent, ChatFold, ChatStatus, Workflow } from "@tasma/protocol";
+import {
+  agentActive,
+  agentState,
+  CHAT_START,
+  chatBusy,
+  chatMark,
+  currentStep,
+  foldChat,
+  isActiveChat,
+  PROJECT_CHAT_ACTIVE_MS,
+  projectChatMark,
+  projectChatSettled,
+  turnRuns,
+} from "@tasma/protocol";
+import type { AgentState, Chat, ChatEvent, ChatFold, ChatStatus, ProjectChat, Workflow } from "@tasma/protocol";
 
 const USER: ChatEvent = { kind: "user", text: "Start", client: "app" };
 
@@ -308,6 +321,69 @@ describe("chatMark", () => {
     const chat: Chat = { ...base, state: "working" };
 
     expect(chatMark(chat, chat.step)).not.toBe(chat);
+  });
+});
+
+const LAST_EVENT = "2026-01-02T10:00:00Z";
+const recent = Date.parse(LAST_EVENT) + PROJECT_CHAT_ACTIVE_MS - 1;
+const old = Date.parse(LAST_EVENT) + PROJECT_CHAT_ACTIVE_MS;
+
+describe("projectChatMark", () => {
+  const base: ProjectChat = {
+    chat: 1,
+    title: "Plan the release",
+    agent: "claude",
+    folder: "/work/alpha",
+    created: "2026-01-02T09:00:00Z",
+    seq: 6,
+    stateSeq: 4,
+    seen: 6,
+    state: "needs-you",
+  };
+
+  it.each<[string, ProjectChat, boolean, string, number, ChatStatus | undefined]>([
+    ["a working chat, old", { ...base, state: "working" }, true, LAST_EVENT, old, { state: "working" }],
+    ["a chat with a waiting request, old", base, true, LAST_EVENT, old, { state: "needs-you" }],
+    ["an unseen answer, old", { ...base, seen: 3 }, false, LAST_EVENT, old, { state: "needs-you" }],
+    ["a chat nobody saw, old", { ...base, seen: undefined }, false, LAST_EVENT, old, { state: "needs-you" }],
+    ["a seen chat 1 ms before 2 days", base, false, LAST_EVENT, recent, { state: "needs-you" }],
+    ["a seen chat at exactly 2 days", base, false, LAST_EVENT, old, undefined],
+    ["a chat with an empty log, old", { ...base, seq: 0, stateSeq: 0, seen: undefined }, false, LAST_EVENT, old, undefined],
+    ["a seen failed chat, old", { ...base, state: "failed" }, false, LAST_EVENT, old, undefined],
+    [
+      "a seen continued-outside chat, recent",
+      { ...base, state: "continued-outside", where: "terminal" },
+      false,
+      LAST_EVENT,
+      recent,
+      { state: "continued-outside", where: "terminal" },
+    ],
+    ["a seen chat whose time cannot be read", base, false, "not a time", old, { state: "needs-you" }],
+  ])("gives the mark of %s", (_case, chat, busy, lastEvent, now, mark) => {
+    expect(projectChatMark(chat, busy, lastEvent, now)).toEqual(mark);
+  });
+
+  it("gives a new object, not the chat", () => {
+    expect(projectChatMark(base, true, LAST_EVENT, old)).not.toBe(base);
+  });
+});
+
+describe("projectChatSettled", () => {
+  it.each<[string, boolean, number | undefined, number, string, number]>([
+    ["a chat seen up to its seq, 1 ms before 2 days", false, 4, 4, LAST_EVENT, recent],
+    ["a chat seen up to its seq, exactly 2 days", true, 4, 4, LAST_EVENT, old],
+    ["a chat seen past its seq, old", true, 6, 4, LAST_EVENT, old],
+    ["a chat seen before its seq, old", false, 3, 4, LAST_EVENT, old],
+    ["a chat nobody saw, with no seq, old", true, undefined, 0, LAST_EVENT, old],
+    ["a chat nobody saw, old", false, undefined, 1, LAST_EVENT, old],
+    ["2 days in another offset", true, 4, 4, "2026-01-02T12:00:00+02:00", Date.parse("2026-01-04T10:00:00Z")],
+    ["a time that cannot be read", false, 4, 4, "", old],
+  ])("counts %s as settled: %s", (_case, settled, seen, upTo, lastEvent, now) => {
+    expect(projectChatSettled(seen, upTo, lastEvent, now)).toBe(settled);
+  });
+
+  it("holds 2 days", () => {
+    expect(PROJECT_CHAT_ACTIVE_MS).toBe(2 * 24 * 60 * 60 * 1000);
   });
 });
 

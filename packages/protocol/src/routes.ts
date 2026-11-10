@@ -91,10 +91,11 @@ export type ChatEventsQuery = { after?: number };
 
 /**
  * Which chats a list of the chats of all projects gives. `project` keeps the
- * chats of one project. `q` is free text: the daemon splits it on whitespace,
- * and a chat matches when each word is a case-insensitive substring of the id
- * of its task, the title of its task or its step. `after` is the `next` of the
- * page before, passed back unchanged.
+ * chats of one project. `q` is free text that the daemon splits on whitespace.
+ * A chat matches when each word is a case-insensitive substring of one of its
+ * fields. The fields of a chat of a task are the id and the title of its task
+ * and its step. The fields of a chat of a project are its tag and its title.
+ * `after` is the `next` of the page before, passed back unchanged.
  */
 export type ChatListQuery = { project?: string; q?: string; after?: string };
 
