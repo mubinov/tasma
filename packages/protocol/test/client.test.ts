@@ -267,6 +267,13 @@ const invocations: Invocation[] = [
     body: { seq: 14, client: "app" },
   },
   {
+    name: "markChatInactive",
+    send: (client) => client.markChatInactive("SAGA", "SAGA-3", 2, { client: "app" }),
+    method: "POST",
+    path: "/projects/SAGA/tasks/SAGA-3/chats/2/inactive",
+    body: { client: "app" },
+  },
+  {
     name: "readChat of a chat of a project",
     send: (client) => client.readChat("SAGA", undefined, 2),
     method: "GET",
@@ -323,6 +330,13 @@ const invocations: Invocation[] = [
     method: "POST",
     path: "/projects/SAGA/chats/2/seen",
     body: { seq: 14, client: "app" },
+  },
+  {
+    name: "markChatInactive of a chat of a project",
+    send: (client) => client.markChatInactive("SAGA", undefined, 2, { client: "app" }),
+    method: "POST",
+    path: "/projects/SAGA/chats/2/inactive",
+    body: { client: "app" },
   },
   {
     name: "listAllChats",

@@ -511,6 +511,68 @@ describe("GET /chats", () => {
     expect(openTreeWorkflows).toHaveBeenCalledTimes(2);
   });
 
+  it("gives the state and busy of one moment when a turn ends during the read of the workflow", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantSteps(root, "flow", "dev:build", "dev:review");
+    await plant(taskFile(root, "ALPHA", "ALPHA-1"), onWorkflow("ALPHA-1", "flow"));
+    const { server, chats } = await world(root);
+    const input = { step: "dev:build", agent: "claude", folder: "/srv/alpha" } as const;
+    const live = await chats.create("ALPHA", "ALPHA-1", input, { text: "Build the parser", client: "app" });
+    const read = vi.mocked(openTreeWorkflows).getMockImplementation()!;
+    vi.mocked(openTreeWorkflows).mockImplementationOnce(async (...args) => {
+      await live.append(TURN_END);
+      return read(...args);
+    });
+
+    const listed = (await page(server)).data.items[0]!;
+
+    expect(listed.status).toEqual({ state: "needs-you" });
+    expect(listed).not.toHaveProperty("busy");
+  });
+
+  it("gives no state to a latest chat marked as not active, also after a restart, until its state moves", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantTask(root, "ALPHA-1");
+    await plantChat(root, at("ALPHA-1", 1), {}, [USER, TURN_END]);
+    await (await (await world(root)).chats.get("ALPHA", "ALPHA-1", 1)).setInactive();
+    const { server, chats } = await world(root);
+    const live = await chats.get("ALPHA", "ALPHA-1", 1);
+
+    expect(await statusOf(server)).toBeUndefined();
+    expect((await page(server)).data).toMatchObject({ total: 1, active: 0 });
+    await live.append({ kind: "update", update: { sessionUpdate: "usage_update" } });
+    expect(await statusOf(server)).toBeUndefined();
+    await live.append(USER);
+    expect(await statusOf(server)).toEqual({ state: "working" });
+    await live.append(TURN_END);
+    expect(await statusOf(server)).toEqual({ state: "needs-you" });
+    expect((await page(server)).data.active).toBe(1);
+  });
+
+  it("gives busy to the row of a task chat while a turn runs and while a request waits, and at no other time", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantTask(root, "ALPHA-1");
+    await plantTask(root, "ALPHA-2", "Planted", "Done");
+    await plantChat(root, at("ALPHA-1", 1), { created: "2026-01-01T00:01:00Z" }, [USER, TURN_END]);
+    await plantChat(root, at("ALPHA-2", 1), { created: "2026-01-01T00:02:00Z" }, [USER, TURN_END]);
+    const { server, chats } = await world(root);
+    const live = await chats.get("ALPHA", "ALPHA-1", 1);
+    await (await chats.get("ALPHA", "ALPHA-2", 1)).append(USER);
+    const rows = async () => {
+      const listed = (await page(server)).data.items.map((one) => [one.task, one.status?.state, one.busy]);
+      expect((await item(server, "/chats/ALPHA-1/1")).data.busy).toBe(listed.find(([task]) => task === "ALPHA-1")![2]);
+      return listed;
+    };
+
+    expect(await rows()).toEqual([["ALPHA-1", "needs-you", undefined], ["ALPHA-2", undefined, undefined]]);
+    await live.append(USER);
+    expect(await rows()).toEqual([["ALPHA-1", "working", true], ["ALPHA-2", undefined, undefined]]);
+    await live.append(PERMISSION);
+    expect(await rows()).toEqual([["ALPHA-1", "needs-you", true], ["ALPHA-2", undefined, undefined]]);
+    await live.append(TURN_END);
+    expect((await page(server)).data.items[0]).not.toHaveProperty("busy");
+  });
+
   it.each(["Done", "dOnE"])("gives no state to the chats of a task whose status is %s", async (status) => {
     const root = await projectsRoot("ALPHA");
     await plantTask(root, "ALPHA-1", "Planted", status);
@@ -817,6 +879,66 @@ describe("GET /chats with project chats", () => {
     expect(await projectStatusOf(server)).toEqual({ state: "needs-you" });
   });
 
+  it("gives no state to a project chat marked as not active, also after a restart, until its state moves", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, [USER, TURN_END], { at: hoursAgo(1) });
+    await (await (await world(root)).chats.getProjectChat("ALPHA", 1)).setInactive();
+    const { server, chats } = await world(root);
+    const loads = vi.spyOn(chats, "getProjectChat");
+
+    expect(await projectStatusOf(server)).toBeUndefined();
+    expect((await page(server)).data).toMatchObject({ total: 1, active: 0 });
+    expect(loads).not.toHaveBeenCalled();
+    expect(chats.loadedProjectChat("ALPHA", 1)).toBeUndefined();
+
+    const live = await chats.getProjectChat("ALPHA", 1);
+    expect(await projectStatusOf(server)).toBeUndefined();
+    await live.append(USER);
+    await live.append(TURN_END);
+    expect(await projectStatusOf(server)).toEqual({ state: "needs-you" });
+    expect((await page(server)).data.active).toBe(1);
+  });
+
+  it.each<[string, ChatEvent[], number, ProjectChatListItem["status"]]>([
+    ["at its last entry", [USER, TURN_END], 2, undefined],
+    ["after its last entry, by a log that lost lines", [USER, TURN_END], 5, undefined],
+    ["before its last entry", [USER, TURN_END], 1, { state: "needs-you" }],
+    ["with an empty log", [], 0, undefined],
+  ])("loads a project chat marked as not active %s only when the mark is below its last entry", async (
+    _case,
+    events,
+    inactive,
+    status,
+  ) => {
+    const root = await projectsRoot("ALPHA");
+    await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, events, { inactive, created: hoursAgo(1), at: hoursAgo(1) });
+    const { server, chats } = await world(root);
+    const loads = vi.spyOn(chats, "getProjectChat");
+
+    expect(await projectStatusOf(server)).toEqual(status);
+    expect(loads.mock.calls.length > 0).toBe(status !== undefined);
+  });
+
+  it("gives busy to the row of a project chat while a turn runs and while a request waits, and at no other time", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, [USER, TURN_END], { at: hoursAgo(1) });
+    const { server, chats } = await world(root);
+    const busyOf = async () => {
+      const listed = (await page<ProjectChatListItem>(server)).data.items[0]!.busy;
+      expect((await item<ProjectChatListItem>(server, "/projects/ALPHA/chats/1/item")).data.busy).toBe(listed);
+      return listed;
+    };
+
+    expect(await busyOf()).toBeUndefined();
+    const live = await chats.getProjectChat("ALPHA", 1);
+    await live.append(USER);
+    expect(await busyOf()).toBe(true);
+    await live.append(PERMISSION);
+    expect(await busyOf()).toBe(true);
+    await live.append(TURN_END);
+    expect(await busyOf()).toBeUndefined();
+  });
+
   it("gives no state to a project chat whose log does not open, and reports it on its page alone", async () => {
     const root = await sixtyTasks();
     await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, [USER, TURN_END], { created: "2026-01-01T00:30:00Z" });
@@ -940,6 +1062,21 @@ describe("GET /chats/state", () => {
 
     expect((await stateOf(server)).state).toBe(state);
     expect((await page(server)).data.active).toBe(active);
+  });
+
+  it("does not count a chat of either kind marked as not active", async () => {
+    const root = await projectsRoot("ALPHA");
+    await plantTask(root, "ALPHA-1");
+    await plantChat(root, at("ALPHA-1", 1), {}, [USER, TURN_END]);
+    await plantProjectChat(root, { tag: "ALPHA", chat: 1 }, [USER, TURN_END], { at: hoursAgo(1) });
+    const { server, chats } = await world(root);
+    expect((await stateOf(server)).state).toBe("needs-you");
+
+    await (await chats.get("ALPHA", "ALPHA-1", 1)).setInactive();
+    expect((await stateOf(server)).state).toBe("needs-you");
+    await (await chats.getProjectChat("ALPHA", 1)).setInactive();
+
+    expect((await stateOf(server)).state).toBe("off");
   });
 
   it("answers running for one working project chat", async () => {

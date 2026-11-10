@@ -181,10 +181,24 @@ describe("readProjectChat, listProjectChats and updateProjectChat", () => {
     });
   });
 
+  it("update inactive, and keep it when another field changes", async () => {
+    const root = await tempRoot();
+    const created = await createProjectChat(options(root), PROJECT_CHAT_INPUT);
+
+    await updateProjectChat(options(root), 1, { inactive: 3 });
+    const updated = await updateProjectChat(options(root), 1, { seen: 2 });
+
+    const expected = { ...created, seen: 2, inactive: 3 };
+    expect(updated).toEqual(expected);
+    await expect(readProjectChat(options(root), 1)).resolves.toEqual(expected);
+    expect((await listProjectChats(options(root))).chats).toEqual([expected]);
+  });
+
   it.each([
     ["an empty session", { session: "" }],
     ["options that are a list", { options: ["auto"] }],
     ["a negative seen", { seen: -1 }],
+    ["a negative inactive", { inactive: -1 }],
   ])("refuse an update with %s and write nothing", async (_name, change) => {
     const root = await tempRoot();
     await createProjectChat(options(root), PROJECT_CHAT_INPUT);

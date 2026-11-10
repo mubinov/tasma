@@ -4,6 +4,7 @@ import {
   agentState,
   CHAT_START,
   chatBusy,
+  chatInactive,
   chatMark,
   currentStep,
   foldChat,
@@ -313,6 +314,17 @@ describe("chatMark", () => {
       "dev:plan",
       { state: "continued-outside", where: "terminal" },
     ],
+    ["needs-you on the current step, marked inactive at its state", { ...base, inactive: 4 }, "dev:research", undefined],
+    ["needs-you on the current step, marked inactive after its state", { ...base, inactive: 6 }, "dev:research", undefined],
+    ["failed on the current step, marked inactive", { ...base, state: "failed", inactive: 4 }, "dev:research", undefined],
+    [
+      "continued-outside on the current step, marked inactive",
+      { ...base, state: "continued-outside", where: "vscode", inactive: 4 },
+      "dev:research",
+      undefined,
+    ],
+    ["a state after the inactive mark", { ...base, inactive: 3 }, "dev:research", { state: "needs-you" }],
+    ["working, marked inactive", { ...base, state: "working", inactive: 6 }, "dev:research", { state: "working" }],
   ])("gives the mark of %s", (_case, chat, step, mark) => {
     expect(chatMark(chat, step)).toEqual(mark);
   });
@@ -359,6 +371,10 @@ describe("projectChatMark", () => {
       { state: "continued-outside", where: "terminal" },
     ],
     ["a seen chat whose time cannot be read", base, false, "not a time", old, { state: "needs-you" }],
+    ["a busy chat marked inactive", { ...base, state: "working", inactive: 6 }, true, LAST_EVENT, recent, { state: "working" }],
+    ["a chat nobody saw, marked inactive, recent", { ...base, seen: undefined, inactive: 4 }, false, LAST_EVENT, recent, undefined],
+    ["a failed chat marked inactive, recent", { ...base, state: "failed", inactive: 6 }, false, LAST_EVENT, recent, undefined],
+    ["a state after the inactive mark, recent", { ...base, inactive: 3 }, false, LAST_EVENT, recent, { state: "needs-you" }],
   ])("gives the mark of %s", (_case, chat, busy, lastEvent, now, mark) => {
     expect(projectChatMark(chat, busy, lastEvent, now)).toEqual(mark);
   });
@@ -368,18 +384,36 @@ describe("projectChatMark", () => {
   });
 });
 
+describe("chatInactive", () => {
+  it.each<[string, boolean, number | undefined, number]>([
+    ["no mark", false, undefined, 4],
+    ["a mark before the state", false, 3, 4],
+    ["a mark at the state", true, 4, 4],
+    ["a mark after the state", true, 6, 4],
+    ["no mark on an empty log", false, undefined, 0],
+    ["a mark on an empty log", true, 0, 0],
+  ])("counts %s as inactive: %s", (_case, inactive, mark, upTo) => {
+    expect(chatInactive(mark, upTo)).toBe(inactive);
+  });
+});
+
 describe("projectChatSettled", () => {
-  it.each<[string, boolean, number | undefined, number, string, number]>([
-    ["a chat seen up to its seq, 1 ms before 2 days", false, 4, 4, LAST_EVENT, recent],
-    ["a chat seen up to its seq, exactly 2 days", true, 4, 4, LAST_EVENT, old],
-    ["a chat seen past its seq, old", true, 6, 4, LAST_EVENT, old],
-    ["a chat seen before its seq, old", false, 3, 4, LAST_EVENT, old],
-    ["a chat nobody saw, with no seq, old", true, undefined, 0, LAST_EVENT, old],
-    ["a chat nobody saw, old", false, undefined, 1, LAST_EVENT, old],
-    ["2 days in another offset", true, 4, 4, "2026-01-02T12:00:00+02:00", Date.parse("2026-01-04T10:00:00Z")],
-    ["a time that cannot be read", false, 4, 4, "", old],
-  ])("counts %s as settled: %s", (_case, settled, seen, upTo, lastEvent, now) => {
-    expect(projectChatSettled(seen, upTo, lastEvent, now)).toBe(settled);
+  it.each<[string, boolean, Pick<ProjectChat, "seen" | "inactive">, number, string, number]>([
+    ["a chat seen up to its seq, 1 ms before 2 days", false, { seen: 4 }, 4, LAST_EVENT, recent],
+    ["a chat seen up to its seq, exactly 2 days", true, { seen: 4 }, 4, LAST_EVENT, old],
+    ["a chat seen past its seq, old", true, { seen: 6 }, 4, LAST_EVENT, old],
+    ["a chat seen before its seq, old", false, { seen: 3 }, 4, LAST_EVENT, old],
+    ["a chat nobody saw, with no seq, old", true, {}, 0, LAST_EVENT, old],
+    ["a chat nobody saw, old", false, {}, 1, LAST_EVENT, old],
+    ["2 days in another offset", true, { seen: 4 }, 4, "2026-01-02T12:00:00+02:00", Date.parse("2026-01-04T10:00:00Z")],
+    ["a time that cannot be read", false, { seen: 4 }, 4, "", old],
+    ["a chat marked as not active at its seq, recent", true, { inactive: 4 }, 4, LAST_EVENT, recent],
+    ["a chat marked as not active past its seq, recent", true, { inactive: 6 }, 4, LAST_EVENT, recent],
+    ["a chat marked as not active before its seq, old", false, { inactive: 3 }, 4, LAST_EVENT, old],
+    ["a chat marked as not active before its seq and seen up to it, old", true, { seen: 4, inactive: 3 }, 4, LAST_EVENT, old],
+    ["a chat marked as not active on an empty log, recent", true, { inactive: 0 }, 0, LAST_EVENT, recent],
+  ])("counts %s as settled: %s", (_case, settled, chat, upTo, lastEvent, now) => {
+    expect(projectChatSettled(chat, upTo, lastEvent, now)).toBe(settled);
   });
 
   it("holds 2 days", () => {

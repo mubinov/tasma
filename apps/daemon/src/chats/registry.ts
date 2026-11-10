@@ -36,7 +36,7 @@ import type {
   ProjectOptions,
   TaskStoreErrorCode,
 } from "@tasma/engine";
-import { CHAT_START, chatBusy, DAEMON_NAME, foldChat, printable } from "@tasma/protocol";
+import { CHAT_START, chatBusy, chatInactive, DAEMON_NAME, foldChat, printable } from "@tasma/protocol";
 import type {
   AcpObject,
   Chat,
@@ -51,7 +51,7 @@ import type {
 import type { Publish } from "../events/feed.js";
 import { createHold, HOLD_MS } from "../events/hold.js";
 import type { Hold } from "../events/hold.js";
-import { causeOf } from "../http/failure.js";
+import { causeOf, DaemonError } from "../http/failure.js";
 import type { ProjectHost } from "../projects/host.js";
 import { taskKey } from "../tasks/serialize.js";
 import type { WriteQueue } from "../tasks/serialize.js";
@@ -118,6 +118,13 @@ export type LiveChat<C extends Chat | ProjectChat = Chat> = {
    * with the other writes of the chat.
    */
   setSeen(seq: number): Promise<void>;
+  /**
+   * Stores the last `seq` of the log as `inactive`, and publishes the feed
+   * event of the chat when the value moves. Refused with `turn-running` while
+   * `chatBusy` is true of the fold. Writes in call order with the other writes
+   * of the chat.
+   */
+  setInactive(): Promise<void>;
   /** Resolves when every write called on the handle before it has ended, whether it failed or not. */
   written(): Promise<void>;
   /** Takes no turn, so a read never waits for a write. */
@@ -218,6 +225,9 @@ type Answers = { answered: boolean; unanswered: string[] };
 
 type Opened<L> = { log: L; fold: ChatFold; stateSeq: number; asked: Asked; answers: Answers };
 
+/** What a row of the chat list shows from the log. Each change of the status moves `stateSeq`. */
+type Shown = { stateSeq: number; busy: boolean };
+
 /** The kinds of update that an agent sends only while it works on a prompt. */
 const WORK_UPDATES: ReadonlySet<unknown> = new Set([
   "agent_message_chunk",
@@ -317,6 +327,17 @@ function sameStatus(one: ChatStatus, other: ChatStatus): boolean {
 /** Whether the entry of `event`, which folds `before` into `after`, moves the `stateSeq` of its chat. */
 function movesStateSeq(before: ChatFold, after: ChatFold, event: ChatEvent): boolean {
   return event.kind === "permission" || event.kind === "question" || !sameStatus(before.status, after.status);
+}
+
+/**
+ * `seen` and `inactive` lowered to `last` where they are above it, or undefined
+ * when neither is. A log that lost lines, by a hand edit or a crash, gives its
+ * next entries the seq of entries that the user saw or marked.
+ */
+function loweredTo(record: ChatKind["record"], last: number): ChatChange | undefined {
+  const seen = (record.seen ?? 0) > last ? last : undefined;
+  const inactive = (record.inactive ?? 0) > last ? last : undefined;
+  return seen === undefined && inactive === undefined ? undefined : { seen, inactive };
 }
 
 /** Keeps `asked` to the open requests of `fold`, the fold after `event`. */
@@ -431,6 +452,20 @@ class Live<K extends ChatKind> implements LiveChat<K["chat"]> {
     });
   }
 
+  setInactive(): Promise<void> {
+    return this.#queued(async () => {
+      this.#assertPresent();
+      if (this.#stale) await this.#reopen();
+      if (chatBusy(this.#fold)) {
+        throw new DaemonError("turn-running", `${chatName(this)} has a working agent or a waiting request`);
+      }
+      const inactive = this.#log.last;
+      if (chatInactive(this.#record.inactive, inactive)) return;
+      await this.#writeRecord({ inactive });
+      this.#publish();
+    });
+  }
+
   async written(): Promise<void> {
     await this.#writes;
   }
@@ -451,9 +486,9 @@ class Live<K extends ChatKind> implements LiveChat<K["chat"]> {
   async appendInHeldTurns(event: ChatEvent): Promise<ChatEntry> {
     this.#assertPresent();
     if (this.#stale) await this.#reopen();
-    // A log that lost lines, by a hand edit or a crash, gives its next entries the seq of entries the user saw.
-    if ((this.#record.seen ?? 0) > this.#log.last) await this.#writeRecord({ seen: this.#log.last });
-    const before = this.#stateSeq;
+    const lowered = loweredTo(this.#record, this.#log.last);
+    if (lowered !== undefined) await this.#writeRecord(lowered);
+    const before = this.#shown();
     const next = foldChat(this.#fold, event);
     let entry;
     try {
@@ -551,10 +586,10 @@ class Live<K extends ChatKind> implements LiveChat<K["chat"]> {
 
   /**
    * A new open reads what a failed append left on disk, and publishes the feed
-   * event of the chat when it finds `stateSeq` changed.
+   * event of the chat when it finds `stateSeq` or `chatBusy` changed.
    */
   async #reopen(): Promise<void> {
-    const before = this.#stateSeq;
+    const before = this.#shown();
     const last = this.#log.last;
     const opened = await openFolded(this.#context, this.#tag, this.#record);
     this.#log = opened.log;
@@ -567,12 +602,19 @@ class Live<K extends ChatKind> implements LiveChat<K["chat"]> {
     if (this.#log.last !== last) this.hold.notify();
   }
 
+  #shown(): Shown {
+    return { stateSeq: this.#stateSeq, busy: chatBusy(this.#fold) };
+  }
+
   /**
-   * Publishes the feed event of the chat when `stateSeq` is not `before`. A log
-   * can become shorter, so a lower one counts.
+   * Publishes the feed event of the chat when `stateSeq` or `chatBusy` is not
+   * as in `before`. A log can become shorter, so a lower `stateSeq` counts.
+   * `chatBusy` can change while the state stays, for example at the end of a
+   * turn with an open request.
    */
-  #announce(before: number): void {
-    if (this.#stateSeq !== before) this.#publish();
+  #announce(before: Shown): void {
+    const now = this.#shown();
+    if (now.stateSeq !== before.stateSeq || now.busy !== before.busy) this.#publish();
   }
 
   #publish(): void {
@@ -591,7 +633,8 @@ export function createChatRegistry(options: {
   /**
    * Receives the `chat` event of a task chat or the `project-chat` event of a
    * project chat at its create, at each change of its status, at each new
-   * permission request or question, and when its `seen` moves forward.
+   * permission request or question, at each change of `chatBusy` of its fold,
+   * when its `seen` moves forward, and when its `inactive` changes.
    */
   publish?: Publish;
   holdMs?: number;

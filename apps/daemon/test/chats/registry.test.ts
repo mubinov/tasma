@@ -1,9 +1,10 @@
-import { appendFile, chmod, link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, link, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { MockInstance } from "vitest";
 import { createChat, TaskStoreError } from "@tasma/engine";
 import type { ChatLog, ChatLogEntry, ProjectChatLog } from "@tasma/engine";
+import { chatBusy } from "@tasma/protocol";
 import type { ChatEntry, ChatEvent, FeedEvent } from "@tasma/protocol";
 import { createChatRegistry, isProjectChat } from "../../src/chats/registry.js";
 import type { ChatRegistry, LiveChat } from "../../src/chats/registry.js";
@@ -405,6 +406,63 @@ describe("appending to a chat", () => {
   });
 });
 
+describe("the busy state of a chat", () => {
+  const PERMISSION: ChatEvent = { kind: "permission", request: "p-1", permission: { toolCall: { title: "Edit" } } };
+  const QUESTION: ChatEvent = { kind: "question", request: "q-1", question: { message: "Which one?" } };
+  const PERMISSION_RESOLVED: ChatEvent = { kind: "permission-resolved", request: "p-1", outcome: { outcome: "cancelled" } };
+
+  it.each<[string, ChatEvent[], (live: LiveChat) => Promise<unknown>]>([
+    ["a permission request outside a turn is resolved", [TURN_END, PERMISSION], (live) => live.append(PERMISSION_RESOLVED)],
+    [
+      "a question outside a turn is resolved",
+      [TURN_END, QUESTION],
+      (live) => live.append({ kind: "question-resolved", request: "q-1", answer: { action: "cancel" } }),
+    ],
+    ["a turn ends while its request waits", [PERMISSION], (live) => live.append(TURN_END)],
+    ["the daemon stops a chat whose request waits outside a turn", [TURN_END, PERMISSION], (live) => live.interrupt()],
+    [
+      "a job starts in a chat that continues outside",
+      [TURN_END, { kind: "continued-outside", where: "vscode" }],
+      (live) => live.append({ kind: "background", job: true, ownTurn: false }),
+    ],
+  ])("publishes one chat event when %s and the state stays", async (_case, appended, act) => {
+    const { chats, events } = await world(await tree());
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    for (const event of appended) await live.append(event);
+    const busy = chatBusy(live.fold);
+    const { stateSeq, state } = live.chat;
+    const published = events.length;
+
+    await act(live);
+
+    expect(chatBusy(live.fold)).toBe(!busy);
+    expect(live.chat).toMatchObject({ stateSeq, state });
+    expect(events).toHaveLength(published + 1);
+    expect(events.at(-1)).toMatchObject({ kind: "chat", chat: 1, state });
+  });
+
+  it("is published when a new open of the log finds it changed and the state stays", async () => {
+    const root = await tree();
+    const { chats, events } = await world(root);
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
+    await live.append(PERMISSION);
+    const log = logFile(root, "ALPHA", "1", 1);
+    await chmod(log, 0o400);
+    await expect(live.append(UPDATE)).rejects.toMatchObject({ code: "EACCES" });
+    await chmod(log, 0o600);
+    await appendFile(log, `${JSON.stringify({ seq: 4, at: TIMESTAMP, event: PERMISSION_RESOLVED })}\n`);
+    const published = events.length;
+
+    await live.setSeen(0);
+
+    expect(chatBusy(live.fold)).toBe(false);
+    expect(live.chat).toMatchObject({ seq: 4, stateSeq: 3, state: "needs-you" });
+    expect(events).toHaveLength(published + 1);
+    expect(events.at(-1)).toEqual(chatEvent(1, "needs-you"));
+  });
+});
+
 describe("the session of a chat", () => {
   it("is written to the record, which a restart reads", async () => {
     const root = await tree();
@@ -519,6 +577,126 @@ describe("the seen of a chat", () => {
     await rm(chatFolder(root, "ALPHA", "1", 1), { recursive: true });
 
     await expect(live.setSeen(1)).rejects.toMatchObject({ code: "chat-not-found" });
+  });
+});
+
+describe("the inactive mark of a chat", () => {
+  const PERMISSION: ChatEvent = { kind: "permission", request: "p-1", permission: { toolCall: { title: "Edit" } } };
+  const QUESTION: ChatEvent = { kind: "question", request: "q-1", question: { message: "Which one?" } };
+
+  function recordFile(root: string): string {
+    return join(chatFolder(root, "ALPHA", "1", 1), "chat.json");
+  }
+
+  it("stores the last seq and publishes one chat event, and a second mark writes and publishes nothing", async () => {
+    const root = await tree();
+    const { chats, events } = await world(root);
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
+    await live.append(UPDATE);
+
+    await live.setInactive();
+
+    expect(live.chat).toMatchObject({ seq: 3, stateSeq: 2, inactive: 3, state: "needs-you" });
+    expect(JSON.parse(await readFile(recordFile(root), "utf8"))).toMatchObject({ inactive: 3 });
+    expect(events).toEqual([chatEvent(1, "working"), chatEvent(1, "needs-you"), chatEvent(1, "needs-you")]);
+    const { ino } = await stat(recordFile(root));
+
+    await live.setInactive();
+
+    expect(events).toHaveLength(3);
+    expect((await stat(recordFile(root))).ino).toBe(ino);
+  });
+
+  it("stays after a restart", async () => {
+    const root = await tree();
+    const live = await (await world(root)).chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
+    await live.setInactive();
+
+    const restarted = await (await world(root)).chats.get("ALPHA", "ALPHA-1", 1);
+
+    expect(restarted.chat).toMatchObject({ seq: 2, stateSeq: 2, inactive: 2 });
+  });
+
+  it("is passed by the next entry that moves the seq of the state", async () => {
+    const { chats } = await world(await tree());
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
+    await live.setInactive();
+
+    await live.append({ kind: "user", ...MESSAGE });
+
+    expect(live.chat).toMatchObject({ seq: 3, stateSeq: 3, inactive: 2, state: "working" });
+  });
+
+  it.each<[string, ChatEvent[]]>([
+    ["a turn runs", []],
+    ["a permission request of a turn waits", [PERMISSION]],
+    ["a question waits after the turn end", [TURN_END, QUESTION]],
+    ["a job runs", [TURN_END, { kind: "background", job: true, ownTurn: false }]],
+    ["an own turn runs", [TURN_END, { kind: "background", job: false, ownTurn: true }]],
+  ])("is refused with turn-running while %s, and writes and publishes nothing", async (_case, appended) => {
+    const root = await tree();
+    const { chats, events } = await world(root);
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    for (const event of appended) await live.append(event);
+    const published = events.length;
+    const before = await readFile(recordFile(root), "utf8");
+
+    const refused = live.setInactive();
+
+    await expect(refused).rejects.toMatchObject({ code: "turn-running" });
+    await expect(refused).rejects.toThrow("chat 1 of ALPHA-1");
+    expect(live.chat).not.toHaveProperty("inactive");
+    await expect(readFile(recordFile(root), "utf8")).resolves.toBe(before);
+    expect(events).toHaveLength(published);
+  });
+
+  it("stores the last seq that a new open of the log finds after a failed append", async () => {
+    const root = await tree();
+    const { chats } = await world(root);
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    const log = logFile(root, "ALPHA", "1", 1);
+    await chmod(log, 0o400);
+    await expect(live.append(UPDATE)).rejects.toMatchObject({ code: "EACCES" });
+    await chmod(log, 0o600);
+    await appendFile(log, `${JSON.stringify({ seq: 2, at: TIMESTAMP, event: TURN_END })}\n`);
+
+    await live.setInactive();
+
+    expect(live.chat).toMatchObject({ seq: 2, stateSeq: 2, inactive: 2, state: "needs-you" });
+  });
+
+  it("comes down to the last seq of a log that lost lines with seen, so the next state passes it", async () => {
+    const root = await tree();
+    const live = await (await world(root)).chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
+    await live.append({ kind: "user", ...MESSAGE });
+    await live.append(TURN_END);
+    await live.setSeen(4);
+    await live.setInactive();
+    const log = logFile(root, "ALPHA", "1", 1);
+    const kept = (await readFile(log, "utf8")).split("\n").slice(0, 2).join("\n");
+    await writeFile(log, `${kept}\n`);
+    const restarted = await (await world(root)).chats.get("ALPHA", "ALPHA-1", 1);
+
+    await restarted.append({ kind: "user", ...MESSAGE });
+
+    expect(restarted.chat).toMatchObject({ seq: 3, stateSeq: 3, seen: 2, inactive: 2 });
+    await expect((await world(root)).chats.get("ALPHA", "ALPHA-1", 1)).resolves.toMatchObject({
+      chat: { seen: 2, inactive: 2 },
+    });
+  });
+
+  it("is refused for a chat removed by hand", async () => {
+    const root = await tree();
+    const { chats } = await world(root);
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
+    await rm(chatFolder(root, "ALPHA", "1", 1), { recursive: true });
+
+    await expect(live.setInactive()).rejects.toMatchObject({ code: "chat-not-found" });
   });
 });
 
@@ -1307,6 +1485,21 @@ describe("a project chat", () => {
     expect(await record(root, 1)).toMatchObject(written);
     expect(live.chat).toMatchObject(written);
     expect(events).toEqual([projectChatEvent(1, "working"), projectChatEvent(1, "working")]);
+  });
+
+  it("writes its inactive mark to its record, publishes project-chat, and refuses the mark while a turn runs", async () => {
+    const root = await tree();
+    const { chats, events } = await world(root);
+    const live = await chats.createProjectChat("ALPHA", PROJECT_INPUT, MESSAGE);
+
+    await expect(live.setInactive()).rejects.toMatchObject({ code: "turn-running" });
+    await live.append(TURN_END);
+    await live.setInactive();
+
+    expect(await record(root, 1)).toMatchObject({ inactive: 2 });
+    expect(live.chat).toMatchObject({ seq: 2, stateSeq: 2, inactive: 2 });
+    expect(events).toEqual([projectChatEvent(1, "working"), projectChatEvent(1, "needs-you"), projectChatEvent(1, "needs-you")]);
+    await expect((await world(root)).chats.getProjectChat("ALPHA", 1)).resolves.toMatchObject({ chat: { inactive: 2 } });
   });
 
   it("keeps its handle through a rename of the project, which appends into the moved log under the new tag", async () => {

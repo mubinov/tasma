@@ -668,6 +668,63 @@ describe("updateChat", () => {
     expect(updated).not.toHaveProperty("seen");
     expect(JSON.parse(await read(record))).toMatchObject({ seen: "far", session: "a session" });
   });
+
+  it("sets inactive, and keeps it when another field changes", async () => {
+    const root = await withTasks();
+    const created = await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    const record = join(chatDir(root, "1", 1), "chat.json");
+
+    await updateChat(options(root), "SAGA-1", 1, { seen: 2, inactive: 5 });
+    const updated = await updateChat(options(root), "SAGA-1", 1, { session: "a session" });
+
+    expect(updated).toEqual({ ...created, session: "a session", seen: 2, inactive: 5 });
+    expect(JSON.parse(await read(record))).toMatchObject({ seen: 2, inactive: 5, session: "a session" });
+    await expect(readChat(options(root), "SAGA-1", 1)).resolves.toEqual(updated);
+  });
+
+  it("takes 0 as inactive", async () => {
+    const root = await withTasks();
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+
+    expect((await updateChat(options(root), "SAGA-1", 1, { inactive: 0 })).inactive).toBe(0);
+  });
+
+  it.each([["negative", -1], ["fractional", 1.5], ["a text", "3"], ["above the safe integers", 2 ** 53]])(
+    "refuses an inactive that is %s and writes nothing",
+    async (_name, value) => {
+      const root = await withTasks();
+      await createChat(options(root), "SAGA-1", CHAT_INPUT);
+      const record = join(chatDir(root, "1", 1), "chat.json");
+      const before = await read(record);
+      const change = { inactive: value } as unknown as ChatChange;
+
+      expect((await storeError(updateChat(options(root), "SAGA-1", 1, change))).code).toBe("field-required");
+      await expect(read(record)).resolves.toBe(before);
+    },
+  );
+});
+
+describe("the inactive of a stored chat", () => {
+  async function stored(value: unknown): Promise<ChatRecord> {
+    const root = await withTasks();
+    await createChat(options(root), "SAGA-1", CHAT_INPUT);
+    const record = join(chatDir(root, "1", 1), "chat.json");
+    const kept = JSON.parse(await read(record)) as Record<string, unknown>;
+    await writeFile(record, JSON.stringify({ ...kept, inactive: value }));
+    return readChat(options(root), "SAGA-1", 1);
+  }
+
+  it("is read when it is a whole number of 0 or more", async () => {
+    expect((await stored(0)).inactive).toBe(0);
+    expect((await stored(12)).inactive).toBe(12);
+  });
+
+  it.each([["negative", -1], ["fractional", 2.5], ["a text", "3"], ["null", null]])(
+    "is left out when it is %s, and the chat stays readable",
+    async (_name, value) => {
+      expect(await stored(value)).not.toHaveProperty("inactive");
+    },
+  );
 });
 
 describe("the seen of a stored chat", () => {

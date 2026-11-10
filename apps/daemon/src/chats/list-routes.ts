@@ -34,6 +34,7 @@ import type {
   AnyChatListItem,
   ChatListItem,
   ChatListPage,
+  ChatStatus,
   Diagnostic,
   ProjectChatListItem,
   Success,
@@ -63,7 +64,12 @@ type Frontmatter = IndexEntry["frontmatter"];
 
 type TaskCandidate = { item: ChatListItem; text: string; stateful: boolean; frontmatter: Frontmatter };
 
-type ProjectCandidate = { item: ProjectChatListItem; text: string; seen: number | undefined };
+type ProjectCandidate = {
+  item: ProjectChatListItem;
+  text: string;
+  seen: number | undefined;
+  inactive: number | undefined;
+};
 
 type Candidate = TaskCandidate | ProjectCandidate;
 
@@ -161,8 +167,14 @@ function candidateOf(tag: string, record: ChatRecord, entry: IndexEntry, statefu
 }
 
 function projectCandidateOf(tag: string, record: ProjectChatRecord): ProjectCandidate {
-  const { chat, title, agent, created, seen } = record;
-  return { item: { tag, title, chat, agent, created }, text: `${tag}\n${title}`.toLowerCase(), seen };
+  const { chat, title, agent, created, seen, inactive } = record;
+  return { item: { tag, title, chat, agent, created }, text: `${tag}\n${title}`.toLowerCase(), seen, inactive };
+}
+
+/** A row with no mark has no `busy`. */
+function marked<T extends AnyChatListItem>(item: T, status: ChatStatus | undefined, busy: boolean): T {
+  if (status === undefined) return item;
+  return busy ? { ...item, status, busy: true } : { ...item, status };
 }
 
 function isGone(error: unknown): boolean {
@@ -242,8 +254,9 @@ export function chatListRoutes(options: { root?: string; host: ProjectHost; chat
     if (!candidate.stateful) return { found: item, diagnostics: [] };
     try {
       const live = await chats.get(item.tag, item.task, item.chat);
-      const status = chatMark(live.chat, await stepOf(candidate.frontmatter, reads));
-      return { found: status === undefined ? item : { ...item, status }, diagnostics: live.diagnostics };
+      // Before the reads of the chat, so the mark and `busy` are of one moment.
+      const step = await stepOf(candidate.frontmatter, reads);
+      return { found: marked(item, chatMark(live.chat, step), chatBusy(live.fold)), diagnostics: live.diagnostics };
     } catch (error) {
       const finding = chatFinding(error, chatPath({ project: item.tag, root }, item.task, item.chat));
       return { found: item, diagnostics: [finding] };
@@ -255,21 +268,23 @@ export function chatListRoutes(options: { root?: string; host: ProjectHost; chat
    * so it is not busy. The list does not load a chat that has no mark by its
    * last entry, because a loaded chat stays in memory.
    */
-  async function withProjectState({ item, seen }: ProjectCandidate): Promise<Found<ProjectChatListItem>> {
+  async function withProjectState(candidate: ProjectCandidate): Promise<Found<ProjectChatListItem>> {
+    const { item } = candidate;
     const { tag, chat } = item;
     try {
       let live = chats.loadedProjectChat(tag, chat);
       if (live === undefined) {
         const onDisk = await readLastProjectChatEntry({ project: tag, root }, chat);
-        if (projectChatSettled(seen, onDisk?.seq ?? 0, onDisk?.at ?? item.created, Date.now())) {
+        if (projectChatSettled(candidate, onDisk?.seq ?? 0, onDisk?.at ?? item.created, Date.now())) {
           return { found: item, diagnostics: [] };
         }
         live = await chats.getProjectChat(tag, chat);
       }
       // After the load, which can write `interrupted`.
       const last = (await live.read(live.chat.seq - 1)).at(-1);
-      const status = projectChatMark(live.chat, chatBusy(live.fold), last?.at ?? live.chat.created, Date.now());
-      return { found: status === undefined ? item : { ...item, status }, diagnostics: live.diagnostics };
+      const busy = chatBusy(live.fold);
+      const status = projectChatMark(live.chat, busy, last?.at ?? live.chat.created, Date.now());
+      return { found: marked(item, status, busy), diagnostics: live.diagnostics };
     } catch (error) {
       return { found: item, diagnostics: [chatFinding(error, projectChatPath({ project: tag, root }, chat))] };
     }

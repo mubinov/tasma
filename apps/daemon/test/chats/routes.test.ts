@@ -675,6 +675,10 @@ describe("the chat commands", () => {
     ["a seen with an extra key", "seen", { seq: 1, client: "web", chat: 1 }],
     ["a seen with no client", "seen", { seq: 1 }],
     ["a seen with an empty client", "seen", { seq: 1, client: "" }],
+    ["an inactive mark with no client", "inactive", {}],
+    ["an inactive mark with an extra key", "inactive", { client: "web", seq: 1 }],
+    ["an inactive mark with an empty client", "inactive", { client: "" }],
+    ["an inactive mark that is not an object", "inactive", ["web"]],
   ])("refuses %s with 400 before it reads the chat", async (_case, command, body) => {
     const { server } = await world(await tree());
 
@@ -843,6 +847,43 @@ describe("the chat commands", () => {
     const { server } = await world(await tree());
 
     const response = await send(server, "POST", `${CHATS}/7/seen`, { seq: 1, client: "web" });
+
+    expect(response.status).toBe(404);
+    await expect(failure(response)).resolves.toMatchObject({ code: "chat-not-found" });
+  });
+
+  it("answers an inactive mark with the chat, which holds it, writes no log entry, and publishes one chat event", async () => {
+    const { chats, server, events } = await world(await tree());
+    const live = await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+    await live.append(TURN_END);
+    await live.append(UPDATE);
+    events.length = 0;
+
+    const response = await send(server, "POST", `${CHATS}/1/inactive`, { client: "web" });
+
+    expect(response.status).toBe(200);
+    const { data, diagnostics } = await success<Chat>(response);
+    expect(data).toMatchObject({ task: "ALPHA-1", chat: 1, seq: 3, stateSeq: 2, inactive: 3, state: "needs-you" });
+    expect(diagnostics).toEqual([]);
+    expect((await success<Chat>(await get(server, `${CHATS}/1`))).data.inactive).toBe(3);
+    expect(await logOf(live)).toEqual([{ kind: "user", ...MESSAGE }, TURN_END, UPDATE]);
+    expect(events).toEqual([{ kind: "chat", tag: "ALPHA", task: "ALPHA-1", chat: 1, step: INPUT.step, state: "needs-you" }]);
+  });
+
+  it("refuses an inactive mark while a turn runs with turn-running and 409", async () => {
+    const { chats, server } = await world(await tree());
+    await chats.create("ALPHA", "ALPHA-1", INPUT, MESSAGE);
+
+    const response = await send(server, "POST", `${CHATS}/1/inactive`, { client: "web" });
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "turn-running" });
+  });
+
+  it("answers an inactive mark of a chat that is not there with chat-not-found and 404", async () => {
+    const { server } = await world(await tree());
+
+    const response = await send(server, "POST", `${CHATS}/7/inactive`, { client: "web" });
 
     expect(response.status).toBe(404);
     await expect(failure(response)).resolves.toMatchObject({ code: "chat-not-found" });
@@ -1099,6 +1140,28 @@ describe("the per-chat routes of a project chat", () => {
     expect((await success<ProjectChat>(await get(server, PROJECT_CHAT))).data.seen).toBe(2);
   });
 
+  it("answers an inactive mark with the chat, which holds it, and refuses it with 409 while a turn runs", async () => {
+    let finish: ((result: PromptResponse) => void) | undefined;
+    const { server, live } = await projectChat({ prompt: () => new Promise((resolve) => (finish = resolve)) });
+    await until(() => finish !== undefined, "the turn runs");
+
+    const refused = await send(server, "POST", `${PROJECT_CHAT}/inactive`, { client: "web" });
+    finish!({ stopReason: "end_turn" });
+    await logUntil(live, "turn-end");
+    const response = await send(server, "POST", `${PROJECT_CHAT}/inactive`, { client: "web" });
+
+    expect(refused.status).toBe(409);
+    await expect(failure(refused)).resolves.toMatchObject({
+      code: "turn-running",
+      message: "chat 1 of project ALPHA has a working agent or a waiting request",
+    });
+    expect(response.status).toBe(200);
+    const { data } = await success<ProjectChat>(response);
+    expect(data).toMatchObject({ chat: 1, title: FIRST_MESSAGE.text, inactive: 2 });
+    expect((await success<ProjectChat>(await get(server, PROJECT_CHAT))).data.inactive).toBe(2);
+    expect(await logOf(live)).toEqual([{ kind: "user", ...FIRST_MESSAGE }, { kind: "turn-end", stopReason: "end_turn" }]);
+  });
+
   it("names the project chat in a refusal of the runner", async () => {
     const { server, live, runner } = await projectChat();
     await logUntil(live, "turn-end");
@@ -1134,6 +1197,7 @@ describe("the per-chat routes of a project chat", () => {
     ["an unknown project", "/projects/OMEGA/chats/1/cancel", "project-not-found"],
     ["a missing chat", `${PROJECT_CHATS}/7/cancel`, "chat-not-found"],
     ["a malformed chat number", `${PROJECT_CHATS}/x/cancel`, "chat-not-found"],
+    ["a missing chat, by an inactive mark", `${PROJECT_CHATS}/7/inactive`, "chat-not-found"],
   ])("gives 404 for a command on %s", async (_case, path, code) => {
     const { server } = await projectChat();
 

@@ -2,7 +2,8 @@
 // the list of the chats of a task, the start of the chat of the current step,
 // the start of a project chat, one chat, a long-poll read of the log of one
 // chat after a cursor, and the commands of a client on a chat: a message, a
-// cancel, an answer, a pick of a config option and a move of `seen`.
+// cancel, an answer, a pick of a config option, a move of `seen` and a mark as
+// not active.
 
 import { routes } from "@tasma/protocol";
 import type {
@@ -64,7 +65,7 @@ const SEEN_KEYS = Object.keys({ seq: true, client: true } satisfies Record<keyof
 type FindChat = (request: HandlerRequest) => Promise<AnyLiveChat>;
 
 type PerChatRoutes = Record<
-  "read" | "events" | "message" | "cancel" | "permission" | "question" | "option" | "seen",
+  "read" | "events" | "message" | "cancel" | "permission" | "question" | "option" | "seen" | "inactive",
   Route
 >;
 
@@ -257,6 +258,10 @@ export function chatRoutes(chats: ChatRegistry, runner: ChatRunner, starts: Step
         route: names.seen,
         handler: command(readSeenInput, (live, input) => live.setSeen(input.seq)),
       },
+      {
+        route: names.inactive,
+        handler: command(readCancel, (live) => live.setInactive()),
+      },
     ];
   }
 
@@ -299,6 +304,7 @@ export function chatRoutes(chats: ChatRegistry, runner: ChatRunner, starts: Step
         question: routes.answerChatQuestion,
         option: routes.setChatOption,
         seen: routes.markChatSeen,
+        inactive: routes.markChatInactive,
       },
     ),
     ...perChatRoutes(
@@ -312,6 +318,7 @@ export function chatRoutes(chats: ChatRegistry, runner: ChatRunner, starts: Step
         question: routes.answerProjectChatQuestion,
         option: routes.setProjectChatOption,
         seen: routes.markProjectChatSeen,
+        inactive: routes.markProjectChatInactive,
       },
     ),
   ];

@@ -61,6 +61,8 @@ export type Chat = {
   options?: Record<string, string>;
   /** The `seq` of the last log entry that the user saw in the app. Absent when nobody saw the chat yet. */
   seen?: number;
+  /** The `seq` of the last log entry when a client marked the chat as not active. Absent when nobody marked it. */
+  inactive?: number;
   /** The `seq` of the last entry of the log, 0 for an empty log. */
   seq: number;
   /**
@@ -72,7 +74,7 @@ export type Chat = {
 
 /** A chat of a project, with no task and no step. */
 export type ProjectChat = { chat: number; title: string }
-  & Pick<Chat, "agent" | "folder" | "created" | "session" | "options" | "seen" | "seq" | "stateSeq">
+  & Pick<Chat, "agent" | "folder" | "created" | "session" | "options" | "seen" | "inactive" | "seq" | "stateSeq">
   & ChatStatus;
 
 /** The chat that a chat command answers: a chat of a task with a task id, a chat of a project with none. */
@@ -90,6 +92,8 @@ export type ChatListItem = {
   created: string;
   /** Only on the latest chat of a task whose status is not final, and only when `chatMark` gives a mark. */
   status?: ChatStatus;
+  /** Only with a `status`, and only while `chatBusy` is true of the chat. */
+  busy?: true;
 };
 
 /** `needs-you` also stands for a failed chat, because a person must act on it. */
@@ -106,6 +110,8 @@ export type ProjectChatListItem = {
   created: string;
   /** Only when the chat has a mark. */
   status?: ChatStatus;
+  /** Only with a `status`, and only while `chatBusy` is true of the chat. */
+  busy?: true;
 };
 
 /** One item of the list of the chats of all projects: a chat of a task, or a chat of a project, which has no `task`. */
@@ -143,6 +149,8 @@ export type ChatEventsReply
 export type ChatMessageInput = { text: string; client: string };
 
 export type ChatCancelInput = { client: string };
+
+export type ChatInactiveInput = { client: string };
 
 /**
  * With `restart`, the daemon stops the agent of the latest chat of the task
@@ -286,15 +294,25 @@ export function currentStep(
 }
 
 /**
+ * Whether a client marked a chat as not active at or after `upTo`. A chat with
+ * an empty log has a `stateSeq` of 0, so an absent mark is not 0.
+ */
+export function chatInactive(inactive: number | undefined, upTo: number): boolean {
+  return inactive !== undefined && inactive >= upTo;
+}
+
+/**
  * The state that a list shows for the latest chat of a task that is not
  * final, or undefined for no mark. `step` is from `currentStep`. A chat on a
- * past step loses its mark once the user saw the entry that set its state.
+ * past step loses its mark once the user saw the entry that set its state, and
+ * a chat that is not working loses it once a client marks it as not active.
  */
 export function chatMark(
-  chat: Pick<Chat, "step" | "stateSeq" | "seen"> & ChatStatus,
+  chat: Pick<Chat, "step" | "stateSeq" | "seen" | "inactive"> & ChatStatus,
   step: string | undefined,
 ): ChatStatus | undefined {
-  if (chat.state !== "working" && chat.step !== step && (chat.seen ?? 0) >= chat.stateSeq) return undefined;
+  const seenOnPastStep = chat.step !== step && (chat.seen ?? 0) >= chat.stateSeq;
+  if (chat.state !== "working" && (chatInactive(chat.inactive, chat.stateSeq) || seenOnPastStep)) return undefined;
   return statusOf(chat);
 }
 
@@ -302,12 +320,19 @@ export function chatMark(
 export const PROJECT_CHAT_ACTIVE_MS = 2 * 24 * 60 * 60 * 1000;
 
 /**
- * Whether a project chat that is not busy has no mark: the user saw it up to
- * `upTo`, and `PROJECT_CHAT_ACTIVE_MS` passed since `lastEvent`. A time that
- * cannot be read is not old.
+ * Whether a project chat that is not busy has no mark: a client marked it as
+ * not active at or after `upTo`, or the user saw it up to `upTo` and
+ * `PROJECT_CHAT_ACTIVE_MS` passed since `lastEvent`. A time that cannot be read
+ * is not old.
  */
-export function projectChatSettled(seen: number | undefined, upTo: number, lastEvent: string, now: number): boolean {
-  return (seen ?? 0) >= upTo && now - Date.parse(lastEvent) >= PROJECT_CHAT_ACTIVE_MS;
+export function projectChatSettled(
+  chat: Pick<ProjectChat, "seen" | "inactive">,
+  upTo: number,
+  lastEvent: string,
+  now: number,
+): boolean {
+  if (chatInactive(chat.inactive, upTo)) return true;
+  return (chat.seen ?? 0) >= upTo && now - Date.parse(lastEvent) >= PROJECT_CHAT_ACTIVE_MS;
 }
 
 /**
@@ -315,12 +340,12 @@ export function projectChatSettled(seen: number | undefined, upTo: number, lastE
  * `busy` is `chatBusy` of its fold.
  */
 export function projectChatMark(
-  chat: Pick<ProjectChat, "stateSeq" | "seen"> & ChatStatus,
+  chat: Pick<ProjectChat, "stateSeq" | "seen" | "inactive"> & ChatStatus,
   busy: boolean,
   lastEvent: string,
   now: number,
 ): ChatStatus | undefined {
-  if (!busy && projectChatSettled(chat.seen, chat.stateSeq, lastEvent, now)) return undefined;
+  if (!busy && projectChatSettled(chat, chat.stateSeq, lastEvent, now)) return undefined;
   return statusOf(chat);
 }
 

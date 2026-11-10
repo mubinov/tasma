@@ -3,6 +3,7 @@ import type {
   Chat,
   ChatCancelInput,
   ChatEventsReply,
+  ChatInactiveInput,
   ChatListItem,
   ChatListPage,
   ChatMessageInput,
@@ -195,6 +196,17 @@ export type Client = {
     id: Id,
     chat: number,
     input: ChatSeenInput,
+  ): Promise<Success<ChatOf<Id>>>;
+  /**
+   * Marks the chat as not active up to the last `seq` of its log: the chat has
+   * no mark in a list until its state changes again. Refused with
+   * `turn-running` while the agent works or a request waits.
+   */
+  markChatInactive<Id extends string | undefined>(
+    tag: string,
+    id: Id,
+    chat: number,
+    input: ChatInactiveInput,
   ): Promise<Success<ChatOf<Id>>>;
   /** One page of the chats of all projects, the active chats first and each group newest first. */
   listAllChats(query?: ChatListQuery): Promise<Success<ChatListPage>>;
@@ -400,6 +412,15 @@ export function createClient(transport: Transport): Client {
       ),
     markChatSeen: (tag, id, chat, input) =>
       callChat<ChatOf<typeof id>>(routes.markChatSeen, routes.markProjectChatSeen, tag, id, { chat }, { body: input }),
+    markChatInactive: (tag, id, chat, input) =>
+      callChat<ChatOf<typeof id>>(
+        routes.markChatInactive,
+        routes.markProjectChatInactive,
+        tag,
+        id,
+        { chat },
+        { body: input },
+      ),
     listAllChats: (query) => call<ChatListPage>(routes.listAllChats, {}, { query }),
     readAgentState: () => call<AgentStateReply>(routes.readAgentState, {}),
     readChatItem: (id, chat) => call<ChatListItem>(routes.readChatItem, { id, chat }),

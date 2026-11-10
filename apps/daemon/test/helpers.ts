@@ -196,7 +196,7 @@ export async function plantProjectChat(
   root: string,
   place: { tag: string; chat: number },
   events: ChatEvent[] = [],
-  fields: { title?: string; created?: string; seen?: number; at?: string } = {},
+  fields: { title?: string; created?: string; seen?: number; inactive?: number; at?: string } = {},
 ): Promise<void> {
   const { tag, chat } = place;
   const { at, ...record } = fields;

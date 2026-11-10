@@ -40,12 +40,14 @@ export type ChatRecord = {
   options?: Record<string, string>;
   /** The `seq` of the last log entry that the user saw in the app. Absent when nobody saw the chat yet. */
   seen?: number;
+  /** The `seq` of the last log entry when a client marked the chat as not active. Absent when nobody marked it. */
+  inactive?: number;
 };
 
 export type ChatInput = { step: string; agent: ChatAgent; folder: string };
 
 /** A change of one field keeps the others. */
-export type ChatChange = { session?: string; options?: Record<string, string>; seen?: number };
+export type ChatChange = { session?: string; options?: Record<string, string>; seen?: number; inactive?: number };
 
 export type ChatList = { chats: ChatRecord[]; diagnostics: StoreDiagnostic[] };
 
@@ -97,7 +99,7 @@ function recordFault(value: unknown, inputFault: InputRule): string | undefined 
 }
 
 /** The fields of a record that a chat of a task and a chat of a project share. */
-export type SharedFields = Pick<ChatRecord, "agent" | "folder" | "created" | "session" | "options" | "seen">;
+export type SharedFields = Pick<ChatRecord, "agent" | "folder" | "created" | "session" | "options" | "seen" | "inactive">;
 
 export function sharedFieldsOf(stored: Record<string, unknown>): SharedFields {
   const fields: SharedFields = {
@@ -109,6 +111,7 @@ export function sharedFieldsOf(stored: Record<string, unknown>): SharedFields {
   const options = stringRecord(stored.options);
   if (options !== undefined) fields.options = options;
   if (isSeq(stored.seen)) fields.seen = stored.seen;
+  if (isSeq(stored.inactive)) fields.inactive = stored.inactive;
   return fields;
 }
 
@@ -342,7 +345,10 @@ export function checkChange(change: ChatChange): ChatChange {
   const options = change.options === undefined ? undefined : stringRecord(change.options);
   if (change.options !== undefined && options === undefined) fail("field-required", '"options" must be an object');
   if (change.seen !== undefined && !isSeq(change.seen)) fail("field-required", '"seen" must be a whole number of 0 or more');
-  return { session: change.session, options, seen: change.seen };
+  if (change.inactive !== undefined && !isSeq(change.inactive)) {
+    fail("field-required", '"inactive" must be a whole number of 0 or more');
+  }
+  return { session: change.session, options, seen: change.seen, inactive: change.inactive };
 }
 
 /** Writes a checked change onto the record of one chat, which keeps every field and key the change does not name. */
@@ -355,6 +361,7 @@ export async function applyChange(
   if (change.session !== undefined) stored.session = change.session;
   if (change.options !== undefined) stored.options = change.options;
   if (change.seen !== undefined) stored.seen = change.seen;
+  if (change.inactive !== undefined) stored.inactive = change.inactive;
   await replaceFile(join(directory, RECORD_FILE), recordText(stored));
   return stored;
 }
