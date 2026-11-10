@@ -160,6 +160,9 @@ type UiState = {
   setArrivalWords: (words: string) => void;
   /** Reads the words and clears them, so they are said once. */
   takeArrivalWords: () => string | null;
+  /** A key went down in the page since it loaded, other than a key with Cmd, Option or Control. Never persisted. */
+  keyPressed: boolean;
+  noteKeyPress: () => void;
 };
 
 export type EditRequest = { tag: string; id: string };
@@ -282,6 +285,10 @@ export const useUiStore = create<UiState>((set, get) => ({
     }
 
     return words;
+  },
+  keyPressed: false,
+  noteKeyPress: () => {
+    set({ keyPressed: true });
   },
 }));
 

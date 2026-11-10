@@ -159,6 +159,31 @@ function useFocusFallback(
   };
 }
 
+/**
+ * Moves focus to the heading at mount. WebKit shows the ring on a script focus with no key press before it, so in
+ * that case the heading hides the ring until focus moves to another element of the page. `<main>` takes the blur
+ * handler.
+ */
+function useMountFocus(
+  headingRef: RefObject<HTMLHeadingElement | null>,
+): { className: string | undefined; onBlur: (event: FocusEvent) => void } {
+  const [ringHidden, setRingHidden] = useState(() => !useUiStore.getState().keyPressed);
+
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, [headingRef]);
+
+  return {
+    className: ringHidden ? "focus-visible:outline-none" : undefined,
+    onBlur: ({ target }) => {
+      // A switch to another app blurs the heading but keeps it the active element.
+      if (target === headingRef.current && document.activeElement !== target) {
+        setRingHidden(false);
+      }
+    },
+  };
+}
+
 export function SetupScreen(): ReactNode {
   const { queryClient, client } = route.useRouteContext();
   const navigate = useNavigate();
@@ -237,6 +262,7 @@ export function SetupScreen(): ReactNode {
   const stopClosedRef = useRef(false);
   const lastRef = useRef({ steps, fullAnswered, opener: null as StepId | null });
   const holdFocus = useFocusFallback(mainRef, headingRef, current?.id, needed);
+  const headingFocus = useMountFocus(headingRef);
 
   useDocumentTitle("Set up");
 
@@ -244,10 +270,6 @@ export function SetupScreen(): ReactNode {
     openNowRef.current = step;
     setOpen(step);
   }
-
-  useEffect(() => {
-    headingRef.current?.focus();
-  }, []);
 
   const readAgain = useEffectEvent(() => {
     void full.refetch({ cancelRefetch: false });
@@ -573,10 +595,11 @@ export function SetupScreen(): ReactNode {
       ref={mainRef}
       tabIndex={-1}
       onFocus={holdFocus}
+      onBlur={headingFocus.onBlur}
       className="grid flex-1 grid-cols-[minmax(0,37rem)] content-start items-start justify-center gap-y-8 px-6 pt-[calc(clamp(1.5rem,11vh,6.5rem)+var(--title-band))] pb-[calc(--spacing(18)+var(--notice-stack-height,0px))] min-[58rem]:grid-cols-[minmax(15rem,19rem)_minmax(0,37rem)] min-[58rem]:gap-x-24 min-[58rem]:px-10"
     >
       <div className="min-[58rem]:sticky min-[58rem]:top-[calc(--spacing(12)+var(--title-band))]">
-        <ScreenHeading ref={headingRef} id={headingId} tabIndex={-1}>
+        <ScreenHeading ref={headingRef} id={headingId} tabIndex={-1} className={headingFocus.className}>
           Set up Tasma
         </ScreenHeading>
         <p className="mt-2.5 text-base text-subtle">Complete these steps to run your first task.</p>

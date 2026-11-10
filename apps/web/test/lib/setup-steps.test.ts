@@ -181,7 +181,7 @@ describe("the full reads", () => {
 describe("setupSteps", () => {
   it("lists the 6 steps in the order in which they depend on each other", () => {
     expect(setupSteps(input()).map(({ number, name }) => [number, name])).toEqual([
-      [1, "Install Claude Code"],
+      [1, "Install the Claude Code CLI"],
       [2, "Log in to Claude Code"],
       [3, "Add the tasma command"],
       [4, "Install the tasma skill in Claude Code"],
@@ -303,7 +303,7 @@ describe("setupSteps", () => {
 
       expect(step.state).toBe("waits");
       expect(step.label).toBe("You do this");
-      expect(step.waitsFor).toEqual({ number: 1, name: "Install Claude Code" });
+      expect(step.waitsFor).toEqual({ number: 1, name: "Install the Claude Code CLI" });
     });
 
     it("e: step 6 waits for step 5", () => {

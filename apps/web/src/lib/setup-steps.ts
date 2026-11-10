@@ -63,7 +63,7 @@ type StepDefinition = {
 };
 
 const DEFINITIONS: readonly StepDefinition[] = [
-  { id: "install", name: "Install Claude Code", owner: "you", fullOnly: true, check: (_status, agent) => agent?.installed },
+  { id: "install", name: "Install the Claude Code CLI", owner: "you", fullOnly: true, check: (_status, agent) => agent?.installed },
   { id: "login", name: "Log in to Claude Code", owner: "you", fullOnly: true, needs: "install", check: (_status, agent) => agent?.loggedIn },
   { id: "command", name: "Add the tasma command", owner: "tasma", fullOnly: true, check: (status) => status?.cli },
   { id: "skill", name: "Install the tasma skill in Claude Code", owner: "tasma", check: (_status, agent) => agent?.skill },

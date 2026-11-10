@@ -110,7 +110,7 @@ beforeEach(() => {
   dialog.pick.mockReset();
   window.localStorage.clear();
   setPreferenceStorage(browserPreferenceStorage);
-  useUiStore.setState({ skillCheckStopped: false, arrivalWords: null });
+  useUiStore.setState({ skillCheckStopped: false, arrivalWords: null, keyPressed: false });
   said = [];
   useNoticeStore.setState({
     announce: (spoken) => {
@@ -163,7 +163,7 @@ describe("the layout", () => {
 
     expect(list.tagName).toBe("OL");
     expect(within(list).getAllByRole("listitem")).toHaveLength(6);
-    expect(list.textContent).toContain("Install Claude Code");
+    expect(list.textContent).toContain("Install the Claude Code CLI");
     expect(list.textContent).toContain("Add a workflow");
     expect(screen.getByText("0 of 6 done")).toBeTruthy();
   });
@@ -177,15 +177,15 @@ describe("the layout", () => {
   it("makes a done step a plain row, outside the Tab order", async () => {
     await openAnswered(setupStatus({ project: "fail", workflow: "fail" }));
 
-    expect(screen.queryByRole("button", { name: /^Install Claude Code/ })).toBeNull();
-    expect(screen.getByText("Install Claude Code")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Install the Claude Code CLI/ })).toBeNull();
+    expect(screen.getByText("Install the Claude Code CLI")).toBeTruthy();
     expect(screen.getByText("4 of 6 done")).toBeTruthy();
   });
 
   it("does not make the name of a step a heading", async () => {
     await openAnswered();
 
-    expect(screen.queryByRole("heading", { name: /Install Claude Code/ })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /Install the Claude Code CLI/ })).toBeNull();
   });
 });
 
@@ -194,7 +194,7 @@ describe("before the first full answer", () => {
     await openHeld();
 
     expect(screen.getAllByText(CHECK_IN_PROGRESS)).toHaveLength(3);
-    expect(screen.queryByRole("button", { name: /^Install Claude Code/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Install the Claude Code CLI/ })).toBeNull();
     expect(trigger("Add a project")).toBeTruthy();
   });
 
@@ -246,16 +246,16 @@ describe("the first full answer", () => {
   it("gives each step its content", async () => {
     await openAnswered(setupStatus({ project: "fail", workflow: "fail", cli: "fail" }, { installed: "fail", loggedIn: "not-run", skill: "fail" }));
 
-    expect(isOpen("Install Claude Code")).toBe(true);
+    expect(isOpen("Install the Claude Code CLI")).toBe(true);
     expect(screen.getByText("Tasma runs your workflows with Claude Code.")).toBeTruthy();
 
-    const guide = screen.getByRole("link", { name: "Open the Claude Code install guide (opens in the browser)" });
+    const guide = screen.getByRole("link", { name: "Open the Claude Code CLI install guide (opens in the browser)" });
 
     expect(guide.getAttribute("href")).toBe("https://code.claude.com/docs/en/setup");
     expect(guide.getAttribute("target")).toBe("_blank");
 
     await userEvent.click(trigger("Log in to Claude Code"));
-    expect(screen.getByText("First, complete step 1: Install Claude Code.")).toBeTruthy();
+    expect(screen.getByText("First, complete step 1: Install the Claude Code CLI.")).toBeTruthy();
 
     await userEvent.click(trigger("Add the tasma command"));
     expect(screen.getByText(/macOS asks for your password one time/)).toBeTruthy();
@@ -296,11 +296,11 @@ describe("the current step", () => {
   it("keeps its mark when it is collapsed", async () => {
     await openAnswered();
 
-    await userEvent.click(trigger("Install Claude Code"));
+    await userEvent.click(trigger("Install the Claude Code CLI"));
 
-    expect(isOpen("Install Claude Code")).toBe(false);
-    expect(trigger("Install Claude Code").getAttribute("aria-current")).toBe("step");
-    expect(trigger("Install Claude Code").querySelector(".bg-signal")).not.toBeNull();
+    expect(isOpen("Install the Claude Code CLI")).toBe(false);
+    expect(trigger("Install the Claude Code CLI").getAttribute("aria-current")).toBe("step");
+    expect(trigger("Install the Claude Code CLI").querySelector(".bg-signal")).not.toBeNull();
   });
 
   it("is the only current step", async () => {
@@ -328,8 +328,8 @@ describe("the current step", () => {
   it("does not colour the label of a current step that names its state", async () => {
     await openAnswered(setupStatus({ project: "fail", workflow: "fail" }, { installed: "unknown" }));
 
-    expect(trigger("Install Claude Code").getAttribute("aria-current")).toBe("step");
-    expect(within(trigger("Install Claude Code")).getByText("Cannot check").className).toContain("text-dim");
+    expect(trigger("Install the Claude Code CLI").getAttribute("aria-current")).toBe("step");
+    expect(within(trigger("Install the Claude Code CLI")).getByText("Cannot check").className).toContain("text-dim");
   });
 });
 
@@ -340,7 +340,7 @@ describe("opening by itself", () => {
     await userEvent.click(trigger("Add a project"));
 
     expect(isOpen("Add a project")).toBe(true);
-    expect(isOpen("Install Claude Code")).toBe(false);
+    expect(isOpen("Install the Claude Code CLI")).toBe(false);
   });
 
   it("opens the next step when the current step changes to done", async () => {
@@ -360,11 +360,11 @@ describe("opening by itself", () => {
       held.answer(successReply(NEW_MACHINE));
     });
     await waitFor(() => {
-      expect(trigger("Install Claude Code").getAttribute("aria-current")).toBe("step");
+      expect(trigger("Install the Claude Code CLI").getAttribute("aria-current")).toBe("step");
     });
 
     expect(isOpen("Add a project")).toBe(true);
-    expect(isOpen("Install Claude Code")).toBe(false);
+    expect(isOpen("Install the Claude Code CLI")).toBe(false);
   });
 
   it("keeps a panel that the user opened with Enter while focus stays on its trigger", async () => {
@@ -376,7 +376,7 @@ describe("opening by itself", () => {
       held.answer(successReply(NEW_MACHINE));
     });
     await waitFor(() => {
-      expect(trigger("Install Claude Code").getAttribute("aria-current")).toBe("step");
+      expect(trigger("Install the Claude Code CLI").getAttribute("aria-current")).toBe("step");
     });
 
     expect(isOpen("Add a project")).toBe(true);
@@ -432,20 +432,20 @@ describe("opening by itself", () => {
     await userEvent.click(trigger("Add a project"));
     await userEvent.click(trigger("Add a project"));
 
-    expect(isOpen("Install Claude Code")).toBe(true);
+    expect(isOpen("Install the Claude Code CLI")).toBe(true);
   });
 
   it("leaves the current step closed when the user closes it", async () => {
     await openAnswered();
 
-    await userEvent.click(trigger("Install Claude Code"));
-    expect(isOpen("Install Claude Code")).toBe(false);
+    await userEvent.click(trigger("Install the Claude Code CLI"));
+    expect(isOpen("Install the Claude Code CLI")).toBe(false);
 
-    await userEvent.click(trigger("Install Claude Code"));
-    expect(isOpen("Install Claude Code")).toBe(true);
+    await userEvent.click(trigger("Install the Claude Code CLI"));
+    expect(isOpen("Install the Claude Code CLI")).toBe(true);
 
-    await userEvent.click(trigger("Install Claude Code"));
-    expect(isOpen("Install Claude Code")).toBe(false);
+    await userEvent.click(trigger("Install the Claude Code CLI"));
+    expect(isOpen("Install the Claude Code CLI")).toBe(false);
   });
 
   it("opens no step when the user closes a panel before the first full answer", async () => {
@@ -547,7 +547,7 @@ describe("a change to done", () => {
   it("plays no effect on a step that was in progress", async () => {
     await openAnswered(setupStatus({ project: "fail", workflow: "fail" }));
 
-    expect(screen.getByText("Install Claude Code").closest("li")!.querySelector(".animate-step-done")).toBeNull();
+    expect(screen.getByText("Install the Claude Code CLI").closest("li")!.querySelector(".animate-step-done")).toBeNull();
   });
 
   it("announces nothing for a read that changes no step", async () => {
@@ -569,7 +569,7 @@ describe("a failed read", () => {
 
     expect(screen.queryByText(CHECK_IN_PROGRESS)).toBeNull();
     expect(screen.getAllByText("Cannot check")).toHaveLength(3);
-    expect(trigger("Install Claude Code").getAttribute("aria-current")).toBe("step");
+    expect(trigger("Install the Claude Code CLI").getAttribute("aria-current")).toBe("step");
     expect(document.querySelector("[aria-expanded=\"true\"]")).toBeNull();
     expect(words()).toEqual([READ_FAILED]);
   });
@@ -757,7 +757,7 @@ describe("Stop checking for the skill", () => {
       await screen.findByText(READ_FAILED);
 
       expect(screen.queryByText("Cannot check")).toBeNull();
-      expect(trigger("Install Claude Code").textContent).toContain("You do this");
+      expect(trigger("Install the Claude Code CLI").textContent).toContain("You do this");
 
       await nextAnswer(stub, successReply(SKIPPED_MACHINE), FULL_SKIPPED);
 
@@ -1210,6 +1210,20 @@ describe("installing the skill", () => {
     expect(screen.queryByText(FIRST_COMMAND)).toBeNull();
     expect(installBodies(stub)).toEqual([{}, {}]);
     expect(again.className).toContain("bg-text");
+  });
+
+  it("numbers the two plugin commands as the items of one list, outside the text of each command", async () => {
+    await openNoNpx();
+
+    const list = screen.getByText(FIRST_COMMAND).closest("ol")!;
+    const items = within(list).getAllByRole("listitem");
+
+    expect(list.getAttribute("role")).toBe("list");
+    expect(items.map((item) => item.querySelector("code")!.textContent)).toEqual([FIRST_COMMAND, SECOND_COMMAND]);
+    expect(items.map((item) => item.firstElementChild!.className)).toEqual([
+      expect.stringMatching(/before:text-dim .*before:content-\['1'\]/),
+      expect.stringMatching(/before:text-dim .*before:content-\['2'\]/),
+    ]);
   });
 
   it("describes each Copy of a command box by its command", async () => {
@@ -2221,10 +2235,43 @@ describe("adding the project and the workflow", () => {
 });
 
 describe("focus", () => {
-  it("moves to the h1 when the screen opens", async () => {
+  it("moves to the h1 when the screen opens, with no ring until the h1 loses focus to an element of the page", async () => {
     await openHeld();
 
-    expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1 }));
+    const heading = screen.getByRole("heading", { level: 1 });
+
+    expect(document.activeElement).toBe(heading);
+    expect(heading.className).toContain("focus-visible:outline-none");
+
+    fireEvent.blur(heading);
+    fireEvent.blur(trigger("Add a project"));
+    expect(document.activeElement).toBe(heading);
+    expect(heading.className).toContain("focus-visible:outline-none");
+
+    act(() => {
+      trigger("Add a project").focus();
+    });
+    expect(heading.className).not.toContain("focus-visible:outline-none");
+
+    act(() => {
+      heading.focus();
+    });
+    expect(heading.className).not.toContain("focus-visible:outline-none");
+  });
+
+  it("keeps the ring of the h1 when a key press came before the screen opens", async () => {
+    useUiStore.getState().noteKeyPress();
+    await openHeld();
+
+    const heading = screen.getByRole("heading", { level: 1 });
+
+    expect(document.activeElement).toBe(heading);
+    expect(heading.className).not.toContain("focus-visible:outline-none");
+
+    act(() => {
+      trigger("Add a project").focus();
+    });
+    expect(heading.className).not.toContain("focus-visible:outline-none");
   });
 
   it("moves to the trigger of the step when the content of its panel replaces the control", async () => {
@@ -2265,15 +2312,15 @@ describe("focus", () => {
     await renderWithRouter("/", stub.transport);
 
     await waitFor(() => {
-      expect(trigger("Install Claude Code")).toBeTruthy();
+      expect(trigger("Install the Claude Code CLI")).toBeTruthy();
     });
-    await userEvent.click(trigger("Install Claude Code"));
+    await userEvent.click(trigger("Install the Claude Code CLI"));
     screen.getByRole("button", { name: "Check again" }).focus();
     stub.replies[FULL] = successReply(NEW_MACHINE);
     await userEvent.keyboard("{Enter}");
 
     await waitFor(() => {
-      expect(document.activeElement).toBe(trigger("Install Claude Code"));
+      expect(document.activeElement).toBe(trigger("Install the Claude Code CLI"));
     });
   });
 

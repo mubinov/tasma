@@ -1,4 +1,4 @@
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
@@ -260,6 +260,19 @@ it("reads the change feed through the wired entry path", async () => {
   await waitFor(() => {
     expect(requested).toContain("/daemon/events?after=smoke-7");
   });
+});
+
+it("notes a key press from the entry, for a screen that mounts after it", async () => {
+  document.body.innerHTML = '<div id="root"></div>';
+
+  await act(async () => {
+    await import("../src/main");
+  });
+  const { useUiStore } = await import("../src/store/ui");
+
+  expect(useUiStore.getState().keyPressed).toBe(false);
+  fireEvent.keyDown(window, { key: "Tab" });
+  expect(useUiStore.getState().keyPressed).toBe(true);
 });
 
 it("fails loudly when the document carries no #root", async () => {

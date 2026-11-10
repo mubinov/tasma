@@ -142,30 +142,41 @@ function CopyButton({ text, holder, noun, describedBy }: CopyButtonProps): React
   );
 }
 
+/**
+ * Generated content, so a selection or a copy of the command holds no number,
+ * and a screen reader still reads it. Full literals, for the Tailwind scanner.
+ */
+const NUMBER_CLASSES = {
+  1: "before:font-mono before:text-xs-plus before:text-dim before:content-['1']",
+  2: "before:font-mono before:text-xs-plus before:text-dim before:content-['2']",
+} as const;
+
 type CommandBoxProps = {
   command: string;
   noun?: CopyNoun;
   /** The id of the `<code>`, for a control that the box describes. */
   codeId?: string;
+  /** The place of the command in a numbered list. */
+  number?: keyof typeof NUMBER_CLASSES;
 };
 
-function CommandBox({ command, noun = "command", codeId }: CommandBoxProps): ReactNode {
+function CommandBox({ command, noun = "command", codeId, number }: CommandBoxProps): ReactNode {
   const codeRef = useRef<HTMLElement>(null);
   const ownId = useId();
   const id = codeId ?? ownId;
 
   return (
-    <div className="mt-1.5 flex w-full max-w-lg items-center justify-between gap-3 rounded-control bg-surface-2 py-1.5 pr-1.5 pl-3">
-      <code ref={codeRef} id={id} className="font-mono text-xs-plus wrap-anywhere">{command}</code>
+    <div className={`mt-1.5 flex w-full max-w-lg items-center gap-3 rounded-control bg-surface-2 py-1.5 pr-1.5 pl-3 ${number === undefined ? "" : NUMBER_CLASSES[number]}`}>
+      <code ref={codeRef} id={id} className="flex-1 font-mono text-xs-plus wrap-anywhere">{command}</code>
       <CopyButton text={command} holder={codeRef} noun={noun} describedBy={id} />
     </div>
   );
 }
 
-function RunCommand({ command, words = "Run this command in a terminal:" }: { command: string; words?: string }): ReactNode {
+function RunCommand({ command }: { command: string }): ReactNode {
   return (
     <>
-      <p className={RUN_CLASS}>{words}</p>
+      <p className={RUN_CLASS}>Run this command in a terminal:</p>
       <CommandBox command={command} />
     </>
   );
@@ -203,11 +214,12 @@ function NoNpx(): ReactNode {
         <code className="font-mono text-xs-plus">npx</code>
         , which comes with Node.js.
       </p>
-      <RunCommand
-        command="/plugin marketplace add mubinov/tasma-skill"
-        words="To install the skill as a Claude Code plugin, run these commands in Claude Code:"
-      />
-      <CommandBox command="/plugin install tasma@tasma" />
+      <p className={RUN_CLASS}>To install the skill as a Claude Code plugin, run these commands in Claude Code:</p>
+      {/* WebKit removes the list role from a list with no list style. */}
+      <ol role="list">
+        <li><CommandBox command="/plugin marketplace add mubinov/tasma-skill" number={1} /></li>
+        <li><CommandBox command="/plugin install tasma@tasma" number={2} /></li>
+      </ol>
       <p className={RUN_CLASS}>Or install Node.js, and then select &quot;Try again&quot;.</p>
     </>
   );
@@ -520,7 +532,7 @@ function StepContent(props: StepContentProps): ReactNode {
           <p className={WHY_CLASS}>Tasma runs your workflows with Claude Code.</p>
           <div className={ACTIONS_CLASS}>
             <ExternalLink href={INSTALL_GUIDE_URL} className={BUTTON_FILLED_CLASS}>
-              Open the Claude Code install guide
+              Open the Claude Code CLI install guide
             </ExternalLink>
           </div>
         </>
