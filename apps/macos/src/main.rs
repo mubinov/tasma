@@ -10,6 +10,7 @@
 //! written as a configuration key instead is read by nothing.
 
 mod alert;
+mod backspace;
 mod command;
 mod daemon;
 mod daemon_stop;
@@ -404,6 +405,7 @@ fn main() {
                 MainThreadMarker::new().expect("setup runs on the main thread"),
                 &window,
             );
+            backspace::install(&window);
             window.on_window_event({
                 let window = window.clone();
                 move |event| match event {
