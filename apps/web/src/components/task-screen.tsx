@@ -838,8 +838,8 @@ export function TaskScreen(): ReactNode {
         : (
             // Under xl the top bar sticks over the panel too, so the panel is shorter than the window by the band and
             // the bar. From xl a sticky box never moves up to its threshold, so the negative margin puts its top at the
-            // window's top, and its colour and border reach that edge.
-            <div className="h-[calc(100vh-var(--title-band)-var(--spacing-top-bar))] w-full border-t border-line bg-bg pb-(--notice-stack-height) xl:sticky xl:top-0 xl:z-(--layer-sidebar) xl:-mt-(--title-band) xl:h-screen xl:w-chat-panel xl:shrink-0 xl:self-start xl:border-t-0 xl:border-l xl:pt-(--title-band)">
+            // window's top, under the title cover.
+            <div className="h-[calc(100vh-var(--title-band)-var(--spacing-top-bar))] w-full border-t border-line bg-bg pb-(--notice-stack-height) xl:sticky xl:top-0 xl:z-(--layer-top-bar) xl:-mt-(--title-band) xl:h-screen xl:w-chat-panel xl:shrink-0 xl:self-start xl:border-t-0 xl:border-l xl:pt-(--title-band)">
               <ChatPanel
                 tag={tag}
                 task={taskId}

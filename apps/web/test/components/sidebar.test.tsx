@@ -1,5 +1,5 @@
 import type { AgentState } from "@tasma/protocol";
-import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonKeys } from "../../src/api/queries";
@@ -50,17 +50,23 @@ it("holds the destinations in exactly one navigation landmark", async () => {
 });
 
 /*
- * The wordmark and the collapse toggle sit outside the <nav>, so without a
- * landmark around the whole column a user moving by landmark would skip past
- * the one control that changes the sidebar and never reach it.
+ * The collapse toggle sits outside the <nav>, so without a landmark around the
+ * whole column a user moving by landmark would skip past the one control that
+ * changes the sidebar and never reach it.
  */
-it("keeps the brand and the toggle inside the banner landmark", async () => {
+it("keeps the toggle and the navigation inside the banner landmark, with no name of the app", async () => {
   await renderWithRouter();
 
   const banner = screen.getByRole("banner");
   expect(banner.contains(screen.getByRole("button", { name: "Collapse sidebar" }))).toBe(true);
-  expect(banner.contains(screen.getByText("tasma"))).toBe(true);
   expect(banner.contains(screen.getByRole("navigation"))).toBe(true);
+  expect(within(banner).queryByText(/^tasma$/i)).toBeNull();
+});
+
+it("starts the navigation directly below the band", async () => {
+  await renderWithRouter();
+
+  expect(screen.getByRole("navigation").classList.contains("pt-2")).toBe(true);
 });
 
 it("marks the current destination, and only that one", async () => {
@@ -152,12 +158,35 @@ it("holds the width on the header and the surface on one fixed child", async () 
     "left-0",
     "z-(--layer-sidebar)",
     "w-[inherit]",
-    "border-r",
-    "border-line",
     "bg-surface-2",
     "pt-(--title-band)",
   ]) {
     expect(content.classList.contains(name), name).toBe(true);
+  }
+  expect(content.classList.contains("border-r")).toBe(false);
+});
+
+it("draws the frame of the page panel as one rounded border, with no line below the band and no curve when the band is 0", async () => {
+  await renderWithRouter();
+
+  const fixed = screen.getByRole("banner").firstElementChild!;
+
+  for (const name of [
+    "after:pointer-events-none",
+    "after:absolute",
+    "after:top-(--title-band)",
+    "after:bottom-0",
+    "after:left-full",
+    "after:w-screen",
+    "after:rounded-tl-(--panel-corner)",
+    "after:border-l",
+    "after:border-line",
+    "after:[border-top-width:min(1px,var(--title-band))]",
+    "after:shadow-[0_0_0_var(--panel-corner)_var(--color-surface-2)]",
+    "after:[clip-path:inset(0)]",
+    "after:[--panel-corner:min(var(--radius-panel),var(--title-band))]",
+  ]) {
+    expect(fixed.classList.contains(name), name).toBe(true);
   }
 });
 
@@ -173,6 +202,7 @@ it("scrolls in a box inside the fixed one, below the band", async () => {
     expect(scroller.classList.contains(name), name).toBe(true);
   }
   expect(scroller.classList.contains("pt-(--title-band)")).toBe(false);
+  expect(scroller.classList.contains("border-r")).toBe(false);
   expect(scroller.contains(screen.getByRole("navigation"))).toBe(true);
 });
 

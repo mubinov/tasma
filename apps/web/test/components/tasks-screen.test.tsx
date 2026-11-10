@@ -358,7 +358,7 @@ describe("the board", () => {
 
     expect(window.localStorage.getItem("tasma.tasks.project")).toBe("DELTA");
     expect(useUiStore.getState().lastTasksProject).toBe("DELTA");
-    expect(document.title).toBe("Tasks · tasma");
+    expect(document.title).toBe("Tasks · Tasma");
     const current = screen.getAllByRole("link").filter((link) => link.getAttribute("aria-current") === "page");
     expect(current.map((link) => link.textContent)).toEqual(["Tasks"]);
   });

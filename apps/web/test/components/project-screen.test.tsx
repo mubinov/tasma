@@ -70,7 +70,7 @@ it("heads the page with the name and marks the tag beside it", async () => {
   expect(heading.textContent).toBe("Delta");
   expect(screen.getByRole("main").textContent).toContain("DELTA");
   expect(screen.getByText("/repos/delta")).toBeTruthy();
-  expect(document.title).toBe("Delta · tasma");
+  expect(document.title).toBe("Delta · Tasma");
 });
 
 // With no name the heading is already the tag, so the chip is dropped rather
@@ -82,7 +82,7 @@ it("heads the page with the tag when the project declares no name", async () => 
 
   expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("ACME");
   expect(within(main).getAllByText("ACME")).toHaveLength(1);
-  expect(document.title).toBe("ACME · tasma");
+  expect(document.title).toBe("ACME · Tasma");
 });
 
 it("marks the default and the final statuses on the statuses row", async () => {

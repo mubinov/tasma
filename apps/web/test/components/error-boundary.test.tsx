@@ -60,7 +60,7 @@ it("replaces a render error with a message inside a landmark, not a blank window
  */
 it("names the document after the failure rather than the screen that is gone", () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
-  document.title = "Tasks · tasma";
+  document.title = "Tasks · Tasma";
 
   function Broken(): never {
     throw new Error("the shell could not render");
@@ -72,7 +72,7 @@ it("names the document after the failure rather than the screen that is gone", (
     </ErrorBoundary>,
   );
 
-  expect(document.title).toBe("Stopped rendering · tasma");
+  expect(document.title).toBe("Stopped rendering · Tasma");
 });
 
 // The tree holding the focused element is gone, so focus would fall to <body>,
@@ -179,10 +179,10 @@ it.each([
 // The screen that named the document is gone, and every failure names the tab
 // after itself rather than after the screen the reader was on.
 it.each([
-  { error: NO_DAEMON, title: "No daemon · tasma" },
-  { error: NO_ENVELOPE, title: "Unreadable answer · tasma" },
-  { error: REFUSED, title: "Request refused · tasma" },
-  { error: CRASH, title: "Stopped rendering · tasma" },
+  { error: NO_DAEMON, title: "No daemon · Tasma" },
+  { error: NO_ENVELOPE, title: "Unreadable answer · Tasma" },
+  { error: REFUSED, title: "Request refused · Tasma" },
+  { error: CRASH, title: "Stopped rendering · Tasma" },
 ])("names the document $title", ({ error, title }) => {
   render(<ErrorPanel error={error} />);
 

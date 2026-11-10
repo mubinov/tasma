@@ -92,7 +92,7 @@ describe("the page", () => {
     expect(step?.textContent).toBe("approve, step 2 of 2, a human's step");
     expect(step?.firstElementChild?.className).toContain("bg-signal");
     expect(step?.querySelector("i")).toBeNull();
-    expect(document.title).toBe("SAGA-3 Build the parser · tasma");
+    expect(document.title).toBe("SAGA-3 Build the parser · Tasma");
   });
 
   it("keeps the back link in a top bar that stays while the page scrolls", async () => {
@@ -529,14 +529,18 @@ describe("the sidebar", () => {
     for (const name of [
       "lg:sticky",
       "lg:top-0",
-      "lg:z-(--layer-sidebar)",
+      "lg:z-(--layer-top-bar)",
       "lg:-mt-(--title-band)",
       "lg:pt-(--title-band)",
       "lg:h-screen",
       "lg:w-task-sidebar",
       "lg:shrink-0",
       "lg:self-start",
-      "lg:border-l",
+      "border-l",
+      "border-transparent",
+      "lg:border-line",
+      "lg:border-t-transparent",
+      "lg:[border-top-width:min(1px,var(--title-band))]",
       "lg:bg-surface-2",
       "lg:flex",
       "lg:flex-col",
@@ -1081,7 +1085,7 @@ describe("a failed load", () => {
     await renderWithRouter(path, transport);
 
     const alert = screen.getByRole("alert");
-    expect(document.title).toBe("Request refused · tasma");
+    expect(document.title).toBe("Request refused · Tasma");
     expect(within(alert).getByRole("heading", { level: 1 }).textContent).toBe("the daemon refused this request");
     for (const word of words) {
       expect(alert.textContent).toContain(word);

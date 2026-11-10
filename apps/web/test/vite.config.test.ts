@@ -60,6 +60,10 @@ describe("the built bundle", () => {
     expect(indexHtml).not.toContain('="/assets/');
   });
 
+  it("names the app with a capital T in the window title before the first screen sets it", () => {
+    expect(indexHtml).toContain("<title>Tasma</title>");
+  });
+
   it("links the favicon by a relative path and copies the file unchanged to the root of the build", () => {
     expect(indexHtml).toContain('<link rel="icon" type="image/svg+xml" href="./favicon.svg"');
     expect(indexHtml).not.toContain('href="data:,"');

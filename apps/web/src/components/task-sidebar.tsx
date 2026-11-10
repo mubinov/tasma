@@ -216,8 +216,10 @@ export function TaskSidebar(props: TaskSidebarProps): ReactNode {
 
   return (
     // From lg a top padding in the scroll box would scroll away, so the band is on a box around it. A sticky box never
-    // moves up to its threshold, so the negative margin puts its top at the window's top.
-    <div className="w-full lg:sticky lg:top-0 lg:z-(--layer-sidebar) lg:-mt-(--title-band) lg:flex lg:h-screen lg:w-task-sidebar lg:shrink-0 lg:flex-col lg:self-start lg:border-l lg:border-line lg:bg-surface-2 lg:pt-(--title-band)">
+    // moves up to its threshold, so the negative margin puts its top at the window's top. The line of the page frame
+    // paints above the page, and a transparent border takes its width at each zoom: the left one under the content, the
+    // top one from lg. The line then never covers the focus ring of the aside.
+    <div className="w-full border-l border-transparent lg:sticky lg:top-0 lg:z-(--layer-top-bar) lg:-mt-(--title-band) lg:flex lg:h-screen lg:w-task-sidebar lg:shrink-0 lg:flex-col lg:self-start lg:border-line lg:border-t-transparent lg:bg-surface-2 lg:pt-(--title-band) lg:[border-top-width:min(1px,var(--title-band))]">
       {/* A scroll container with no link inside is a tab stop only in some engines, so the aside is one while it
           scrolls. -1 keeps the focus on it when it stops scrolling. The aside meets the window's edges, so its focus
           ring is drawn inside. */}

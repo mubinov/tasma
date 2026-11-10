@@ -98,7 +98,9 @@ export function DashboardScreen(): ReactNode {
   const showChat = wide || open !== undefined;
 
   return (
-    <div className="-m-6 -mt-[calc(--spacing(6)+var(--title-band))] -mb-[calc(--spacing(6)+var(--notice-stack-height,0px))] flex h-screen min-h-[30rem] pt-(--title-band) sm:-m-10 sm:-mt-[calc(--spacing(10)+var(--title-band))] sm:-mb-[calc(--spacing(10)+var(--notice-stack-height,0px))]">
+    // The line of the page frame paints above the page. The transparent border takes the width of that line at each
+    // zoom, so the line never covers the focus ring of a row.
+    <div className="-m-6 -mt-[calc(--spacing(6)+var(--title-band))] -mb-[calc(--spacing(6)+var(--notice-stack-height,0px))] flex h-screen min-h-[30rem] border-l border-transparent pt-(--title-band) sm:-m-10 sm:-mt-[calc(--spacing(10)+var(--title-band))] sm:-mb-[calc(--spacing(10)+var(--notice-stack-height,0px))]">
       <ScreenHeading className="sr-only">{TITLE}</ScreenHeading>
       {showList && (
         <ChatList

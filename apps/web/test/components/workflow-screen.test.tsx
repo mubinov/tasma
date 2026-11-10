@@ -75,7 +75,7 @@ it("heads the page with the title, marks the name beside it and shows the file",
   expect(heading.textContent).toBe("Orbit review");
   expect(heading.nextElementSibling?.textContent).toBe("orbit");
   expect(screen.getByText("/flows/orbit/workflow.yml")).toBeTruthy();
-  expect(document.title).toBe("Orbit review · tasma");
+  expect(document.title).toBe("Orbit review · Tasma");
 });
 
 it.each(["", "  "])("heads the page with the name when the title is blank: %j", async (title) => {
@@ -85,7 +85,7 @@ it.each(["", "  "])("heads the page with the name when the title is blank: %j", 
 
   expect(heading.textContent).toBe("orbit");
   expect(heading.nextElementSibling).toBeNull();
-  expect(document.title).toBe("orbit · tasma");
+  expect(document.title).toBe("orbit · Tasma");
 });
 
 it("heads the page with the name when the workflow has no title", async () => {
@@ -93,7 +93,7 @@ it("heads the page with the name when the workflow has no title", async () => {
 
   expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("orbit");
   expect(within(screen.getByRole("main")).getAllByText("orbit")).toHaveLength(1);
-  expect(document.title).toBe("orbit · tasma");
+  expect(document.title).toBe("orbit · Tasma");
 });
 
 it("lists the steps in order, each with its number, name, file and owner", async () => {
@@ -166,7 +166,7 @@ it("hands a workflow the daemon does not know to the failure panel", async () =>
 
   const alert = screen.getByRole("alert");
 
-  expect(document.title).toBe("Request refused · tasma");
+  expect(document.title).toBe("Request refused · Tasma");
   expect(alert.textContent).toContain("store/workflow-unknown");
   expect(alert.textContent).toContain("no workflow is named orbit");
 });

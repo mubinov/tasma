@@ -131,11 +131,11 @@ describe("the layout", () => {
   it("sets the title, and keeps the title cover", async () => {
     await openHeld();
 
-    expect(document.title).toBe("Set up · tasma");
+    expect(document.title).toBe("Set up · Tasma");
     expect(document.getElementById(TITLE_COVER_ID)).not.toBeNull();
   });
 
-  it("holds the one h1 in main, with the mark before it as no heading", async () => {
+  it("holds the one h1 in main, with the name in the band and no banner", async () => {
     await openHeld();
 
     const main = screen.getByRole("main");
@@ -143,9 +143,17 @@ describe("the layout", () => {
 
     expect(headings).toHaveLength(1);
     expect(main.contains(headings[0]!)).toBe(true);
-    expect(main.contains(screen.getByText("tasma"))).toBe(false);
-    expect(screen.getByRole("banner").contains(screen.getByText("tasma"))).toBe(true);
+    expect(main.contains(screen.getByText("Tasma"))).toBe(false);
+    expect(document.getElementById(TITLE_COVER_ID)!.textContent).toBe("Tasma");
+    expect(document.getElementById(TITLE_COVER_ID)!.classList.contains("shadow-[inset_0_-1px_0_var(--color-line)]")).toBe(true);
+    expect(screen.queryByRole("banner")).toBeNull();
     expect(screen.getByText("Complete these steps to run your first task.")).toBeTruthy();
+  });
+
+  it("keeps the content of main below the band", async () => {
+    await openHeld();
+
+    expect(screen.getByRole("main").classList.contains("pt-[calc(clamp(1.5rem,11vh,6.5rem)+var(--title-band))]")).toBe(true);
   });
 
   it("lists the 6 steps in an ordered list that the heading names", async () => {

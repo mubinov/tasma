@@ -93,7 +93,7 @@ it("opens the main content with the heading Projects and names the document", as
   expect(headings).toHaveLength(1);
   expect(headings[0]!.textContent).toBe("Projects");
   expect(screen.getByRole("main").contains(headings[0]!)).toBe(true);
-  expect(document.title).toBe("Projects · tasma");
+  expect(document.title).toBe("Projects · Tasma");
 });
 
 // A tree with no project is the normal first run, not a fault, so it is a

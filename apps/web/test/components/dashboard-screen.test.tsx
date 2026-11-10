@@ -157,7 +157,7 @@ describe("the screen", () => {
     const heading = screen.getByRole("heading", { level: 1 });
     expect(heading.textContent).toBe("Chats");
     expect(heading.classList.contains("sr-only")).toBe(true);
-    expect(document.title).toBe("Chats · tasma");
+    expect(document.title).toBe("Chats · Tasma");
     expect(screen.getByRole("heading", { level: 2, name: "Chats" }).classList.contains("sr-only")).toBe(true);
   });
 
@@ -170,6 +170,8 @@ describe("the screen", () => {
       "sm:-mt-[calc(--spacing(10)+var(--title-band))]",
       "pt-(--title-band)",
       "h-screen",
+      "border-l",
+      "border-transparent",
     ]) {
       expect(frame.classList.contains(name), name).toBe(true);
     }

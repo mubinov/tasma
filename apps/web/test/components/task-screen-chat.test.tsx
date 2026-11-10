@@ -113,7 +113,7 @@ it("shows the chat panel in place of the task sidebar, and keeps the h1 and the 
   expect(noSidebar()).toBe(true);
   expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   expect(taskHeading().textContent).toBe("Build the parser");
-  expect(document.title).toBe("SAGA-3 Build the parser · tasma");
+  expect(document.title).toBe("SAGA-3 Build the parser · Tasma");
 });
 
 const ENDED = chatRecord({ seq: TEXT_LOG.length, stateSeq: TEXT_LOG.length });
@@ -371,7 +371,7 @@ it("gives the panel the height of the window under the top bar, and at xl and wi
     "xl:h-screen",
     "xl:sticky",
     "xl:top-0",
-    "xl:z-(--layer-sidebar)",
+    "xl:z-(--layer-top-bar)",
     "xl:-mt-(--title-band)",
     "xl:pt-(--title-band)",
     "xl:w-chat-panel",

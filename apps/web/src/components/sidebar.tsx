@@ -18,6 +18,11 @@ const RAIL_WIDTH_CLASS = "w-[max(--spacing(16),var(--title-controls))] [html:has
 
 const FULL_WIDTH_CLASS = "sm:w-[max(--spacing(60),var(--title-controls))] sm:[html:has(&)]:scroll-pl-[max(--spacing(60),var(--title-controls))]";
 
+// One rounded border draws the line below the band, the curve and the line beside the sidebar, because WebKit rounds a
+// border, a shadow and a gradient to different widths at a page zoom. The page scrolls on `html`, which would carry a
+// frame on `<main>` away. The shadow fills the area outside the curve, and the clip keeps it there.
+const PAGE_FRAME_CLASS = "after:pointer-events-none after:absolute after:top-(--title-band) after:bottom-0 after:left-full after:w-screen after:rounded-tl-(--panel-corner) after:border-l after:border-line after:shadow-[0_0_0_var(--panel-corner)_var(--color-surface-2)] after:[border-top-width:min(1px,var(--title-band))] after:[clip-path:inset(0)] after:[--panel-corner:min(var(--radius-panel),var(--title-band))]";
+
 const AGENT_STATE_WORDS: Record<AgentState, string> = {
   "off": "",
   "running": ", agent works",
@@ -83,24 +88,13 @@ export function Sidebar(): ReactNode {
       className={`shrink-0 transition-[width] ${TIMING_CLASS} ${RAIL_WIDTH_CLASS} ${collapsed ? "" : FULL_WIDTH_CLASS}`}
     >
       {/* A top padding in a scroll box scrolls away, so the band is on a box that does not scroll. */}
-      <div className="fixed inset-y-0 left-0 z-(--layer-sidebar) flex w-[inherit] flex-col border-r border-line bg-surface-2 pt-(--title-band)">
+      <div className={`fixed inset-y-0 left-0 z-(--layer-sidebar) flex w-[inherit] flex-col bg-surface-2 pt-(--title-band) ${PAGE_FRAME_CLASS}`}>
         {/* The bottom padding below `sm` keeps the last link's focus ring inside
             the scroll box, which clips it; above `sm` the collapse block does. */}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-2 sm:pb-0">
-          <div className="px-3 py-4">
-            <div className={ROW_CLASS}>
-              <span className={ICON_BOX_CLASS}>
-                <span className="size-6 rounded-control bg-graphic" />
-              </span>
-              <CollapsingLabel collapsed={collapsed} className="font-chrome text-lg font-semibold">
-                tasma
-              </CollapsingLabel>
-            </div>
-          </div>
-
           {/* The side padding sits on the lists, so the foot's border spans the
               sidebar's full width. */}
-          <nav className="flex flex-1 flex-col">
+          <nav className="flex flex-1 flex-col pt-2">
             <ul className={LIST_CLASS}>
               {PRIMARY_NAVIGATION.map((entry) => (
                 <SidebarLink key={entry.path} entry={entry} collapsed={collapsed} signal={signal} />

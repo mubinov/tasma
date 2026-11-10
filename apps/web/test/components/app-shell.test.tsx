@@ -84,9 +84,36 @@ it("covers the band with a box that a screen reader skips and that takes pointer
   const cover = document.getElementById(TITLE_COVER_ID)!;
   expect(cover.getAttribute("aria-hidden")).toBe("true");
   expect(cover.classList.contains("pointer-events-none")).toBe(false);
-  for (const name of ["fixed", "inset-x-0", "top-0", "h-(--title-band)", "bg-bg", "z-(--layer-title-cover)"]) {
+  for (const name of ["fixed", "inset-x-0", "top-0", "h-(--title-band)", "z-(--layer-title-cover)"]) {
     expect(cover.classList.contains(name), name).toBe(true);
   }
+});
+
+it("shows the name in the band, in the colour of the sidebar", async () => {
+  await renderWithRouter();
+
+  const cover = document.getElementById(TITLE_COVER_ID)!;
+  expect(cover.textContent).toBe("Tasma");
+  expect(cover.classList.contains("bg-bg")).toBe(false);
+  for (const name of [
+    "bg-surface-2",
+    "overflow-hidden",
+    "text-center",
+    "font-chrome",
+    "text-base",
+    "font-semibold",
+    "text-text",
+    "leading-(--title-band)",
+    "select-none",
+  ]) {
+    expect(cover.classList.contains(name), name).toBe(true);
+  }
+});
+
+it("leaves the bottom line of the band to the frame of the sidebar", async () => {
+  await renderWithRouter();
+
+  expect(document.getElementById(TITLE_COVER_ID)!.classList.contains("shadow-[inset_0_-1px_0_var(--color-line)]")).toBe(false);
 });
 
 it("keeps the main content its distance below the band", async () => {
@@ -111,13 +138,13 @@ it("keeps room below the main content for the notice stack", async () => {
 // show, so it has to follow the screen rather than name the app alone.
 it("names the document after the screen it shows", async () => {
   const router = await renderWithRouter();
-  expect(document.title).toBe("Chats · tasma");
+  expect(document.title).toBe("Chats · Tasma");
 
   await act(async () => {
     await router.navigate({ to: "/settings" });
   });
 
-  expect(document.title).toBe("Settings · tasma");
+  expect(document.title).toBe("Settings · Tasma");
 });
 
 /*

@@ -69,12 +69,15 @@ export function AppShell(): ReactNode {
   return (
     <div className={onSetup ? "flex min-h-screen flex-col bg-bg text-text" : "flex min-h-screen bg-bg text-text"}>
       {!onSetup && <Sidebar />}
-      {/* It takes pointer events, so `elementFromPoint` reads a target under the band as covered. */}
+      {/* It takes pointer events, so `elementFromPoint` reads a target under the band as covered. Its bottom line is a
+          shadow because a border draws also at height 0. Beside a sidebar, the frame of the sidebar draws it. */}
       <div
         id={TITLE_COVER_ID}
         aria-hidden="true"
-        className="fixed inset-x-0 top-0 z-(--layer-title-cover) h-(--title-band) bg-bg"
-      />
+        className={`fixed inset-x-0 top-0 z-(--layer-title-cover) h-(--title-band) overflow-hidden bg-surface-2 text-center font-chrome text-base leading-(--title-band) font-semibold text-text select-none ${onSetup ? "shadow-[inset_0_-1px_0_var(--color-line)]" : ""}`}
+      >
+        Tasma
+      </div>
       {onSetup
         ? <Outlet />
         : (

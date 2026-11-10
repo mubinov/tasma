@@ -163,7 +163,7 @@ it("opens the main content with the heading Workflows and names the document", a
   expect(headings).toHaveLength(1);
   expect(headings[0]!.textContent).toBe("Workflows");
   expect(screen.getByRole("main").contains(headings[0]!)).toBe(true);
-  expect(document.title).toBe("Workflows · tasma");
+  expect(document.title).toBe("Workflows · Tasma");
 });
 
 it("announces the warnings a refetch turns up", async () => {

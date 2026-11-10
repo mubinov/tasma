@@ -569,67 +569,59 @@ export function SetupScreen(): ReactNode {
   }
 
   return (
-    <>
-      <header className="flex items-center px-6 pt-[calc(--spacing(5)+var(--title-band))] min-[58rem]:px-10">
-        <div className="flex min-h-8 items-center gap-2.5 font-chrome text-lg font-semibold">
-          <span className="size-6 rounded-control bg-graphic" />
-          tasma
-        </div>
-      </header>
-      <main
-        ref={mainRef}
-        tabIndex={-1}
-        onFocus={holdFocus}
-        className="grid flex-1 grid-cols-[minmax(0,37rem)] content-start items-start justify-center gap-y-8 px-6 pt-[clamp(1.5rem,11vh,6.5rem)] pb-[calc(--spacing(18)+var(--notice-stack-height,0px))] min-[58rem]:grid-cols-[minmax(15rem,19rem)_minmax(0,37rem)] min-[58rem]:gap-x-24 min-[58rem]:px-10"
+    <main
+      ref={mainRef}
+      tabIndex={-1}
+      onFocus={holdFocus}
+      className="grid flex-1 grid-cols-[minmax(0,37rem)] content-start items-start justify-center gap-y-8 px-6 pt-[calc(clamp(1.5rem,11vh,6.5rem)+var(--title-band))] pb-[calc(--spacing(18)+var(--notice-stack-height,0px))] min-[58rem]:grid-cols-[minmax(15rem,19rem)_minmax(0,37rem)] min-[58rem]:gap-x-24 min-[58rem]:px-10"
+    >
+      <div className="min-[58rem]:sticky min-[58rem]:top-[calc(--spacing(12)+var(--title-band))]">
+        <ScreenHeading ref={headingRef} id={headingId} tabIndex={-1}>
+          Set up Tasma
+        </ScreenHeading>
+        <p className="mt-2.5 text-base text-subtle">Complete these steps to run your first task.</p>
+        <p className="mt-6 font-chrome text-base font-medium">{`${doneWords} done`}</p>
+        {readFailing && <p className="mt-2 text-sm text-subtle">{READ_FAILED_WORDS}</p>}
+      </div>
+      {/* WebKit removes the list role from a list with no list style. */}
+      <Accordion.Root<StepId>
+        value={open === null ? [] : [open]}
+        onValueChange={changeOpen}
+        aria-labelledby={headingId}
+        render={<ol role="list" />}
       >
-        <div className="min-[58rem]:sticky min-[58rem]:top-[calc(--spacing(12)+var(--title-band))]">
-          <ScreenHeading ref={headingRef} id={headingId} tabIndex={-1}>
-            Set up Tasma
-          </ScreenHeading>
-          <p className="mt-2.5 text-base text-subtle">Complete these steps to run your first task.</p>
-          <p className="mt-6 font-chrome text-base font-medium">{`${doneWords} done`}</p>
-          {readFailing && <p className="mt-2 text-sm text-subtle">{READ_FAILED_WORDS}</p>}
-        </div>
-        {/* WebKit removes the list role from a list with no list style. */}
-        <Accordion.Root<StepId>
-          value={open === null ? [] : [open]}
-          onValueChange={changeOpen}
-          aria-labelledby={headingId}
-          render={<ol role="list" />}
-        >
-          {steps.map((step) => (
-            <SetupStepRow
-              key={step.id}
-              step={step}
-              current={step.id === current?.id}
-              checking={checking === step.id}
-              onCheckAgain={() => void checkAgain(step.id)}
-              onStop={stopChecking}
-              install={{ state: skillInstall, answer: install.data, onInstall: startInstall }}
-              project={{
-                dialog: folderDialogAvailable(),
-                picking,
-                adding: createProject.isPending,
-                failure: projectFailure,
-                retry: retryPath,
-                path: pickedPath ?? "",
-                onPress: pressProject,
-                onAdd: addProject,
-              }}
-              workflow={{
-                project: target?.words,
-                listFailure: listFailing ? LIST_FAILED_WORDS : undefined,
-                running: workflowWrite === "running",
-                failure: workflowFailure,
-                onAdd: pressAddWorkflow,
-              }}
-              onPressInside={() => {
-                byHandRef.current = true;
-              }}
-            />
-          ))}
-        </Accordion.Root>
-      </main>
-    </>
+        {steps.map((step) => (
+          <SetupStepRow
+            key={step.id}
+            step={step}
+            current={step.id === current?.id}
+            checking={checking === step.id}
+            onCheckAgain={() => void checkAgain(step.id)}
+            onStop={stopChecking}
+            install={{ state: skillInstall, answer: install.data, onInstall: startInstall }}
+            project={{
+              dialog: folderDialogAvailable(),
+              picking,
+              adding: createProject.isPending,
+              failure: projectFailure,
+              retry: retryPath,
+              path: pickedPath ?? "",
+              onPress: pressProject,
+              onAdd: addProject,
+            }}
+            workflow={{
+              project: target?.words,
+              listFailure: listFailing ? LIST_FAILED_WORDS : undefined,
+              running: workflowWrite === "running",
+              failure: workflowFailure,
+              onAdd: pressAddWorkflow,
+            }}
+            onPressInside={() => {
+              byHandRef.current = true;
+            }}
+          />
+        ))}
+      </Accordion.Root>
+    </main>
   );
 }

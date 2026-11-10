@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-const APP_NAME = "tasma";
+const APP_NAME = "Tasma";
 
 export function useDocumentTitle(title: string): void {
   useEffect(() => {
