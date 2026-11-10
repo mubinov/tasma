@@ -18,6 +18,7 @@ import { ChatBody, ChatPanel } from "../../src/components/chat-panel";
 import type { RouterContext } from "../../src/routes";
 import { useChatDraftStore } from "../../src/store/chat-drafts";
 import { useNoticeStore } from "../../src/store/notices";
+import { useUiStore } from "../../src/store/ui";
 import {
   chatPath,
   chatRecord,
@@ -2229,6 +2230,34 @@ it("shows the mode of the chat in the composer, and no picker for a log with no 
 
   await findComposer();
   expect(screen.queryByRole("button", MODE_TRIGGER)).toBeNull();
+});
+
+it("puts the Mode picker in the picker row, whose start padding is the start padding of the message input", async () => {
+  await renderPanel(logOf(MODE_LOG));
+
+  const trigger = await screen.findByRole("button", { name: "Mode Accept edits" });
+  expect(trigger.closest(".ps-2\\.5")?.className).toContain("flex-wrap");
+  expect(composer().className).toContain("px-2.5");
+});
+
+it.each([
+  ["with another number", { tag: "SAGA", chat: 7 }],
+  ["of another project", { tag: "ACME", chat: 2 }],
+])("leaves a started chat %s alone when the composer of a project chat shows", async (_name, chat) => {
+  const started = { ...chat, focus: true, words: "The chat started." };
+  useUiStore.setState({ startedChat: started });
+  onTestFinished(() => {
+    useUiStore.setState({ startedChat: null });
+  });
+  const record = successReply(projectChatRecord({ seq: TEXT_LOG.length }));
+  const log = stubChatLog({ [projectChatPath()]: record }, projectEventsPath);
+  log.serve(0, { cursor: TEXT_LOG.length, entries: [...TEXT_LOG] });
+
+  await renderPanel(log, { host: <ChatBody tag="SAGA" task={undefined} chat={2} headingRef={{ current: null }} /> });
+  await findComposer();
+
+  expect(useUiStore.getState().startedChat).toEqual(started);
+  expect(spoken()).not.toContain("The chat started.");
 });
 
 it("offers the values of the agent without the hidden ones", async () => {

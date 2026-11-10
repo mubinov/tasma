@@ -14,6 +14,7 @@ import {
   FOLDER_DIALOG_FAILURE,
   pageFailureLine,
   projectAddFailure,
+  projectChatStartFailure,
   skillInstallFailure,
   workflowAddFailure,
 } from "../../src/lib/write-failure";
@@ -215,6 +216,24 @@ describe("chatStartFailure", () => {
 
   it.each(CASES)("says whether a chat started for $label", ({ cause, line }) => {
     expect(chatStartFailure("research", "SAGA-3").line(new WriteError(cause))).toBe(line);
+  });
+});
+
+describe("projectChatStartFailure", () => {
+  const LINES: Record<FailureKind, string> = {
+    refused: "The daemon refused to start the chat. Its own words are below.",
+    unanswered: "No daemon answered. If the chat started, it shows in the list of chats.",
+    address: "The daemon did not answer through the address below. Start the daemon there if it is not running.",
+    unsent: "The request did not start, so no chat started.",
+  };
+  const CASES = KINDS.map((kind) => ({ ...CAUSES[kind], line: LINES[kind] }));
+
+  it("titles the failure with the project", () => {
+    expect(projectChatStartFailure("SAGA").title).toBe("The new chat of SAGA did not start");
+  });
+
+  it.each(CASES)("says whether a chat started for $label", ({ cause, line }) => {
+    expect(projectChatStartFailure("SAGA").line(new WriteError(cause))).toBe(line);
   });
 });
 

@@ -25,6 +25,11 @@ type ChatOptionMenuProps = {
   onFocusLost: () => void;
 };
 
+/** The pickers of a composer. The start padding is the start padding of the kit message input. */
+export function ChatPickerRow({ children }: { children: ReactNode }): ReactNode {
+  return <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 ps-2.5">{children}</div>;
+}
+
 /**
  * The menu of one `select` config option of a chat, with the names and the
  * descriptions that the agent sends. The wait for a pick stands in the

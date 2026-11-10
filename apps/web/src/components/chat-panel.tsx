@@ -12,21 +12,24 @@ import { Thread, type ThreadComponents } from "@kit/components/assistant-ui/elem
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { chatBusy, turnRuns, type Chat, type ChatStatus, type Client, type ProjectChat } from "@tasma/protocol";
-import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type DOMAttributes, type ReactNode, type RefObject } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useChatLog } from "../api/chat-log";
 import { chatQuery, type ChatPlace } from "../api/queries";
 import { chatRequestOf } from "../lib/chat-approval";
 import type { ChatMessage } from "../lib/chat-fold";
-import { chatAgentName, chatStateText, chatThreadMessage, isChatMissing } from "../lib/chat-messages";
+import { chatAgentName, chatStateText, chatThreadMessage, isChatMissing, messageText } from "../lib/chat-messages";
 import { WarningIcon, XIcon } from "../lib/icons";
-import { CHAT_HEADING_MARK, focusInView } from "../lib/focus-in-view";
+import { CHAT_HEADING_MARK, CHAT_HEADING_SELECTOR, focusInView, KIT_INPUT } from "../lib/focus-in-view";
+import { sayStartedWords } from "../lib/started-chat";
 import { useChatModePick, type ChatModePick } from "../lib/use-chat-mode-pick";
 import { chatOpenMessageId, chatUserSeq, useChatScroll, type ChatScrollInput } from "../lib/use-chat-scroll";
 import { useChatSeen, type SeenWatch } from "../lib/use-chat-seen";
+import { useChatThreadFocus } from "../lib/use-chat-thread-focus";
 import { useChatWrites } from "../lib/use-chat-writes";
 import { focusDropped, useFocusLost } from "../lib/use-focus-lost";
-import { chatDraft, subscribeChatDraft, useChatDraftStore } from "../store/chat-drafts";
-import { ChatOptionMenu } from "./chat-option-menu";
+import { chatDraft, subscribeChatDraft, useChatDraftStore, type ChatDraftPlace } from "../store/chat-drafts";
+import { useUiStore } from "../store/ui";
+import { ChatOptionMenu, ChatPickerRow } from "./chat-option-menu";
 import { ChatDataViews, ChatEmpty, ChatToolGroup, ChatToolView } from "./chat-tool";
 import { BUTTON_CLASS, ICON_BUTTON_CLASS } from "./control-classes";
 import { Tooltip } from "./tooltip";
@@ -92,59 +95,6 @@ function ChatScroll(input: ScrollInput): null {
   return null;
 }
 
-const KIT_SEND = '[aria-label="Send message"]';
-
-const KIT_INPUT = 'textarea[aria-label="Message input"]';
-
-/**
- * An own turn removes the action bars of the messages with no action of the user.
- * A send puts Stop in the place of Send, or disables Send, so the focus goes to the
- * message input: a second key press must not stop the turn. Text that comes back
- * into the input during a turn puts Send in the place of Stop, so the focus goes to
- * the heading: a key press meant for Stop must not send that text. The heading is
- * the target for every other element that leaves. The move is in a layout effect
- * body, because React gives the focus back to an element that stays in the page at
- * the end of its mutations. The last element with focus comes from React events:
- * they also come from a portal, such as a menu of a message, and React sends none
- * for an element that leaves in its commit.
- */
-function useChatThreadFocus(
-  threadRef: RefObject<HTMLElement | null>,
-  onFocusLost: () => void,
-): Pick<DOMAttributes<HTMLElement>, "onFocusCapture" | "onBlurCapture"> {
-  const canCancel = useAuiState((s) => s.composer.canCancel);
-  const canSend = useAuiState((s) => s.composer.canSend);
-  const lastFocusedRef = useRef<Element | null>(null);
-  const settleFocus = useEffectEvent(() => {
-    const held = focusDropped() ? lastFocusedRef.current : document.activeElement;
-    if (held === null || (held.isConnected && !held.matches(":disabled"))) {
-      return;
-    }
-    lastFocusedRef.current = null;
-    if (held.matches(KIT_SEND)) {
-      focusInView(threadRef.current!.querySelector<HTMLElement>(KIT_INPUT));
-    } else {
-      onFocusLost();
-    }
-  });
-
-  useLayoutEffect(() => {
-    settleFocus();
-  }, [canCancel, canSend]);
-
-  return {
-    onFocusCapture: ({ target }) => {
-      lastFocusedRef.current = target;
-    },
-    onBlurCapture: ({ target }) => {
-      // A window that loses focus keeps `activeElement`, and the element can still leave.
-      if (document.activeElement !== target) {
-        lastFocusedRef.current = null;
-      }
-    },
-  };
-}
-
 /**
  * The seen tracker, the scroll and the mode picker in the composer. Their data
  * comes through the runtime extras, so `THREAD_COMPONENTS` stays one object: a
@@ -163,15 +113,17 @@ function ChatComposerStart(): ReactNode {
       <ChatSeenTracker {...seenWatch} />
       <ChatScroll {...scroll} />
       {mode !== undefined && (
-        <ChatOptionMenu
-          option={mode}
-          hidden={hidden}
-          pending={pending}
-          onPick={(value) => {
-            pick(mode, value);
-          }}
-          onFocusLost={onFocusLost}
-        />
+        <ChatPickerRow>
+          <ChatOptionMenu
+            option={mode}
+            hidden={hidden}
+            pending={pending}
+            onPick={(value) => {
+              pick(mode, value);
+            }}
+            onFocusLost={onFocusLost}
+          />
+        </ChatPickerRow>
       )}
     </>
   );
@@ -187,10 +139,6 @@ const THREAD_COMPONENTS: ThreadComponents = {
 const NO_MESSAGES: readonly ChatMessage[] = [];
 
 const NO_QUEUE_ITEMS: readonly QueueItemState[] = [];
-
-function messageText(message: AppendMessage): string {
-  return message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
-}
 
 export function StateMark({ status }: { status: ChatStatus }): ReactNode {
   const text = chatStateText(status);
@@ -418,7 +366,8 @@ function ChatTranscript(
     });
   }
 
-  const writes = useChatWrites({ tag, task, chat });
+  const place = { tag, task, chat };
+  const writes = useChatWrites(place);
   // The message shows from its `user` event; a failed send puts its text back in the draft.
   const sendQueued = (message: AppendMessage) => {
     writes.send(messageText(message)).catch(() => undefined);
@@ -486,18 +435,17 @@ function ChatTranscript(
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <ChatDataViews tag={tag} task={task} chat={chat} />
-      <ChatDraft tag={tag} task={task} chat={chat} />
-      {ready && runtimeReady && <ChatThread headingRef={headingRef} autoScroll={autoScroll} />}
+      <ChatDraft place={place} />
+      {ready && runtimeReady && <ChatThread place={place} headingRef={headingRef} autoScroll={autoScroll} />}
     </AssistantRuntimeProvider>
   );
 }
 
-/** Keeps the composer text of the chat and its draft the same, both ways, from the mount on. */
-function ChatDraft({ tag, task, chat }: ChatPlace): null {
+/** Keeps the composer text and the draft of the place the same, both ways, from the mount on. */
+export function ChatDraft({ place }: { place: ChatDraftPlace }): null {
   const aui = useAui();
 
   useEffect(() => {
-    const place = { tag, task, chat };
     const fill = (draft: string): void => {
       if (draft !== aui.composer.getState().text) {
         aui.composer.setText(draft);
@@ -513,14 +461,46 @@ function ChatDraft({ tag, task, chat }: ChatPlace): null {
       stopDraft();
       stopComposer();
     };
-  }, [aui, tag, task, chat]);
+  }, [aui, place]);
 
   return null;
 }
 
+/** The focus and the words of a start from the New chat view, when the composer of its chat shows. */
+function useStartedChat(
+  { tag, task, chat }: ChatPlace,
+  threadRef: RefObject<HTMLElement | null>,
+): void {
+  // StrictMode runs the effect again after the cleanup of `useFocusLost` moved the focus to the heading.
+  const focusAgainRef = useRef(false);
+  const take = useEffectEvent(() => {
+    const ui = useUiStore.getState();
+    const started = ui.startedChat;
+    const taken = task === undefined && started?.tag === tag && started.chat === chat;
+    const focus = taken ? started.focus : focusAgainRef.current;
+
+    focusAgainRef.current = taken && started.focus;
+    if (focus && (focusDropped() || document.activeElement!.matches(CHAT_HEADING_SELECTOR))) {
+      focusInView(threadRef.current!.querySelector<HTMLElement>(KIT_INPUT));
+    }
+    if (taken) {
+      sayStartedWords();
+      ui.setStartedChat(null);
+    }
+  });
+
+  useEffect(() => {
+    take();
+  }, []);
+}
+
 /** The kit thread. When a reset removes it with focus inside, focus moves to the panel heading. */
 function ChatThread(
-  { headingRef, autoScroll }: { headingRef: RefObject<HTMLHeadingElement | null>; autoScroll: boolean },
+  { place, headingRef, autoScroll }: {
+    place: ChatPlace;
+    headingRef: RefObject<HTMLHeadingElement | null>;
+    autoScroll: boolean;
+  },
 ): ReactNode {
   const ref = useRef<HTMLDivElement>(null);
   const focusHeading = (): void => {
@@ -529,6 +509,7 @@ function ChatThread(
   const focusEvents = useChatThreadFocus(ref, focusHeading);
 
   useFocusLost(ref, focusHeading);
+  useStartedChat(place, ref);
 
   return (
     <div ref={ref} {...focusEvents} className="min-h-0 flex-1">

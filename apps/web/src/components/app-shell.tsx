@@ -1,5 +1,6 @@
 import { Outlet, useRouter, useRouterState } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, type ReactNode } from "react";
+import { chatKey, NEW_CHAT_KEY } from "../lib/chat-list-announcements";
 import { SETUP_PATH } from "../lib/setup-steps";
 import { TITLE_COVER_ID } from "../lib/use-top-bar-lengths";
 import { useNoticeStore } from "../store/notices";
@@ -10,6 +11,21 @@ import { Sidebar } from "./sidebar";
 export function AppShell(): ReactNode {
   const router = useRouter();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  // The Dashboard place of the address: the New chat view, or the key of an open chat of a project.
+  const dashboardPlace = useRouterState({
+    select: ({ location: { pathname: path, search } }) => {
+      if (path !== "/") {
+        return null;
+      }
+      if (search.new === "1") {
+        return NEW_CHAT_KEY;
+      }
+      const { tag, chat } = search;
+
+      return tag === undefined || chat === undefined ? null : chatKey({ tag, chat: Number(chat) });
+    },
+  });
+  const startedChat = useUiStore((state) => state.startedChat);
   // A retry replaces the failure panel without navigating anywhere, which the
   // path alone cannot see.
   const failing = useRouterState({ select: (state) => state.matches.some((match) => match.status === "error") });
@@ -39,6 +55,31 @@ export function AppShell(): ReactNode {
   useEffect(() => {
     dropStaleEdit();
   }, [pathname]);
+
+  // In the shell, and not on the Dashboard: a check there stops when the screen unmounts.
+  const endStartedChat = useEffectEvent(() => {
+    if (startedChat === null || dashboardPlace === NEW_CHAT_KEY || dashboardPlace === chatKey(startedChat)) {
+      return;
+    }
+
+    const ui = useUiStore.getState();
+    const words = ui.takeStartedWords();
+
+    ui.setStartedChat(null);
+    if (words === null) {
+      return;
+    }
+    // A change of screen moves the focus to the page in the effect below, and the live message loses to it.
+    if (shownRef.current.pathname === pathname) {
+      useNoticeStore.getState().announce(words);
+    } else {
+      ui.setArrivalWords(words);
+    }
+  });
+
+  useEffect(() => {
+    endStartedChat();
+  }, [dashboardPlace, startedChat]);
 
   // What the region shows is compared rather than the renders counted: the first
   // paint replaced nothing, and StrictMode runs every mount effect twice.

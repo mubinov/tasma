@@ -61,6 +61,11 @@ const CHAT_START_FAILURE_LINES: Record<FailureKind, string> = {
   unsent: "The request did not start, so no chat started.",
 };
 
+const PROJECT_CHAT_START_FAILURE_LINES: Record<FailureKind, string> = {
+  ...CHAT_START_FAILURE_LINES,
+  unanswered: "No daemon answered. If the chat started, it shows in the list of chats.",
+};
+
 const CHAT_RESTART_FAILURE_LINES: Record<FailureKind, string> = {
   refused: "The daemon refused the restart. Its own words are below.",
   unanswered: "No daemon answered. If the restart ran, the new chat shows in the chats of the task.",
@@ -148,6 +153,13 @@ export function chatStartFailure(step: string, id: string): WriteFailure {
   return {
     title: chatStartFailureTitle(step, id),
     line: (error) => CHAT_START_FAILURE_LINES[failureKind(error.cause)],
+  };
+}
+
+export function projectChatStartFailure(tag: string): WriteFailure {
+  return {
+    title: `The new chat of ${tag} did not start`,
+    line: (error) => PROJECT_CHAT_START_FAILURE_LINES[failureKind(error.cause)],
   };
 }
 

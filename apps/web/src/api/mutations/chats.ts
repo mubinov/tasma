@@ -7,13 +7,20 @@ import {
   type Client,
   type Diagnostic,
   type ProjectChat,
+  type ProjectChatStart,
   type QuestionValue,
   type Success,
 } from "@tasma/protocol";
-import { CHAT_HEADING_SELECTOR, focusChatHeading } from "../../lib/focus-in-view";
+import { CHAT_HEADING_SELECTOR, focusChatHeading, NEW_CHAT_SELECTOR } from "../../lib/focus-in-view";
+import { searchWords } from "../../lib/match-ranges";
+import { sayStartedWords } from "../../lib/started-chat";
 import { latestOnTask, STEP_ACTION_SELECTOR } from "../../lib/step-action";
+import { chatFilterOf } from "../../lib/use-chat-filter";
+import { focusDropped } from "../../lib/use-focus-lost";
+import { NEW_CHAT_DRAFT, chatDraft, useChatDraftStore } from "../../store/chat-drafts";
 import { useNoticeStore } from "../../store/notices";
-import { chatPlaceText, chatRecordKey, daemonKeys, type ChatPlace } from "../queries";
+import { useUiStore, type StartedChat } from "../../store/ui";
+import { chatListQuery, chatPlaceText, chatRecordKey, daemonKeys, projectsQuery, type ChatFilter, type ChatPlace } from "../queries";
 import { openWriteNotice, refusalWords, usePendingVariables, WriteError, type WriteFailure } from "./notices";
 
 /** The texts of the warning notice after `already-answered`. */
@@ -314,6 +321,153 @@ export function chatStartOptions(queryClient: QueryClient, client: Client, route
       });
     },
   });
+}
+
+export type NewChatStart = { tag: string; text: string };
+
+export type ProjectChatStartWrite = { start: NewChatStart; failure: WriteFailure };
+
+const PROJECT_CHAT_START_FAILURE_KEY = "project-chat-start-failure";
+
+/** Under the prefix `usePendingVariables` reads. */
+export function projectChatStartKey() {
+  return [...daemonKeys.projects(), "project-chat-start"] as const;
+}
+
+function newChatShown({ latestLocation: { pathname, search } }: RegisteredRouter): boolean {
+  return pathname === "/" && search.new === "1";
+}
+
+/** The filter parts of an address that do not hide a chat with this tag and title, by the rule of the daemon. */
+function filterShowing({ project, q }: ChatFilter, tag: string, title: string): ChatFilter {
+  const text = `${tag}\n${title}`.toLowerCase();
+
+  return {
+    project: project === tag ? project : undefined,
+    q: q !== undefined && searchWords(q).every((word) => text.includes(word)) ? q : undefined,
+  };
+}
+
+function clearedWords(before: ChatFilter, after: ChatFilter): string | null {
+  const projectCleared = before.project !== after.project;
+  const searchCleared = before.q !== after.q;
+
+  if (projectCleared && searchCleared) {
+    return "The project filter and the search were cleared.";
+  }
+  if (projectCleared) {
+    return "The project filter was cleared.";
+  }
+  return searchCleared ? "The search was cleared." : null;
+}
+
+function focusIsInNewChat(): boolean {
+  return focusDropped() || document.activeElement!.closest(NEW_CHAT_SELECTOR) !== null;
+}
+
+type OpenedChat = { tag: string; chat: number; title: string; words: string; cleared: string | null };
+
+/** The view gives its address to the new chat, and the text typed during the wait moves to it. */
+async function openNewChat(router: RegisteredRouter, { tag, chat, title, words, cleared }: OpenedChat): Promise<void> {
+  const focus = focusIsInNewChat();
+  const place = { tag, task: undefined, chat };
+
+  useUiStore.getState().setStartedChat({ tag, chat, focus, words: cleared === null ? words : `${words} ${cleared}` });
+  await router.navigate({
+    to: "/",
+    search: (previous) => ({
+      ...previous,
+      ...filterShowing(previous, tag, title),
+      tag,
+      chat: String(chat),
+      task: undefined,
+      new: undefined,
+    }),
+    replace: true,
+    resetScroll: false,
+  });
+  useChatDraftStore.getState().setDraft(place, chatDraft(NEW_CHAT_DRAFT));
+  useChatDraftStore.getState().setDraft(NEW_CHAT_DRAFT, "");
+
+  if (focus) {
+    // The chat may have taken the focus already, when its composer shows before the navigation ends.
+    if (useUiStore.getState().startedChat !== null) {
+      focusChatHeading();
+    }
+    return;
+  }
+  // With a new filter, the screen says the words before the count of the new list.
+  if (cleared === null) {
+    sayStartedWords();
+  }
+}
+
+/**
+ * The start of a chat of a project from the New chat view. The answer opens the
+ * chat when the view still shows, and the list holds it before it opens.
+ */
+export function projectChatStartOptions(queryClient: QueryClient, client: Client, router: RegisteredRouter) {
+  return mutationOptions<ProjectChatStart, WriteError, ProjectChatStartWrite>({
+    mutationKey: projectChatStartKey(),
+    mutationFn: async ({ start: { tag, text } }) => {
+      try {
+        return (await client.startProjectChat(tag, { text, client: CHAT_CLIENT })).data;
+      } catch (cause) {
+        throw new WriteError(cause);
+      }
+    },
+    // Each call makes a new chat.
+    retry: 0,
+    onMutate: ({ start: { tag } }) => {
+      useNoticeStore.getState().closeNotice(PROJECT_CHAT_START_FAILURE_KEY);
+      useNoticeStore.getState().announce(`Starting a chat in ${tag}`);
+    },
+    onSuccess: async ({ chat: { chat, title, state } }, { start: { tag } }) => {
+      const ui = useUiStore.getState();
+      const words = `Chat ${String(chat)} of ${tag} ${state === "failed" ? "failed" : "started"}.`;
+      const shown = newChatShown(router);
+      const { search } = router.latestLocation;
+      const projects = queryClient.getQueryData(projectsQuery(client).queryKey)?.data ?? [];
+      const before = chatFilterOf(search, projects);
+      const after = chatFilterOf(filterShowing(search, tag, title), projects);
+      const cleared = shown ? clearedWords(before, after) : null;
+      const started: StartedChat = { tag, chat, focus: false, words };
+
+      ui.noteChatStartAnswer(Date.now());
+      ui.setLastChatProject(tag);
+      if (shown) {
+        ui.setStartedChat(started);
+      }
+      await queryClient.invalidateQueries({ queryKey: daemonKeys.chats() });
+      if (cleared !== null) {
+        await queryClient.infiniteQuery({ ...chatListQuery(client, after), staleTime: 0 }).catch(() => undefined);
+      }
+      if (!shown) {
+        useNoticeStore.getState().announce(words);
+        return;
+      }
+      // Another place took the started chat when the user left the view during the reads. A view opened again is not
+      // the view of this start.
+      if (newChatShown(router) && useUiStore.getState().startedChat === started) {
+        await openNewChat(router, { tag, chat, title, words, cleared });
+      }
+    },
+    onError: (error, { start: { text }, failure }) => {
+      useUiStore.getState().setChatStartWatch(null);
+      useChatDraftStore.getState().returnToDraft(NEW_CHAT_DRAFT, text);
+      openWriteNotice({
+        key: PROJECT_CHAT_START_FAILURE_KEY,
+        form: "failure",
+        title: failure.title,
+        line: failure.line(error),
+        words: [refusalWords(error)],
+      });
+    },
+  });
+}
+
+export function usePendingProjectChatStart(): ProjectChatStartWrite | undefined {
+  return usePendingVariables<ProjectChatStartWrite>(projectChatStartKey()).at(-1)?.variables;
 }
 
 /** The pending option writes of the chat, in the order they were sent. */

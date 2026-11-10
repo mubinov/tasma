@@ -1,13 +1,15 @@
 import { act, cleanup, screen } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TITLE_COVER_ID } from "../../src/lib/use-top-bar-lengths";
 import { FOOTER_NAVIGATION, PRIMARY_NAVIGATION } from "../../src/navigation";
-import { useUiStore } from "../../src/store/ui";
+import { useUiStore, type StartedChat } from "../../src/store/ui";
 import { renderWithRouter } from "../helpers";
+import { frame } from "../setup/notice-store";
+import { spoken } from "../update-fixtures";
 
 beforeEach(() => {
   window.localStorage.clear();
-  useUiStore.setState({ sidebarCollapsed: false });
+  useUiStore.setState({ sidebarCollapsed: false, startedChat: null, arrivalWords: null });
   document.title = "tasma";
 });
 
@@ -181,4 +183,68 @@ it("mounts the spoken region with the shell, empty", async () => {
   const region = document.querySelector("[aria-live].sr-only");
   expect(region).not.toBeNull();
   expect(region!.children).toHaveLength(0);
+});
+
+describe("the end of a started chat", () => {
+  const WORDS = "Chat 5 of SAGA started.";
+  const STARTED: StartedChat = { tag: "SAGA", chat: 5, focus: true, words: WORDS };
+
+  function start(fields: Partial<StartedChat> = {}): void {
+    act(() => {
+      useUiStore.getState().setStartedChat({ ...STARTED, ...fields });
+    });
+  }
+
+  it.each([
+    ["the view", "/?new=1"],
+    ["the chat", "/?tag=SAGA&chat=5"],
+  ])("does not end on the address of %s", async (_name, path) => {
+    await renderWithRouter(path);
+
+    start();
+    await frame();
+
+    expect(useUiStore.getState().startedChat).toEqual(STARTED);
+    expect(spoken()).not.toContain(WORDS);
+  });
+
+  it.each([
+    ["no chat", "/"],
+    ["another chat of the project", "/?tag=SAGA&chat=6"],
+    ["a chat of a task", "/?task=SAGA-3&chat=5"],
+  ])("ends on a Dashboard address with %s and says its words one time", async (_name, path) => {
+    await renderWithRouter(path);
+
+    start();
+    await frame();
+
+    expect(useUiStore.getState().startedChat).toBeNull();
+    expect(spoken().filter((words) => words === WORDS)).toHaveLength(1);
+  });
+
+  it("says nothing when a speaker already took the words", async () => {
+    await renderWithRouter("/");
+
+    start({ words: null });
+    await frame();
+
+    expect(useUiStore.getState().startedChat).toBeNull();
+    expect(spoken()).not.toContain(WORDS);
+  });
+
+  it("ends on another screen, and says its words after the focus move of the shell", async () => {
+    const router = await renderWithRouter("/?new=1");
+    const setArrivalWords = vi.spyOn(useUiStore.getState(), "setArrivalWords");
+
+    start();
+    await act(async () => {
+      await router.navigate({ to: "/settings" });
+    });
+    await frame();
+
+    expect(useUiStore.getState().startedChat).toBeNull();
+    expect(setArrivalWords).toHaveBeenCalledWith(WORDS);
+    expect(spoken().filter((words) => words === WORDS)).toHaveLength(1);
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+  });
 });

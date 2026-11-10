@@ -104,9 +104,10 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
 /**
  * `project` is the tag of the project filter, and `q` the search text. `task`
  * and `chat` name the open chat of a task, and `tag` and `chat` the open chat
- * of a project. An address with both `task` and `tag` names no chat.
+ * of a project. An address with both `task` and `tag` names no chat. `new` opens
+ * the New chat view, and an address that names a chat opens the chat instead.
  */
-type DashboardSearch = { project?: string; q?: string; task?: string; tag?: string; chat?: string };
+type DashboardSearch = { project?: string; q?: string; task?: string; tag?: string; chat?: string; new?: "1" };
 
 /** A tag of the engine. */
 const PROJECT_TAG = /^[A-Z0-9]+$/;
@@ -118,7 +119,7 @@ const CHAT_NUMBER = /^[1-9]\d*$/;
 
 // As on the task page, a dropped value is set to undefined rather than left out.
 function readDashboardSearch(search: Record<string, unknown>): DashboardSearch {
-  const { project, q, task, tag, chat } = search;
+  const { project, q, task, tag, chat, new: newChat } = search;
   const numbered = typeof chat === "string" && CHAT_NUMBER.test(chat);
   const ofTask = numbered && tag === undefined && typeof task === "string" && TASK_ID.test(task);
   const ofProject = numbered && task === undefined && typeof tag === "string" && PROJECT_TAG.test(tag);
@@ -127,6 +128,7 @@ function readDashboardSearch(search: Record<string, unknown>): DashboardSearch {
     project: typeof project === "string" && PROJECT_TAG.test(project) ? project : undefined,
     q: typeof q === "string" && q !== "" ? q : undefined,
     ...(ofTask ? { task, chat } : ofProject ? { tag, chat } : { task: undefined, tag: undefined, chat: undefined }),
+    new: newChat === "1" && !ofTask && !ofProject ? "1" : undefined,
   };
 }
 

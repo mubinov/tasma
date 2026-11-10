@@ -1,11 +1,12 @@
 import { Button } from "@base-ui/react/button";
 import { useSuspenseInfiniteQuery } from "@tanstack/react-query";
-import { getRouteApi } from "@tanstack/react-router";
+import { getRouteApi, useNavigate } from "@tanstack/react-router";
 import { isActiveChat, type AnyChatListItem as Item, type ProjectSummary } from "@tasma/protocol";
-import { useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { chatListQuery, type ChatFilter } from "../api/queries";
-import { chatKey, chatListItems } from "../lib/chat-list-announcements";
-import { ArrowUpIcon } from "../lib/icons";
+import { chatKey, chatListItems, NEW_CHAT_KEY } from "../lib/chat-list-announcements";
+import { focusNewChatField } from "../lib/focus-in-view";
+import { ArrowUpIcon, PlusIcon } from "../lib/icons";
 import { searchWords } from "../lib/match-ranges";
 import { filterKey, type FailedFields } from "../lib/use-chat-filter";
 import { useFocusLost } from "../lib/use-focus-lost";
@@ -13,7 +14,7 @@ import { useMinute } from "../lib/use-minute";
 import { usePendingFocus } from "../lib/use-pending-focus";
 import { ChatFilterBar } from "./chat-filter-bar";
 import { BAND_HEIGHT, ChatListItem, type Band } from "./chat-list-item";
-import { SCROLL_TO_TOP_CLASS } from "./control-classes";
+import { BUTTON_CLASS, SCROLL_TO_TOP_CLASS } from "./control-classes";
 import { RetryButton } from "./retry-button";
 import { VirtualList } from "./virtual-list";
 
@@ -34,7 +35,8 @@ type ChatListProps = {
   openKey: string | undefined;
   /**
    * The chat that "Chats" closed. The mount it comes with focuses its item, or
-   * the search field, and calls `onReturned`.
+   * the search field, and calls `onReturned`. `NEW_CHAT_KEY` focuses the
+   * New chat button.
    */
   returnKey: string | undefined;
   onReturned: () => void;
@@ -49,7 +51,7 @@ function emptyText({ project, q }: ChatFilter): string {
     return `No chats match "${q}".`;
   }
   return project === undefined
-    ? "No chats yet. A chat shows here when an agent starts a step of a task."
+    ? "No chats yet. Press New chat to start one. A chat also shows here when an agent starts a step of a task."
     : "This project has no chats.";
 }
 
@@ -74,8 +76,9 @@ export function ChatList({
     = useSuspenseInfiniteQuery(chatListQuery(client, filter));
   const items = chatListItems(data.pages);
   const listKey = filterKey(filter);
+  const returnsToNewChat = returnKey === NEW_CHAT_KEY;
   // The preferred tab stop of the list of the filter at mount, after `returnKey` is cleared.
-  const [mountReturn, setMountReturn] = useState({ key: returnKey, listKey });
+  const [mountReturn, setMountReturn] = useState({ key: returnsToNewChat ? undefined : returnKey, listKey });
 
   if (mountReturn.key !== undefined && mountReturn.listKey !== listKey) {
     setMountReturn({ key: undefined, listKey });
@@ -83,13 +86,16 @@ export function ChatList({
   const now = useMinute();
   const columnRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const newChatRef = useRef<HTMLButtonElement>(null);
   const headingId = useId();
   const pendingFocus = usePendingFocus();
   const takeReturnFocus = useEffectEvent(() => {
     if (returnKey === undefined) {
       return;
     }
-    if (items.length === 0) {
+    if (returnsToNewChat) {
+      newChatRef.current?.focus();
+    } else if (items.length === 0) {
       inputRef.current?.focus();
     }
     onReturned();
@@ -133,7 +139,7 @@ export function ChatList({
         onRetryFocusLost={focusSearch}
       />
       {items.length === 0
-        ? <p className="p-4 text-sm wrap-anywhere text-subtle">{emptyText(filter)}</p>
+        ? <p className="min-h-0 flex-1 p-4 text-sm wrap-anywhere text-subtle">{emptyText(filter)}</p>
         : (
             <ChatRows
               items={items}
@@ -144,7 +150,7 @@ export function ChatList({
               headingId={headingId}
               openKey={openKey}
               mountReturnKey={mountReturn.key}
-              focusOnMount={returnKey !== undefined}
+              focusOnMount={returnKey !== undefined && !returnsToNewChat}
               now={now}
               loadingOlder={isFetchingNextPage}
               olderFailed={isFetchNextPageError && !isFetchingNextPage}
@@ -153,7 +159,38 @@ export function ChatList({
               onFocusLost={focusSearch}
             />
           )}
+      <div className="shrink-0 border-t border-line bg-bg p-3 pb-[calc(--spacing(3)+var(--notice-stack-height,0px))]">
+        <NewChatButton buttonRef={newChatRef} />
+      </div>
     </div>
+  );
+}
+
+/** A button and not a link: it changes the panel of the same screen. */
+function NewChatButton({ buttonRef }: { buttonRef: RefObject<HTMLButtonElement | null> }): ReactNode {
+  const open = route.useSearch({ select: (search) => search.new === "1" });
+  const navigate = useNavigate({ from: "/" });
+
+  return (
+    <Button
+      ref={buttonRef}
+      type="button"
+      onClick={() => {
+        if (open) {
+          focusNewChatField();
+          return;
+        }
+        void navigate({
+          search: (previous) => ({ ...previous, task: undefined, tag: undefined, chat: undefined, new: "1" }),
+          replace: true,
+          resetScroll: false,
+        });
+      }}
+      className={`${BUTTON_CLASS} w-full justify-center`}
+    >
+      <PlusIcon size={14} aria-hidden="true" />
+      New chat
+    </Button>
   );
 }
 
@@ -244,7 +281,6 @@ function ChatRows({
         )}
         keepRendered={[...bands.keys()]}
         height="100%"
-        className="pb-(--notice-stack-height) scroll-pb-(--notice-stack-height)"
         total={total}
         footer={(
           <OlderFooter

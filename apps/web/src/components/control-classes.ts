@@ -23,6 +23,9 @@ export const MENU_RADIO_ITEM_CLASS = `${MENU_ITEM_CLASS} data-[checked]:text-dim
 
 export const POSITIONER_CLASS = "z-(--layer-popup)";
 
+/** The width of the kit thread, which the header and the status line of a chat keep. */
+export const CHAT_COLUMN_CLASS = "mx-auto w-full max-w-[44rem]";
+
 /*
  * Tailwind settles a conflict by the order of the rules in the generated sheet,
  * not by the order of the names in the class string, so the base carries no

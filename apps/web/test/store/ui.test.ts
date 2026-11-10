@@ -16,6 +16,7 @@ const SIDEBAR_KEY = "tasma.sidebar";
 const TASKS_PROJECT_KEY = "tasma.tasks.project";
 const CREATE_PROJECT_KEY = "tasma.tasks.createProject";
 const SKILL_CHECK_KEY = "tasma.setup.skillCheck";
+const CHAT_PROJECT_KEY = "tasma.chats.startProject";
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -32,6 +33,57 @@ beforeEach(() => {
     lastBoard: null,
     revealedColumns: new Set(),
     editRequest: null,
+    startedChat: null,
+    chatStartWatch: null,
+  });
+});
+
+describe("the project of the last new chat", () => {
+  it("is stored and hydrated", () => {
+    useUiStore.getState().setLastChatProject("SAGA");
+
+    expect(window.localStorage.getItem(CHAT_PROJECT_KEY)).toBe("SAGA");
+    useUiStore.setState({ lastChatProject: null });
+    expect(hydrateUiStore().lastChatProject).toBe("SAGA");
+    expect(useUiStore.getState().lastChatProject).toBe("SAGA");
+  });
+
+  it("drops a stored value that is not a tag", () => {
+    window.localStorage.setItem(CHAT_PROJECT_KEY, "not a tag");
+
+    expect(hydrateUiStore().lastChatProject).toBeNull();
+  });
+});
+
+describe("the started chat", () => {
+  const STARTED = { tag: "SAGA", chat: 5, focus: false, words: "Chat 5 of SAGA started." };
+
+  it("gives its words one time and stays", () => {
+    useUiStore.getState().setStartedChat(STARTED);
+
+    expect(useUiStore.getState().takeStartedWords()).toBe("Chat 5 of SAGA started.");
+    expect(useUiStore.getState().takeStartedWords()).toBeNull();
+    expect(useUiStore.getState().startedChat).toEqual({ ...STARTED, words: null });
+  });
+
+  it("gives no words when no chat started", () => {
+    expect(useUiStore.getState().takeStartedWords()).toBeNull();
+  });
+});
+
+describe("the watch of a chat start", () => {
+  it("records the time of the answer", () => {
+    useUiStore.getState().setChatStartWatch({ tag: "SAGA", snapshot: new Set(["SAGA/1"]), answeredAt: null });
+
+    useUiStore.getState().noteChatStartAnswer(1234);
+
+    expect(useUiStore.getState().chatStartWatch).toEqual({ tag: "SAGA", snapshot: new Set(["SAGA/1"]), answeredAt: 1234 });
+  });
+
+  it("records nothing with no watch", () => {
+    useUiStore.getState().noteChatStartAnswer(1234);
+
+    expect(useUiStore.getState().chatStartWatch).toBeNull();
   });
 });
 
@@ -73,6 +125,7 @@ describe("the ui store", () => {
       sidebarCollapsed: false,
       lastTasksProject: null,
       lastCreateProject: null,
+      lastChatProject: null,
       skillCheckStopped: false,
     });
   });
@@ -104,6 +157,7 @@ describe("the ui store", () => {
       sidebarCollapsed: true,
       lastTasksProject: null,
       lastCreateProject: null,
+      lastChatProject: null,
       skillCheckStopped: false,
     });
     useUiStore.getState().setThemePreference("light");
@@ -300,6 +354,7 @@ describe("the restore a card open asks for", () => {
       sidebarCollapsed: false,
       lastTasksProject: null,
       lastCreateProject: null,
+      lastChatProject: null,
       skillCheckStopped: false,
     });
     expect(useUiStore.getState().lastBoard).toEqual({ projects: "DELTA,SAGA", labels: "web" });

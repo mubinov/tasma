@@ -16,6 +16,7 @@ const THEME_STORAGE_KEY = "tasma.theme";
 const SIDEBAR_STORAGE_KEY = "tasma.sidebar";
 const TASKS_PROJECT_STORAGE_KEY = "tasma.tasks.project";
 const CREATE_PROJECT_STORAGE_KEY = "tasma.tasks.createProject";
+const CHAT_PROJECT_STORAGE_KEY = "tasma.chats.startProject";
 const SKILL_CHECK_STORAGE_KEY = "tasma.setup.skillCheck";
 
 const PROJECT_TAG = /^[A-Z0-9]+$/;
@@ -104,6 +105,18 @@ type UiState = {
   /** The tag of the project of the last task created from a board. */
   lastCreateProject: string | null;
   setLastCreateProject: (tag: string) => void;
+  /** The tag of the project of the last chat started from the Dashboard. */
+  lastChatProject: string | null;
+  setLastChatProject: (tag: string) => void;
+  /** The chat that a start from the New chat view opens, until the address leaves it. Never persisted. */
+  startedChat: StartedChat | null;
+  setStartedChat: (started: StartedChat | null) => void;
+  /** Reads the words of the started chat and clears them, so they are said once. */
+  takeStartedWords: () => string | null;
+  /** Never persisted. */
+  chatStartWatch: ChatStartWatch | null;
+  setChatStartWatch: (watch: ChatStartWatch | null) => void;
+  noteChatStartAnswer: (answeredAt: number) => void;
   /** What the next board visit puts back. Never persisted: a reload has no board behind the page. */
   boardReturn: BoardReturn | null;
   /** Whether a board that matches `boardReturn` still has to put itself back. One board visit consumes it. */
@@ -168,6 +181,19 @@ type UiState = {
 export type EditRequest = { tag: string; id: string };
 
 /**
+ * `focus`: the chat takes the focus when its composer shows.
+ * `words`: what announces the start, `null` after one speaker said them.
+ */
+export type StartedChat = { tag: string; chat: number; focus: boolean; words: string | null };
+
+/**
+ * The start in progress of a project chat, for the announcements of the list.
+ * `snapshot` holds the `chatKey` of each chat of the tag that the list knew at
+ * Send, and `answeredAt` the time of the answer.
+ */
+export type ChatStartWatch = { tag: string; snapshot: ReadonlySet<string>; answeredAt: number | null };
+
+/**
  * One of the three update dialogs, and where focus goes when it closes: the
  * sidebar item that opened it, or `null` for where focus was when it opened.
  */
@@ -195,6 +221,31 @@ export const useUiStore = create<UiState>((set, get) => ({
   setLastCreateProject: (tag) => {
     storage.write(CREATE_PROJECT_STORAGE_KEY, tag);
     set({ lastCreateProject: tag });
+  },
+  lastChatProject: null,
+  setLastChatProject: (tag) => {
+    storage.write(CHAT_PROJECT_STORAGE_KEY, tag);
+    set({ lastChatProject: tag });
+  },
+  startedChat: null,
+  setStartedChat: (started) => {
+    set({ startedChat: started });
+  },
+  takeStartedWords: () => {
+    const started = get().startedChat;
+    if (started === null) {
+      return null;
+    }
+
+    set({ startedChat: { ...started, words: null } });
+    return started.words;
+  },
+  chatStartWatch: null,
+  setChatStartWatch: (watch) => {
+    set({ chatStartWatch: watch });
+  },
+  noteChatStartAnswer: (answeredAt) => {
+    set(({ chatStartWatch }) => ({ chatStartWatch: chatStartWatch && { ...chatStartWatch, answeredAt } }));
   },
   boardReturn: null,
   boardRestorePending: false,
@@ -333,6 +384,7 @@ export type HydratedUi = {
   sidebarCollapsed: boolean;
   lastTasksProject: string | null;
   lastCreateProject: string | null;
+  lastChatProject: string | null;
   skillCheckStopped: boolean;
 };
 
@@ -356,8 +408,17 @@ export function hydrateUiStore(): HydratedUi {
   const sidebarCollapsed = readSidebarState(storage.read(SIDEBAR_STORAGE_KEY)) ?? false;
   const lastTasksProject = readStoredBoard(storage.read(TASKS_PROJECT_STORAGE_KEY));
   const lastCreateProject = readStoredTag(storage.read(CREATE_PROJECT_STORAGE_KEY));
+  const lastChatProject = readStoredTag(storage.read(CHAT_PROJECT_STORAGE_KEY));
   const skillCheckStopped = storage.read(SKILL_CHECK_STORAGE_KEY) === SKILL_CHECK_STOPPED;
+  const hydrated = {
+    themePreference,
+    sidebarCollapsed,
+    lastTasksProject,
+    lastCreateProject,
+    lastChatProject,
+    skillCheckStopped,
+  };
 
-  useUiStore.setState({ themePreference, sidebarCollapsed, lastTasksProject, lastCreateProject, skillCheckStopped });
-  return { themePreference, sidebarCollapsed, lastTasksProject, lastCreateProject, skillCheckStopped };
+  useUiStore.setState(hydrated);
+  return hydrated;
 }

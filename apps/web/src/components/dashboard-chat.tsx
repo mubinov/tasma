@@ -1,29 +1,28 @@
 import { Menu } from "@base-ui/react/menu";
 import { useQuery, useSuspenseInfiniteQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
-import type { AnyChatListItem } from "@tasma/protocol";
+import type { AnyChatListItem, ProjectSummary } from "@tasma/protocol";
 import { useId, useReducer, useRef, useState, type ReactNode, type RefObject } from "react";
 import { usePendingChatStart } from "../api/mutations";
 import { chatItemQuery, chatListQuery, taskChatsQuery, taskQuery, workflowQuery, type ChatFilter } from "../api/queries";
-import { opensHere, tagOf } from "../lib/board";
+import { tagOf } from "../lib/board";
 import { chatKey, chatListItems, sameChat, type OpenChat } from "../lib/chat-list-announcements";
 import { chatAgentName, isChatMissing } from "../lib/chat-messages";
 import type { FinalFocus } from "../lib/final-focus";
 import { CHAT_HEADING_MARK, focusInView } from "../lib/focus-in-view";
-import { ArrowClockwiseIcon, ArrowLeftIcon, CircleNotchIcon, DotsThreeVerticalIcon } from "../lib/icons";
+import { ArrowClockwiseIcon, CircleNotchIcon, DotsThreeVerticalIcon } from "../lib/icons";
 import { actionStep, STEP_ACTION_MARK, stepAction } from "../lib/step-action";
 import { useChatStart } from "../lib/use-chat-start";
 import { useFocusLost } from "../lib/use-focus-lost";
 import { usePendingFocus } from "../lib/use-pending-focus";
 import { ChatBody, StateMark } from "./chat-panel";
-import { BUTTON_CLASS, ICON_BUTTON_CLASS, MENU_ITEM_CLASS, POPUP_CLASS, POSITIONER_CLASS } from "./control-classes";
+import { ChatsLink } from "./chats-link";
+import { BUTTON_CLASS, CHAT_COLUMN_CLASS, ICON_BUTTON_CLASS, MENU_ITEM_CLASS, POPUP_CLASS, POSITIONER_CLASS } from "./control-classes";
+import { NewChat } from "./new-chat";
 import { RestartDialog } from "./restart-dialog";
 import { Tooltip } from "./tooltip";
 
 const route = getRouteApi("/");
-
-/** The width of the kit thread, which the header and the status line keep. */
-const COLUMN_CLASS = "mx-auto w-full max-w-[44rem]";
 
 const CHAT_MENU_CLASS = `shrink-0 ${ICON_BUTTON_CLASS} aria-disabled:hover:border-line aria-disabled:hover:text-dim`;
 
@@ -31,17 +30,39 @@ type DashboardChatProps = {
   /** The filter of the list on the screen. */
   filter: ChatFilter;
   open: OpenChat | undefined;
+  /** The New chat view shows. */
+  newChat: boolean;
+  /** The project of the filter of the address. */
+  filterProject: string | undefined;
+  projects: readonly ProjectSummary[];
   wide: boolean;
   headingRef: RefObject<HTMLHeadingElement | null>;
-  /** Called when "Chats" closes the chat. */
+  /** Called when "Chats" closes the chat or the New chat view. */
   onBack: () => void;
+  /** Called at Send of the New chat view. */
+  onStart: (tag: string) => void;
 };
 
-/** The chat side of the dashboard: the open chat, or a short text. */
-export function DashboardChat({ filter, open, wide, headingRef, onBack }: DashboardChatProps): ReactNode {
+/** The chat side of the dashboard: the New chat view, the open chat, or a short text. */
+export function DashboardChat(
+  { filter, open, newChat, filterProject, projects, wide, headingRef, onBack, onStart }: DashboardChatProps,
+): ReactNode {
   const { client } = route.useRouteContext();
   const { data } = useSuspenseInfiniteQuery(chatListQuery(client, filter));
   const items = chatListItems(data.pages);
+
+  if (newChat) {
+    return (
+      <NewChat
+        filterProject={filterProject}
+        projects={projects}
+        wide={wide}
+        headingRef={headingRef}
+        onBack={onBack}
+        onStart={onStart}
+      />
+    );
+  }
 
   if (open === undefined) {
     return (
@@ -94,7 +115,7 @@ function useChatMenu(tag: string, task: string, chat: number): ChatMenuState | n
 
 type RestartAsk = { tag: string; id: string; step: string; chat: number; open: boolean };
 
-type ChatSideProps = Omit<DashboardChatProps, "open" | "filter"> & {
+type ChatSideProps = Pick<DashboardChatProps, "wide" | "headingRef" | "onBack"> & {
   open: OpenChat;
   /** The item of the open chat in the loaded pages. */
   listed: AnyChatListItem | undefined;
@@ -142,7 +163,7 @@ function ChatSide({ open, listed, wide, headingRef, onBack }: ChatSideProps): Re
   return (
     <section aria-labelledby={headingId} className="flex h-full min-w-0 flex-1 flex-col bg-bg pb-(--notice-stack-height)">
       <div className="border-b border-line">
-        <div className={`${COLUMN_CLASS} flex items-start gap-3 px-6 py-3`}>
+        <div className={`${CHAT_COLUMN_CLASS} flex items-start gap-3 px-6 py-3`}>
           <div className="min-w-0 flex-1">
             {!wide && <ChatsLink onBack={onBack} onFocusLost={focusHeading} />}
             <h2 ref={headingRef} id={headingId} tabIndex={-1} {...CHAT_HEADING_MARK} className="font-chrome text-base font-semibold">
@@ -176,7 +197,7 @@ function ChatSide({ open, listed, wide, headingRef, onBack }: ChatSideProps): Re
           )}
         </div>
       </div>
-      <ChatBody tag={tag} task={task} chat={chat} headingRef={headingRef} lineClassName={COLUMN_CLASS} />
+      <ChatBody tag={tag} task={task} chat={chat} headingRef={headingRef} lineClassName={CHAT_COLUMN_CLASS} />
       {restartAsk !== null && (
         <ChatRestartDialog
           ask={restartAsk}
@@ -293,34 +314,6 @@ function ChatRestartDialog({ ask, finalFocus, onClose }: ChatRestartDialogProps)
       }}
       finalFocus={finalFocus}
     />
-  );
-}
-
-function ChatsLink({ onBack, onFocusLost }: { onBack: () => void; onFocusLost: () => void }): ReactNode {
-  const ref = useRef<HTMLAnchorElement>(null);
-
-  useFocusLost(ref, onFocusLost);
-
-  return (
-    <Link
-      ref={ref}
-      from="/"
-      to="/"
-      search={(previous) => ({ ...previous, task: undefined, tag: undefined, chat: undefined })}
-      // A partial match is active on every address of the dashboard.
-      activeOptions={{ exact: true }}
-      replace
-      resetScroll={false}
-      onClick={(event) => {
-        if (opensHere(event)) {
-          onBack();
-        }
-      }}
-      className="mb-2 inline-flex items-center gap-1.5 text-sm text-dim hover:text-text"
-    >
-      <ArrowLeftIcon size={16} aria-hidden="true" />
-      Chats
-    </Link>
   );
 }
 

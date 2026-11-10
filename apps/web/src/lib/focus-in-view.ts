@@ -17,6 +17,18 @@ export const CHAT_HEADING_MARK = { [CHAT_HEADING]: "" };
 
 export const CHAT_HEADING_SELECTOR = `[${CHAT_HEADING}]`;
 
+const NEW_CHAT = "data-new-chat";
+
+export const NEW_CHAT_MARK = { [NEW_CHAT]: "" };
+
+export const NEW_CHAT_SELECTOR = `[${NEW_CHAT}]`;
+
+export const KIT_INPUT = 'textarea[aria-label="Message input"]';
+
+export function focusNewChatField(): void {
+  focusInView(document.querySelector<HTMLElement>(`${NEW_CHAT_SELECTOR} ${KIT_INPUT}`));
+}
+
 export function focusChatHeading(): void {
   focusInView(document.querySelector<HTMLElement>(CHAT_HEADING_SELECTOR));
 }

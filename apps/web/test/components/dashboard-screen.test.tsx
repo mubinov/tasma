@@ -1,4 +1,4 @@
-import type { Chat, ChatListItem, FeedEvent, TransportReply } from "@tasma/protocol";
+import type { AnyChatListItem, Chat, ChatListItem, ChatStatus, FeedEvent, ProjectChatListItem, TransportReply } from "@tasma/protocol";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -8,8 +8,10 @@ import { BAND_HEIGHT, BANDED_ROW_CLASS, ROW_CLASS } from "../../src/components/c
 import { ICON_BUTTON_CLASS, SCROLL_TO_TOP_CLASS } from "../../src/components/control-classes";
 import { FindShortcut } from "../../src/components/find-shortcut";
 import { STEP_ACTION_SELECTOR } from "../../src/lib/step-action";
+import { useChatDraftStore } from "../../src/store/chat-drafts";
 import { useNoticeStore } from "../../src/store/notices";
-import { chatPath, chatRecord } from "../chat-daemon";
+import { useUiStore } from "../../src/store/ui";
+import { chatPath, chatRecord, projectChatRecord, projectEventsPath } from "../chat-daemon";
 import { chatEntries, modeOption, optionsUpdate, TEXT_LOG } from "../chat-fixtures";
 import {
   chatHeading,
@@ -20,11 +22,17 @@ import {
   itemLinks,
   listItem,
   minutesAgo,
+  newChatButton,
   NOW,
   OPEN,
   pageReply,
+  projectItem,
   PROJECTS,
   renderDashboard,
+  START_LOG,
+  START_POST,
+  START_RECORD,
+  startDaemon,
   stubDashboard,
   stubLayout,
   type DashboardStub,
@@ -709,7 +717,7 @@ describe("the empty texts", () => {
   it("says that there are no chats, and shows no text on the chat side", async () => {
     await renderDashboard(stubDashboard({ "/chats": pageReply([]) }));
 
-    const empty = screen.getByText("No chats yet. A chat shows here when an agent starts a step of a task.");
+    const empty = screen.getByText("No chats yet. Press New chat to start one. A chat also shows here when an agent starts a step of a task.");
     expect(empty.hasAttribute("tabindex")).toBe(false);
     expect(screen.queryByRole("list", { name: "Chats" })).toBeNull();
     expect(screen.queryByText("Select a chat in the list.")).toBeNull();
@@ -719,6 +727,304 @@ describe("the empty texts", () => {
     await renderDashboard(stubDashboard());
 
     expect(screen.getByText("Select a chat in the list.")).toBeTruthy();
+  });
+});
+
+describe("New chat", () => {
+  const CHAT_EVENT: FeedEvent = { kind: "project-chat", tag: "SAGA", chat: 5, state: "failed" };
+  const LIST_FAILED_WORDS = "Chat 5 of SAGA failed";
+  const START_FAILED_WORDS = "Chat 5 of SAGA failed.";
+
+  function messageField(): Promise<HTMLTextAreaElement> {
+    return screen.findByRole<HTMLTextAreaElement>("textbox", { name: "Message input" });
+  }
+
+  function row(status: ChatStatus): ProjectChatListItem {
+    return projectItem("SAGA", 5, 0, { title: "Plan the release", status });
+  }
+
+  /** The view with SAGA selected, after Send, with the answer held. */
+  async function sent(replies: Record<string, TransportReply> = {}) {
+    useUiStore.setState({ lastChatProject: "SAGA" });
+    const { reply, answer } = heldBack();
+    const stub = startDaemon({ [START_POST]: reply, ...replies });
+    const router = await renderDashboard(stub, "/?new=1");
+    const user = userEvent.setup();
+
+    await user.type(await messageField(), "Plan the release{Enter}");
+    await screen.findByText("Plan the release");
+    return { stub, router, user, answer };
+  }
+
+  function answered(state: ChatStatus["state"] = "working"): TransportReply {
+    return successReply({ chat: projectChatRecord({ ...START_RECORD, state }) });
+  }
+
+  async function listReads(stub: DashboardStub, items: readonly AnyChatListItem[], at: number): Promise<void> {
+    vi.setSystemTime(at);
+    stub.replies["/chats"] = pageReply(items);
+    await stub.send([CHAT_EVENT]);
+    await frame();
+  }
+
+  beforeEach(() => {
+    useUiStore.setState({ lastChatProject: null, startedChat: null, chatStartWatch: null, arrivalWords: null });
+    useChatDraftStore.setState({ drafts: new Map() });
+  });
+
+  it("shows the button below the rows, at the full width, with a hidden icon", async () => {
+    await renderDashboard(stubDashboard());
+
+    const button = newChatButton();
+    expect(button.className).toContain("w-full");
+    expect(button.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect(chatList().compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(button.parentElement!.className).toContain("pb-[calc(--spacing(3)+var(--notice-stack-height,0px))]");
+  });
+
+  it("shows the button with the empty text", async () => {
+    await renderDashboard(stubDashboard({ "/chats": pageReply([]) }));
+
+    expect(newChatButton()).toBeTruthy();
+  });
+
+  it("shows the button after a failed read of a filter", async () => {
+    const stub = stubDashboard({ [chatsPath({ q: "zebra" })]: refusalReply(500, { kind: "daemon", code: "internal", message: "broken" }) });
+    await renderDashboard(stub);
+
+    fireEvent.change(searchField(), { target: { value: "zebra" } });
+
+    await waitFor(() => {
+      expect(spoken()).toContain(FAILURE);
+    });
+    expect(newChatButton()).toBeTruthy();
+  });
+
+  it("opens the view on a press, keeps the filter and clears an open chat", async () => {
+    const user = userEvent.setup();
+    const router = await renderDashboard(stubDashboard(), `${OPEN_PATH}&project=SAGA`);
+
+    await user.click(newChatButton());
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ project: "SAGA", new: "1" });
+    });
+    expect(await messageField()).toBe(document.activeElement);
+  });
+
+  it("keeps the text and the project on a second press, and moves the focus to the field", async () => {
+    const user = userEvent.setup();
+    await renderDashboard(startDaemon({ [START_POST]: heldBack().reply }), "/?new=1");
+    const field = await messageField();
+    const region = within(screen.getByRole("region", { name: "New chat" }));
+
+    await user.type(field, "Plan");
+    await user.click(region.getByRole("button", { name: /^Project/ }));
+    await user.click(await screen.findByRole("menuitemradio", { name: "Saga SAGA" }));
+    await user.click(newChatButton());
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(field);
+    });
+    expect(field.value).toBe("Plan");
+    expect(region.getByRole("button", { name: "Project Saga SAGA" })).toBeTruthy();
+  });
+
+  it("opens the view from the address", async () => {
+    await renderDashboard(stubDashboard(), "/?new=1");
+
+    expect(screen.getByRole("heading", { level: 2, name: "New chat" })).toBeTruthy();
+    expect(screen.queryByText("Select a chat in the list.")).toBeNull();
+  });
+
+  it("opens the chat for an address that names a chat and the view", async () => {
+    const router = await renderDashboard(stubDashboard(), `${OPEN_PATH}&new=1`);
+
+    expect(chatHeading()).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 2, name: "New chat" })).toBeNull();
+    expect(router.state.location.search).toEqual({ task: "SAGA-3", chat: "2" });
+  });
+
+  it("drops a value of new that is not 1", async () => {
+    const router = await renderDashboard(stubDashboard(), "/?new=yes");
+
+    expect(screen.queryByRole("heading", { level: 2, name: "New chat" })).toBeNull();
+    expect(router.state.location.search).toEqual({});
+  });
+
+  it("does not announce the chat of the start during the wait, and the start announces it one time", async () => {
+    const { stub, answer } = await sent();
+
+    await listReads(stub, [row({ state: "failed" }), ...ITEMS], NOW + 1000);
+    await waitFor(() => {
+      expect(itemLink("SAGA", 5)).toBeTruthy();
+    });
+    await listReads(stub, [row({ state: "failed" }), ...ITEMS.slice(0, 2)], NOW + 2000);
+    expect(spoken()).not.toContain(LIST_FAILED_WORDS);
+    expect(useUiStore.getState().chatStartWatch).not.toBeNull();
+
+    vi.setSystemTime(NOW + 3000);
+    await act(async () => {
+      answer(answered("failed"));
+      await Promise.resolve();
+    });
+    await screen.findByRole("heading", { level: 2, name: /^SAGA/ });
+    await act(async () => {
+      stub.answer(0, START_LOG, 5);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(spoken()).toContain(START_FAILED_WORDS);
+    });
+    await frame();
+
+    expect(spoken().filter((words) => words === START_FAILED_WORDS)).toHaveLength(1);
+    expect(spoken()).not.toContain(LIST_FAILED_WORDS);
+    expect(useUiStore.getState().chatStartWatch).toBeNull();
+  });
+
+  it("announces a later change of the chat of the start", async () => {
+    const { stub, answer, router } = await sent();
+    stub.replies["/chats"] = pageReply([row({ state: "working" }), ...ITEMS]);
+
+    vi.setSystemTime(NOW + 1000);
+    await act(async () => {
+      answer(answered());
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(useUiStore.getState().chatStartWatch).toBeNull();
+    });
+    await act(async () => {
+      await router.navigate({ to: "/", search: {} });
+    });
+    await listReads(stub, [row({ state: "needs-you" }), ...ITEMS], NOW + 2000);
+
+    await waitFor(() => {
+      expect(spoken()).toContain("Chat 5 of SAGA needs you");
+    });
+  });
+
+  it("ends the watch of the start when the read after the answer gives a list equal to the last one", async () => {
+    const { answer } = await sent();
+
+    vi.setSystemTime(NOW + 1000);
+    await act(async () => {
+      answer(answered());
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(useUiStore.getState().chatStartWatch).toBeNull();
+    });
+  });
+
+  it("announces a chat of the tag that the list knew at Send", async () => {
+    const known = projectItem("SAGA", 2, 30, { title: "An older question", status: { state: "working" } });
+    const { stub } = await sent({ "/chats": pageReply([known, ...ITEMS]) });
+
+    await listReads(stub, [{ ...known, status: { state: "needs-you" } }, ...ITEMS], NOW + 1000);
+
+    await waitFor(() => {
+      expect(spoken()).toContain("Chat 2 of SAGA needs you");
+    });
+  });
+
+  it("announces a chat of another project during the wait", async () => {
+    const { stub } = await sent();
+
+    await listReads(stub, [{ ...ITEMS[0]!, status: { state: "needs-you" } }, ...ITEMS.slice(1)], NOW + 1000);
+
+    await waitFor(() => {
+      expect(spoken()).toContain("ACME-7 needs you");
+    });
+  });
+
+  it("keeps the watch of the start on another screen and ends it at the first read after the user comes back", async () => {
+    const { answer, router } = await sent();
+
+    await act(async () => {
+      await router.navigate({ to: "/settings" });
+    });
+    vi.setSystemTime(NOW + 1000);
+    await act(async () => {
+      answer(answered());
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(useUiStore.getState().chatStartWatch?.answeredAt).toBe(NOW + 1000);
+
+    vi.setSystemTime(NOW + 2000);
+    await act(async () => {
+      await router.navigate({ to: "/", search: {} });
+    });
+
+    await waitFor(() => {
+      expect(useUiStore.getState().chatStartWatch).toBeNull();
+    });
+  });
+
+  it("does not announce the started chat while the address still shows the view", async () => {
+    const { stub } = await sent();
+    useUiStore.getState().setChatStartWatch(null);
+    useUiStore.getState().setStartedChat({ tag: "SAGA", chat: 5, focus: false, words: "Chat 5 of SAGA started." });
+
+    await listReads(stub, [row({ state: "needs-you" }), ...ITEMS], NOW + 1000);
+    await waitFor(() => {
+      expect(itemLink("SAGA", 5)).toBeTruthy();
+    });
+    await frame();
+
+    expect(spoken()).not.toContain("Chat 5 of SAGA needs you");
+  });
+
+  it("announces a change of the list while the view shows and no start waits", async () => {
+    const stub = stubDashboard({}, projectEventsPath);
+    await renderDashboard(stub, "/?new=1");
+
+    await listReads(stub, [{ ...ITEMS[0]!, status: { state: "needs-you" } }, ...ITEMS.slice(1)], NOW + 1000);
+
+    await waitFor(() => {
+      expect(spoken()).toContain("ACME-7 needs you");
+    });
+  });
+
+  it("does not take the words of a start for a filter change while the chat of the start is not open", async () => {
+    await renderDashboard(stubDashboard(), "/?new=1");
+    useUiStore.getState().setStartedChat({ tag: "SAGA", chat: 5, focus: false, words: "Chat 5 of SAGA started." });
+
+    fireEvent.change(searchField(), { target: { value: "parser" } });
+    await frame();
+
+    await waitFor(() => {
+      expect(spoken()).toContain("2 chats");
+    });
+    expect(useUiStore.getState().startedChat?.words).toBe("Chat 5 of SAGA started.");
+  });
+
+  it("says only the count of a new filter when the words of the open started chat are gone", async () => {
+    await renderDashboard(stubDashboard(), "/?tag=SAGA&chat=2");
+    useUiStore.getState().setStartedChat({ tag: "SAGA", chat: 2, focus: false, words: null });
+
+    fireEvent.change(searchField(), { target: { value: "parser" } });
+
+    await waitFor(() => {
+      expect(spoken()).toContain("2 chats");
+    });
+    expect(spoken()).toHaveLength(1);
+  });
+
+  it("leaves the words to the chat when the chat takes the focus and the filter changes", async () => {
+    const router = await renderDashboard(stubDashboard(), "/");
+
+    useUiStore.getState().setStartedChat({ tag: "SAGA", chat: 2, focus: true, words: "Chat 2 of SAGA started." });
+    await act(async () => {
+      await router.navigate({ to: "/", search: { tag: "SAGA", chat: "2", project: "SAGA" } });
+    });
+    await waitFor(() => {
+      expect(spoken()).toContain("2 chats");
+    });
+
+    expect(useUiStore.getState().startedChat?.words).toBe("Chat 2 of SAGA started.");
   });
 });
 

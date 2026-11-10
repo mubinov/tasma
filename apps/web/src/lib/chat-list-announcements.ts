@@ -37,6 +37,9 @@ export function chatKey(one: OpenChat): string {
   return `${one.task ?? one.tag}/${String(one.chat)}`;
 }
 
+/** The New chat view where a `chatKey` names an open chat. A chat key holds "/", so the two never match. */
+export const NEW_CHAT_KEY = "new-chat";
+
 /** The items of all loaded pages, each chat one time, at its first place. */
 export function chatListItems(pages: readonly { data: ChatListPage }[]): AnyChatListItem[] {
   const items = new Map<string, AnyChatListItem>();

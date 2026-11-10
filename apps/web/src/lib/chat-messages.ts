@@ -1,4 +1,4 @@
-import type { ThreadMessageLike, ToolCallMessagePartStatus } from "@assistant-ui/react";
+import type { AppendMessage, ThreadMessageLike, ToolCallMessagePartStatus } from "@assistant-ui/react";
 import { agentActive, ProtocolError, turnRuns, type ChatAgent, type ChatOutside, type ChatStatus } from "@tasma/protocol";
 import { diffLines } from "diff";
 import { permissionApproval, questionApproval, type ChatApproval } from "./chat-approval";
@@ -115,6 +115,10 @@ export function chatToolStatus(tool: ChatTool): ToolCallMessagePartStatus {
     default:
       return { type: "running" };
   }
+}
+
+export function messageText(message: AppendMessage): string {
+  return message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
 }
 
 export function chatThreadMessage(message: ChatMessage, folder: string): ThreadMessageLike {

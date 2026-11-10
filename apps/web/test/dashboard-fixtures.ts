@@ -5,6 +5,7 @@ import {
   type AnyChatListItem,
   type ChatListItem,
   type ChatListPage,
+  type ProjectChat,
   type ProjectChatListItem,
   type ProjectSummary,
   type Transport,
@@ -13,7 +14,8 @@ import {
 import { screen, within } from "@testing-library/react";
 import { vi } from "vitest";
 import { tagOf } from "../src/lib/board";
-import { chatPath, chatRecord, stubChatLog, type eventsPath } from "./chat-daemon";
+import { chatPath, chatRecord, projectChatPath, projectChatRecord, projectEventsPath, stubChatLog, type eventsPath } from "./chat-daemon";
+import { chatEntries, userMessage } from "./chat-fixtures";
 import { renderWithRouter, stubFeed, successReply } from "./helpers";
 import { daemon } from "./task-screen-fixtures";
 
@@ -137,10 +139,38 @@ export function stubDashboard(
 export type DashboardStub = ReturnType<typeof stubDashboard>;
 
 /** The app at `path`, with the feed subscriber that main.tsx mounts beside it. */
-export async function renderDashboard(stub: DashboardStub, path = "/") {
-  const router = await renderWithRouter(path, stub.transport);
+export async function renderDashboard(stub: DashboardStub, path = "/", { strict = false } = {}) {
+  const router = await renderWithRouter(path, stub.transport, { strict });
   await stub.mount(router);
   return router;
+}
+
+/** The start of a chat of SAGA from the New chat view. */
+export const START_POST = "POST /projects/SAGA/chats";
+
+/** Chat 5 of SAGA, which the start makes. */
+export const START_RECORD: Partial<ProjectChat> = { chat: 5, title: "Plan the release", seq: 1 };
+
+export const START_ANSWER = successReply({ chat: projectChatRecord(START_RECORD) });
+
+/** The first log of chat 5 of SAGA. */
+export const START_LOG = { cursor: 1, entries: chatEntries([userMessage("Plan the release")]) };
+
+/** The daemon of the dashboard, which starts chat 5 of SAGA and holds its log. A reply can replace the answer. */
+export function startDaemon(
+  replies: Record<string, TransportReply | Promise<TransportReply>> = {},
+): DashboardStub {
+  const stub = stubDashboard({
+    [START_POST]: START_ANSWER,
+    [projectChatPath(5)]: successReply(projectChatRecord(START_RECORD)),
+    ...replies,
+  }, projectEventsPath);
+  stub.hold(0, 5);
+  return stub;
+}
+
+export function newChatButton(): HTMLElement {
+  return screen.getByRole("button", { name: "New chat" });
 }
 
 /** The list of the chats, named by its hidden heading. */

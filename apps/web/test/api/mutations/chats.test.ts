@@ -6,9 +6,9 @@ import {
   type TransportReply,
   type TransportRequest,
 } from "@tasma/protocol";
-import { act, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAppQueryClient } from "../../../src/api/client";
 import {
   CHAT_CLIENT,
@@ -19,15 +19,32 @@ import {
   chatWriteKey,
   chatWriteOptions,
   failureKind,
+  projectChatStartKey,
+  projectChatStartOptions,
   usePendingChatOptions,
+  usePendingProjectChatStart,
   WriteError,
   type ChatWrite,
   type StartChat,
 } from "../../../src/api/mutations";
-import { daemonKeys, type ChatPlace } from "../../../src/api/queries";
+import { chatListQuery, daemonKeys, type ChatPlace } from "../../../src/api/queries";
+import { projectChatStartFailure } from "../../../src/lib/write-failure";
+import { chatDraft, NEW_CHAT_DRAFT, useChatDraftStore } from "../../../src/store/chat-drafts";
 import { useNoticeStore } from "../../../src/store/notices";
+import { useUiStore } from "../../../src/store/ui";
 import { projectChatPath, projectChatRecord } from "../../chat-daemon";
-import { heldBack, refusalReply, stubTransport, successReply } from "../../helpers";
+import {
+  chatsPath,
+  pageReply,
+  projectItem,
+  renderDashboard,
+  START_ANSWER,
+  START_POST,
+  stubDashboard,
+  stubLayout,
+} from "../../dashboard-fixtures";
+import { heldBack, refusalReply, stubThreadDom, stubTransport, successReply } from "../../helpers";
+import { frame } from "../../setup/notice-store";
 
 const PLACE = { tag: "SAGA", task: "SAGA-3", chat: 2 };
 
@@ -373,5 +390,390 @@ describe("chatRefusalCode", () => {
   it("gives the code of a refusal inside a write error, and nothing for another error", () => {
     expect(chatRefusalCode(new WriteError(new TransportError("lost")))).toBeUndefined();
     expect(chatRefusalCode(new Error("boom"))).toBeUndefined();
+  });
+});
+
+describe("projectChatStartOptions", () => {
+  const STARTED = "Chat 5 of SAGA started.";
+  const NEW_PLACE = { tag: "SAGA", task: undefined, chat: 5 };
+
+  function variables(text = "Plan the release") {
+    return { start: { tag: "SAGA", text }, failure: projectChatStartFailure("SAGA") };
+  }
+
+  async function view(path: string, replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
+    const stub = stubDashboard({ [START_POST]: START_ANSWER, ...replies });
+    const router = await renderDashboard(stub, path);
+    const { queryClient, client } = router.options.context;
+    const options = projectChatStartOptions(queryClient, client, router);
+
+    return { stub, router, queryClient, client, options, observer: new MutationObserver(queryClient, options) };
+  }
+
+  async function start(observer: { mutate: (write: ReturnType<typeof variables>) => Promise<unknown> }, text?: string) {
+    await act(async () => {
+      await observer.mutate(variables(text)).catch(() => undefined);
+    });
+  }
+
+  async function spoken(): Promise<string[]> {
+    await frame();
+    return useNoticeStore.getState().announced.map(({ words }) => words);
+  }
+
+  beforeEach(() => {
+    stubThreadDom();
+    stubLayout();
+    useUiStore.setState({ lastChatProject: null, startedChat: null, chatStartWatch: null, arrivalWords: null });
+    useChatDraftStore.setState({ drafts: new Map() });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("posts the text as typed with the client of the window, and sends it one time", async () => {
+    const { stub, options, observer } = await view("/?new=1");
+
+    await start(observer, "  Plan the release\n");
+
+    expect(options.retry).toBe(0);
+    expect(options.mutationKey).toEqual(projectChatStartKey());
+    expect(projectChatStartKey()).toEqual(["daemon", "projects", "project-chat-start"]);
+    expect(stub.requests.filter(({ method }) => method === "POST")).toEqual([
+      { method: "POST", path: "/projects/SAGA/chats", body: { text: "  Plan the release\n", client: CHAT_CLIENT } },
+    ]);
+  });
+
+  it("says the start at Send and closes the last failure notice", async () => {
+    const { reply } = heldBack();
+    const { observer } = await view("/?new=1", { [START_POST]: reply });
+    useNoticeStore.getState().showNotice({ key: "project-chat-start-failure", form: "failure", title: "Old", words: [] });
+
+    act(() => {
+      void observer.mutate(variables());
+    });
+
+    expect(await spoken()).toContain("Starting a chat in SAGA");
+    expect(useNoticeStore.getState().notices).toEqual([]);
+  });
+
+  it("gives the variables of the pending start", async () => {
+    const { reply } = heldBack();
+    const { observer, queryClient } = await view("/?new=1", { [START_POST]: reply });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    );
+    const { result } = renderHook(() => usePendingProjectChatStart(), { wrapper });
+
+    expect(result.current).toBeUndefined();
+    act(() => {
+      void observer.mutate(variables());
+    });
+
+    await waitFor(() => {
+      expect(result.current?.start).toEqual({ tag: "SAGA", text: "Plan the release" });
+    });
+  });
+
+  it("opens the chat, remembers the project and clears the view from the address", async () => {
+    const { router, observer } = await view("/?new=1");
+
+    await start(observer);
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ tag: "SAGA", chat: "5" });
+    });
+    expect(useUiStore.getState().lastChatProject).toBe("SAGA");
+  });
+
+  it("reads the list after the answer and before the chat opens", async () => {
+    const { stub, router, observer } = await view("/?new=1");
+    const reads = stub.readsOf("/chats");
+    const list = heldBack();
+    stub.replies["/chats"] = list.reply;
+
+    act(() => {
+      void observer.mutate(variables());
+    });
+
+    await waitFor(() => {
+      expect(stub.readsOf("/chats")).toBe(reads + 1);
+    });
+    expect(router.state.location.search).toEqual({ new: "1" });
+
+    await act(async () => {
+      list.answer(pageReply([projectItem("SAGA", 5, 0)]));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ tag: "SAGA", chat: "5" });
+    });
+  });
+
+  it("records the time of the answer before the list reads", async () => {
+    const { stub, observer } = await view("/?new=1");
+    stub.replies["/chats"] = heldBack().reply;
+    useUiStore.getState().setChatStartWatch({ tag: "SAGA", snapshot: new Set(), answeredAt: null });
+    const before = Date.now();
+
+    act(() => {
+      void observer.mutate(variables());
+    });
+
+    await waitFor(() => {
+      expect(useUiStore.getState().chatStartWatch?.answeredAt).toBeGreaterThanOrEqual(before);
+    });
+  });
+
+  it("reads the list of the new filter before the chat opens, with the key that the screen reads", async () => {
+    const { stub, router, queryClient, client, observer } = await view("/?new=1&project=ACME&q=%20plan%20");
+    const path = chatsPath({ q: "plan" });
+    const list = heldBack();
+    stub.replies[path] = list.reply;
+
+    act(() => {
+      void observer.mutate(variables());
+    });
+
+    await waitFor(() => {
+      expect(stub.paths).toContain(path);
+    });
+    expect(router.state.location.search).toMatchObject({ new: "1" });
+
+    await act(async () => {
+      list.answer(pageReply([projectItem("SAGA", 5, 0)]));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ q: " plan ", tag: "SAGA", chat: "5" });
+    });
+    expect(queryClient.getQueryData(chatListQuery(client, { q: "plan" }).queryKey)).toBeDefined();
+  });
+
+  it("opens the chat when the read of the new filter fails", async () => {
+    const { stub, router, observer } = await view("/?new=1&project=ACME");
+    stub.replies["/chats"] = refusalReply(500, { kind: "daemon", code: "internal", message: "broken" });
+
+    await start(observer);
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ tag: "SAGA", chat: "5" });
+    });
+  });
+
+  it.each([
+    ["/?new=1&project=ACME", {}, `${STARTED} The project filter was cleared.`],
+    ["/?new=1&q=zebra", {}, `${STARTED} The search was cleared.`],
+    ["/?new=1&project=ACME&q=zebra", {}, `${STARTED} The project filter and the search were cleared.`],
+    ["/?new=1&project=SAGA&q=plan", { project: "SAGA", q: "plan" }, STARTED],
+    ["/?new=1&q=saga%20RELEASE", { q: "saga RELEASE" }, STARTED],
+    ["/?new=1&project=GONE", {}, STARTED],
+  ])("clears only the filter parts that hide the chat of %s", async (path, kept, words) => {
+    const { router, observer } = await view(path);
+
+    await start(observer);
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ ...kept, tag: "SAGA", chat: "5" });
+    });
+    expect(useUiStore.getState().startedChat).toEqual({ tag: "SAGA", chat: 5, focus: true, words });
+  });
+
+  it("keeps the focus and says the words itself when the focus left the view", async () => {
+    const { observer } = await view("/?new=1");
+    document.querySelector("input")!.focus();
+
+    await start(observer);
+
+    expect(useUiStore.getState().startedChat).toEqual({ tag: "SAGA", chat: 5, focus: false, words: null });
+    expect((await spoken()).filter((words) => words === STARTED)).toHaveLength(1);
+    expect(document.activeElement).toBe(document.querySelector("input"));
+  });
+
+  describe("a chat that acts before the navigation ends", () => {
+    function afterNavigation(router: Awaited<ReturnType<typeof view>>["router"], onNavigated: () => void): void {
+      const navigate = router.navigate.bind(router) as (options: unknown) => Promise<void>;
+
+      vi.spyOn(router, "navigate").mockImplementation((async (options: unknown) => {
+        await navigate(options);
+        onNavigated();
+      }) as typeof router.navigate);
+    }
+
+    it("keeps its focus", async () => {
+      const { router, observer } = await view("/?new=1");
+      afterNavigation(router, () => {
+        useUiStore.getState().setStartedChat(null);
+        document.querySelector("input")!.focus();
+      });
+
+      await start(observer);
+
+      expect(document.activeElement).toBe(document.querySelector("input"));
+    });
+
+    it("keeps the words that it took", async () => {
+      const { router, observer } = await view("/?new=1");
+      document.querySelector("input")!.focus();
+      afterNavigation(router, () => {
+        useUiStore.getState().takeStartedWords();
+      });
+
+      await start(observer);
+
+      expect(await spoken()).not.toContain(STARTED);
+    });
+  });
+
+  it("reads the filter with no project when the list of projects is not in the cache", async () => {
+    const { router, queryClient, observer } = await view("/?new=1&project=ACME");
+    queryClient.removeQueries({ queryKey: daemonKeys.projects(), exact: true });
+
+    await start(observer);
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ tag: "SAGA", chat: "5" });
+    });
+    expect(useUiStore.getState().startedChat?.words).toBe(STARTED);
+  });
+
+  it("says that a chat failed to launch", async () => {
+    const { observer } = await view("/?new=1", {
+      [START_POST]: successReply({ chat: projectChatRecord({ chat: 5, state: "failed" }) }),
+    });
+    document.querySelector("input")!.focus();
+
+    await start(observer);
+
+    expect(await spoken()).toContain("Chat 5 of SAGA failed.");
+  });
+
+  it("moves the text typed during the wait to the draft of the new chat", async () => {
+    const { reply, answer } = heldBack();
+    const { observer } = await view("/?new=1", { [START_POST]: reply });
+
+    act(() => {
+      void observer.mutate(variables());
+    });
+    useChatDraftStore.getState().setDraft(NEW_CHAT_DRAFT, "One more thing");
+    answer(START_ANSWER);
+
+    await waitFor(() => {
+      expect(chatDraft(NEW_PLACE)).toBe("One more thing");
+    });
+    expect(chatDraft(NEW_CHAT_DRAFT)).toBe("");
+  });
+
+  it("opens nothing when the address no longer shows the view, and says the words", async () => {
+    const { reply, answer } = heldBack();
+    const { router, stub, observer } = await view("/?new=1", { [START_POST]: reply });
+
+    act(() => {
+      void observer.mutate(variables());
+    });
+    useChatDraftStore.getState().setDraft(NEW_CHAT_DRAFT, "One more thing");
+    await act(async () => {
+      await router.navigate({ to: "/", search: {} });
+    });
+    const reads = stub.readsOf("/chats");
+    answer(START_ANSWER);
+
+    await waitFor(() => {
+      expect(stub.readsOf("/chats")).toBe(reads + 1);
+    });
+    await waitFor(async () => {
+      expect(await spoken()).toContain(STARTED);
+    });
+    expect(router.state.location.search).toEqual({});
+    expect(useUiStore.getState().startedChat).toBeNull();
+    expect(useUiStore.getState().lastChatProject).toBe("SAGA");
+    expect(chatDraft(NEW_CHAT_DRAFT)).toBe("One more thing");
+  });
+
+  it("does not open the chat when the user leaves the view during the read of the list", async () => {
+    const { stub, router, observer } = await view("/?new=1");
+    const reads = stub.readsOf("/chats");
+    const list = heldBack();
+    stub.replies["/chats"] = list.reply;
+
+    act(() => {
+      void observer.mutate(variables());
+    });
+    await waitFor(() => {
+      expect(stub.readsOf("/chats")).toBe(reads + 1);
+    });
+    await act(async () => {
+      await router.navigate({ to: "/", search: {} });
+    });
+    await act(async () => {
+      list.answer(pageReply([projectItem("SAGA", 5, 0)]));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(router.state.location.search).toEqual({});
+    expect((await spoken()).filter((words) => words === STARTED)).toHaveLength(1);
+  });
+
+  it("does not open the chat in a view that the user opens again during the read of the list", async () => {
+    const { stub, router, observer } = await view("/?new=1");
+    const reads = stub.readsOf("/chats");
+    const list = heldBack();
+    stub.replies["/chats"] = list.reply;
+
+    act(() => {
+      void observer.mutate(variables());
+    });
+    await waitFor(() => {
+      expect(stub.readsOf("/chats")).toBe(reads + 1);
+    });
+    await act(async () => {
+      await router.navigate({ to: "/", search: { task: "ACME-7", chat: "1" } });
+    });
+    await act(async () => {
+      await router.navigate({ to: "/", search: { new: "1" } });
+    });
+    useChatDraftStore.getState().setDraft(NEW_CHAT_DRAFT, "Another chat");
+    await act(async () => {
+      list.answer(pageReply([projectItem("SAGA", 5, 0)]));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(router.state.location.search).toEqual({ new: "1" });
+    expect(useUiStore.getState().startedChat).toBeNull();
+    expect(chatDraft(NEW_CHAT_DRAFT)).toBe("Another chat");
+    expect((await spoken()).filter((words) => words === STARTED)).toHaveLength(1);
+  });
+
+  it("puts a refused text back in front of the draft and opens the notice", async () => {
+    const refusal = refusalReply(409, { kind: "daemon", code: "project-has-no-folder", message: "SAGA has no folder" });
+    const { reply, answer } = heldBack();
+    const { router, observer } = await view("/?new=1", { [START_POST]: reply });
+    useUiStore.getState().setChatStartWatch({ tag: "SAGA", snapshot: new Set(), answeredAt: null });
+
+    act(() => {
+      void observer.mutate(variables()).catch(() => undefined);
+    });
+    useChatDraftStore.getState().setDraft(NEW_CHAT_DRAFT, "One more thing");
+    answer(refusal);
+
+    await waitFor(() => {
+      expect(useNoticeStore.getState().notices).toHaveLength(1);
+    });
+    expect(useNoticeStore.getState().notices[0]).toMatchObject({
+      key: "project-chat-start-failure",
+      form: "failure",
+      title: "The new chat of SAGA did not start",
+      line: "The daemon refused to start the chat. Its own words are below.",
+      words: ["daemon/project-has-no-folder · SAGA has no folder"],
+    });
+    expect(chatDraft(NEW_CHAT_DRAFT)).toBe("Plan the release\nOne more thing");
+    expect(useUiStore.getState().chatStartWatch).toBeNull();
+    expect(useUiStore.getState().lastChatProject).toBeNull();
+    expect(router.state.location.search).toEqual({ new: "1" });
   });
 });
