@@ -19,6 +19,7 @@ import {
   optionsUpdate,
   PICK,
   promptText,
+  SAVED_MANUAL,
   slowEnd,
   START,
   USER,
@@ -47,6 +48,15 @@ const EFFORT: SessionConfigOption = {
   type: "select",
   currentValue: "low",
   options: [{ value: "low", name: "Low" }, { value: "high", name: "High" }],
+};
+
+const MODE_WITHOUT_AUTO: SessionConfigOption = {
+  id: "mode",
+  name: "Mode",
+  category: "mode",
+  type: "select",
+  currentValue: "default",
+  options: ["default", "acceptEdits", "plan"].map((value) => ({ value, name: value })),
 };
 
 async function plantDefaults(root: string, value: unknown): Promise<void> {
@@ -89,6 +99,7 @@ function refusing(configId: string): Script["setConfigOption"] {
 /** A chat whose first turn has ended and whose agent process the runner then ended. */
 async function stopped(options: WorldOptions = { script: { configOptions: OPTIONS } }) {
   const setup = await world(options);
+  await plantDefaults(setup.root, SAVED_MANUAL);
   const live = await setup.runner.start(START);
   const log = await logUntil(live, "turn-end");
   await setup.runner.stop(live);
@@ -98,6 +109,7 @@ async function stopped(options: WorldOptions = { script: { configOptions: OPTION
 /** A chat whose agent process exited after the first turn, so the chat is failed. */
 async function failed(options: WorldOptions) {
   const setup = await world(options);
+  await plantDefaults(setup.root, SAVED_MANUAL);
   const live = await setup.runner.start(START);
   await logUntil(live, "turn-end");
   setup.processes[0]?.exit({ code: 137, signal: null });
@@ -108,6 +120,7 @@ async function failed(options: WorldOptions) {
 /** A chat whose first turn has ended and whose agent process the runner is ending, slowly. */
 async function endingSlowly(options: WorldOptions = {}) {
   const setup = await world({ script: { configOptions: OPTIONS }, started: slowEnd(100), ...options });
+  await plantDefaults(setup.root, SAVED_MANUAL);
   const live = await setup.runner.start(START);
   const log = await logUntil(live, "turn-end");
   void setup.runner.stop(live);
@@ -216,7 +229,7 @@ describe("the options of a session that opens", () => {
 
   it.each([
     ["an option the session does not offer", { effort: "high", mode: "default" }],
-    ["a value the session does not offer", { model: "huge" }],
+    ["a value the session does not offer", { model: "huge", mode: "default" }],
     ["the current value", { mode: "default" }],
   ])("sends no default that is %s", async (_case, values) => {
     const { script, seen } = recording();
@@ -303,7 +316,7 @@ describe("the options of a session that opens", () => {
   });
 
   it("keeps the list of the run to the notifications of the agent", async () => {
-    const { runner, processes } = await world({
+    const { runner, root, processes } = await world({
       script: {
         configOptions: OPTIONS,
         async prompt(params, agent) {
@@ -317,6 +330,7 @@ describe("the options of a session that opens", () => {
         },
       },
     });
+    await plantDefaults(root, SAVED_MANUAL);
     const live = await runner.start(START);
     await logUntil(live, "turn-end");
 
@@ -331,9 +345,114 @@ describe("the options of a session that opens", () => {
   });
 });
 
+describe("the start mode of a new session", () => {
+  it("is auto, sent before the first prompt and logged as a default, and no file changes", async () => {
+    const { script, seen } = recording();
+    const { runner, root, errors } = await world({ script });
+
+    const live = await runner.start(START);
+
+    expect(await logUntil(live, "turn-end")).toEqual([
+      USER,
+      optionsUpdate(OPTIONS),
+      modeUpdate("auto"),
+      optionsUpdate([modeOption("auto"), modelOption()]),
+      TURN_END,
+    ]);
+    expect(seen).toEqual(["mode=auto", `prompt ${START.text}`]);
+    expect(live.chat.options).toBeUndefined();
+    await expect(readFile(defaultsFile(root))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(errors).toEqual([]);
+  });
+
+  it("comes after a saved model, and no file changes", async () => {
+    const { script, seen } = recording();
+    const { runner, root } = await world({ script });
+    await plantDefaults(root, { claude: { model: "large" } });
+    const before = await readFile(defaultsFile(root), "utf8");
+
+    const live = await runner.start(START);
+
+    expect(await logUntil(live, "turn-end")).toEqual([
+      USER,
+      optionsUpdate(OPTIONS),
+      optionsUpdate([modeOption(), modelOption("large")]),
+      modeUpdate("auto"),
+      optionsUpdate([modeOption("auto"), modelOption("large")]),
+      TURN_END,
+    ]);
+    expect(seen).toEqual(["model=large", "mode=auto", `prompt ${START.text}`]);
+    expect(live.chat.options).toBeUndefined();
+    await expect(readFile(defaultsFile(root), "utf8")).resolves.toBe(before);
+  });
+
+  it.each([
+    ["a saved mode default", OPTIONS, SAVED_MANUAL],
+    ["a session that opens in acceptEdits", [modeOption("acceptEdits"), modelOption()], undefined],
+    ["a session that does not offer auto", [MODE_WITHOUT_AUTO, modelOption()], undefined],
+  ])("is not sent for %s", async (_case, configOptions, defaults) => {
+    const { script, seen } = recording({ configOptions });
+    const { runner, root } = await world({ script });
+    if (defaults !== undefined) await plantDefaults(root, defaults);
+
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+
+    expect(seen).toEqual([`prompt ${START.text}`]);
+  });
+
+  it("is not sent to a resumed session", async () => {
+    const { script, seen } = recording();
+    const { runner, processes } = await world({ script });
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+    await runner.stop(live);
+
+    await runner.message(live, NEXT);
+    await logUntil(live, "turn-end");
+
+    expect(processes[1]?.resumes).toHaveLength(1);
+    expect(seen).toEqual(["mode=auto", `prompt ${START.text}`, `prompt ${NEXT.text}`]);
+  });
+
+  it("gives way to a pick that waits for the session", async () => {
+    const held = gate();
+    const { script, seen } = recording({
+      async newSession(_params, fake) {
+        await held.opened;
+        return { sessionId: SESSION, configOptions: fake.configOptions };
+      },
+    });
+    const { runner, root, processes } = await world({ script });
+    const live = await runner.start(START);
+    await until(() => processes[0]?.newSession !== undefined, "the session is opening");
+
+    const picked = runner.setOption(live, PICK);
+    held.open();
+
+    await expect(picked).resolves.toEqual([]);
+    await logUntil(live, "turn-end");
+    expect(seen).toEqual(["mode=acceptEdits", `prompt ${START.text}`]);
+    expect(await storedDefaults(root)).toEqual({ claude: { mode: "acceptEdits" } });
+  });
+
+  it("writes a fault line when the agent refuses it, and the run goes on", async () => {
+    const { script, seen } = recording({ setConfigOption: refusing("mode") });
+    const { runner, root, errors } = await world({ script });
+
+    const live = await runner.start(START);
+
+    expect(await logUntil(live, "turn-end")).toEqual([USER, optionsUpdate(OPTIONS), TURN_END]);
+    expect(seen).toEqual(["mode=auto", `prompt ${START.text}`]);
+    expect(errors).toEqual(['tasma-daemon: chat 1 of ALPHA-1: the agent refused "auto" for "mode": auto needs another model\n']);
+    await expect(readFile(defaultsFile(root))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
 describe("a pick on a chat whose session is open", () => {
   async function opened(script: Script = { configOptions: OPTIONS }) {
     const setup = await world({ script });
+    await plantDefaults(setup.root, SAVED_MANUAL);
     const live = await setup.runner.start(START);
     const log = await logUntil(live, "turn-end");
     return { ...setup, live, log };
@@ -370,11 +489,12 @@ describe("a pick on a chat whose session is open", () => {
     await expect(runner.setOption(live, { ...PICK, value: "bypassPermissions" })).resolves.toEqual([]);
 
     expect(live.chat.options).toEqual({ mode: "bypassPermissions" });
-    await expect(readFile(defaultsFile(root))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await storedDefaults(root)).toEqual(SAVED_MANUAL);
   });
 
   it("sends and saves a pick of the current value", async () => {
     const { runner, live, root, processes } = await opened();
+    await plantDefaults(root, {});
 
     await runner.setOption(live, { ...PICK, value: "default" });
 
@@ -413,7 +533,7 @@ describe("a pick on a chat whose session is open", () => {
 
     expect(processes[0]?.configSets).toEqual([]);
     expect(live.chat.options).toBeUndefined();
-    await expect(readFile(defaultsFile(root))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await storedDefaults(root)).toEqual(SAVED_MANUAL);
   });
 
   it("refuses a value the agent refuses with its message, and writes nothing", async () => {
@@ -426,11 +546,11 @@ describe("a pick on a chat whose session is open", () => {
 
     expect(await logOf(live)).toEqual(log);
     expect(live.chat.options).toBeUndefined();
-    await expect(readFile(defaultsFile(root))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await storedDefaults(root)).toEqual(SAVED_MANUAL);
   });
 
   it("sets a value during a turn, while a permission request is open", async () => {
-    const { runner, processes } = await world({
+    const { runner, root, processes } = await world({
       script: {
         configOptions: OPTIONS,
         prompt(_params, agent) {
@@ -439,6 +559,7 @@ describe("a pick on a chat whose session is open", () => {
         },
       },
     });
+    await plantDefaults(root, SAVED_MANUAL);
     const live = await runner.start(START);
     await logUntil(live, "permission");
 
@@ -538,7 +659,7 @@ describe("a pick while the session opens", () => {
       },
     });
     const { runner, root } = await world({ script });
-    await plantDefaults(root, { claude: { model: "large" } });
+    await plantDefaults(root, { claude: { model: "large", mode: "default" } });
     const live = await runner.start(START);
     await until(() => seen.includes("model=large"), "the default is on its way");
 
@@ -563,7 +684,8 @@ describe("a pick while the session opens", () => {
       },
       setConfigOption: refusing("mode"),
     });
-    const { runner, processes } = await world({ script });
+    const { runner, root, processes } = await world({ script });
+    await plantDefaults(root, SAVED_MANUAL);
     const live = await runner.start(START);
     await until(() => processes[0]?.newSession !== undefined, "the session is opening");
 
@@ -670,7 +792,7 @@ describe("a pick while the session opens", () => {
         },
         started: slowEnd(300),
       });
-      await plantDefaults(root, { claude: { model: "large" } });
+      await plantDefaults(root, { claude: { model: "large", mode: "default" } });
       const live = await runner.start(START);
       started.live = live;
 
@@ -690,7 +812,7 @@ describe("a pick while the session opens", () => {
       },
     });
     const { runner, root, processes } = await world({ script });
-    await plantDefaults(root, { claude: { model: "large" } });
+    await plantDefaults(root, { claude: { model: "large", mode: "default" } });
     const live = await runner.start(START);
     await until(() => seen.includes("model=large"), "the default is on its way");
 

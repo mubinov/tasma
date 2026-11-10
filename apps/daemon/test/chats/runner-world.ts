@@ -136,6 +136,9 @@ export function defaultsFile(root: string): string {
   return join(root, "agent-defaults.json");
 }
 
+/** A saved mode `default`: a new session keeps the mode that it opens in, with no start mode. */
+export const SAVED_MANUAL = { claude: { mode: "default" } };
+
 /** A list of options as the daemon writes it to the log. */
 export function optionsUpdate(configOptions: SessionConfigOption[]): ChatEvent {
   return { kind: "update", update: { sessionUpdate: "config_option_update", configOptions } };

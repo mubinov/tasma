@@ -102,10 +102,14 @@ export function applyPlan<P extends Pick>(
 
 export type OptionFiles = {
   /**
-   * The defaults of the agent for a new session. A file that cannot be used,
-   * and a default that the rules leave unsaved, each give a line on stderr.
+   * The defaults of the agent for a new session that opened with `options`. A
+   * file that cannot be used, and a default that the rules leave unsaved, each
+   * give a line on stderr. A session of claude that opened in the mode
+   * `default` gets the start mode `auto` while the file reads with no fault and
+   * holds no mode of claude, unsaved values included; nothing writes the start
+   * mode to a file.
    */
-  defaultsOf(agent: ChatAgent): Promise<Record<string, string>>;
+  defaultsOf(agent: ChatAgent, options: SessionConfigOption[]): Promise<Record<string, string>>;
   /**
    * Writes an accepted pick to the chat, and to the defaults of the agent
    * unless the rules leave it unsaved. Gives a diagnostic for each file that a
@@ -140,16 +144,21 @@ export function optionFiles(options: {
   }
 
   return {
-    async defaultsOf(agent) {
+    async defaultsOf(agent, options) {
       const read = await defaults.read();
       for (const diagnostic of read.diagnostics) fileLine(defaults.path, diagnostic.message);
+      const saved = read.defaults[agent] ?? {};
       const own: Record<string, string> = {};
-      for (const [configId, value] of Object.entries(read.defaults[agent] ?? {})) {
+      for (const [configId, value] of Object.entries(saved)) {
         if (isUnsaved(agent, configId, value)) {
           fileLine(defaults.path, `"${value}" of "${configId}" of ${agent} is not applied: this value is never a default`);
         } else {
           own[configId] = value;
         }
+      }
+      const manual = options.find((option) => option.id === "mode")?.currentValue === "default";
+      if (agent === "claude" && manual && read.diagnostics.length === 0 && !Object.hasOwn(saved, "mode")) {
+        own.mode = "auto";
       }
       return own;
     },

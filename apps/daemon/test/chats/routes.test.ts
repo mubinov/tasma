@@ -26,7 +26,7 @@ import { taskRoutes } from "../../src/tasks/routes.js";
 import { WriteQueue } from "../../src/tasks/serialize.js";
 import { fakeAgent, forever, modeOption } from "../agents/fake-agent.js";
 import type { FakeProcess, Script } from "../agents/fake-agent.js";
-import { promptText } from "./runner-world.js";
+import { promptText, SAVED_MANUAL } from "./runner-world.js";
 import {
   bearer,
   chatFolder,
@@ -147,9 +147,10 @@ async function projectWorld(
   return { ...(await world(root, options)), root };
 }
 
-/** `projectWorld`, with chat 1 of ALPHA-1 started through the runner. */
-async function running(script?: Script): Promise<World & { live: LiveChat; root: string }> {
+/** `projectWorld`, with chat 1 of ALPHA-1 started through the runner, over a defaults file of `defaults` when given. */
+async function running(script?: Script, defaults?: unknown): Promise<World & { live: LiveChat; root: string }> {
   const started = await projectWorld({ script });
+  if (defaults !== undefined) await plant(join(started.root, "agent-defaults.json"), JSON.stringify(defaults));
   const live = await started.runner.start({ tag: "ALPHA", task: "ALPHA-1", step: "dev:build", agent: "claude", ...MESSAGE });
   return { ...started, live };
 }
@@ -768,7 +769,7 @@ describe("the chat commands", () => {
     const { live, server } = await running({
       configOptions: [modeOption()],
       setConfigOption: () => Promise.reject(new Error("auto needs another model")),
-    });
+    }, SAVED_MANUAL);
     await logUntil(live, "turn-end");
 
     const response = await send(server, "POST", `${CHATS}/1/options`, { configId: "mode", value: "auto", client: "web" });

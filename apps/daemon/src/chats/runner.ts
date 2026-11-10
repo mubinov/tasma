@@ -811,7 +811,7 @@ export function createChatRunner(options: {
     const { agent } = live.chat;
     run.options = session.configOptions;
     if (run.options.length > 0) await append(run, optionsEvent(run.options));
-    const defaults = created && run.options.length > 0 ? await files.defaultsOf(agent) : {};
+    const defaults = created && run.options.length > 0 ? await files.defaultsOf(agent, run.options) : {};
     const plan = applyPlan(run.options, { defaults, chosen: live.chat.options ?? {}, waiting: run.waiting });
 
     const answers: PickAnswer[] = [];

@@ -48,6 +48,7 @@ fi
 
 ## When the agent runs
 
+- A new chat starts in the Auto permission mode, also when your Claude Code settings set `permissions.defaultMode` to `default`, `manual` or `dontAsk`. Two things change this: a mode that you pick in a chat is the start mode of your next chats, except Bypass permissions, and a `permissions.defaultMode` of `acceptEdits`, `plan` or `bypassPermissions` applies while you have not picked a mode. On a model that does not support Auto, Claude Code uses Accept edits.
 - Tasma stops the agent of a chat 10 minutes after its last answer, or 1 hour after it in a step whose owner is `human` or in a chat with no task. Commands that the agent started in the background stop with it. A program that runs as a daemon, for example a Docker container, keeps running.
 - Tasma tells Claude to start the description of each command that it runs in the background with a mark: `[job]` for a command that ends by itself, for example tests or a build, and `[service]` for a command that runs until something stops it, for example a dev server. While a `[job]` runs, Tasma does not stop the agent, so that the agent can report the result of the job. After the job ends, the agent gets one more period of 10 minutes, or 1 hour. A `[service]` and a command with no mark stop with the agent.
 - A `[job]` keeps the agent for at most 2 hours after the last activity in the chat, and the time that the Mac sleeps does not count. Then the chat fails.
