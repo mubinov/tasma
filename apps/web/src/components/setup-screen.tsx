@@ -23,6 +23,7 @@ import {
   projectGone,
 } from "../api/mutations";
 import { projectsQuery, setupQuery } from "../api/queries";
+import { attended } from "../lib/attended";
 import { useDocumentTitle } from "../lib/document-title";
 import {
   currentStep,
@@ -31,12 +32,13 @@ import {
   hasFullAnswer,
   hasFullFailure,
   newestSetup,
+  screenNeeded,
   SETUP_PATH,
-  setupNeeded,
   setupSteps,
   stepsNowDone,
   type SkillInstallState,
   type StepId,
+  type StepInput,
   type StepState,
   type WorkflowWriteState,
 } from "../lib/setup-steps";
@@ -184,6 +186,44 @@ function useMountFocus(
   };
 }
 
+/**
+ * Calls `onClose` 1 second after the reader is in the window while `closing` is true. A line said while the reader
+ * is in another app does not reach them.
+ */
+function useCloseWhenAttended(closing: boolean, onClose: () => void): void {
+  const close = useEffectEvent(onClose);
+
+  useEffect(() => {
+    if (!closing) {
+      return;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    function startClose(): void {
+      if (!attended()) {
+        return;
+      }
+
+      window.removeEventListener("focus", startClose);
+      document.removeEventListener("visibilitychange", startClose);
+      timer = setTimeout(() => {
+        close();
+      }, CLOSE_DELAY_MS);
+    }
+
+    window.addEventListener("focus", startClose);
+    document.addEventListener("visibilitychange", startClose);
+    startClose();
+
+    return () => {
+      window.removeEventListener("focus", startClose);
+      document.removeEventListener("visibilitychange", startClose);
+      clearTimeout(timer);
+    };
+  }, [closing]);
+}
+
 export function SetupScreen(): ReactNode {
   const { queryClient, client } = route.useRouteContext();
   const navigate = useNavigate();
@@ -192,7 +232,9 @@ export function SetupScreen(): ReactNode {
   const fullAnswered = useQueryCache(queryClient, hasFullAnswer);
   const fullFailed = useQueryCache(queryClient, hasFullFailure);
   const readFailing = useQueryCache(queryClient, fullReadsFailing);
-  const needed = setupNeeded(status, skillCheckStopped);
+  const needed = screenNeeded({ status, fullAnswered, fullFailed, skillCheckStopped });
+  // The reads stop when the screen closes.
+  const readFailedShown = readFailing && needed;
 
   // The route does not wait for this read, because it can take up to 15 seconds.
   const full = useQuery({
@@ -288,31 +330,17 @@ export function SetupScreen(): ReactNode {
     };
   }, []);
 
-  const close = useEffectEvent(() => {
+  useCloseWhenAttended(!needed, () => {
     // The screen unmounts on the move, so the shell says the words after it moves focus.
     useUiStore.getState().setArrivalWords(stopClosedRef.current ? `${STOPPED_WORDS} ${COMPLETE_WORDS}` : COMPLETE_WORDS);
     void navigate({ to: "/tasks", replace: true });
   });
 
   useEffect(() => {
-    if (needed) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      close();
-    }, CLOSE_DELAY_MS);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [needed]);
-
-  useEffect(() => {
-    if (readFailing) {
+    if (readFailedShown) {
       announce(READ_FAILED_WORDS);
     }
-  }, [readFailing]);
+  }, [readFailedShown]);
 
   useEffect(() => {
     if (listFailing) {
@@ -441,13 +469,17 @@ export function SetupScreen(): ReactNode {
   }
 
   /** A render holds the state of the answers before it, and an end of a read or a write needs the newest. */
-  function stateNow(step: StepId): StepState | undefined {
-    return setupSteps({
+  function inputNow(): StepInput {
+    return {
       status: newestSetup(queryClient),
       fullAnswered: hasFullAnswer(queryClient),
       fullFailed: hasFullFailure(queryClient),
       skillCheckStopped: useUiStore.getState().skillCheckStopped,
-    }).find(({ id }) => id === step)?.state;
+    };
+  }
+
+  function stateNow(step: StepId): StepState | undefined {
+    return setupSteps(inputNow()).find(({ id }) => id === step)?.state;
   }
 
   async function checkAgain(step: StepId): Promise<void> {
@@ -461,10 +493,7 @@ export function SetupScreen(): ReactNode {
 
     const state = stateNow(step);
 
-    if (
-      setupNeeded(newestSetup(queryClient), useUiStore.getState().skillCheckStopped)
-      && (result.isError || state === "cannot-check" || state === "not-run")
-    ) {
+    if (screenNeeded(inputNow()) && (result.isError || state === "cannot-check" || state === "not-run")) {
       announce(STILL_CANNOT_CHECK_WORDS);
     }
   }
@@ -583,7 +612,7 @@ export function SetupScreen(): ReactNode {
   function stopChecking(): void {
     useUiStore.getState().setSkillCheckStopped(true);
 
-    if (setupNeeded(newestSetup(queryClient), true)) {
+    if (screenNeeded(inputNow())) {
       announce(STOPPED_WORDS);
     } else {
       stopClosedRef.current = true;
@@ -604,7 +633,7 @@ export function SetupScreen(): ReactNode {
         </ScreenHeading>
         <p className="mt-2.5 text-base text-subtle">Complete these steps to run your first task.</p>
         <p className="mt-6 font-chrome text-base font-medium">{`${doneWords} done`}</p>
-        {readFailing && <p className="mt-2 text-sm text-subtle">{READ_FAILED_WORDS}</p>}
+        {readFailedShown && <p className="mt-2 text-sm text-subtle">{READ_FAILED_WORDS}</p>}
       </div>
       {/* WebKit removes the list role from a list with no list style. */}
       <Accordion.Root<StepId>

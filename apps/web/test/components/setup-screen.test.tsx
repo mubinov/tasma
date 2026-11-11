@@ -1,7 +1,7 @@
 import type { SetupStatus, TransportReply } from "@tasma/protocol";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { FolderDialogError } from "../../src/api/folder-dialog";
 import { TITLE_COVER_ID } from "../../src/lib/use-top-bar-lengths";
 import { useNoticeStore } from "../../src/store/notices";
@@ -44,6 +44,8 @@ const NEW_MACHINE = setupStatus(
 );
 
 const REFUSED = refusalReply(500, { kind: "daemon", code: "internal", message: "the check broke" });
+
+let hasFocus: MockInstance<() => boolean>;
 
 /** Every announcement, with the element that had focus when it was made. */
 let said: { words: string; focus: Element | null }[] = [];
@@ -111,6 +113,7 @@ beforeEach(() => {
   window.localStorage.clear();
   setPreferenceStorage(browserPreferenceStorage);
   useUiStore.setState({ skillCheckStopped: false, arrivalWords: null, keyPressed: false });
+  hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
   said = [];
   useNoticeStore.setState({
     announce: (spoken) => {
@@ -738,6 +741,101 @@ describe("Stop checking for the skill", () => {
     expect(said[0]!.focus).toBe(screen.getByRole("main"));
   });
 
+  it("keeps the screen open on step 2 after the first full answer, while step 2 fails", async () => {
+    const LOGIN_AND_SKILL = setupStatus({}, { loggedIn: "fail", skill: "fail" });
+    const stub = stubTransport({
+      [START]: successReply(startOf(LOGIN_AND_SKILL)),
+      [FULL]: successReply(LOGIN_AND_SKILL),
+      [FULL_SKIPPED]: successReply(setupStatus({}, { loggedIn: "fail", skill: "not-run" })),
+    });
+    const router = await renderWithRouter("/", stub.transport);
+
+    await waitFor(() => {
+      expect(isOpen("Log in to Claude Code")).toBe(true);
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+
+    await user.click(trigger("Install the tasma skill in Claude Code"));
+    await user.click(screen.getByRole("button", { name: STOP }));
+    await advance(2000);
+
+    expect(stub.paths).toContain(FULL_SKIPPED);
+    expect(router.state.location.pathname).toBe("/setup");
+    expect(words()).toContain("Tasma does not check for the skill now.");
+    expect(trigger("Log in to Claude Code").getAttribute("aria-current")).toBe("step");
+  });
+
+  describe("before the first full answer", () => {
+    /** Stops the check while the first full read runs, and holds back the read with the skip flag. */
+    async function stopEarly() {
+      const skipped = heldBack();
+      const { stub, router } = await openHeld(SKILL_ONLY);
+
+      stub.replies[FULL_SKIPPED] = skipped.reply;
+      await userEvent.click(trigger("Install the tasma skill in Claude Code"));
+      await userEvent.click(screen.getByRole("button", { name: STOP }));
+      await waitFor(() => {
+        expect(stub.paths).toContain(FULL_SKIPPED);
+      });
+
+      expect(screen.getByRole("button", { name: /^Install the tasma skill in Claude Code, Not checked/ })).toBeTruthy();
+      expect(words()).toEqual(["Tasma does not check for the skill now."]);
+      expect(router.state.location.pathname).toBe("/setup");
+      said = [];
+
+      return { router, answer: skipped.answer };
+    }
+
+    it("closes after a full answer with no failed step, and says only that setup is complete after the move", async () => {
+      const { router, answer } = await stopEarly();
+
+      await act(async () => {
+        answer(successReply(setupStatus({}, { skill: "not-run" })));
+      });
+
+      await waitFor(() => {
+        expect(router.state.location.pathname).toBe("/tasks");
+      }, { timeout: 3000 });
+      await waitFor(() => {
+        expect(words()).toEqual(["Setup is complete."]);
+      });
+    });
+
+    it("stays open on step 2 after a full answer in which step 2 fails", async () => {
+      const { router, answer } = await stopEarly();
+
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      await act(async () => {
+        answer(successReply(setupStatus({}, { loggedIn: "fail", skill: "not-run" })));
+      });
+      await advance(2000);
+
+      expect(router.state.location.pathname).toBe("/setup");
+      expect(trigger("Log in to Claude Code").getAttribute("aria-current")).toBe("step");
+      expect(isOpen("Install the tasma skill in Claude Code")).toBe(true);
+      expect(words()).toEqual(["The check is complete. 4 of 6 steps are done. Next: Log in to Claude Code."]);
+    });
+
+    it("closes after a failed full read, with no failed-read line, and says only that setup is complete after the move", async () => {
+      const { router, answer } = await stopEarly();
+
+      await act(async () => {
+        answer(REFUSED);
+      });
+
+      expect(await screen.findAllByText("Cannot check")).toHaveLength(3);
+      expect(screen.queryByText(READ_FAILED)).toBeNull();
+
+      await waitFor(() => {
+        expect(router.state.location.pathname).toBe("/tasks");
+      }, { timeout: 3000 });
+      await waitFor(() => {
+        expect(words()).toEqual(["Setup is complete."]);
+      });
+    });
+  });
+
   describe("with a failed read", () => {
     const SKIPPED_MACHINE = setupStatus(
       { cli: "fail", project: "fail", workflow: "fail" },
@@ -797,10 +895,179 @@ describe("Stop checking for the skill", () => {
   });
 });
 
+describe("a failed step of Claude Code or of the tasma command", () => {
+  const START_REPLY = successReply(startOf(setupStatus({ workflow: "fail" })));
+
+  it.each([
+    ["Install the Claude Code CLI", setupStatus({}, { installed: "fail", loggedIn: "not-run" })],
+    ["Log in to Claude Code", setupStatus({}, { loggedIn: "fail" })],
+    ["Add the tasma command", setupStatus({ cli: "fail" })],
+  ])("keeps the screen open while %s fails, and closes it 1 second after the step passes", async (name, status) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const stub = stubTransport({ [START]: START_REPLY, [FULL]: successReply(status) });
+    const router = await renderWithRouter("/", stub.transport);
+
+    await advance(2000);
+
+    expect(words().some((spoken) => spoken.startsWith("The check is complete."))).toBe(true);
+    expect(router.state.location.pathname).toBe("/setup");
+    expect(trigger(name).getAttribute("aria-current")).toBe("step");
+    expect(isOpen(name)).toBe(true);
+
+    stub.replies[FULL] = successReply(setupStatus());
+    said = [];
+    window.dispatchEvent(new Event("focus"));
+    await advance(20);
+
+    expect(screen.getByText("6 of 6 done")).toBeTruthy();
+
+    await advance(900);
+    expect(router.state.location.pathname).toBe("/setup");
+
+    await advance(200);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/tasks");
+    });
+    expect(router.history.length).toBe(1);
+    await waitFor(() => {
+      expect(words()).toEqual(["Setup is complete."]);
+    });
+  });
+
+  it("closes the screen when the login cannot be checked", async () => {
+    const stub = stubTransport({ [START]: START_REPLY, [FULL]: successReply(setupStatus({}, { loggedIn: "unknown" })) });
+    const router = await renderWithRouter("/", stub.transport);
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/tasks");
+    }, { timeout: 3000 });
+  });
+});
+
 describe("closing", () => {
   const PROJECT_ONLY = setupStatus({ workflow: "fail" });
 
-  it("goes to the Tasks page 1 second after the triggers pass, with replace", async () => {
+  describe("the reader in the window", () => {
+    /** Opens the screen with step 6 to do, and waits for its first full answer. */
+    async function openOnWorkflow() {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const stub = stubTransport({ [START]: successReply(startOf(PROJECT_ONLY)), [FULL]: successReply(PROJECT_ONLY) });
+      const router = await renderWithRouter("/", stub.transport);
+
+      await advance(20);
+      stub.replies[FULL] = successReply(setupStatus());
+
+      return { stub, router };
+    }
+
+    it("starts the close at a focus event of the window, and does not stop it when the reader leaves", async () => {
+      const { router } = await openOnWorkflow();
+
+      hasFocus.mockReturnValue(false);
+      await advance(5000);
+
+      expect(screen.getByText("6 of 6 done")).toBeTruthy();
+
+      await advance(2000);
+      expect(router.state.location.pathname).toBe("/setup");
+
+      said = [];
+      hasFocus.mockReturnValue(true);
+      window.dispatchEvent(new Event("focus"));
+      await advance(500);
+      hasFocus.mockReturnValue(false);
+      window.dispatchEvent(new Event("blur"));
+      await advance(400);
+      expect(router.state.location.pathname).toBe("/setup");
+
+      await advance(200);
+      await waitFor(() => {
+        expect(router.state.location.pathname).toBe("/tasks");
+      });
+      await waitFor(() => {
+        expect(words()).toEqual(["Setup is complete."]);
+      });
+    });
+
+    it("waits while the page is hidden, also at a focus event, and starts the close when the page shows", async () => {
+      const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      const { router } = await openOnWorkflow();
+
+      visibility.mockReturnValue("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+      // The focus event reads again, and the answer changes the last step to Done.
+      window.dispatchEvent(new Event("focus"));
+      await advance(20);
+
+      expect(screen.getByText("6 of 6 done")).toBeTruthy();
+
+      window.dispatchEvent(new Event("focus"));
+      await advance(2000);
+      expect(router.state.location.pathname).toBe("/setup");
+
+      visibility.mockReturnValue("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+      await advance(900);
+      expect(router.state.location.pathname).toBe("/setup");
+
+      await advance(200);
+      await waitFor(() => {
+        expect(router.state.location.pathname).toBe("/tasks");
+      });
+    });
+
+    it("moves one time, 1 second after the first of a focus event and a visibilitychange event", async () => {
+      const { router } = await openOnWorkflow();
+
+      hasFocus.mockReturnValue(false);
+      await advance(5000);
+
+      expect(screen.getByText("6 of 6 done")).toBeTruthy();
+
+      said = [];
+      hasFocus.mockReturnValue(true);
+      window.dispatchEvent(new Event("focus"));
+      await advance(500);
+      document.dispatchEvent(new Event("visibilitychange"));
+      await advance(400);
+      expect(router.state.location.pathname).toBe("/setup");
+
+      await advance(200);
+      await waitFor(() => {
+        expect(router.state.location.pathname).toBe("/tasks");
+      });
+      expect(router.history.length).toBe(1);
+      await waitFor(() => {
+        expect(words()).toEqual(["Setup is complete."]);
+      });
+    });
+
+    it("stops the wait when a later answer needs the setup again, and does not close when the reader comes back", async () => {
+      const { stub, router } = await openOnWorkflow();
+
+      hasFocus.mockReturnValue(false);
+      await advance(5000);
+
+      expect(screen.getByText("6 of 6 done")).toBeTruthy();
+
+      stub.replies[FULL] = successReply(PROJECT_ONLY);
+      await advance(5000);
+
+      expect(screen.getByText("5 of 6 done")).toBeTruthy();
+
+      said = [];
+      hasFocus.mockReturnValue(true);
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      await advance(2000);
+
+      expect(router.state.location.pathname).toBe("/setup");
+      expect(useUiStore.getState().arrivalWords).toBeNull();
+      expect(words()).not.toContain("Setup is complete.");
+    });
+  });
+
+  it("goes to the Tasks page 1 second after every step passes, with replace", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const stub = stubTransport({ [START]: successReply(startOf(PROJECT_ONLY)), [FULL]: successReply(PROJECT_ONLY) });
     const router = await renderWithRouter("/", stub.transport);
@@ -848,9 +1115,9 @@ describe("closing", () => {
     const router = await renderWithRouter("/", stub.transport);
 
     await act(async () => {
-      held.answer(successReply(setupStatus({ cli: "fail" }, { installed: "fail" })));
+      held.answer(successReply(setupStatus()));
     });
-    await screen.findByText("4 of 6 done");
+    await screen.findByText("6 of 6 done");
 
     expect(router.state.location.pathname).toBe("/setup");
     expect(document.querySelector("[aria-expanded=\"true\"]")).toBeNull();

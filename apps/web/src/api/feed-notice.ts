@@ -1,4 +1,5 @@
 import { TransportError } from "@tasma/protocol";
+import { attended } from "../lib/attended";
 import { failureWords, joinFailureWords } from "../lib/failure-words";
 import { noticeText, useNoticeStore, type Notice } from "../store/notices";
 
@@ -15,11 +16,6 @@ export type FeedNotice = {
   status: (failures: number) => void;
   stop: () => void;
 };
-
-/** The reader is in the window, so a spoken line reaches them. */
-function attended(): boolean {
-  return document.visibilityState === "visible" && document.hasFocus();
-}
 
 function feedWords(firstFailure: { error: unknown } | null): string[] {
   if (firstFailure === null) {

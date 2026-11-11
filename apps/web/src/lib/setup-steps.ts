@@ -99,11 +99,25 @@ function claudeOf(status: SetupStatus | undefined): AgentSetup | undefined {
   return status?.agents.find(({ agent }) => agent === "claude");
 }
 
-/** Whether a setup trigger fails. `unknown` and `not-run` never count, and neither does no status. */
+/**
+ * Whether a step of setup fails. Each step counts, but steps 1 to 3 cannot open
+ * the screen at start, because a start read gives `not-run` for them. `unknown`
+ * and `not-run` never count, and neither does no status.
+ */
 export function setupNeeded(status: SetupStatus | undefined, skillCheckStopped: boolean): boolean {
-  return status?.project === "fail"
-    || status?.workflow === "fail"
-    || (!skillCheckStopped && claudeOf(status)?.skill === "fail");
+  const claude = claudeOf(status);
+
+  return DEFINITIONS.some(({ id, check }) => (id !== "skill" || !skillCheckStopped) && check(status, claude) === "fail");
+}
+
+/** The open screen also waits for the first end of a full read, as steps 1 to 3 have no state before it. */
+export function screenNeeded({
+  status,
+  fullAnswered,
+  fullFailed,
+  skillCheckStopped,
+}: Pick<StepInput, "status" | "fullAnswered" | "fullFailed" | "skillCheckStopped">): boolean {
+  return setupNeeded(status, skillCheckStopped) || (!fullAnswered && !fullFailed);
 }
 
 /**

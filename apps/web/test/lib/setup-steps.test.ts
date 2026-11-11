@@ -10,6 +10,7 @@ import {
   hasFullFailure,
   isChangeToDone,
   newestSetup,
+  screenNeeded,
   setupNeeded,
   setupSteps,
   stepsNowDone,
@@ -28,29 +29,45 @@ function stepOf(steps: readonly SetupStep[], id: StepId): SetupStep {
 }
 
 describe("setupNeeded", () => {
+  const FAILING: Record<StepId, SetupStatus> = {
+    install: setupStatus({}, { installed: "fail" }),
+    login: setupStatus({}, { loggedIn: "fail" }),
+    command: setupStatus({ cli: "fail" }),
+    skill: setupStatus({}, { skill: "fail" }),
+    project: setupStatus({ project: "fail" }),
+    workflow: setupStatus({ workflow: "fail" }),
+  };
+  const steps = setupSteps(input()).map(({ id, name }) => [name, id] as const);
+
   it("is false with no status", () => {
     expect(setupNeeded(undefined, false)).toBe(false);
   });
 
-  it("is false when every trigger passes", () => {
+  it("is false when every step passes", () => {
     expect(setupNeeded(setupStatus(), false)).toBe(false);
   });
 
-  it.each(["project", "workflow"] as const)("is true when %s fails", (trigger) => {
-    expect(setupNeeded(setupStatus({ [trigger]: "fail" }), false)).toBe(true);
-  });
+  it.each(steps)("is true when the check of %s fails", (_name, id) => {
+    const status = FAILING[id];
 
-  it("is true when the skill of Claude Code fails", () => {
-    expect(setupNeeded(setupStatus({}, { skill: "fail" }), false)).toBe(true);
+    expect(stepOf(setupSteps(input({ status })), id).state).toBe("to-do");
+    expect(setupNeeded(status, false)).toBe(true);
   });
 
   it("does not count the skill after the check stopped", () => {
-    expect(setupNeeded(setupStatus({}, { skill: "fail" }), true)).toBe(false);
+    expect(setupNeeded(FAILING.skill, true)).toBe(false);
     expect(setupNeeded(setupStatus({ project: "fail" }, { skill: "fail" }), true)).toBe(true);
   });
 
+  it.each(steps.filter(([, id]) => id !== "skill"))("counts a failed check of %s after the check of the skill stopped", (_name, id) => {
+    expect(setupNeeded(FAILING[id], true)).toBe(true);
+  });
+
   it.each(["unknown", "not-run"] as const)("does not count %s", (check) => {
-    expect(setupNeeded(setupStatus({ project: check, workflow: check }, { skill: check }), false)).toBe(false);
+    const checks = { project: check, workflow: check, cli: check };
+    const agent = { installed: check, loggedIn: check, skill: check };
+
+    expect(setupNeeded(setupStatus(checks, agent), false)).toBe(false);
   });
 
   it("counts only the entry of Claude Code", () => {
@@ -58,10 +75,33 @@ describe("setupNeeded", () => {
 
     expect(setupNeeded(setupStatus({ agents: [other] }), false)).toBe(false);
     expect(setupNeeded(setupStatus({ agents: [other, ...setupStatus({}, { skill: "fail" }).agents] }), false)).toBe(true);
+    expect(setupNeeded(setupStatus({ agents: [other, ...setupStatus({}, { installed: "fail" }).agents] }), false)).toBe(true);
+    expect(setupNeeded(setupStatus({ agents: [other, ...setupStatus({}, { loggedIn: "fail" }).agents] }), false)).toBe(true);
+  });
+});
+
+describe("screenNeeded", () => {
+  const noFullEnd = { fullAnswered: false, fullFailed: false, skillCheckStopped: false };
+
+  it("is true before the first full answer and the first full failure, also when no check fails", () => {
+    expect(screenNeeded({ ...noFullEnd, status: startOf(setupStatus()) })).toBe(true);
+    expect(screenNeeded({ ...noFullEnd, status: undefined })).toBe(true);
   });
 
-  it("does not count the steps that are not triggers", () => {
-    expect(setupNeeded(setupStatus({ cli: "fail" }, { installed: "fail", loggedIn: "fail" }), false)).toBe(false);
+  it.each([
+    ["a full answer", { fullAnswered: true }],
+    ["a full failure", { fullFailed: true }],
+  ])("is false after %s when no check fails", (_end, end) => {
+    expect(screenNeeded({ ...noFullEnd, ...end, status: setupStatus() })).toBe(false);
+  });
+
+  it("is true after a full answer when a check fails", () => {
+    expect(screenNeeded({ ...noFullEnd, fullAnswered: true, status: setupStatus({}, { loggedIn: "fail" }) })).toBe(true);
+    expect(screenNeeded({ ...noFullEnd, fullFailed: true, status: setupStatus({ project: "fail" }) })).toBe(true);
+  });
+
+  it("does not count the skill after the check stopped", () => {
+    expect(screenNeeded({ ...noFullEnd, fullAnswered: true, skillCheckStopped: true, status: setupStatus({}, { skill: "fail" }) })).toBe(false);
   });
 });
 
