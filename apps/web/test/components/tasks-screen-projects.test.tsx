@@ -45,11 +45,12 @@ const MERGED = ["Backlog", "To Do", "Review", "In Progress", "Done"];
 
 const INVALID = refusalReply(422, { kind: "store", code: "config-invalid", message: "statuses is empty" });
 
-/** The titles of the notes and the warnings lines under the heading, in the order of the page. */
-function blocksUnderHeading(): (string | null | undefined)[] {
-  const board = screen.getByRole("heading", { level: 1 }).parentElement!.parentElement!;
+/** The titles of the notes and the warnings lines under the top row, in the order of the page. */
+function blocksUnderTopRow(): (string | null | undefined)[] {
+  // The box of the notes is the second child of the wrapper after the h1, the top row the first.
+  const notes = screen.getByRole("heading", { level: 1 }).nextElementSibling!.children[1]!;
 
-  return [...board.children]
+  return [...notes.children]
     .map((block) => (block.getAttribute("role") === "note"
       ? block.querySelector("h2, p")
       : block.querySelector(":scope > div > h2"))?.textContent)
@@ -789,7 +790,7 @@ describe("a project that fails while the board is open", () => {
     });
     expect(columnNames()).toEqual([]);
     expect(screen.queryByText("No tasks in these projects yet.")).toBeNull();
-    expect(blocksUnderHeading()).toEqual(["DELTA did not load", "SAGA did not load"]);
+    expect(blocksUnderTopRow()).toEqual(["DELTA did not load", "SAGA did not load"]);
 
     stub.replies["/projects/DELTA"] = project("DELTA", { config: OTHER_CONFIG });
     await sendAndWaitPastRetry(feed, [projectEvent("DELTA")]);
@@ -940,7 +941,7 @@ describe("a project that fails while the board is open", () => {
       "/projects/ECHO/tasks": listing([taggedEntry("ECHO", 21)]),
     });
     const { feed } = await openWithFeed("/tasks?projects=DELTA,ECHO", stub);
-    expect(blocksUnderHeading()).toEqual(["ECHO is not a project"]);
+    expect(blocksUnderTopRow()).toEqual(["ECHO is not a project"]);
 
     stub.replies["/projects"] = successReply([DELTA, { tag: "ECHO" }, SAGA]);
     await sendAndWaitPastRetry(feed, [projectEvent("ECHO", "created")]);
@@ -1199,7 +1200,7 @@ describe("the texts of a board of several projects", () => {
     });
     await renderWithRouter("/tasks?projects=DELTA,SAGA", transport);
 
-    expect(blocksUnderHeading()).toEqual([
+    expect(blocksUnderTopRow()).toEqual([
       "The index of DELTA is not following the disk",
       "The index of SAGA is not following the disk",
     ]);
@@ -1216,7 +1217,7 @@ describe("the texts of a board of several projects", () => {
     });
     await renderWithRouter("/tasks?projects=SAGA,ECHO,DELTA,NOPE", transport);
 
-    expect(blocksUnderHeading()).toEqual([
+    expect(blocksUnderTopRow()).toEqual([
       "NOPE is not a project",
       "SAGA did not load",
       "The index of DELTA is not following the disk",

@@ -139,7 +139,24 @@ it("shows the daemon's warnings about the projects under the heading", async () 
   const line = within(screen.getByRole("main")).getByRole("heading", { level: 2 });
 
   expect(line.textContent).toBe("1 warning about the projects");
-  expect(screen.getByRole("heading", { level: 1 }).nextElementSibling).toBe(line.parentElement!.parentElement);
+  // The h1 is alone in the top row.
+  expect(screen.getByRole("heading", { level: 1 }).parentElement!.parentElement!.nextElementSibling)
+    .toBe(line.parentElement!.parentElement);
+});
+
+it("holds the title in the top row as the one h1, and labels the list with it", async () => {
+  await renderWithRouter("/projects", listing());
+
+  const main = screen.getByRole("main");
+  const heading = within(main).getByRole("heading", { level: 1, name: "Projects" });
+  const row = heading.parentElement!;
+
+  expect(within(main).getAllByRole("heading", { level: 1 })).toEqual([heading]);
+  expect(row.children).toHaveLength(1);
+  expect(row.classList.contains("min-h-top-bar")).toBe(true);
+  expect(row.parentElement!.classList.contains("border-b")).toBe(true);
+  expect(row.parentElement).toBe(main.firstElementChild);
+  expect(screen.getByRole("list", { name: "Projects" })).toBeTruthy();
 });
 
 it("shows no warnings line where the daemon reported nothing", async () => {

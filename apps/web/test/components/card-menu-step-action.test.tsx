@@ -575,7 +575,7 @@ describe("Restart", () => {
     expect(daemon.restarts()).toBe(1);
   });
 
-  it("returns focus to the h1 when the card left the board during the dialog", async () => {
+  it("returns focus to the heading of the card's column when the card left the board during the dialog", async () => {
     const user = userEvent.setup();
     const daemon = stub([chat(2)]);
     await openBoard(daemon);
@@ -589,7 +589,7 @@ describe("Restart", () => {
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
     await waitFor(() => {
-      expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1 }));
+      expect(document.activeElement).toBe(screen.getByRole("heading", { level: 2, name: "In Progress" }));
     });
   });
 });

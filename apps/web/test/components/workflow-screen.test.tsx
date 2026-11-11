@@ -67,6 +67,18 @@ it("links back to the list", async () => {
   expect(back.getAttribute("href")).toBe("/workflows");
 });
 
+it("holds the back link in the top row, and the h1 below it", async () => {
+  await renderWorkflow(successReply(ORBIT));
+
+  const main = screen.getByRole("main");
+  const row = within(main).getByRole("link", { name: "Workflows" }).parentElement!;
+
+  expect(row.classList.contains("min-h-top-bar")).toBe(true);
+  expect(row.parentElement).toBe(main.firstElementChild);
+  expect(row.contains(screen.getByRole("heading", { level: 1 }))).toBe(false);
+  expect(row.parentElement!.nextElementSibling!.contains(screen.getByRole("heading", { level: 1 }))).toBe(true);
+});
+
 it("heads the page with the title, marks the name beside it and shows the file", async () => {
   await renderWorkflow(successReply(ORBIT));
 

@@ -166,6 +166,19 @@ it("opens the main content with the heading Workflows and names the document", a
   expect(document.title).toBe("Workflows · Tasma");
 });
 
+it("holds the title in the top row, and labels the list with it", async () => {
+  await renderWithRouter("/workflows", daemon().transport);
+
+  const main = screen.getByRole("main");
+  const row = screen.getByRole("heading", { level: 1, name: "Workflows" }).parentElement!;
+
+  expect(row.children).toHaveLength(1);
+  expect(row.classList.contains("min-h-top-bar")).toBe(true);
+  expect(row.parentElement!.classList.contains("border-b")).toBe(true);
+  expect(row.parentElement).toBe(main.firstElementChild);
+  expect(screen.getByRole("list", { name: "Workflows" })).toBeTruthy();
+});
+
 it("announces the warnings a refetch turns up", async () => {
   const { transport, replies } = daemon();
   const router = await renderWithRouter("/workflows", transport);

@@ -42,7 +42,7 @@ type FilterPopupProps = {
 export function FilterPopup({ labelId, placeholder, empty, children }: FilterPopupProps): ReactNode {
   return (
     <Combobox.Portal>
-      <Combobox.Positioner align="end" sideOffset={4} className={POSITIONER_CLASS}>
+      <Combobox.Positioner align="start" sideOffset={4} className={POSITIONER_CLASS}>
         <Combobox.Popup aria-labelledby={labelId} className={`w-62 ${POPUP_CLASS}`}>
           <div className="mb-1.5 flex h-8 items-center gap-2 rounded-control border border-line bg-bg px-2 text-sm">
             <MagnifyingGlassIcon size={14} aria-hidden="true" className="text-dim" />

@@ -71,6 +71,7 @@ import { RestartDialog } from "./restart-dialog";
 import { ScreenHeading } from "./screen-heading";
 import { SearchField } from "./search-field";
 import type { CardFocus } from "./task-card";
+import { TopRow, TopRowTitle } from "./top-row";
 
 // The route is reached by id rather than imported: the tree in routes.tsx names
 // this component, so importing the route back would close a cycle.
@@ -78,9 +79,7 @@ const route = getRouteApi("/tasks");
 
 const { label: TITLE } = NAVIGATION_BY_PATH["/tasks"];
 
-const EMPTY_CLASS = "mt-2 max-w-2xl text-base text-subtle";
-
-const HEADING_LINE_CLASS = "flex min-h-8 flex-wrap items-center gap-x-4 gap-y-3";
+const EMPTY_CLASS = "mt-6 max-w-2xl text-base text-subtle";
 
 const SEARCH_FAILED = "The search failed. The board shows all tasks.";
 
@@ -195,8 +194,12 @@ function spotColumn(keys: readonly string[], spot: ColumnSpot): number | null {
  */
 type DeleteAsk = { id: string; title: string; column: ColumnSpot; open: boolean };
 
-/** The restart the dialog asks about, kept after the close so the closing dialog keeps its words. */
-type RestartAsk = { tag: string; id: string; step: string; chat: number; open: boolean };
+/**
+ * The restart the dialog asks about, kept after the close so the closing dialog
+ * keeps its words. `column` is where the card stood when the dialog opened, for
+ * a card a read removes while it is open.
+ */
+type RestartAsk = { tag: string; id: string; step: string; chat: number; column: ColumnSpot; open: boolean };
 
 type BoardRestartProps = {
   ask: RestartAsk;
@@ -282,7 +285,6 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
   const deleteFocusRef = useRef<FinalFocus>(null);
   const [restartAsk, setRestartAsk] = useState<RestartAsk | null>(null);
   const restartFocusRef = useRef<FinalFocus>(null);
-  const headingRef = useRef<HTMLHeadingElement>(null);
   const [focusCard, setFocusCard] = useState<CardFocus | null>(null);
   const [focusColumn, setFocusColumn] = useState<number | null>(null);
   // A count, so each request moves the focus once and none has to be cleared.
@@ -535,12 +537,15 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
     sendDelete({ id });
   }
 
-  /** Focus goes back to the menu button of the card, or to the h1 when the board no longer shows the card. */
+  /**
+   * Focus goes back to the menu button of the card, or to the heading of its
+   * column when the board no longer shows the card.
+   */
   function cancelRestart(ask: RestartAsk): void {
+    restartFocusRef.current = "keep";
     if (cardPlace(columns, ask.id) === null) {
-      restartFocusRef.current = headingRef.current;
+      focusSpot(ask.column);
     } else {
-      restartFocusRef.current = "keep";
       setFocusCard({ id: ask.id, part: "menu" });
     }
     setRestartAsk({ ...ask, open: false });
@@ -572,27 +577,7 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
 
   return (
     <div ref={rootRef} className="contents">
-      <div className={HEADING_LINE_CLASS}>
-        <ScreenHeading ref={headingRef} tabIndex={-1}>{TITLE}</ScreenHeading>
-        <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-x-5 gap-y-3">
-          <ProjectSelect projects={projects} board={board} labels={labels} q={q} />
-          <SearchField board={board} q={q} busy={busy} describedBy={failed ? failureId : undefined} />
-          <LabelFilter entries={listed} selected={selected} subject={subject} />
-          {shown.length > 0 && (
-            <button
-              ref={newTaskRef}
-              type="button"
-              onClick={(event) => {
-                startCreate(null, event.currentTarget);
-              }}
-              className={`ml-1 ${BUTTON_CLASS}`}
-            >
-              <PlusIcon size={14} aria-hidden="true" />
-              New task
-            </button>
-          )}
-        </div>
-      </div>
+      <ScreenHeading className="sr-only">{TITLE}</ScreenHeading>
 
       {/* Rendered whether or not they say anything: a live region inserted
           together with its content announces nothing. Two regions, so a change
@@ -617,91 +602,115 @@ function Board({ tags, refused, missing, all, several, board, labels, q }: Board
         </>,
         document.body,
       )}
-      {/* Subtle, not signal: a failed search needs no human. */}
-      {failed && <p id={failureId} className="mt-3 text-sm text-subtle">{SEARCH_FAILED}</p>}
-      {failedProjects.map((failedProject, index) => (
-        <ProjectFailureNote
-          key={failedProject.tag}
-          tag={failedProject.tag}
-          missing={failedProject.missing}
-          className={index === 0 ? "mt-6" : "mt-3"}
-        />
-      ))}
-      {unlive.map((unliveTag, index) => (
-        <LiveNotice
-          key={unliveTag}
-          project={unliveTag}
-          className={`${failedProjects.length + index === 0 ? "mt-6" : "mt-3"} max-w-2xl`}
-        />
-      ))}
-      {reports.map((report, index) => (
-        // The board stays mounted when the address changes, so the board in
-        // the key starts the line folded for the next board.
-        <Diagnostics
-          key={`${board}:${report.tag}`}
-          items={report.items}
-          excluded={report.excluded}
-          subject={report.tag}
-          className={failedProjects.length + unlive.length + index === 0 ? "mt-4" : "mt-3"}
-        />
-      ))}
-      {/* With no project shown, the notes say why the board is empty. */}
-      {listed.length === 0 && shown.length > 0 && <p className={EMPTY_CLASS}>{`No tasks in ${projectsName} yet.`}</p>}
-      {listed.length > 0 && filtered && matching === 0 && (
-        <p className={EMPTY_CLASS}>{emptyWords(projectsName, labelled, searchApplied)}</p>
-      )}
+      {/* As wide as the columns, so the top row can stay in place during a sideways scroll. */}
+      <div className="-mx-6 -mt-6 w-max min-w-[calc(100%+--spacing(12))] sm:-mx-10 sm:-mt-10 sm:min-w-[calc(100%+--spacing(20))]">
+        <TopRow wide>
+          <ProjectSelect projects={projects} board={board} labels={labels} q={q} />
+          <SearchField board={board} q={q} busy={busy} describedBy={failed ? failureId : undefined} />
+          <LabelFilter entries={listed} selected={selected} subject={subject} />
+          {shown.length > 0 && (
+            <button
+              ref={newTaskRef}
+              type="button"
+              onClick={(event) => {
+                startCreate(null, event.currentTarget);
+              }}
+              className={`ml-auto ${BUTTON_CLASS}`}
+            >
+              <PlusIcon size={14} aria-hidden="true" />
+              New task
+            </button>
+          )}
+        </TopRow>
+        <div className="w-[min(100%,calc(100vw-var(--sidebar-width)))] px-6 [contain:inline-size] sm:px-10">
+          {/* Subtle, not signal: a failed search needs no human. */}
+          {failed && <p id={failureId} className="mt-3 text-sm text-subtle">{SEARCH_FAILED}</p>}
+          {failedProjects.map((failedProject, index) => (
+            <ProjectFailureNote
+              key={failedProject.tag}
+              tag={failedProject.tag}
+              missing={failedProject.missing}
+              className={index === 0 ? "mt-6" : "mt-3"}
+            />
+          ))}
+          {unlive.map((unliveTag, index) => (
+            <LiveNotice
+              key={unliveTag}
+              project={unliveTag}
+              className={`${failedProjects.length + index === 0 ? "mt-6" : "mt-3"} max-w-2xl`}
+            />
+          ))}
+          {reports.map((report, index) => (
+            // The board stays mounted when the address changes, so the board in
+            // the key starts the line folded for the next board.
+            <Diagnostics
+              key={`${board}:${report.tag}`}
+              items={report.items}
+              excluded={report.excluded}
+              subject={report.tag}
+              className={failedProjects.length + unlive.length + index === 0 ? "mt-4" : "mt-3"}
+            />
+          ))}
+          {/* With no project shown, the notes say why the board is empty. */}
+          {listed.length === 0 && shown.length > 0 && (
+            <p className={EMPTY_CLASS}>{`No tasks in ${projectsName} yet.`}</p>
+          )}
+          {listed.length > 0 && filtered && matching === 0 && (
+            <p className={EMPTY_CLASS}>{emptyWords(projectsName, labelled, searchApplied)}</p>
+          )}
+        </div>
 
-      {/* The right padding of main is not part of the page's sideways overflow, so
-          the row extends into it and the last column carries the same padding. */}
-      <div className="mt-6 -mr-6 flex items-start gap-6 *:last:box-content *:last:pr-6 sm:-mr-10 sm:*:last:pr-10">
-        {columns.map((column, index) => (
-          // Keyed by the column key, so a project that joins or leaves the board
-          // of all projects inserts or removes only its own columns. The board
-          // value resets a column's state for the next board.
-          <BoardColumn
-            key={`${board}:${keys[index]!}`}
-            board={board}
-            columnKey={keys[index]!}
-            place={index}
-            column={column}
-            filtered={filtered}
-            workflows={workflows}
-            configs={configs}
-            pendingIds={pendingIds}
-            movedIds={movedIds}
-            onMove={move}
-            onMoveBy={(id, by) => {
-              moveBy(index, id, by);
-            }}
-            onOpen={recordReturn}
-            onDelete={askDelete}
-            onRestart={(id, step, chat) => {
-              setRestartAsk({ tag: tagOf(id), id, step, chat, open: true });
-            }}
-            focusCard={focusCard}
-            onCardFocused={() => {
-              setFocusCard(null);
-            }}
-            onCardFocusLost={(id) => {
-              setLostFocus({ id, column: { key: keys[index]!, index } });
-            }}
-            onFocusLost={() => {
-              setLostFocus({ id: null, column: { key: keys[index]!, index } });
-            }}
-            focusHeading={focusColumn === index}
-            onHeaderFocused={() => {
-              setFocusColumn(null);
-            }}
-            onCreate={(_status, opener) => {
-              startCreate(column.byTag, opener);
-            }}
-            draggingId={drag?.taskId ?? null}
-            slot={drag?.place?.column === index
-              ? { index: drag.place.index, height: drag.box.height }
-              : undefined}
-            onPress={press}
-          />
-        ))}
+        {/* The last column carries the right padding, so the card drag reads the gutter as a part of it. */}
+        <div className="mt-4 flex items-start gap-6 pl-6 *:last:box-content *:last:pr-6 sm:pl-10 sm:*:last:pr-10">
+          {columns.map((column, index) => (
+            // Keyed by the column key, so a project that joins or leaves the board
+            // of all projects inserts or removes only its own columns. The board
+            // value resets a column's state for the next board.
+            <BoardColumn
+              key={`${board}:${keys[index]!}`}
+              board={board}
+              columnKey={keys[index]!}
+              place={index}
+              column={column}
+              filtered={filtered}
+              workflows={workflows}
+              configs={configs}
+              pendingIds={pendingIds}
+              movedIds={movedIds}
+              onMove={move}
+              onMoveBy={(id, by) => {
+                moveBy(index, id, by);
+              }}
+              onOpen={recordReturn}
+              onDelete={askDelete}
+              onRestart={(id, step, chat) => {
+                setRestartAsk({ tag: tagOf(id), id, step, chat, column: { key: keys[index]!, index }, open: true });
+              }}
+              focusCard={focusCard}
+              onCardFocused={() => {
+                setFocusCard(null);
+              }}
+              onCardFocusLost={(id) => {
+                setLostFocus({ id, column: { key: keys[index]!, index } });
+              }}
+              onFocusLost={() => {
+                setLostFocus({ id: null, column: { key: keys[index]!, index } });
+              }}
+              focusHeading={focusColumn === index}
+              onHeaderFocused={() => {
+                setFocusColumn(null);
+              }}
+              onCreate={(_status, opener) => {
+                startCreate(column.byTag, opener);
+              }}
+              draggingId={drag?.taskId ?? null}
+              slot={drag?.place?.column === index
+                ? { index: drag.place.index, height: drag.box.height }
+                : undefined}
+              onPress={press}
+            />
+          ))}
+        </div>
       </div>
       {drag !== null && origin !== null && (
         <DraggedCard
@@ -796,9 +805,9 @@ function EmptyTree(): ReactNode {
 
   return (
     <>
-      <div className={HEADING_LINE_CLASS}>
-        <ScreenHeading>{TITLE}</ScreenHeading>
-      </div>
+      <TopRow>
+        <TopRowTitle>{TITLE}</TopRowTitle>
+      </TopRow>
       <p className={EMPTY_CLASS}>
         No projects yet. The daemon&apos;s tree holds no project directory. Add one, and its tasks are shown here.
         {" "}

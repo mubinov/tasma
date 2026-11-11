@@ -1,4 +1,4 @@
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useUiStore } from "../../src/store/ui";
@@ -13,6 +13,19 @@ afterEach(() => {
   cleanup();
   // renderWithRouter stubs scrollTo, which jsdom does not implement.
   vi.unstubAllGlobals();
+});
+
+it("holds the title in the top row as the one h1", async () => {
+  await renderWithRouter("/settings");
+
+  const main = screen.getByRole("main");
+  const heading = within(main).getByRole("heading", { level: 1, name: "Settings" });
+  const row = heading.parentElement!;
+
+  expect(within(main).getAllByRole("heading", { level: 1 })).toEqual([heading]);
+  expect(row.children).toHaveLength(1);
+  expect(row.classList.contains("min-h-top-bar")).toBe(true);
+  expect(row.parentElement).toBe(main.firstElementChild);
 });
 
 // A label carried by aria-label alone is a group label only screen-reader users

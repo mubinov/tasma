@@ -14,9 +14,10 @@ const LIST_CLASS = "flex flex-col gap-1 px-3 py-1";
 const SIDEBAR_ID = "sidebar";
 
 // Never narrower than the window buttons need. The width itself takes the maximum, so the fixed box inherits it.
-const RAIL_WIDTH_CLASS = "w-[max(--spacing(16),var(--title-controls))] [html:has(&)]:scroll-pl-[max(--spacing(16),var(--title-controls))]";
+// `--sidebar-width` is the end width: it does not follow the collapse transition.
+const RAIL_WIDTH_CLASS = "w-[max(--spacing(16),var(--title-controls))] [html:has(&)]:scroll-pl-[max(--spacing(16),var(--title-controls))] [html:has(&)]:[--sidebar-width:max(--spacing(16),var(--title-controls))]";
 
-const FULL_WIDTH_CLASS = "sm:w-[max(--spacing(60),var(--title-controls))] sm:[html:has(&)]:scroll-pl-[max(--spacing(60),var(--title-controls))]";
+const FULL_WIDTH_CLASS = "sm:w-[max(--spacing(60),var(--title-controls))] sm:[html:has(&)]:scroll-pl-[max(--spacing(60),var(--title-controls))] sm:[html:has(&)]:[--sidebar-width:max(--spacing(60),var(--title-controls))]";
 
 // One rounded border draws the line below the band, the curve and the line beside the sidebar, because WebKit rounds a
 // border, a shadow and a gradient to different widths at a page zoom. The page scrolls on `html`, which would carry a

@@ -64,11 +64,16 @@ const STICKY_IN_A_REGION = new Set([
   "components/virtual-list.tsx: \"sticky top-2 z-(--layer-scroll-to-top) flex h-0 items-start justify-center\"",
 ]);
 
+/** Boxes that stick to the left of the page and never to the top. */
+const STICKY_SIDEWAYS = new Set([
+  "components/top-row.tsx: \"sticky left-(--sidebar-width) w-[min(100%,calc(100vw-var(--sidebar-width)))]\"",
+]);
+
 it("names the band in each class string that reaches the top of the window", () => {
   const files = tasmaSourceFiles();
   const offenders = files.flatMap((file) =>
     withoutBand(readFileSync(file, "utf8"), file).map((literal) => `${relative(SRC, file)}: ${literal}`))
-    .filter((offender) => !STICKY_IN_A_REGION.has(offender));
+    .filter((offender) => !STICKY_IN_A_REGION.has(offender) && !STICKY_SIDEWAYS.has(offender));
 
   expect(files.length).toBeGreaterThan(0);
   expect(offenders).toEqual([]);

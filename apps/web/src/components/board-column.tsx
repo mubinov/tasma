@@ -300,7 +300,7 @@ export function BoardColumn({
       ref={sectionRef}
       {...{ [DRAG_ATTRIBUTE.column]: place }}
       aria-labelledby={headingId}
-      className="group/column min-w-60 flex-1"
+      className="group/column min-w-60 flex-1 [contain:inline-size]"
     >
       {/* The page's scroll padding keeps a focus scroll's target and its ring clear of the header. */}
       <div className="sticky top-(--title-band) z-(--layer-column-header) -mt-3 flex items-baseline gap-2 bg-bg py-3 [html:has(&)]:scroll-pt-[calc(var(--title-band)+--spacing(13))]">

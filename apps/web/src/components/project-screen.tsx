@@ -13,6 +13,7 @@ import { LiveNotice } from "./live-notice";
 import { ScreenHeading } from "./screen-heading";
 import { SectionHeading } from "./section-heading";
 import { Tag } from "./tag";
+import { TopRow } from "./top-row";
 
 // The route is reached by id rather than imported: the tree in routes.tsx names
 // this component, so importing the route back would close a cycle.
@@ -123,52 +124,56 @@ export function ProjectScreen(): ReactNode {
   useDocumentTitle(title);
 
   return (
-    <div className="w-full max-w-2xl">
-      {/* A link, not a heading: the page's one h1 opens the content. */}
-      <Link to="/projects" className="inline-flex items-center gap-1.5 text-sm text-dim hover:text-text">
-        <ArrowLeftIcon size={16} aria-hidden="true" />
-        Projects
-      </Link>
-      <div className="mt-3 flex flex-wrap items-center gap-3">
-        <ScreenHeading>{title}</ScreenHeading>
-        {/* Dropped where the heading is already the tag, so it is not shown twice. */}
-        {name !== undefined && <Tag>{tag}</Tag>}
-      </div>
-      {path !== undefined && <p className="mt-2 font-mono text-sm text-subtle wrap-anywhere">{path}</p>}
+    <>
+      <TopRow>
+        {/* A link, not a heading: the page's one h1 opens the content. */}
+        <Link to="/projects" className="inline-flex min-h-6 items-center gap-1.5 text-sm text-dim hover:text-text">
+          <ArrowLeftIcon size={16} aria-hidden="true" />
+          Projects
+        </Link>
+      </TopRow>
+      <div className="w-full max-w-2xl pt-6">
+        <div className="flex flex-wrap items-center gap-3">
+          <ScreenHeading>{title}</ScreenHeading>
+          {/* Dropped where the heading is already the tag, so it is not shown twice. */}
+          {name !== undefined && <Tag>{tag}</Tag>}
+        </div>
+        {path !== undefined && <p className="mt-2 font-mono text-sm text-subtle wrap-anywhere">{path}</p>}
 
-      {/*
-       * The region stands whether or not it says anything: a refetch on window
-       * focus can turn the notice or a warning up while the page stays put, and
-       * a live region inserted together with its content announces nothing.
-       */}
-      <div role="status" className="sr-only">
-        {stateSummary(live, diagnostics.length)}
-      </div>
-      {!live && <LiveNotice className="mt-7" />}
-      <Diagnostics key={tag} items={diagnostics} subject="this project" className={live ? "mt-7" : "mt-3"} />
+        {/*
+         * The region stands whether or not it says anything: a refetch on window
+         * focus can turn the notice or a warning up while the page stays put, and
+         * a live region inserted together with its content announces nothing.
+         */}
+        <div role="status" className="sr-only">
+          {stateSummary(live, diagnostics.length)}
+        </div>
+        {!live && <LiveNotice className="mt-7" />}
+        <Diagnostics key={tag} items={diagnostics} subject="this project" className={live ? "mt-7" : "mt-3"} />
 
-      {/* The list carries no name of its own: a `dl` is exposed as a generic
-          element, and ARIA prohibits naming one. The heading says what it is. */}
-      <SectionHeading>Configuration</SectionHeading>
-      <dl className="mt-2 divide-y divide-line rounded-card border border-line bg-surface">
-        <ConfigurationRow term="Statuses">
-          <StatusChips config={config} />
-        </ConfigurationRow>
-        <ConfigurationRow term="Priorities">
-          <ValueChips values={config.priorities} />
-        </ConfigurationRow>
-        <ConfigurationRow term="Workflows">
-          <ValueChips values={config.workflows} />
-        </ConfigurationRow>
-        <ConfigurationRow term="Project instructions">
-          <InstructionLines paths={config.instructions} />
-        </ConfigurationRow>
-      </dl>
-      <AgentHint
-        className="mt-7"
-        sentence="If you want to change this project, ask your agent, naming it and the change you want. For example:"
-        example={`Use the tasma skill. In the "${tag}" project, add the status "Review" before "${lastStatus}".`}
-      />
-    </div>
+        {/* The list carries no name of its own: a `dl` is exposed as a generic
+            element, and ARIA prohibits naming one. The heading says what it is. */}
+        <SectionHeading>Configuration</SectionHeading>
+        <dl className="mt-2 divide-y divide-line rounded-card border border-line bg-surface">
+          <ConfigurationRow term="Statuses">
+            <StatusChips config={config} />
+          </ConfigurationRow>
+          <ConfigurationRow term="Priorities">
+            <ValueChips values={config.priorities} />
+          </ConfigurationRow>
+          <ConfigurationRow term="Workflows">
+            <ValueChips values={config.workflows} />
+          </ConfigurationRow>
+          <ConfigurationRow term="Project instructions">
+            <InstructionLines paths={config.instructions} />
+          </ConfigurationRow>
+        </dl>
+        <AgentHint
+          className="mt-7"
+          sentence="If you want to change this project, ask your agent, naming it and the change you want. For example:"
+          example={`Use the tasma skill. In the "${tag}" project, add the status "Review" before "${lastStatus}".`}
+        />
+      </div>
+    </>
   );
 }

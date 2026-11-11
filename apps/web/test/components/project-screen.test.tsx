@@ -62,6 +62,20 @@ it("links back to the list", async () => {
   expect(back.getAttribute("href")).toBe("/projects");
 });
 
+it("holds the back link in the top row, and the h1 below it", async () => {
+  await renderProject({});
+
+  const main = screen.getByRole("main");
+  const back = within(main).getByRole("link", { name: "Projects" });
+  const row = back.parentElement!;
+
+  expect(row.classList.contains("min-h-top-bar")).toBe(true);
+  expect(row.parentElement).toBe(main.firstElementChild);
+  expect(back.classList.contains("min-h-6")).toBe(true);
+  expect(row.contains(screen.getByRole("heading", { level: 1 }))).toBe(false);
+  expect(row.parentElement!.nextElementSibling!.contains(screen.getByRole("heading", { level: 1 }))).toBe(true);
+});
+
 it("heads the page with the name and marks the tag beside it", async () => {
   await renderProject({});
 

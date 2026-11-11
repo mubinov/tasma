@@ -131,6 +131,14 @@ it("sets the page's top scroll padding past the sticky header", async () => {
   expect(header.classList.contains("[html:has(&)]:scroll-pt-[calc(var(--title-band)+--spacing(13))]")).toBe(true);
 });
 
+it("keeps the width of a column from following the length of its titles", async () => {
+  await renderColumn({ matching: entries(1), total: 1 });
+
+  const section = screen.getByRole("region", { name: "In Progress" });
+  expect(section.classList.contains("[contain:inline-size]")).toBe(true);
+  expect(section.classList.contains("min-w-60")).toBe(true);
+});
+
 it("counts the matching tasks of all while labels are selected", async () => {
   await renderColumn({ matching: entries(2), total: 5 }, { filtered: true });
 

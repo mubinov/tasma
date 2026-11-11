@@ -222,6 +222,22 @@ it("sets the page's scroll padding to the sidebar width", async () => {
   expect(header.classList.contains("sm:[html:has(&)]:scroll-pl-[max(--spacing(60),var(--title-controls))]")).toBe(false);
 });
 
+it("sets the sidebar width on the page as a variable", async () => {
+  const user = userEvent.setup();
+  await renderWithRouter();
+
+  const header = screen.getByRole("banner");
+  const rail = "[html:has(&)]:[--sidebar-width:max(--spacing(16),var(--title-controls))]";
+  const full = "sm:[html:has(&)]:[--sidebar-width:max(--spacing(60),var(--title-controls))]";
+  expect(header.classList.contains(rail)).toBe(true);
+  expect(header.classList.contains(full)).toBe(true);
+
+  await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+
+  expect(header.classList.contains(rail)).toBe(true);
+  expect(header.classList.contains(full)).toBe(false);
+});
+
 // A disclosure, not a toggle: it expands and collapses a region. The button
 // carries no visible label in either state, so its name has to change with it,
 // and aria-controls is what says which region it means.

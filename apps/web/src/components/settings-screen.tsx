@@ -5,7 +5,7 @@ import { useDocumentTitle } from "../lib/document-title";
 import { CheckIcon, MonitorIcon, MoonIcon, SunIcon, type IconComponent } from "../lib/icons";
 import { NAVIGATION_BY_PATH } from "../navigation";
 import { THEME_PREFERENCE_LABELS, THEME_PREFERENCES, useUiStore, type ThemePreference } from "../store/ui";
-import { ScreenHeading } from "./screen-heading";
+import { TopRow, TopRowTitle } from "./top-row";
 
 const THEME_PREFERENCE_ICONS: Record<ThemePreference, IconComponent> = {
   system: MonitorIcon,
@@ -26,9 +26,11 @@ export function SettingsScreen(): ReactNode {
 
   return (
     <>
-      <ScreenHeading>{title}</ScreenHeading>
+      <TopRow>
+        <TopRowTitle>{title}</TopRowTitle>
+      </TopRow>
 
-      <span id={themeLabelId} className="mt-7 block font-chrome text-sm font-medium">
+      <span id={themeLabelId} className="mt-6 block font-chrome text-sm font-medium">
         Theme
       </span>
 

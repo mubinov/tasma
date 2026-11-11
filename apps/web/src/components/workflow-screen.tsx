@@ -12,6 +12,7 @@ import { InstructionLines } from "./instruction-lines";
 import { ScreenHeading } from "./screen-heading";
 import { SectionHeading } from "./section-heading";
 import { Tag } from "./tag";
+import { TopRow } from "./top-row";
 
 // The route is reached by id rather than imported: the tree in routes.tsx names
 // this component, so importing the route back would close a cycle.
@@ -115,25 +116,29 @@ export function WorkflowScreen(): ReactNode {
   useDocumentTitle(title);
 
   return (
-    <div className="w-full max-w-2xl">
-      {/* A link, not a heading: the page's one h1 opens the content. */}
-      <Link to="/workflows" className="inline-flex min-h-6 items-center gap-1.5 text-sm text-dim hover:text-text">
-        <ArrowLeftIcon size={16} aria-hidden="true" />
-        Workflows
-      </Link>
-      <div className="mt-3 flex flex-wrap items-center gap-3">
-        <ScreenHeading>{title}</ScreenHeading>
-        {title !== name && <Tag>{name}</Tag>}
-      </div>
-      {path !== undefined && <p className="mt-2 font-mono text-sm text-subtle wrap-anywhere">{path}</p>}
+    <>
+      <TopRow>
+        {/* A link, not a heading: the page's one h1 opens the content. */}
+        <Link to="/workflows" className="inline-flex min-h-6 items-center gap-1.5 text-sm text-dim hover:text-text">
+          <ArrowLeftIcon size={16} aria-hidden="true" />
+          Workflows
+        </Link>
+      </TopRow>
+      <div className="w-full max-w-2xl pt-6">
+        <div className="flex flex-wrap items-center gap-3">
+          <ScreenHeading>{title}</ScreenHeading>
+          {title !== name && <Tag>{name}</Tag>}
+        </div>
+        {path !== undefined && <p className="mt-2 font-mono text-sm text-subtle wrap-anywhere">{path}</p>}
 
-      {/* Stands with no text, so a refetch that breaks the file or turns a warning up is announced. */}
-      <div role="status" className="sr-only">
-        {statusText(read)}
-      </div>
-      <Diagnostics key={name} items={diagnostics} subject="this workflow" className="mt-7" />
+        {/* Stands with no text, so a refetch that breaks the file or turns a warning up is announced. */}
+        <div role="status" className="sr-only">
+          {statusText(read)}
+        </div>
+        <Diagnostics key={name} items={diagnostics} subject="this workflow" className="mt-7" />
 
-      {read.ok ? <WorkflowBody workflow={read.workflow} /> : <FaultBody name={name} failure={read.failure} />}
-    </div>
+        {read.ok ? <WorkflowBody workflow={read.workflow} /> : <FaultBody name={name} failure={read.failure} />}
+      </div>
+    </>
   );
 }

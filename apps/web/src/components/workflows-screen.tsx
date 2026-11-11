@@ -10,8 +10,8 @@ import { warningCount } from "../lib/warning-count";
 import { NAVIGATION_BY_PATH } from "../navigation";
 import { AgentHint } from "./agent-hint";
 import { Diagnostics, type WarningItem } from "./diagnostics";
-import { ScreenHeading } from "./screen-heading";
 import { Tag } from "./tag";
+import { TopRow, TopRowTitle } from "./top-row";
 
 // The route is reached by id rather than imported: the tree in routes.tsx names
 // this component, so importing the route back would close a cycle.
@@ -86,20 +86,22 @@ export function WorkflowsScreen(): ReactNode {
 
   return (
     <>
-      <ScreenHeading id={headingId}>{title}</ScreenHeading>
+      <TopRow>
+        <TopRowTitle id={headingId}>{title}</TopRowTitle>
+      </TopRow>
       {/* Stands with no text, so a refetch that turns a warning up is announced. */}
       <div role="status" className="sr-only">
         {warnings.length > 0 ? `${warningCount(warnings.length)} about the workflows.` : ""}
       </div>
-      <Diagnostics items={warnings} subject="the workflows" className="mt-4" />
+      <Diagnostics items={warnings} subject="the workflows" className="mt-6" />
       {names.length === 0
         ? (
-            <p className="mt-2 text-base text-subtle">
+            <p className="mt-6 text-base text-subtle">
               No workflows yet. The workflows directory holds none. Add one, and it is listed here.
             </p>
           )
         : (
-            <ul aria-labelledby={headingId} className="mt-7 flex w-full max-w-2xl flex-col gap-3">
+            <ul aria-labelledby={headingId} className="mt-6 flex w-full max-w-2xl flex-col gap-3">
               {names.map((name, index) => {
                 const read = reads[index];
                 const refused = read?.data?.ok === false || (read?.data === undefined && read?.isError === true);

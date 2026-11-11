@@ -8,8 +8,8 @@ import { CaretRightIcon } from "../lib/icons";
 import { NAVIGATION_BY_PATH } from "../navigation";
 import { AgentHint } from "./agent-hint";
 import { Diagnostics } from "./diagnostics";
-import { ScreenHeading } from "./screen-heading";
 import { Tag } from "./tag";
+import { TopRow, TopRowTitle } from "./top-row";
 
 // The route is reached by id rather than imported: the tree in routes.tsx names
 // this component, so importing the route back would close a cycle.
@@ -48,11 +48,13 @@ export function ProjectsScreen(): ReactNode {
 
   return (
     <>
-      <ScreenHeading id={headingId}>{title}</ScreenHeading>
-      <Diagnostics items={diagnostics} subject="the projects" className="mt-4" />
+      <TopRow>
+        <TopRowTitle id={headingId}>{title}</TopRowTitle>
+      </TopRow>
+      <Diagnostics items={diagnostics} subject="the projects" className="mt-6" />
       {projects.length === 0
         ? (
-            <p className="mt-2 text-base text-subtle">
+            <p className="mt-6 text-base text-subtle">
               No projects yet. Add one, and it is listed here.
             </p>
           )
@@ -61,7 +63,7 @@ export function ProjectsScreen(): ReactNode {
             // directory of the tree the daemon watches, a count that stays a
             // person's repositories and never reaches the rows virtualising
             // pays for.
-            <ul aria-labelledby={headingId} className="mt-7 flex w-full max-w-2xl flex-col gap-3">
+            <ul aria-labelledby={headingId} className="mt-6 flex w-full max-w-2xl flex-col gap-3">
               {projects.map((project) => (
                 <li key={project.tag}>
                   <ProjectRow {...project} />

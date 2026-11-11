@@ -60,7 +60,10 @@ describe("a tree with no project", () => {
     const router = await renderWithRouter("/tasks", transport);
 
     const main = screen.getByRole("main");
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Tasks");
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading.textContent).toBe("Tasks");
+    expect(heading.classList.contains("sr-only")).toBe(false);
+    expect(heading.parentElement!.classList.contains("min-h-top-bar")).toBe(true);
     expect(main.textContent).toContain(
       "No projects yet. The daemon's tree holds no project directory. Add one, and its tasks are shown here. Projects",
     );
@@ -319,21 +322,81 @@ describe("the board", () => {
     expect(filterResult()).toBe("0 of 2 tasks carry a selected label.");
   });
 
-  it("wraps the heading line, so the controls stay inside a narrow viewport", async () => {
+  it("opens the board with a visually hidden h1 as the first child of the board root", async () => {
     const { transport } = daemon();
     await renderWithRouter("/tasks?projects=SAGA", transport);
 
-    const line = screen.getByRole("heading", { level: 1 }).parentElement!;
-    expect(line.classList.contains("flex-wrap")).toBe(true);
-    expect(line.lastElementChild?.classList.contains("flex-wrap")).toBe(true);
+    const heading = screen.getByRole("heading", { level: 1, name: "Tasks" });
+    expect(heading.classList.contains("sr-only")).toBe(true);
+    expect(heading.parentElement!.firstElementChild).toBe(heading);
+    expect(heading.parentElement!.classList.contains("contents")).toBe(true);
+    expect(heading.hasAttribute("tabindex")).toBe(false);
+    expect(within(screen.getByRole("main")).getAllByText("Tasks")).toEqual([heading]);
   });
 
-  it("gives the last column the right padding of main, so the page scrolls past it", async () => {
+  it("holds the filters and New task in one top row that wraps, in this order", async () => {
+    const { transport } = daemon();
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    const newTask = screen.getByRole("button", { name: "New task" });
+    const row = newTask.parentElement!;
+    const controls = [
+      screen.getByRole("combobox", { name: "Project Saga SAGA" }),
+      screen.getByRole("searchbox", { name: "Search" }),
+      screen.getByRole("combobox", { name: "Labels Any" }),
+      newTask,
+    ];
+
+    expect(row.classList.contains("flex-wrap")).toBe(true);
+    expect(row.classList.contains("min-h-top-bar")).toBe(true);
+    const order = [...row.children].map((child) => controls.findIndex((control) => child.contains(control)));
+    expect(order).toEqual([0, 1, 2, 3]);
+    expect(newTask.className).toContain("ml-auto");
+  });
+
+  it("puts the top row, the notes and the columns in one wrapper as wide as the columns", async () => {
+    const { transport } = daemon();
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    const wrapper = screen.getByRole("heading", { level: 1 }).nextElementSibling!;
+    const [top, notes, columns] = [...wrapper.children];
+
+    expect(wrapper.children).toHaveLength(3);
+    expect([...wrapper.classList]).toEqual(expect.arrayContaining([
+      "-mx-6",
+      "-mt-6",
+      "w-max",
+      "min-w-[calc(100%+--spacing(12))]",
+      "sm:-mx-10",
+      "sm:-mt-10",
+      "sm:min-w-[calc(100%+--spacing(20))]",
+    ]));
+    expect(top!.contains(screen.getByRole("button", { name: "New task" }))).toBe(true);
+    expect(top!.firstElementChild!.classList.contains("sticky")).toBe(true);
+    expect([...notes!.classList]).toEqual(expect.arrayContaining([
+      "[contain:inline-size]",
+      "w-[min(100%,calc(100vw-var(--sidebar-width)))]",
+      "px-6",
+      "sm:px-10",
+    ]));
+    expect(notes!.textContent).toBe("No tasks in Saga yet.");
+    expect(notes!.firstElementChild!.classList.contains("mt-6")).toBe(true);
+    expect(columns!.contains(screen.getAllByRole("region")[0]!)).toBe(true);
+  });
+
+  it("gives the last column the right padding of the page, so the page scrolls past it", async () => {
     const { transport } = daemon();
     await renderWithRouter("/tasks?projects=SAGA", transport);
 
     const row = screen.getAllByRole("region")[0]!.parentElement!;
-    expect([...row.classList]).toEqual(expect.arrayContaining(["-mr-6", "sm:-mr-10", "*:last:box-content", "*:last:pr-6", "sm:*:last:pr-10"]));
+    expect([...row.classList]).toEqual(expect.arrayContaining([
+      "mt-4",
+      "pl-6",
+      "sm:pl-10",
+      "*:last:box-content",
+      "*:last:pr-6",
+      "sm:*:last:pr-10",
+    ]));
     expect(row.lastElementChild?.getAttribute("aria-labelledby")).toBeTruthy();
   });
 
@@ -1646,7 +1709,6 @@ describe("creating a task", () => {
 
     const labels = screen.getByRole("combobox", { name: "Labels Any" }).parentElement!;
     expect(labels.nextElementSibling).toBe(newTask());
-    expect(newTask().className).toContain("ml-1");
     expect(newTask().querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     expect(newTask().hasAttribute("aria-label")).toBe(false);
 

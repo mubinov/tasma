@@ -99,6 +99,15 @@ it("names the popup, the filter input and the list by the visible label", async 
   expect(screen.getByRole("combobox", { name: "Labels" })).toBe(screen.getByPlaceholderText("Filter labels"));
 });
 
+it("aligns the popup with the start of the trigger", async () => {
+  const user = userEvent.setup();
+  await renderBoard("");
+
+  const listbox = await open(user);
+
+  expect(listbox.closest("[data-align]")?.getAttribute("data-align")).toBe("start");
+});
+
 it("draws no focus ring on the filter input or its field", async () => {
   const user = userEvent.setup();
   await renderBoard("");
