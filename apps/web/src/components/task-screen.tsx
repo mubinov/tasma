@@ -84,17 +84,17 @@ const route = getRouteApi("/tasks/$project/$task");
 
 /**
  * The classes that put the right column beside the content. The chat panel is beside the content from xl only: in a
- * narrower window with the app navigation open, the content column is narrower than its top bar.
+ * narrower window with the app navigation open, the content column beside a chat panel is too narrow to read.
  */
-const COLUMN_LAYOUT: Record<PageColumn, { frame: string; content: string; contentEnd: string }> = {
+const COLUMN_LAYOUT: Record<PageColumn, { columns: string; content: string; contentEnd: string }> = {
   sidebar: {
-    frame: "lg:flex-row lg:items-start",
-    content: "lg:block lg:min-w-0 lg:flex-1",
+    columns: "lg:flex-row lg:items-start",
+    content: "lg:min-w-0 lg:flex-1",
     contentEnd: "lg:pb-[calc(--spacing(12)+var(--notice-stack-height,0px))]",
   },
   chat: {
-    frame: "xl:flex-row xl:items-start",
-    content: "xl:block xl:min-w-0 xl:flex-1",
+    columns: "xl:flex-row xl:items-start",
+    content: "xl:min-w-0 xl:flex-1",
     contentEnd: "xl:pb-[calc(--spacing(12)+var(--notice-stack-height,0px))]",
   },
 };
@@ -628,228 +628,226 @@ export function TaskScreen(): ReactNode {
   return (
     // A sticky sidebar cannot move past the end of its parent, so the frame reaches the page's end and its children
     // keep the notice stack's room in place of <main>.
-    <div className={`-m-6 -mb-[calc(--spacing(6)+var(--notice-stack-height,0px))] flex flex-col sm:-m-10 sm:-mb-[calc(--spacing(10)+var(--notice-stack-height,0px))] ${layout.frame}`}>
-      {/* A sticky bar stays only inside its parent box, so while the right column
-          is under the content, the content gives up its box and the bar stays
-          over the right column too. */}
-      <div className={`contents ${layout.content}`}>
-        {/*
-          The page's scroll padding keeps a focus scroll's target and its ring clear of the bar. WebKit applies it to
-          the bar's own controls too, so each focus move and keystroke in them would scroll the page: the page has the
-          band's scroll padding alone while the bar holds focus. WebKit's scroll anchoring scrolls the page by each
-          change of the scroll padding; a change of the root's min-height, which never limits the root's height,
-          suppresses it.
-        */}
+    <div className="-m-6 -mb-[calc(--spacing(6)+var(--notice-stack-height,0px))] flex flex-col sm:-m-10 sm:-mb-[calc(--spacing(10)+var(--notice-stack-height,0px))]">
+      {/*
+        The page's scroll padding keeps a focus scroll's target and its ring clear of the bar. WebKit applies it to
+        the bar's own controls too, so each focus move and keystroke in them would scroll the page: the page has the
+        band's scroll padding alone while the bar holds focus. WebKit's scroll anchoring scrolls the page by each
+        change of the scroll padding; a change of the root's min-height, which never limits the root's height,
+        suppresses it.
+      */}
+      <div
+        ref={barRef}
+        className="@container sticky top-(--title-band) z-(--layer-top-bar) border-b border-line bg-bg [html:has(&)]:[--page-scroll-padding:calc(var(--title-band)+--spacing(16))] [html:has(&:not(:focus-within))]:scroll-pt-(--page-scroll-padding) [html:has(&:focus-within)]:min-h-px"
+      >
         <div
-          ref={barRef}
-          className="@container sticky top-(--title-band) z-(--layer-top-bar) border-b border-line bg-bg [html:has(&)]:[--page-scroll-padding:calc(var(--title-band)+--spacing(16))] [html:has(&:not(:focus-within))]:scroll-pt-(--page-scroll-padding) [html:has(&:focus-within)]:min-h-px"
+          ref={barLineRef}
+          data-find-open={find.open ? "" : undefined}
+          data-step-action-shown={actionShows ? "" : undefined}
+          className={`group/top-bar flex h-top-bar items-center gap-4 px-6 sm:px-10 ${FIND_OPEN_FLOOR.line} ${STEP_ACTION_FLOOR.line}`}
         >
-          <div
-            ref={barLineRef}
-            data-find-open={find.open ? "" : undefined}
-            data-step-action-shown={actionShows ? "" : undefined}
-            className={`group/top-bar flex h-top-bar items-center gap-4 px-6 sm:px-10 ${FIND_OPEN_FLOOR.line} ${STEP_ACTION_FLOOR.line}`}
+          <Link
+            to="/tasks"
+            search={boardSearch}
+            className={`inline-flex items-center gap-1.5 text-sm text-dim hover:text-text ${FIND_OPEN_WIDTHS.back}`}
           >
-            <Link
-              to="/tasks"
-              search={boardSearch}
-              className={`inline-flex items-center gap-1.5 text-sm text-dim hover:text-text ${FIND_OPEN_WIDTHS.back}`}
-            >
-              <ArrowLeftIcon size={16} aria-hidden="true" />
-              {/* At 320 CSS px the word does not fit beside the bar's controls. */}
-              <span className="max-sm:sr-only">Tasks</span>
-            </Link>
-            {/* It repeats the h1, so a screen reader skips it. */}
-            <span
-              aria-hidden="true"
-              className={`inline-flex min-w-0 items-center gap-3 transition-[opacity,visibility] duration-(--duration-fast) ${scrolled ? "opacity-100" : "invisible opacity-0"} ${FIND_OPEN_WIDTHS.title}`}
-            >
-              <span className="shrink-0 font-mono text-sm text-dim">{id}</span>
-              <span className="truncate font-chrome text-base font-medium">{title}</span>
-            </span>
-            <div className={`ml-auto flex shrink-0 items-center gap-2 ${FIND_OPEN_WIDTHS.controls} ${FIND_OPEN_FLOOR.controls} ${STEP_ACTION_FLOOR.controls}`}>
-              {find.open && <FindGroup find={find} />}
-              {draft === null
-                ? (
-                    <ReadingControls
-                      stepActionButton={actionShows && (
-                        <StepActionButton
-                          tag={tag}
-                          id={id}
-                          action={action}
-                          chatShown={action.kind === "open" && action.chat === chat}
-                          menuRef={restartOpenerRef}
-                          onRestart={(restartStep, restartChat) => {
-                            setRestartAsk({ step: restartStep, chat: restartChat, open: true });
-                          }}
-                          onFocusLost={actionFocusLost}
-                        />
-                      )}
-                      editButtonRef={editing.editRef}
-                      findButtonRef={findButtonRef}
-                      findOpen={find.open}
-                      onFind={find.toggle}
-                      onEdit={editing.openEditor}
-                      onDelete={() => {
-                        setDeleteAsked(true);
-                      }}
-                    />
-                  )
-                : (
-                    <EditControls
-                      formId={formId}
-                      saving={editing.saving}
-                      cancelButtonRef={editing.cancelRef}
-                      saveButtonRef={editing.saveRef}
-                      onCancel={editing.cancel}
-                      onKeyDown={editing.onKeyDown}
-                    />
-                  )}
-            </div>
-          </div>
-        </div>
-
-        <div ref={findRootRef} className={`px-6 pb-12 sm:px-10 ${layout.contentEnd}`}>
-          {draft === null
-            ? (
-                <>
-                  {/* The title comes first in the DOM, so the h1 opens the content and is
-                      read before the id shown above it. */}
-                  <div data-find-scope="header" className="mt-6 flex flex-col-reverse gap-1">
-                    <ScreenHeading ref={headingRef} tabIndex={-1} className="max-w-2xl wrap-anywhere">{title}</ScreenHeading>
-                    {idLine}
-                  </div>
-                  {metaLine}
-                  <TaskChats
-                    tag={tag}
-                    task={taskId}
-                    chats={chats}
-                    stateful={!final}
-                    currentStep={stepNow}
-                    openChat={chat}
+            <ArrowLeftIcon size={16} aria-hidden="true" />
+            {/* At 320 CSS px the word does not fit beside the bar's controls. */}
+            <span className="max-sm:sr-only">Tasks</span>
+          </Link>
+          {/* It repeats the h1, so a screen reader skips it. */}
+          <span
+            aria-hidden="true"
+            className={`inline-flex min-w-0 items-center gap-3 transition-[opacity,visibility] duration-(--duration-fast) ${scrolled ? "opacity-100" : "invisible opacity-0"} ${FIND_OPEN_WIDTHS.title}`}
+          >
+            <span className="shrink-0 font-mono text-sm text-dim">{id}</span>
+            <span className="truncate font-chrome text-base font-medium">{title}</span>
+          </span>
+          <div className={`ml-auto flex shrink-0 items-center gap-2 ${FIND_OPEN_WIDTHS.controls} ${FIND_OPEN_FLOOR.controls} ${STEP_ACTION_FLOOR.controls}`}>
+            {find.open && <FindGroup find={find} />}
+            {draft === null
+              ? (
+                  <ReadingControls
+                    stepActionButton={actionShows && (
+                      <StepActionButton
+                        tag={tag}
+                        id={id}
+                        action={action}
+                        chatShown={action.kind === "open" && action.chat === chat}
+                        menuRef={restartOpenerRef}
+                        onRestart={(restartStep, restartChat) => {
+                          setRestartAsk({ step: restartStep, chat: restartChat, open: true });
+                        }}
+                        onFocusLost={actionFocusLost}
+                      />
+                    )}
+                    editButtonRef={editing.editRef}
+                    findButtonRef={findButtonRef}
+                    findOpen={find.open}
+                    onFind={find.toggle}
+                    onEdit={editing.openEditor}
+                    onDelete={() => {
+                      setDeleteAsked(true);
+                    }}
                   />
-                  {body.trim() !== "" && (
-                    <div ref={bodyRef} data-find-scope="body" className={`${chats.length > 0 ? "mt-10" : "mt-8"} max-w-2xl`}>
-                      <Markdown text={body} base={2} title={title} />
-                    </div>
-                  )}
-                </>
-              )
-            : (
-                <div className="mt-6">
-                  {/* The page keeps its one h1 while the title is an input: clipped
-                      rather than hidden, so it stays in the accessibility tree, and
-                      holding the title on disk rather than the typed one. */}
-                  <ScreenHeading ref={headingRef} className="sr-only">{title}</ScreenHeading>
-                  {diskChange.showing && (
-                    <ChangedOnDisk
-                      subject={{ kind: "task" }}
-                      at={diskChange.at}
-                      lineRef={editing.diskLineRef}
-                      onReload={editing.reload}
-                      onKeyDown={editing.onKeyDown}
-                      onFocusLost={editing.diskLineFocusLost}
-                    />
-                  )}
-                  {idLine}
-                  <TaskEditor
+                )
+              : (
+                  <EditControls
                     formId={formId}
-                    formRef={editing.formRef}
-                    draft={draft}
-                    onDraftChange={editing.changeDraft}
-                    titleRef={editing.titleRef}
-                    titleError={editing.titleError}
-                    bodyError={editing.bodyError}
-                    meta={metaLine}
-                    onSubmit={editing.save}
+                    saving={editing.saving}
+                    cancelButtonRef={editing.cancelRef}
+                    saveButtonRef={editing.saveRef}
+                    onCancel={editing.cancel}
                     onKeyDown={editing.onKeyDown}
                   />
-                </div>
-              )}
-
-          <Comments
-            count={comments.length}
-            listRef={list.listRef}
-            headingRef={list.headingRef}
-            addButtonRef={list.addButtonRef}
-            adding={list.adding}
-            onAdd={list.openAddForm}
-            addForm={(
-              <EditingComment
-                options={{
-                  queryClient,
-                  client,
-                  tag,
-                  taskId: id,
-                  subject: { kind: "new" },
-                  disk: null,
-                  // The form shows no disk line, having no comment to compare with.
-                  updated: frontmatter.updated,
-                  // A new comment is appended last, so no line end is written back.
-                  lineEndRestored: false,
-                  guard,
-                  onClose: list.closeAddForm,
-                }}
-                heading="New comment"
-              />
-            )}
-          >
-            {list.rows.map(({ comment, onDisk, editing: open, lineEndRestored }, place) => (
-              <CommentCard
-                key={comment.id}
-                comment={comment}
-                queryClient={queryClient}
-                client={client}
-                tag={tag}
-                taskId={id}
-                taskUpdated={frontmatter.updated}
-                lineEndRestored={lineEndRestored}
-                editing={open}
-                removed={!onDisk}
-                guard={guard}
-                onEdit={() => {
-                  list.openEditor(place);
-                }}
-                onCloseEditor={(close) => {
-                  list.closeEditor(place, close);
-                }}
-                onDeleted={() => {
-                  list.deleted(place);
-                }}
-                findActive={find.findActive}
-                revealRequest={find.reveal?.commentId === comment.id ? find.reveal.count : undefined}
-              />
-            ))}
-          </Comments>
+                )}
+          </div>
         </div>
-        <ScrollToTop scrolled={scrolled} headingRef={scrolledRef} column={column} />
       </div>
-      {chat === undefined
-        ? (
-            <TaskSidebar
-              tag={tag}
-              view={view}
-              relations={relations}
-              outline={outline}
-              pageScrollPadding={scrollPaddingTop}
-              properties={properties}
-            />
-          )
-        : (
-            // Under xl the top bar sticks over the panel too, so the panel is shorter than the window by the band and
-            // the bar. From xl a sticky box never moves up to its threshold, so the negative margin puts its top at the
-            // window's top, under the title cover.
-            <div className="h-[calc(100vh-var(--title-band)-var(--spacing-top-bar))] w-full border-t border-line bg-bg pb-(--notice-stack-height) xl:sticky xl:top-0 xl:z-(--layer-top-bar) xl:-mt-(--title-band) xl:h-screen xl:w-chat-panel xl:shrink-0 xl:self-start xl:border-t-0 xl:border-l xl:pt-(--title-band)">
-              <ChatPanel
+
+      <div className={`flex flex-col ${layout.columns}`}>
+        <div className={layout.content}>
+          <div ref={findRootRef} className={`px-6 pb-12 sm:px-10 ${layout.contentEnd}`}>
+            {draft === null
+              ? (
+                  <>
+                    {/* The title comes first in the DOM, so the h1 opens the content and is
+                        read before the id shown above it. */}
+                    <div data-find-scope="header" className="mt-6 flex flex-col-reverse gap-1">
+                      <ScreenHeading ref={headingRef} tabIndex={-1} className="max-w-2xl wrap-anywhere">{title}</ScreenHeading>
+                      {idLine}
+                    </div>
+                    {metaLine}
+                    <TaskChats
+                      tag={tag}
+                      task={taskId}
+                      chats={chats}
+                      stateful={!final}
+                      currentStep={stepNow}
+                      openChat={chat}
+                    />
+                    {body.trim() !== "" && (
+                      <div ref={bodyRef} data-find-scope="body" className={`${chats.length > 0 ? "mt-10" : "mt-8"} max-w-2xl`}>
+                        <Markdown text={body} base={2} title={title} />
+                      </div>
+                    )}
+                  </>
+                )
+              : (
+                  <div className="mt-6">
+                    {/* The page keeps its one h1 while the title is an input: clipped
+                        rather than hidden, so it stays in the accessibility tree, and
+                        holding the title on disk rather than the typed one. */}
+                    <ScreenHeading ref={headingRef} className="sr-only">{title}</ScreenHeading>
+                    {diskChange.showing && (
+                      <ChangedOnDisk
+                        subject={{ kind: "task" }}
+                        at={diskChange.at}
+                        lineRef={editing.diskLineRef}
+                        onReload={editing.reload}
+                        onKeyDown={editing.onKeyDown}
+                        onFocusLost={editing.diskLineFocusLost}
+                      />
+                    )}
+                    {idLine}
+                    <TaskEditor
+                      formId={formId}
+                      formRef={editing.formRef}
+                      draft={draft}
+                      onDraftChange={editing.changeDraft}
+                      titleRef={editing.titleRef}
+                      titleError={editing.titleError}
+                      bodyError={editing.bodyError}
+                      meta={metaLine}
+                      onSubmit={editing.save}
+                      onKeyDown={editing.onKeyDown}
+                    />
+                  </div>
+                )}
+
+            <Comments
+              count={comments.length}
+              listRef={list.listRef}
+              headingRef={list.headingRef}
+              addButtonRef={list.addButtonRef}
+              adding={list.adding}
+              onAdd={list.openAddForm}
+              addForm={(
+                <EditingComment
+                  options={{
+                    queryClient,
+                    client,
+                    tag,
+                    taskId: id,
+                    subject: { kind: "new" },
+                    disk: null,
+                    // The form shows no disk line, having no comment to compare with.
+                    updated: frontmatter.updated,
+                    // A new comment is appended last, so no line end is written back.
+                    lineEndRestored: false,
+                    guard,
+                    onClose: list.closeAddForm,
+                  }}
+                  heading="New comment"
+                />
+              )}
+            >
+              {list.rows.map(({ comment, onDisk, editing: open, lineEndRestored }, place) => (
+                <CommentCard
+                  key={comment.id}
+                  comment={comment}
+                  queryClient={queryClient}
+                  client={client}
+                  tag={tag}
+                  taskId={id}
+                  taskUpdated={frontmatter.updated}
+                  lineEndRestored={lineEndRestored}
+                  editing={open}
+                  removed={!onDisk}
+                  guard={guard}
+                  onEdit={() => {
+                    list.openEditor(place);
+                  }}
+                  onCloseEditor={(close) => {
+                    list.closeEditor(place, close);
+                  }}
+                  onDeleted={() => {
+                    list.deleted(place);
+                  }}
+                  findActive={find.findActive}
+                  revealRequest={find.reveal?.commentId === comment.id ? find.reveal.count : undefined}
+                />
+              ))}
+            </Comments>
+          </div>
+          <ScrollToTop scrolled={scrolled} headingRef={scrolledRef} column={column} />
+        </div>
+        {chat === undefined
+          ? (
+              <TaskSidebar
                 tag={tag}
-                task={taskId}
-                chat={chat}
-                marked={chatMarked}
-                onClose={closeChat}
-                focusOnMount={chatOpened}
+                view={view}
+                relations={relations}
+                outline={outline}
+                pageScrollPadding={scrollPaddingTop}
+                properties={properties}
               />
-            </div>
-          )}
+            )
+          : (
+              // From xl the panel sticks below the bar, and the negative margin puts it there before the page scrolls
+              // too, under the bottom line of the bar. The page's scroll padding while it holds focus is the sidebar's.
+              <div className="h-[calc(100vh-var(--title-band)-var(--spacing-top-bar))] w-full border-t border-line bg-bg pb-(--notice-stack-height) xl:sticky xl:top-[calc(var(--title-band)+var(--spacing-top-bar))] xl:-mt-px xl:w-chat-panel xl:shrink-0 xl:self-start xl:border-t-0 xl:border-l xl:[html:has(&:focus-within)]:min-h-px xl:[html:has(&:focus-within)]:scroll-pt-(--title-band)! xl:[html:has(&:focus-within)]:scroll-pb-0">
+                <ChatPanel
+                  tag={tag}
+                  task={taskId}
+                  chat={chat}
+                  marked={chatMarked}
+                  onClose={closeChat}
+                  focusOnMount={chatOpened}
+                />
+              </div>
+            )}
+      </div>
       {/* Cancel asks about one editor, so it keeps the editor's own dialog. */}
       <ConfirmDialog
         open={editing.discardAsked}

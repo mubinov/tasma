@@ -215,19 +215,22 @@ export function TaskSidebar(props: TaskSidebarProps): ReactNode {
   const stepValue = <StepValue view={view} step={step} />;
 
   return (
-    // From lg a top padding in the scroll box would scroll away, so the band is on a box around it. A sticky box never
-    // moves up to its threshold, so the negative margin puts its top at the window's top. The line of the page frame
-    // paints above the page, and a transparent border takes its width at each zoom: the left one under the content, the
-    // top one from lg. The line then never covers the focus ring of the aside.
-    <div className="w-full border-l border-transparent lg:sticky lg:top-0 lg:z-(--layer-top-bar) lg:-mt-(--title-band) lg:flex lg:h-screen lg:w-task-sidebar lg:shrink-0 lg:flex-col lg:self-start lg:border-line lg:border-t-transparent lg:bg-surface-2 lg:pt-(--title-band) lg:[border-top-width:min(1px,var(--title-band))]">
+    // From lg the box sticks below the top bar, and the negative margin puts it there before the page scrolls too. The
+    // line of the page frame under the content and the line of the bar from lg paint over the box, so a transparent
+    // border of the same width at each zoom keeps the focus ring of the aside clear of them.
+    // WebKit also scrolls the page for a focus scroll of the aside, to show the control and the aside's scroll padding
+    // inside the page's scroll padding. The page's top padding ends below the top of the box, and its bottom one covers
+    // the notice stack, so while the box holds focus the page has the band's top padding alone and no bottom one. `!`
+    // puts the top one over the top bar's rule, which matches too. The min-height is there for the top bar's reason.
+    <div className="w-full border-l border-transparent lg:sticky lg:top-[calc(var(--title-band)+var(--spacing-top-bar))] lg:-mt-px lg:flex lg:h-[calc(100vh-var(--title-band)-var(--spacing-top-bar))] lg:w-task-sidebar lg:shrink-0 lg:flex-col lg:self-start lg:border-t lg:border-line lg:border-t-transparent lg:[html:has(&:focus-within)]:min-h-px lg:[html:has(&:focus-within)]:scroll-pt-(--title-band)! lg:[html:has(&:focus-within)]:scroll-pb-0">
       {/* A scroll container with no link inside is a tab stop only in some engines, so the aside is one while it
-          scrolls. -1 keeps the focus on it when it stops scrolling. The aside meets the window's edges, so its focus
-          ring is drawn inside. */}
+          scrolls. -1 keeps the focus on it when it stops scrolling. The aside meets the right and the bottom edge of
+          the window, so its focus ring is drawn inside. The scroll padding keeps the focus ring of a control whole. */}
       <aside
         ref={asideRef}
         tabIndex={scrolls ? 0 : -1}
         aria-label="Task details"
-        className="w-full border-t border-line bg-surface-2 px-6 pt-5 pb-[calc(--spacing(8)+var(--notice-stack-height,0px))] focus-visible:-outline-offset-2 lg:min-h-0 lg:flex-1 lg:scroll-pb-(--notice-stack-height) lg:overflow-y-auto lg:border-t-0"
+        className="w-full border-t border-line bg-bg px-6 pt-5 pb-[calc(--spacing(8)+var(--notice-stack-height,0px))] focus-visible:-outline-offset-2 lg:min-h-0 lg:flex-1 lg:scroll-pt-2 lg:scroll-pb-[calc(--spacing(2)+var(--notice-stack-height,0px))] lg:overflow-y-auto lg:border-t-0"
       >
         <dl className={GROUP_CLASS}>
           <Field label="Status" labelId={statusId}>

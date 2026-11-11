@@ -362,41 +362,57 @@ it("still scrolls to the top when the reader leaves the task", async () => {
   expect(window.scrollY).toBe(0);
 });
 
-it("gives the panel the height of the window under the top bar, and at xl and wider the whole height beside the content", async () => {
+it("gives the panel the height of the window under the top bar, and at xl and wider sticks it under the bar beside the content", async () => {
   await renderWithRouter(`${PAGE}?chat=2`, chatDaemon().transport);
 
   const frame = (await screen.findByRole("region", { name: "Claude · build" })).parentElement!;
   for (const name of [
     "h-[calc(100vh-var(--title-band)-var(--spacing-top-bar))]",
-    "xl:h-screen",
+    "w-full",
+    "bg-bg",
+    "pb-(--notice-stack-height)",
     "xl:sticky",
-    "xl:top-0",
-    "xl:z-(--layer-top-bar)",
-    "xl:-mt-(--title-band)",
-    "xl:pt-(--title-band)",
+    "xl:top-[calc(var(--title-band)+var(--spacing-top-bar))]",
+    "xl:-mt-px",
     "xl:w-chat-panel",
+    "xl:shrink-0",
+    "xl:self-start",
     "border-t",
+    "border-line",
     "xl:border-t-0",
     "xl:border-l",
   ]) {
     expect(frame.classList.contains(name), name).toBe(true);
   }
-  expect(frame.classList.contains("h-screen")).toBe(false);
-  expect([...frame.classList].filter((name) => name.startsWith("lg:"))).toEqual([]);
+  for (const name of ["h-screen", "xl:h-screen", "xl:top-0", "xl:-mt-(--title-band)", "xl:pt-(--title-band)"]) {
+    expect(frame.classList.contains(name), name).toBe(false);
+  }
+  expect([...frame.classList].filter((name) => name.startsWith("lg:") || name.startsWith("xl:z-"))).toEqual([]);
+});
+
+it("gives the page the band's top scroll padding alone and no bottom one from xl while the panel holds focus", async () => {
+  await renderWithRouter(`${PAGE}?chat=2`, chatDaemon().transport);
+
+  const frame = (await screen.findByRole("region", { name: "Claude · build" })).parentElement!;
+  expect([...frame.classList].filter((name) => name.includes("[html:has(")).sort()).toEqual([
+    "xl:[html:has(&:focus-within)]:min-h-px",
+    "xl:[html:has(&:focus-within)]:scroll-pb-0",
+    "xl:[html:has(&:focus-within)]:scroll-pt-(--title-band)!",
+  ]);
 });
 
 it("puts the chat panel beside the content from xl, and the sidebar from lg again after close", async () => {
   const user = userEvent.setup();
   await renderWithRouter(`${PAGE}?chat=2`, chatDaemon().transport);
   const panel = (await screen.findByRole("region", { name: "Claude · build" })).parentElement!;
-  const page = panel.parentElement!;
+  const columns = panel.parentElement!;
   const contentEnd = () => taskHeading().parentElement!.parentElement!;
   const room = "[calc(--spacing(12)+var(--notice-stack-height,0px))]";
 
-  expect(topBar().parentElement?.className).toBe("contents xl:block xl:min-w-0 xl:flex-1");
-  expect(page.classList.contains("xl:flex-row")).toBe(true);
-  expect(page.classList.contains("xl:items-start")).toBe(true);
-  expect(page.classList.contains("lg:flex-row")).toBe(false);
+  expect(topBar().nextElementSibling).toBe(columns);
+  expect(contentEnd().parentElement?.className).toBe("xl:min-w-0 xl:flex-1");
+  expect(columns.className).toBe("flex flex-col xl:flex-row xl:items-start");
+  expect(topBar().parentElement?.className).not.toMatch(/flex-row|items-start/);
   expect(contentEnd().classList.contains(`xl:pb-${room}`)).toBe(true);
   expect(contentEnd().classList.contains(`lg:pb-${room}`)).toBe(false);
 
@@ -405,9 +421,9 @@ it("puts the chat panel beside the content from xl, and the sidebar from lg agai
   await waitFor(() => {
     expect(sidebar()).toBeTruthy();
   });
-  expect(topBar().parentElement?.className).toBe("contents lg:block lg:min-w-0 lg:flex-1");
-  expect(page.classList.contains("lg:flex-row")).toBe(true);
-  expect(page.classList.contains("xl:flex-row")).toBe(false);
+  expect(contentEnd().parentElement?.className).toBe("lg:min-w-0 lg:flex-1");
+  expect(columns.className).toBe("flex flex-col lg:flex-row lg:items-start");
+  expect(topBar().parentElement?.className).not.toMatch(/flex-row|items-start/);
   expect(contentEnd().classList.contains(`lg:pb-${room}`)).toBe(true);
   expect(contentEnd().classList.contains(`xl:pb-${room}`)).toBe(false);
 });

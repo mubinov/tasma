@@ -28,7 +28,7 @@ const LINE_CLASS = "block w-full truncate border-l-2 py-0.5 pl-2.5 text-left tex
 const LIST_CLASS = "mt-1.5 space-y-0.5";
 
 // Focus moves first: a click on a line leaves focus where it was, and the page has the band's scroll padding alone
-// while the top bar holds focus.
+// while the top bar or the sidebar holds focus.
 function activate(target: HTMLElement): void {
   target.tabIndex = -1;
   target.focus({ preventScroll: true });

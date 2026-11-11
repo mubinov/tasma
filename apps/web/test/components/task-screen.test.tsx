@@ -95,7 +95,7 @@ describe("the page", () => {
     expect(document.title).toBe("SAGA-3 Build the parser · Tasma");
   });
 
-  it("keeps the back link in a top bar that stays while the page scrolls", async () => {
+  it("keeps the back link in a top bar that stays while the page scrolls, across the content and the sidebar", async () => {
     const { transport } = daemon();
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
@@ -111,8 +111,16 @@ describe("the page", () => {
     expect(bar.classList.contains("border-b")).toBe(true);
     expect(bar.classList.contains("[html:has(&:not(:focus-within))]:scroll-pt-(--page-scroll-padding)")).toBe(true);
     expect(bar.childElementCount).toBe(1);
-    expect(bar.parentElement?.className).toBe("contents lg:block lg:min-w-0 lg:flex-1");
-    expect(bar.parentElement?.nextElementSibling).toBe(sidebar().parentElement);
+    const frame = bar.parentElement!;
+    expect(frame.firstElementChild).toBe(bar);
+    expect(frame.classList.contains("-m-6")).toBe(true);
+    const columns = bar.nextElementSibling!;
+    expect(columns.className).toBe("flex flex-col lg:flex-row lg:items-start");
+    const [content, column] = [...columns.children];
+    expect(columns.childElementCount).toBe(2);
+    expect(content?.className).toBe("lg:min-w-0 lg:flex-1");
+    expect(content?.contains(screen.getByRole("heading", { level: 1 }))).toBe(true);
+    expect(column).toBe(sidebar().parentElement);
     const current = screen.getAllByRole("link").filter((link) => link.getAttribute("aria-current") === "page");
     expect(current.map((link) => link.textContent)).toEqual(["Tasks"]);
   });
@@ -425,8 +433,9 @@ describe("the title in the top bar and scroll to top", () => {
     resize.report(topBar());
     io.report({ target: screen.getByRole("heading", { level: 1 }), top: -40, bottom: -10 });
 
-    const column = topBar().parentElement!;
-    expect(column.lastElementChild).toBe(screen.getByRole("button", { name: "Scroll to top" }));
+    const content = topBar().nextElementSibling!.firstElementChild!;
+    expect(content.contains(screen.getByRole("heading", { level: 1 }))).toBe(true);
+    expect(content.lastElementChild).toBe(screen.getByRole("button", { name: "Scroll to top" }));
   });
 });
 
@@ -522,31 +531,34 @@ describe("the sidebar", () => {
 
     const aside = sidebar();
     const column = aside.parentElement!;
-    for (const name of ["lg:border-t-0", "border-t", "lg:min-h-0", "lg:flex-1", "lg:overflow-y-auto"]) {
+    for (const name of ["lg:border-t-0", "border-t", "border-line", "bg-bg", "lg:min-h-0", "lg:flex-1", "lg:overflow-y-auto"]) {
       expect(aside.classList.contains(name), name).toBe(true);
     }
-    expect(aside.classList.contains("lg:sticky")).toBe(false);
+    for (const name of ["lg:sticky", "bg-surface-2", "lg:bg-surface-2"]) {
+      expect(aside.classList.contains(name), name).toBe(false);
+    }
     for (const name of [
       "lg:sticky",
-      "lg:top-0",
-      "lg:z-(--layer-top-bar)",
-      "lg:-mt-(--title-band)",
-      "lg:pt-(--title-band)",
-      "lg:h-screen",
+      "lg:top-[calc(var(--title-band)+var(--spacing-top-bar))]",
+      "lg:-mt-px",
+      "lg:h-[calc(100vh-var(--title-band)-var(--spacing-top-bar))]",
       "lg:w-task-sidebar",
       "lg:shrink-0",
       "lg:self-start",
       "border-l",
       "border-transparent",
+      "lg:border-t",
       "lg:border-line",
       "lg:border-t-transparent",
-      "lg:[border-top-width:min(1px,var(--title-band))]",
-      "lg:bg-surface-2",
       "lg:flex",
       "lg:flex-col",
     ]) {
       expect(column.classList.contains(name), name).toBe(true);
     }
+    for (const name of ["lg:top-0", "lg:-mt-(--title-band)", "lg:pt-(--title-band)", "lg:h-screen"]) {
+      expect(column.classList.contains(name), name).toBe(false);
+    }
+    expect([...column.classList].filter((name) => /^lg:(?:z-|bg-)/.test(name))).toEqual([]);
     expect(column.hasAttribute("tabindex")).toBe(false);
     expect(column.parentElement?.classList.contains("lg:flex-row")).toBe(true);
     expect(column.previousElementSibling?.contains(screen.getByRole("heading", { level: 1 }))).toBe(true);
@@ -642,14 +654,28 @@ describe("the sidebar", () => {
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
     const aside = sidebar();
-    const frame = aside.parentElement!.parentElement!;
-    const content = screen.getByRole("heading", { level: 1 }).parentElement!.parentElement!;
+    const frame = topBar().parentElement!;
+    const contentEnd = screen.getByRole("heading", { level: 1 }).parentElement!.parentElement!;
     const room = (spacing: number) => `[calc(--spacing(${String(spacing)})+var(--notice-stack-height,0px))]`;
     expect(frame.classList.contains(`-mb-${room(6)}`)).toBe(true);
     expect(frame.classList.contains(`sm:-mb-${room(10)}`)).toBe(true);
-    expect(content.classList.contains(`lg:pb-${room(12)}`)).toBe(true);
+    expect(contentEnd.classList.contains(`lg:pb-${room(12)}`)).toBe(true);
     expect(aside.classList.contains(`pb-${room(8)}`)).toBe(true);
-    expect(aside.classList.contains("lg:scroll-pb-(--notice-stack-height)")).toBe(true);
+    expect(aside.classList.contains(`lg:scroll-pb-${room(2)}`)).toBe(true);
+  });
+
+  it("gives the page the band's top scroll padding alone and no bottom one from lg while the sidebar holds focus", async () => {
+    const { transport } = daemon();
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    const aside = sidebar();
+    const box = aside.parentElement!;
+    expect([...box.classList].filter((name) => name.includes("[html:has(")).sort()).toEqual([
+      "lg:[html:has(&:focus-within)]:min-h-px",
+      "lg:[html:has(&:focus-within)]:scroll-pb-0",
+      "lg:[html:has(&:focus-within)]:scroll-pt-(--title-band)!",
+    ]);
+    expect([...aside.classList].filter((name) => name.includes("scroll-pt"))).toEqual(["lg:scroll-pt-2"]);
   });
 
   it("reads None for a missing priority, labels, workflow, step, blockers and parent", async () => {
