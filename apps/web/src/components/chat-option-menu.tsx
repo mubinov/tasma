@@ -58,14 +58,16 @@ export function ChatOptionMenu({ option, hidden, pending, onPick, onFocusLost }:
           aria-labelledby={`${labelId} ${triggerId}`}
           className={TRIGGER_CLASS}
         >
-          {chatOptionValueName(option, shown)}
-          {/* The wait shows in the label, never in `disabled`. */}
-          {pending !== undefined && "…"}
+          <span className="min-w-0 wrap-anywhere">
+            {chatOptionValueName(option, shown)}
+            {/* The wait shows in the label, never in `disabled`. */}
+            {pending !== undefined && "…"}
+          </span>
           <CaretDownIcon size={14} aria-hidden="true" className="shrink-0 text-dim" />
         </Menu.Trigger>
         <Menu.Portal>
           <Menu.Positioner side="top" align="start" sideOffset={4} className={POSITIONER_CLASS}>
-            <Menu.Popup aria-labelledby={labelId} className={`max-w-(--available-width) min-w-52 ${POPUP_CLASS}`}>
+            <Menu.Popup aria-labelledby={labelId} className={`max-h-(--available-height) max-w-(--available-width) min-w-52 overflow-y-auto ${POPUP_CLASS}`}>
               <Menu.RadioGroup
                 value={shown}
                 onValueChange={(next: string) => {

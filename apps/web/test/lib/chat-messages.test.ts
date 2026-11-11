@@ -14,11 +14,11 @@ import {
   chatAnnouncements,
   chatAnswerText,
   chatDiff,
-  chatModeOption,
   chatNoticeText,
   chatOptionValueName,
   chatOptionWords,
   chatOutsideName,
+  chatPickerOptions,
   chatStateText,
   chatTerminalView,
   chatThreadMessage,
@@ -30,6 +30,8 @@ import {
   atSeq,
   background,
   chatEntries,
+  effortOption,
+  modelOption,
   modeOption,
   modeUpdate,
   optionsUpdate,
@@ -609,23 +611,81 @@ describe("chatAnnouncements", () => {
 
     expect(chatAnnouncements(before, after, "claude", false)).toEqual([]);
   });
-});
 
-describe("chatModeOption", () => {
-  it("gives the option with the category mode", () => {
-    const view = fold(chatEntries([optionsUpdate({ ...modeOption("auto"), category: "other" }, modeOption("plan"))]));
+  it("announces a change of the model", () => {
+    const [before, after] = views([optionsUpdate(modelOption("default"))], [optionsUpdate(modelOption("model-b"))]);
 
-    expect(chatModeOption(view)).toEqual(expect.objectContaining({ current: "plan" }));
+    expect(chatAnnouncements(before, after, "claude")).toEqual(["Model: Model B"]);
   });
 
-  it("gives nothing with no mode option", () => {
-    expect(chatModeOption(CHAT_VIEW_START)).toBeUndefined();
+  it("announces the mode, then the model, when both change", () => {
+    const [before, after] = views(
+      [optionsUpdate(modelOption("default"), modeOption("auto"))],
+      [optionsUpdate(modelOption("model-b"), modeOption("acceptEdits"))],
+    );
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual(["Mode: Accept edits", "Model: Model B"]);
+  });
+
+  it("compares the options of one category, also when the list gets another option", () => {
+    const [before, after] = views([optionsUpdate(modelOption("default"))], [optionsUpdate(modeOption("auto"), modelOption("default"))]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual([]);
+  });
+
+  it("does not announce the first list of a chat with a model", () => {
+    const [before, after] = views([], [optionsUpdate(modeOption("auto"), modelOption("default"))]);
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual([]);
+  });
+
+  it("does not announce a change of an option outside the picker row", () => {
+    const [before, after] = views(
+      [optionsUpdate(modelOption("default"), effortOption("low"))],
+      [optionsUpdate(modelOption("default"), effortOption("high"))],
+    );
+
+    expect(chatAnnouncements(before, after, "claude")).toEqual([]);
+  });
+
+  it("does not announce a change of the model when its flag turns the case off", () => {
+    const [before, after] = views([optionsUpdate(modelOption("default"))], [optionsUpdate(modelOption("model-b"))]);
+
+    expect(chatAnnouncements(before, after, "claude", false)).toEqual([]);
+  });
+});
+
+describe("chatPickerOptions", () => {
+  function pickerIds(...configOptions: readonly unknown[]): string[] {
+    return chatPickerOptions(fold(chatEntries([optionsUpdate(...configOptions)]))).map(({ id }) => id);
+  }
+
+  it("gives the mode, then the model, also when the log lists the model first", () => {
+    expect(pickerIds(modeOption("auto"), modelOption("default"))).toEqual(["mode", "model"]);
+    expect(pickerIds(modelOption("default"), modeOption("auto"))).toEqual(["mode", "model"]);
+  });
+
+  it("leaves out an option that is not there", () => {
+    expect(pickerIds(modelOption("default"))).toEqual(["model"]);
+    expect(pickerIds(modeOption("auto"))).toEqual(["mode"]);
+    expect(chatPickerOptions(CHAT_VIEW_START)).toEqual([]);
+  });
+
+  it("leaves out the other categories and a second option of the same category", () => {
+    const view = fold(chatEntries([
+      optionsUpdate(effortOption("low"), modeOption("plan"), { ...modeOption("auto"), id: "mode-2" }, modelOption("default")),
+    ]));
+
+    expect(chatPickerOptions(view)).toEqual([
+      expect.objectContaining({ id: "mode", current: "plan" }),
+      expect.objectContaining({ id: "model", current: "default" }),
+    ]);
   });
 });
 
 describe("chatOptionWords", () => {
   const view = fold(chatEntries([optionsUpdate(modeOption("auto"))]));
-  const mode = chatModeOption(view)!;
+  const mode = chatPickerOptions(view)[0]!;
 
   it("names the option and the value", () => {
     expect(chatOptionWords(mode, "bypassPermissions")).toBe("Mode: Bypass permissions");
@@ -638,7 +698,7 @@ describe("chatOptionWords", () => {
 
 describe("chatOptionValueName", () => {
   const view = fold(chatEntries([optionsUpdate(modeOption("auto"))]));
-  const mode = chatModeOption(view)!;
+  const mode = chatPickerOptions(view)[0]!;
 
   it("gives the name of a value, and the id of a value that the option does not offer", () => {
     expect(chatOptionValueName(mode, "acceptEdits")).toBe("Accept edits");

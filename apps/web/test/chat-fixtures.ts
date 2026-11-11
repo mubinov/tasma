@@ -576,6 +576,41 @@ export function modeOption(currentValue: string, options: readonly unknown[] = M
   };
 }
 
+/** The models of the adapter: `default` first, with the model that it runs in its description. */
+export const MODEL_VALUES: readonly AcpObject[] = [
+  { value: "default", name: "Default", description: "Model A" },
+  { value: "model-b", name: "Model B", description: "The larger model" },
+  { value: "model-c", name: "Model C", description: "The smaller model" },
+];
+
+/** The model option as the adapter sends it: a select with a flat list of values. */
+export function modelOption(currentValue: string, options: readonly unknown[] = MODEL_VALUES): AcpObject {
+  return {
+    id: "model",
+    name: "Model",
+    description: "AI model to use",
+    category: "model",
+    type: "select",
+    currentValue,
+    options,
+  };
+}
+
+/** An option of a category that the picker row does not show. */
+export function effortOption(currentValue: string): AcpObject {
+  return {
+    id: "effort",
+    name: "Effort",
+    category: "thought_level",
+    type: "select",
+    currentValue,
+    options: [
+      { value: "low", name: "Low" },
+      { value: "high", name: "High" },
+    ],
+  };
+}
+
 /** A model option with its values in groups. */
 export const MODEL_OPTION: AcpObject = {
   id: "model",

@@ -278,8 +278,11 @@ function spoken(text: string): string {
   return characters.length > SPOKEN_LIMIT ? `${characters.slice(0, SPOKEN_LIMIT - 1).join("")}…` : text;
 }
 
-export function chatModeOption(view: ChatView): ChatOption | undefined {
-  return view.options.find((option) => option.category === "mode");
+const PICKER_CATEGORIES = ["mode", "model"] as const;
+
+/** The options of the picker row: the first of each category of `PICKER_CATEGORIES`, in that order. */
+export function chatPickerOptions(view: ChatView): ChatOption[] {
+  return PICKER_CATEGORIES.flatMap((category) => view.options.find((option) => option.category === category) ?? []);
 }
 
 /** The name of a value of the option, or its id when the option does not offer it. */
@@ -293,10 +296,16 @@ export function chatOptionWords(option: ChatOption, value: string): string {
 
 /**
  * What a screen reader hears about the change from `before` to `after`, in the
- * order it hears it. `announceMode` false leaves out a change of the mode,
- * which a pick period of this window announces at its end.
+ * order it hears it. `announceOptions` false leaves out a change of the
+ * options of the picker row, which a pick period of this window announces at
+ * its end.
  */
-export function chatAnnouncements(before: ChatView, after: ChatView, agent: ChatAgent, announceMode = true): string[] {
+export function chatAnnouncements(
+  before: ChatView,
+  after: ChatView,
+  agent: ChatAgent,
+  announceOptions = true,
+): string[] {
   if (before === after) {
     return [];
   }
@@ -335,10 +344,14 @@ export function chatAnnouncements(before: ChatView, after: ChatView, agent: Chat
   if (agentActive(before.fold) && !agentActive(after.fold) && status.state === "needs-you" && notices.length === 0) {
     words.push(`${name} finished the turn`);
   }
-  const modeBefore = chatModeOption(before);
-  const modeAfter = chatModeOption(after);
-  if (announceMode && modeBefore !== undefined && modeAfter !== undefined && modeBefore.current !== modeAfter.current) {
-    words.push(chatOptionWords(modeAfter, modeAfter.current));
+  if (announceOptions) {
+    const optionsBefore = chatPickerOptions(before);
+    for (const option of chatPickerOptions(after)) {
+      const old = optionsBefore.find((one) => one.category === option.category);
+      if (old !== undefined && old.current !== option.current) {
+        words.push(chatOptionWords(option, option.current));
+      }
+    }
   }
 
   return words;

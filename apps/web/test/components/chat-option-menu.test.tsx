@@ -76,6 +76,14 @@ describe("the trigger", () => {
 
     expect(screen.getByRole("button", { name: "Mode dontAsk" })).toBe(trigger());
   });
+
+  it("shows a model id that the list does not offer, in a name that can break anywhere", () => {
+    const model: ChatOption = { id: "model", name: "Model", category: "model", current: "model-a-2026-01-01", values: [] };
+    renderMenu({ option: model });
+
+    expect(screen.getByRole("button", { name: "Model model-a-2026-01-01" })).toBe(trigger());
+    expect(screen.getByText("model-a-2026-01-01").className).toContain("wrap-anywhere");
+  });
 });
 
 describe("the menu", () => {
@@ -100,6 +108,14 @@ describe("the menu", () => {
     expect(document.getElementById(manual.getAttribute("aria-describedby")!)?.textContent)
       .toBe("Always ask before making changes");
     expect(within(menu).getByRole("menuitemradio", { name: "Auto" }).hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  it("has the available height and scrolls", async () => {
+    renderMenu();
+    const { menu } = await openMenu();
+
+    expect(menu.className).toContain("max-h-(--available-height)");
+    expect(menu.className).toContain("overflow-y-auto");
   });
 
   it("checks the current value", async () => {

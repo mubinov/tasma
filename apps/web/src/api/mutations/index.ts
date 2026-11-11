@@ -1,6 +1,7 @@
 export {
   CHAT_CLIENT,
   chatFailureKey,
+  chatOptionFailureKey,
   chatRefusalCode,
   chatRestartFailureTitle,
   chatSeenOptions,

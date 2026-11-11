@@ -21,7 +21,7 @@ import { chatAgentName, chatStateText, chatThreadMessage, isChatMissing, message
 import { WarningIcon, XIcon } from "../lib/icons";
 import { CHAT_HEADING_MARK, CHAT_HEADING_SELECTOR, focusInView, KIT_INPUT } from "../lib/focus-in-view";
 import { sayStartedWords } from "../lib/started-chat";
-import { useChatModePick, type ChatModePick } from "../lib/use-chat-mode-pick";
+import { useChatOptionPicks, type ChatOptionPicks } from "../lib/use-chat-option-picks";
 import { chatOpenMessageId, chatUserSeq, useChatScroll, type ChatScrollInput } from "../lib/use-chat-scroll";
 import { useChatSeen, type SeenWatch } from "../lib/use-chat-seen";
 import { useChatThreadFocus } from "../lib/use-chat-thread-focus";
@@ -66,7 +66,7 @@ type ChatOpening = Pick<ChatScrollInput, "openId" | "lastId">;
 type ScrollInput = ChatOpening & Pick<ChatScrollInput, "userSeq" | "ownTurn" | "onFollow">;
 
 /** What `ChatTranscript` gives the composer slot through `extras` of the runtime, from the ready view on. */
-type ComposerExtras = ChatModePick & {
+type ComposerExtras = ChatOptionPicks & {
   seenWatch: SeenInput;
   scroll: ScrollInput;
   onFocusLost: () => void;
@@ -96,7 +96,7 @@ function ChatScroll(input: ScrollInput): null {
 }
 
 /**
- * The seen tracker, the scroll and the mode picker in the composer. Their data
+ * The seen tracker, the scroll and the pickers in the composer. Their data
  * comes through the runtime extras, so `THREAD_COMPONENTS` stays one object: a
  * new one would change the context that every message of the thread reads.
  */
@@ -107,22 +107,25 @@ function ChatComposerStart(): ReactNode {
     return null;
   }
 
-  const { mode, hidden, pending, pick, onFocusLost, seenWatch, scroll } = extras;
+  const { picks, pick, onFocusLost, seenWatch, scroll } = extras;
   return (
     <>
       <ChatSeenTracker {...seenWatch} />
       <ChatScroll {...scroll} />
-      {mode !== undefined && (
+      {picks.length > 0 && (
         <ChatPickerRow>
-          <ChatOptionMenu
-            option={mode}
-            hidden={hidden}
-            pending={pending}
-            onPick={(value) => {
-              pick(mode, value);
-            }}
-            onFocusLost={onFocusLost}
-          />
+          {picks.map(({ option, hidden, pending }) => (
+            <ChatOptionMenu
+              key={option.category}
+              option={option}
+              hidden={hidden}
+              pending={pending}
+              onPick={(value) => {
+                pick(option, value);
+              }}
+              onFocusLost={onFocusLost}
+            />
+          ))}
         </ChatPickerRow>
       )}
     </>
@@ -372,11 +375,11 @@ function ChatTranscript(
   const sendQueued = (message: AppendMessage) => {
     writes.send(messageText(message)).catch(() => undefined);
   };
-  const modePick = useChatModePick({ tag, task, chat, view, agent, ready, write: writes.pick });
+  const optionPicks = useChatOptionPicks({ tag, task, chat, view, agent, ready, write: writes.pick });
   const extras: ComposerExtras | undefined = opening === null
     ? undefined
     : {
-        ...modePick,
+        ...optionPicks,
         seenWatch: { tag, task, chat, seq: view.seq, seen: record.seen, busy },
         scroll: { ...opening, userSeq: chatUserSeq(view.messages), ownTurn, onFollow: setAutoScroll },
         onFocusLost: () => {

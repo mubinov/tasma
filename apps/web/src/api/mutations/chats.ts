@@ -63,8 +63,17 @@ export function chatWriteKey(place: ChatPlace) {
 }
 
 /** One notice for each chat and kind of write, so a new failure replaces the last one. */
-export function chatFailureKey(place: ChatPlace, kind: ChatWrite["kind"]): string {
+export function chatFailureKey(place: ChatPlace, kind: Exclude<ChatWrite["kind"], "option">): string {
   return `${CHAT_FAILURE_KEY_PREFIX}${chatPlaceText(place)}:${kind}`;
+}
+
+/** One notice for each option of a chat, so a pick of one option leaves the notice of another. */
+export function chatOptionFailureKey(place: ChatPlace, configId: string): string {
+  return `${CHAT_FAILURE_KEY_PREFIX}${chatPlaceText(place)}:option:${configId}`;
+}
+
+function writeFailureKey(place: ChatPlace, write: ChatWrite): string {
+  return write.kind === "option" ? chatOptionFailureKey(place, write.configId) : chatFailureKey(place, write.kind);
 }
 
 /** The code of the refusal that a write failed with, also inside a `WriteError`. */
@@ -131,7 +140,7 @@ export function chatWriteOptions(queryClient: QueryClient, client: Client, place
     // A write whose answer is lost can be done already.
     retry: 0,
     onSuccess: (answer, write) => {
-      const key = chatFailureKey(place, write.kind);
+      const key = writeFailureKey(place, write);
       const diagnostics = answer?.diagnostics ?? [];
 
       if (write.kind === "option" && diagnostics.length > 0) {
@@ -142,7 +151,7 @@ export function chatWriteOptions(queryClient: QueryClient, client: Client, place
       useNoticeStore.getState().closeNotice(key);
     },
     onError: (error, write) => {
-      const key = chatFailureKey(place, write.kind);
+      const key = writeFailureKey(place, write);
       const words = [refusalWords(error)];
 
       if ((write.kind === "permission" || write.kind === "question") && chatRefusalCode(error) === "already-answered") {

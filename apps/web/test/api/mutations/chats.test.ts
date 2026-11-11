@@ -13,6 +13,7 @@ import { createAppQueryClient } from "../../../src/api/client";
 import {
   CHAT_CLIENT,
   chatFailureKey,
+  chatOptionFailureKey,
   chatRefusalCode,
   chatSeenOptions,
   chatStartKey,
@@ -77,6 +78,8 @@ const DECLINE: ChatWrite = { kind: "question", request: "r2", answer: { action: 
 const SAVED = { title: "Mode changed, but it is not saved.", line: "The daemon could not write the files below." };
 
 const OPTION: ChatWrite = { kind: "option", configId: "mode", value: "auto", failure: FAILURE, saved: SAVED };
+
+const MODEL: ChatWrite = { kind: "option", configId: "model", value: "model-b", failure: FAILURE, saved: SAVED };
 
 const NOT_SAVED: Diagnostic[] = [
   {
@@ -295,7 +298,7 @@ describe("chatWriteOptions", () => {
 
     expect(notices()).toEqual([
       expect.objectContaining({
-        key: chatFailureKey(PLACE, "option"),
+        key: chatOptionFailureKey(PLACE, "mode"),
         form: "warning",
         title: "Mode changed, but it is not saved.",
         line: "The daemon could not write the files below.",
@@ -325,8 +328,32 @@ describe("chatWriteOptions", () => {
     await expect(observer.mutate(OPTION)).rejects.toBeInstanceOf(WriteError);
 
     expect(notices()).toEqual([
-      expect.objectContaining({ key: chatFailureKey(PLACE, "option"), form: "failure", title: "The write failed." }),
+      expect.objectContaining({ key: chatOptionFailureKey(PLACE, "mode"), form: "failure", title: "The write failed." }),
     ]);
+  });
+
+  it("keys the notice of an option write by its option", () => {
+    expect(chatOptionFailureKey(PLACE, "model")).toBe("chat-write-failure:SAGA/SAGA-3/2:option:model");
+  });
+
+  it("opens one failure notice for each option", async () => {
+    const { observer } = setup({ [`POST ${CHAT_PATH}/options`]: refused("malformed-request") });
+
+    await expect(observer.mutate(OPTION)).rejects.toBeInstanceOf(WriteError);
+    await expect(observer.mutate(MODEL)).rejects.toBeInstanceOf(WriteError);
+
+    expect(notices().map(({ key }) => key)).toEqual([chatOptionFailureKey(PLACE, "mode"), chatOptionFailureKey(PLACE, "model")]);
+  });
+
+  it("closes only the notice of its own option when an option write succeeds", async () => {
+    const { observer, replies } = setup({ [`POST ${CHAT_PATH}/options`]: refused("malformed-request") });
+    await expect(observer.mutate(OPTION)).rejects.toBeInstanceOf(WriteError);
+    await expect(observer.mutate(MODEL)).rejects.toBeInstanceOf(WriteError);
+    replies[`POST ${CHAT_PATH}/options`] = RECORD;
+
+    await observer.mutate(MODEL);
+
+    expect(notices().map(({ key }) => key)).toEqual([chatOptionFailureKey(PLACE, "mode")]);
   });
 
   it("does not send a write again when its answer is lost", async () => {

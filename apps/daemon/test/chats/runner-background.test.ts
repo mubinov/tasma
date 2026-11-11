@@ -6,7 +6,7 @@ import { holdReason, ownTurnReason, stopNote } from "../../src/chats/idle.js";
 import { faultLine } from "../../src/chats/registry.js";
 import type { LiveChat } from "../../src/chats/registry.js";
 import { logOf, logUntil, until } from "../helpers.js";
-import { modeOption, text } from "../agents/fake-agent.js";
+import { actAsAdapter, modelOption, modeOption, text } from "../agents/fake-agent.js";
 import type { Script } from "../agents/fake-agent.js";
 import { chatState, endedByRunner, fakeAdapter, filtered, gate, NEXT, PICK, requestOf, START, world } from "./runner-world.js";
 import type { World, WorldOptions } from "./runner-world.js";
@@ -43,6 +43,11 @@ const CANCEL = { client: "web" };
 const MARKER: SessionUpdate = { sessionUpdate: "usage_update", used: 1, size: 2, cost: { amount: 0.01, currency: "USD" } };
 
 const PLAN: SessionUpdate = { sessionUpdate: "plan", entries: [] };
+
+/** What Claude sends before the answer of a model change that leaves a mode the model does not support. */
+const NOTICE = text("The mode changed to Accept edits.");
+
+const MODEL_PICK = { configId: "model", value: "large", client: "web" } as const;
 
 type Control = {
   /** What the next checks give, one for each check, before `state`. */
@@ -366,6 +371,31 @@ describe("createChatRunner with the background commands of the adapter", () => {
       const log = await agentSends(setup, text(" passed"));
 
       expect(backgroundEvents(log)).toEqual([WAITS, OWN_TURN_WITH_JOB]);
+    });
+
+    it.each<[string, Script["setConfigOption"], boolean]>([
+      ["a change", async (params, fake) => {
+        await fake.update(NOTICE);
+        return actAsAdapter(params, fake);
+      }, true],
+      ["a refused change", async (_params, fake) => {
+        await fake.update(NOTICE);
+        throw new Error("Not now");
+      }, false],
+    ])("opens no own turn for output during %s of an option, and output after it opens one", async (_case, setConfigOption, changes) => {
+      const setup = await started({ ...LONG_LIMIT, script: { configOptions: [modelOption()], setConfigOption } });
+
+      const picked = setup.runner.setOption(setup.live, MODEL_PICK);
+      await (changes ? picked : expect(picked).rejects.toMatchObject({ code: "option-refused" }));
+      await setup.live.written();
+
+      expect(await logOf(setup.live)).toContainEqual({ kind: "update", update: { ...NOTICE, filtered: true } });
+      expect(backgroundEvents(await logOf(setup.live))).toEqual([]);
+      expect(setup.live.chat.state).toBe("needs-you");
+
+      const log = await agentSends(setup, text("The tests passed"));
+
+      expect(backgroundEvents(log)).toEqual([OWN_TURN]);
     });
 
     it.each<[string, SessionUpdate]>([

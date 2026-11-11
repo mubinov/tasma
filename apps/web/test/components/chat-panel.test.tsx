@@ -37,6 +37,7 @@ import {
   CONFIRM_LOG,
   EDIT_LOG,
   FORM_LOG,
+  modelOption,
   modeOption,
   modeUpdate,
   optionsUpdate,
@@ -2199,11 +2200,11 @@ async function settle(): Promise<void> {
   });
 }
 
-/** Each text that the mode trigger shows from now on, one for each change. */
-function watchTrigger(): string[] {
-  const seen: string[] = [modeTrigger().textContent];
+/** Each text that the trigger shows from now on, one for each change. */
+function watchTrigger(trigger: { name: RegExp } = MODE_TRIGGER): string[] {
+  const seen: string[] = [screen.getByRole("button", trigger).textContent];
   const observer = new MutationObserver(() => {
-    const text = screen.queryByRole("button", MODE_TRIGGER)?.textContent;
+    const text = screen.queryByRole("button", trigger)?.textContent;
     if (text !== undefined && text !== seen.at(-1)) {
       seen.push(text);
     }
@@ -2695,6 +2696,206 @@ it("keeps the newer of two picks whose answers come in the wrong order", async (
   });
   await frame();
   expect(modeWords()).toEqual(["Mode: Manual"]);
+});
+
+describe("the model picker", () => {
+  /** A turn that ended, after the first list of the options, in Accept edits on the default model. */
+  const MODEL_LOG = chatEntries([
+    optionsUpdate(modelOption("default"), modeOption("acceptEdits")),
+    userMessage("Build."),
+    textChunk("Built."),
+    turnEnd(),
+  ]);
+
+  const MODEL_TRIGGER = { name: /^Model / };
+
+  function modelTrigger(): HTMLElement {
+    return screen.getByRole("button", MODEL_TRIGGER);
+  }
+
+  async function pickModel(user: ReturnType<typeof userEvent.setup>, name: string): Promise<void> {
+    await user.click(await screen.findByRole("button", MODEL_TRIGGER));
+    await user.click(await screen.findByRole("menuitemradio", { name }));
+  }
+
+  /** The values in the triggers of the picker row of the composer, in their order. */
+  async function pickerValues(): Promise<string[]> {
+    const row = (await screen.findByRole("button", MODEL_TRIGGER)).closest(".ps-2\\.5")!;
+    return within(row as HTMLElement).getAllByRole("button").map((trigger) => trigger.textContent);
+  }
+
+  function optionWords(): string[] {
+    return spoken().filter((words) => words.startsWith("Mode:") || words.startsWith("Model:"));
+  }
+
+  const OPTION_REFUSED = refusalReply(422, { kind: "daemon", code: "option-refused", message: "the agent refused the value" });
+
+  it("shows Mode, then Model, in one picker row of a task chat", async () => {
+    await renderPanel(logOf(MODEL_LOG));
+
+    expect(await pickerValues()).toEqual(["Accept edits", "Default"]);
+    expect(screen.getByRole("button", { name: "Model Default" })).toBe(modelTrigger());
+    expect(composer().closest("form")?.contains(modelTrigger())).toBe(true);
+  });
+
+  it("shows Mode, then Model, in one picker row of a project chat", async () => {
+    const record = successReply(projectChatRecord({ seq: MODEL_LOG.length }));
+    const log = stubChatLog({ [projectChatPath()]: record }, projectEventsPath);
+    log.serve(0, { cursor: MODEL_LOG.length, entries: [...MODEL_LOG] });
+
+    await renderPanel(log, { host: <ChatBody tag="SAGA" task={undefined} chat={2} headingRef={{ current: null }} /> });
+
+    expect(await pickerValues()).toEqual(["Accept edits", "Default"]);
+  });
+
+  it("shows only Model for a log with only a model option", async () => {
+    await renderPanel(logOf(chatEntries([optionsUpdate(modelOption("default"))])));
+
+    expect(await pickerValues()).toEqual(["Default"]);
+    expect(screen.queryByRole("button", MODE_TRIGGER)).toBeNull();
+  });
+
+  it("offers the models of the agent with their descriptions", async () => {
+    const user = userEvent.setup();
+    await renderPanel(logOf(MODEL_LOG));
+
+    await user.click(await screen.findByRole("button", MODEL_TRIGGER));
+
+    const menu = await screen.findByRole("menu", { name: "Model" });
+    expect(within(menu).getAllByRole("menuitemradio").map((item) => item.textContent)).toEqual([
+      "DefaultModel A",
+      "Model BThe larger model",
+      "Model CThe smaller model",
+    ]);
+  });
+
+  it("posts a pick of the model, shows its wait in the Model trigger alone, and announces the model one time", async () => {
+    const user = userEvent.setup();
+    const log = logOf(MODEL_LOG);
+    const held = holdPick(log);
+    await renderPanel(log);
+
+    await pickModel(user, "Model B");
+
+    await waitFor(() => {
+      expect(posts(log)).toEqual([
+        { method: "POST", path: OPTIONS_PATH, body: { configId: "model", value: "model-b", client: CHAT_CLIENT } },
+      ]);
+    });
+    expect(modelTrigger().textContent).toBe("Model B…");
+    expect(modeTrigger().textContent).toBe("Accept edits");
+    held.answer(optionAnswer(5));
+    log.answer(4, { cursor: 5, entries: chatEntries([optionsUpdate(modelOption("model-b"), modeOption("acceptEdits"))], 5) });
+
+    await waitFor(() => {
+      expect(modelTrigger().textContent).toBe("Model B");
+    });
+    await frame();
+    expect(optionWords()).toEqual(["Model: Model B"]);
+  });
+
+  it("keeps a picked model while a later mode pick has a higher seq", async () => {
+    const user = userEvent.setup();
+    const log = logOf(MODEL_LOG);
+    const model = holdPick(log);
+    await renderPanel(log);
+    await screen.findByRole("button", MODEL_TRIGGER);
+    const seen = watchTrigger(MODEL_TRIGGER);
+
+    await pickModel(user, "Model B");
+    await waitFor(() => {
+      expect(posts(log)).toHaveLength(1);
+    });
+    model.answer(optionAnswer(10));
+    await settle();
+    const mode = holdPick(log);
+    await pickMode(user, "Auto");
+    await waitFor(() => {
+      expect(posts(log)).toHaveLength(2);
+    });
+    mode.answer(optionAnswer(12));
+    await settle();
+    const usage = agentUpdate({ sessionUpdate: "usage_update", used: 9 });
+    log.answer(4, { cursor: 9, entries: chatEntries([usage, usage, usage, usage, usage], 5) });
+    await settle();
+
+    expect(modelTrigger().textContent).toBe("Model B…");
+    expect(modeTrigger().textContent).toBe("Auto…");
+
+    log.answer(9, {
+      cursor: 12,
+      entries: chatEntries([
+        optionsUpdate(modelOption("model-b"), modeOption("acceptEdits")),
+        usage,
+        optionsUpdate(modelOption("model-b"), modeOption("auto")),
+      ], 10),
+    });
+
+    await waitFor(() => {
+      expect(modeTrigger().textContent).toBe("Auto");
+    });
+    expect(seen).toEqual(["Default", "Model B…", "Model B"]);
+    await frame();
+    expect(optionWords()).toEqual(["Mode: Auto", "Model: Model B"]);
+  });
+
+  it("opens the failure notice of a refused model pick with the name Model", async () => {
+    const user = userEvent.setup();
+    const log = logOf(MODEL_LOG);
+    log.replies[`POST ${OPTIONS_PATH}`] = OPTION_REFUSED;
+    await renderPanel(log);
+
+    await pickModel(user, "Model B");
+
+    await waitFor(() => {
+      expect(notices()).toEqual([
+        expect.objectContaining({ form: "failure", title: "Model of chat 2 of SAGA-3 did not change." }),
+      ]);
+    });
+    expect(modelTrigger().textContent).toBe("Default");
+  });
+
+  it("keeps the failure notice of a refused mode pick open after a model pick succeeds", async () => {
+    const user = userEvent.setup();
+    const log = logOf(MODEL_LOG);
+    log.replies[`POST ${OPTIONS_PATH}`] = OPTION_REFUSED;
+    await renderPanel(log);
+    await pickMode(user, "Auto");
+    await waitFor(() => {
+      expect(notices()).toHaveLength(1);
+    });
+    log.replies[`POST ${OPTIONS_PATH}`] = optionAnswer(5);
+
+    await pickModel(user, "Model B");
+    await waitFor(() => {
+      expect(posts(log)).toHaveLength(2);
+    });
+    await settle();
+
+    expect(notices()).toEqual([expect.objectContaining({ title: "Mode of chat 2 of SAGA-3 did not change." })]);
+  });
+
+  it("moves focus to the heading when the model option leaves the log with its menu open", async () => {
+    const user = userEvent.setup();
+    const log = logOf(MODEL_LOG);
+    await renderPanel(log);
+    const trigger = await screen.findByRole("button", MODEL_TRIGGER);
+    act(() => {
+      trigger.focus();
+    });
+    await user.keyboard("{Enter}");
+    const menu = await screen.findByRole("menu", { name: "Model" });
+    await waitFor(() => {
+      expect(menu.contains(document.activeElement)).toBe(true);
+    });
+
+    log.answer(4, { cursor: 5, entries: chatEntries([optionsUpdate(modeOption("acceptEdits"))], 5) });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(heading());
+    });
+    expect(modeTrigger().textContent).toBe("Accept edits");
+  });
 });
 
 /** A finished chat of two turns. */

@@ -261,6 +261,12 @@ type Run = RunningChat & {
   /** Set by a stop of an own turn until the next marker or message. Output until then is late output of that turn. */
   ownTurnStopped: boolean;
   /**
+   * Set while a change of an option waits for its answer. Output until then is
+   * a notice of the change, for example of a mode that the agent changed with
+   * the model, and no own turn.
+   */
+  settingOption: boolean;
+  /**
    * The texts of the chat that no prompt and no steer has taken to the agent,
    * in log order. A new session takes every text.
    */
@@ -393,6 +399,7 @@ function newRun(live: AnyLiveChat): Run {
     endCheck: false,
     stopCheck: false,
     ownTurnStopped: false,
+    settingOption: false,
     unsent: [],
     steering: new Set(),
     cancelAsked: false,
@@ -693,7 +700,7 @@ export function createChatRunner(options: {
         run.background?.note(update);
         run.options = foldOptions(run.options, update);
         const ownTurnPossible = !run.turning && run.background !== undefined;
-        if (ownTurnPossible && OWN_TURN_OUTPUT.has(update.sessionUpdate)) {
+        if (ownTurnPossible && !run.settingOption && OWN_TURN_OUTPUT.has(update.sessionUpdate)) {
           run.outputs += 1;
           if (!run.ownTurnStopped) void setBackground(run, run.job, true);
         }
@@ -747,11 +754,14 @@ export function createChatRunner(options: {
 
   /** Gives the reason of a refusal of the agent. `AgentClosed` passes on. */
   async function setOn(run: Run, session: AgentSession, configId: string, value: string): Promise<string | undefined> {
+    run.settingOption = true;
     try {
       run.options = await session.setConfigOption(configId, value);
     } catch (error) {
       if (error instanceof AgentClosed) throw error;
       return errorReason(run.adapter!, error);
+    } finally {
+      run.settingOption = false;
     }
     if (!run.quiet) await append(run, optionsEvent(run.options));
     return undefined;
