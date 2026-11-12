@@ -60,7 +60,7 @@ function describeFailure(error: unknown): Presentation {
   return {
     title: "Stopped rendering",
     heading: "tasma stopped rendering",
-    advice: "Restart the window. If it keeps happening, the message below is what to report.",
+    advice: "Quit Tasma and open it again. If it keeps happening, the message below is what to report.",
     offersRetry: false,
   };
 }

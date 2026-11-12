@@ -252,7 +252,7 @@ describe("the first full answer", () => {
     expect(isOpen("Install the Claude Code CLI")).toBe(true);
     expect(screen.getByText("Tasma runs your workflows with Claude Code.")).toBeTruthy();
 
-    const guide = screen.getByRole("link", { name: "Open the Claude Code CLI install guide (opens in the browser)" });
+    const guide = screen.getByRole("link", { name: "Open the Claude Code CLI install guide" });
 
     expect(guide.getAttribute("href")).toBe("https://code.claude.com/docs/en/setup");
     expect(guide.getAttribute("target")).toBe("_blank");
@@ -267,7 +267,7 @@ describe("the first full answer", () => {
     await userEvent.click(trigger("Install the tasma skill in Claude Code"));
     expect(screen.getByRole("button", { name: "Install in Claude Code" })).toBeTruthy();
     expect(screen.queryByText("npx skills add mubinov/tasma-skill -g")).toBeNull();
-    expect(screen.getByRole("link", { name: "Other ways to install the skill (opens in the browser)" }).getAttribute("href"))
+    expect(screen.getByRole("link", { name: "Other ways to install the skill" }).getAttribute("href"))
       .toBe("https://github.com/mubinov/tasma-skill#install");
 
     await userEvent.click(trigger("Add a project"));

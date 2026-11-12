@@ -130,16 +130,16 @@ describe("a link", () => {
   it.each([
     { url: "https://example.com", href: "https://example.com/" },
     { url: "mailto:someone@example.com", href: "mailto:someone@example.com" },
-  ])("to $url opens its absolute form in a new tab", ({ url, href }) => {
+  ])("to $url opens its absolute form", ({ url, href }) => {
     renderMarkdown(`[site](${url})`);
 
     const link = screen.getByRole("link");
-    expect(link.textContent).toBe("site (opens in a new tab)");
+    expect(link.textContent).toBe("site");
     expect(link.getAttribute("href")).toBe(href);
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toBe("noreferrer");
     expect(classOf(link)).toBe("underline underline-offset-2");
-    expect(classOf(link.lastElementChild)).toBe("sr-only");
+    expect(link.querySelector(".sr-only")).toBeNull();
   });
 
   it.each(["javascript:alert(1)", "relative/path", "#x", "http:/api/items", "http:page.invalid/../daemon/items", "http:/page.invalid/../items"])(
@@ -157,7 +157,7 @@ describe("a link", () => {
     (text) => {
       renderMarkdown(text);
 
-      expect(screen.getByRole("link").textContent).toBe("https://example.com/report (opens in a new tab)");
+      expect(screen.getByRole("link").textContent).toBe("https://example.com/report");
     },
   );
 
@@ -190,8 +190,8 @@ describe("a link", () => {
     const wrapper = renderMarkdown("[https://github.com/acme/repo](https://evil.example/login)");
 
     const link = screen.getByRole("link");
-    expect(link.textContent).toBe("https://github.com/acme/repo (warning: goes to evil.example) (opens in a new tab)");
-    expect([...link.querySelectorAll("span")].map((span) => classOf(span))).toEqual(["sr-only", "sr-only"]);
+    expect(link.textContent).toBe("https://github.com/acme/repo (warning: goes to evil.example)");
+    expect([...link.querySelectorAll("span")].map((span) => classOf(span))).toEqual(["sr-only"]);
     const mark = wrapper.querySelector("[aria-hidden='true']:has(svg)");
     expect(link.contains(mark)).toBe(false);
     expect(mark?.textContent).toBe("(evil.example)");
@@ -231,7 +231,7 @@ describe("a link", () => {
     const wrapper = renderMarkdown(text);
 
     const link = screen.getByRole("link");
-    expect(link.textContent).toBe("oper/emca/moc.buhtig//:sptth (warning: goes to moc.buhtig.ac) (opens in a new tab)");
+    expect(link.textContent).toBe("oper/emca/moc.buhtig//:sptth (warning: goes to moc.buhtig.ac)");
     expect(wrapper.querySelector("[aria-hidden='true']:has(svg)")?.textContent).toBe("(moc.buhtig.ac)");
   });
 
@@ -241,7 +241,7 @@ describe("a link", () => {
     const link = screen.getByRole("link");
     expect(link.querySelector("strong")?.textContent).toBe("bold");
     expect(link.querySelector("code")?.textContent).toBe("code");
-    expect(link.textContent).toBe("bold code plain (opens in a new tab)");
+    expect(link.textContent).toBe("bold code plain");
   });
 
   it("keeps the bidi controls of the text around it", () => {
@@ -253,13 +253,13 @@ describe("a link", () => {
   it("whose text is only bidi controls is named by its URL", () => {
     renderMarkdown("[⁩‮](https://example.com/a)");
 
-    expect(screen.getByRole("link").textContent).toBe("https://example.com/a (opens in a new tab)");
+    expect(screen.getByRole("link").textContent).toBe("https://example.com/a");
   });
 
   it("whose text is not a URL has no mark", () => {
     const wrapper = renderMarkdown("[site](https://example.com)");
 
-    expect(screen.getByRole("link").textContent).toBe("site (opens in a new tab)");
+    expect(screen.getByRole("link").textContent).toBe("site");
     expect(wrapper.querySelector("svg")).toBeNull();
   });
 
@@ -296,7 +296,7 @@ describe("an image", () => {
     const wrapper = renderMarkdown("![a chart](https://example.com/chart.png)");
 
     const link = screen.getByRole("link");
-    expect(link.textContent).toBe("a chart (opens in a new tab)");
+    expect(link.textContent).toBe("a chart");
     expect(link.getAttribute("href")).toBe("https://example.com/chart.png");
     expect(link.getAttribute("target")).toBe("_blank");
     expect(wrapper.querySelector("img")).toBeNull();
@@ -305,7 +305,7 @@ describe("an image", () => {
   it("with no alt text renders as a link named by its URL", () => {
     renderMarkdown("![](https://example.com/chart.png)");
 
-    expect(screen.getByRole("link").textContent).toBe("https://example.com/chart.png (opens in a new tab)");
+    expect(screen.getByRole("link").textContent).toBe("https://example.com/chart.png");
   });
 
   it("from a reference renders as a link to the source of its definition", () => {
@@ -322,7 +322,7 @@ describe("an image", () => {
 
       const links = screen.getAllByRole("link");
       expect(links.map((link) => [link.getAttribute("href"), link.textContent])).toEqual([
-        ["https://example.com/report", "a chart (opens in a new tab)"],
+        ["https://example.com/report", "a chart"],
       ]);
       expect(wrapper.querySelector("img")).toBeNull();
     },
@@ -337,7 +337,7 @@ describe("an image", () => {
 
     const links = screen.getAllByRole("link");
     expect(links.map((link) => [link.getAttribute("href"), link.textContent])).toEqual([
-      ["https://example.com/report", "https://example.com/report (opens in a new tab)"],
+      ["https://example.com/report", "https://example.com/report"],
     ]);
   });
 
@@ -417,7 +417,7 @@ describe("a single newline", () => {
     const [broken, plain] = screen.getAllByRole("link");
     expect(broken?.querySelectorAll("br")).toHaveLength(1);
     expect(plain?.querySelector("br")).toBeNull();
-    expect(cuesOf(plain!)).toEqual({ cues: [" (opens in a new tab)"], description: "https://site.example/", mark: undefined });
+    expect(cuesOf(plain!)).toEqual({ cues: [], description: "https://site.example/", mark: undefined });
     expect(cuesOf(broken!)).toEqual(cuesOf(plain!));
   });
 });

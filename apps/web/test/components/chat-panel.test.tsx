@@ -1892,7 +1892,7 @@ it("posts the option of a clicked button, locks the buttons, and shows the answe
   expect(document.activeElement).toBe(answered.parentElement);
 });
 
-it("closes a request that another window answers, with no write, and moves focus from its buttons to its line", async () => {
+it("closes a request that is already answered, with no write, and moves focus from its buttons to its line", async () => {
   const log = logOf(PERMISSION_LOG.slice(0, 5));
   await renderPanel(log);
   const yes = await findPermissionOption("Yes");
@@ -1926,7 +1926,7 @@ it("opens the warning notice for an answer that came too late, and keeps the but
       expect.objectContaining({
         form: "warning",
         title: "Your answer to chat 2 of SAGA-3 was not used.",
-        line: "The request was already closed: another window answered it, or it was cancelled or ended. "
+        line: "The request was already closed: it was answered, cancelled or ended. "
           + "The chat shows the outcome.",
       }),
     ]);

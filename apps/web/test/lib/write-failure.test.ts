@@ -151,7 +151,7 @@ describe("chatFailure", () => {
   it("gives the texts of an answer that came after its request closed", () => {
     expect(chatClosedNotice(PLACE)).toEqual({
       title: "Your answer to chat 2 of SAGA-3 was not used.",
-      line: "The request was already closed: another window answered it, or it was cancelled or ended. "
+      line: "The request was already closed: it was answered, cancelled or ended. "
         + "The chat shows the outcome.",
     });
   });

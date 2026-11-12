@@ -172,7 +172,7 @@ export function chatOptionSavedNotice(place: ChatPlace, name: string): SavedNoti
 export function chatClosedNotice(place: ChatPlace): ClosedNotice {
   return {
     title: `Your answer to ${chatName(place)} was not used.`,
-    line: "The request was already closed: another window answered it, or it was cancelled or ended. "
+    line: "The request was already closed: it was answered, cancelled or ended. "
       + "The chat shows the outcome.",
   };
 }

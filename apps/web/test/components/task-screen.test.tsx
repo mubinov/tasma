@@ -501,10 +501,10 @@ describe("the contents outline", () => {
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
     const heading = screen.getByRole("heading", { level: 2, name: /^Read the guide/ });
-    expect(heading.querySelector(".sr-only")?.textContent).toBe(" (opens in a new tab)");
+    expect(heading.querySelector(".sr-only")).toBeNull();
     expect(lines()).toEqual(["Read the guide first", "Plan"]);
     expect(within(outline()).getByRole("button", { name: "Read the guide first" })).toBeTruthy();
-    expect(heading.textContent).toBe("Read the guide (opens in a new tab)https://example.com/ first");
+    expect(heading.textContent).toBe("Read the guidehttps://example.com/ first");
   });
 
   it("labels a heading line without the description and the host mark of a link", async () => {
@@ -1068,7 +1068,7 @@ describe("a failed load", () => {
     const { transport, paths } = daemon();
     await renderWithRouter("/tasks/SAGA/%5C", transport);
 
-    expect(screen.getByRole("main").textContent).toContain("names nothing the application can show");
+    expect(screen.getByRole("main").textContent).toContain("Tasma has nothing to show here");
     expect(paths).toEqual(["/setup?mode=start", "/chats/state"]);
   });
 

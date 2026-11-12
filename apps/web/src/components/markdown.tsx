@@ -89,7 +89,6 @@ export function MarkdownLink(
         >
           {named ? children : href}
           {host !== undefined && <span className="sr-only">{` (warning: goes to ${host})`}</span>}
-          <span className="sr-only"> (opens in a new tab)</span>
         </a>
       </Tooltip>
       {/* A hidden element still gives the description, and the virtual cursor does not read it as text. */}
@@ -175,7 +174,7 @@ const sourceComponents: Components = { ...components, pre: (props) => <CodeBlock
 /**
  * Renders the markdown of a task body or a comment body: GitHub-flavoured, raw
  * HTML shown as source, a single newline shown as a line break, links opened
- * in a new tab, no image loaded, Mermaid blocks drawn as diagrams.
+ * outside the app, no image loaded, Mermaid blocks drawn as diagrams.
  */
 export function Markdown({ text, base, title, diagrams = true }: MarkdownProps): ReactNode {
   return (

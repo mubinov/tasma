@@ -171,7 +171,7 @@ describe("the address", () => {
     const { transport, paths } = twoProjects();
     await renderWithRouter("/tasks?projects=SAGA,..", transport);
 
-    expect(screen.getByRole("main").textContent).toContain("names nothing the application can show");
+    expect(screen.getByRole("main").textContent).toContain("Tasma has nothing to show here");
     expect(paths).toEqual(["/setup?mode=start", "/chats/state"]);
   });
 

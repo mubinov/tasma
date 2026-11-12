@@ -454,7 +454,7 @@ export function createAppRouter(history: RouterHistory, context: RouterContext) 
     defaultNotFoundComponent: () => (
       <PlaceholderScreen
         title="Not found"
-        summary="This address names nothing the application can show. The sidebar reaches every section."
+        summary="Tasma has nothing to show here. The sidebar reaches every section."
       />
     ),
   });

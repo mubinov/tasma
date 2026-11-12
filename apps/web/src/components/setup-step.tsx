@@ -79,8 +79,6 @@ function ExternalLink({ href, className, children }: ExternalLinkProps): ReactNo
   return (
     <a href={href} target="_blank" rel="noreferrer" className={className}>
       {children}
-      {" "}
-      <span className="sr-only">(opens in the browser)</span>
     </a>
   );
 }

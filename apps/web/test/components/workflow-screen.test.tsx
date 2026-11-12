@@ -226,7 +226,7 @@ it.each([{ segment: ".." }, { segment: "." }, { segment: "%5C" }])(
 
     await renderWithRouter(`/workflows/${segment}`, transport);
 
-    expect(screen.getByRole("main").textContent).toContain("names nothing the application can show");
+    expect(screen.getByRole("main").textContent).toContain("Tasma has nothing to show here");
     expect(paths.filter((path) => path.startsWith("/workflows"))).toEqual([]);
   },
 );

@@ -322,8 +322,8 @@ it("hands a tag no project carries to the failure panel", async () => {
 /*
  * A segment the client will not write into a path is refused by throwing, and a
  * throw from a loader reads as a fault in our own code — the one arm of the
- * panel that tells the person to restart the window. A hand-typed address is
- * not that, so the route answers it before the daemon is asked.
+ * panel that says tasma stopped rendering. A hand-typed address is not that,
+ * so the route answers it before the daemon is asked.
  */
 it.each([{ segment: ".." }, { segment: "." }, { segment: "%5C" }])(
   "hands the address /projects/$segment to the not-found screen",
@@ -332,7 +332,7 @@ it.each([{ segment: ".." }, { segment: "." }, { segment: "%5C" }])(
 
     await renderWithRouter(`/projects/${segment}`, transport);
 
-    expect(screen.getByRole("main").textContent).toContain("names nothing the application can show");
+    expect(screen.getByRole("main").textContent).toContain("Tasma has nothing to show here");
     expect(paths).toEqual(["/setup?mode=start", "/chats/state"]);
   },
 );
