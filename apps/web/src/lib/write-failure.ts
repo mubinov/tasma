@@ -54,6 +54,13 @@ const CHAT_FAILURE_LINES: Record<FailureKind, string> = {
   unsent: "The write did not start, so nothing was sent.",
 };
 
+const CHAT_INACTIVE_FAILURE_LINES: Record<FailureKind, string> = {
+  refused: "The daemon refused it, so the chat stays in Active. Its own words are below.",
+  unanswered: "No daemon answered. If the daemon marked the chat, it moves to Other chats.",
+  address: CHAT_FAILURE_LINES.address,
+  unsent: "The request did not start, so nothing changed.",
+};
+
 const CHAT_START_FAILURE_LINES: Record<FailureKind, string> = {
   refused: "The daemon refused to start the chat. Its own words are below.",
   unanswered: "No daemon answered. If the chat started, it shows in the chats of the task.",
@@ -87,6 +94,10 @@ function chatName({ tag, task, chat }: ChatPlace): string {
   return `chat ${String(chat)} of ${task ?? tag}`;
 }
 
+function capitalChatName({ tag, task, chat }: ChatPlace): string {
+  return `Chat ${String(chat)} of ${task ?? tag}`;
+}
+
 /** An option write names its option, so its texts come from `chatOptionFailure`. */
 type ChatFailureKind = Exclude<ChatWrite["kind"], "option">;
 
@@ -99,17 +110,39 @@ function chatFailureTitle(place: ChatPlace, kind: ChatFailureKind): string {
     case "permission":
     case "question":
       return `The answer to ${chatName(place)} was not sent.`;
+    case "inactive":
+      return `${capitalChatName(place)} did not move to Other chats.`;
   }
+}
+
+function inactiveFailureLine({ chat }: ChatPlace, error: WriteError): string {
+  return chatRefusalCode(error) === "turn-running"
+    ? `The agent of chat ${String(chat)} works or waits for an answer, so the chat stays in Active. `
+    + "Mark it again when the agent stops."
+    : CHAT_INACTIVE_FAILURE_LINES[failureKind(error.cause)];
 }
 
 export function chatFailure(place: ChatPlace, kind: ChatFailureKind): WriteFailure {
   return {
     title: chatFailureTitle(place, kind),
-    // A restart in progress is the only cause of a message refused with `turn-running`.
-    line: (error) => kind === "message" && chatRefusalCode(error) === "turn-running"
-      ? chatRestartingLine(place)
-      : CHAT_FAILURE_LINES[failureKind(error.cause)],
+    line: (error) => {
+      if (kind === "inactive") {
+        return inactiveFailureLine(place, error);
+      }
+      // A restart in progress is the only cause of a message refused with `turn-running`.
+      return kind === "message" && chatRefusalCode(error) === "turn-running"
+        ? chatRestartingLine(place)
+        : CHAT_FAILURE_LINES[failureKind(error.cause)];
+    },
   };
+}
+
+export function chatMarkingWords(place: ChatPlace): string {
+  return `Marking ${chatName(place)} as not active`;
+}
+
+export function chatInactiveWords(place: ChatPlace): string {
+  return `${capitalChatName(place)} is in Other chats.`;
 }
 
 /** `name` is the name of the option. */

@@ -27,15 +27,17 @@ export const FEED_MAPPINGS: FeedMappings = {
     { queryKey: daemonKeys.chats() },
     { queryKey: daemonKeys.setup() },
   ],
-  // A change of state, a new request and a move of `seen` send it. The list of
-  // all chats and the chats of the task read again, and the record reads do
-  // not. The chat panel reads the state from the log, and the `seq` of the
-  // record when it opens and after each reset of the log.
+  // A change of state, a new request, a move of `seen`, a mark as not active
+  // and a change of `busy` send it. The list of all chats and the chats of the
+  // task read again, and the record reads do not. The chat panel reads the
+  // state from the log, and the `seq` of the record when it opens and after
+  // each reset of the log.
   "chat": ({ tag, task }) => [
     { queryKey: daemonKeys.chats() },
     { queryKey: daemonKeys.taskChats(tag, task), exact: true },
   ],
-  // The list of all chats and its items read again.
+  // The changes that send `chat` also send it. The list of all chats and its
+  // items read again.
   "project-chat": () => [{ queryKey: daemonKeys.chats() }],
   // The main config gives the statuses of a project that has none, and its
   // `workflows_path` moves every workflow.

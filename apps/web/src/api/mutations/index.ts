@@ -14,6 +14,7 @@ export {
   projectChatStartKey,
   projectChatStartOptions,
   useFailedChatStart,
+  usePendingChatInactive,
   usePendingChatOptions,
   usePendingChatStart,
   usePendingProjectChatStart,

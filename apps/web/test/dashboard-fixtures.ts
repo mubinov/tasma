@@ -187,6 +187,11 @@ export function itemLink(task: string, chat: number): HTMLElement {
   return chatList().querySelector<HTMLElement>(`[data-chat-key="${task}/${String(chat)}"]`)!;
 }
 
+/** The text of each item of a menu, in order. */
+export function menuItemNames(menu: HTMLElement): string[] {
+  return within(menu).getAllByRole("menuitem").map((item) => item.textContent);
+}
+
 /** The heading of the chat side. */
 export function chatHeading(): HTMLElement {
   return screen.getByRole("heading", { level: 2, name: /^[A-Z0-9]+-\d+/ });

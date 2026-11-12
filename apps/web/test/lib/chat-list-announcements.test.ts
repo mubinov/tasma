@@ -1,7 +1,15 @@
 import type { AnyChatListItem, ChatListItem, ChatStatus, ProjectChatListItem } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
 import { tagOf } from "../../src/lib/board";
-import { chatKey, chatListAnnouncements, chatListItems, knownChats, resultCountWords, sameChat } from "../../src/lib/chat-list-announcements";
+import {
+  chatKey,
+  chatListAnnouncements,
+  chatListItems,
+  knownChats,
+  markableChat,
+  resultCountWords,
+  sameChat,
+} from "../../src/lib/chat-list-announcements";
 
 function item(task: string, chat: number, minute: number, status?: ChatStatus): ChatListItem {
   return {
@@ -371,5 +379,31 @@ describe("resultCountWords", () => {
     expect(resultCountWords(0)).toBe("No chats");
     expect(resultCountWords(1)).toBe("1 chat");
     expect(resultCountWords(12)).toBe("12 chats");
+  });
+});
+
+describe("markableChat", () => {
+  const OUTSIDE: ChatStatus = { state: "continued-outside", where: "terminal" };
+
+  it.each<[string, ChatStatus | undefined, boolean]>([
+    ["working", WORKING, true],
+    ["needs-you", NEEDS_YOU, true],
+    ["failed", FAILED, true],
+    ["continued-outside", OUTSIDE, false],
+    ["no status", undefined, false],
+  ])("gives %s with no busy: %s", (_state, status, markable) => {
+    expect(markableChat(item("SAGA-3", 1, 5, status))).toBe(markable);
+    expect(markableChat(projectItem("SAGA", 1, 5, status))).toBe(markable);
+  });
+
+  it.each<[string, ChatStatus | undefined]>([
+    ["working", WORKING],
+    ["needs-you", NEEDS_YOU],
+    ["failed", FAILED],
+    ["continued-outside", OUTSIDE],
+    ["no status", undefined],
+  ])("gives false for %s with busy", (_state, status) => {
+    expect(markableChat({ ...item("SAGA-3", 1, 5, status), busy: true })).toBe(false);
+    expect(markableChat({ ...projectItem("SAGA", 1, 5, status), busy: true })).toBe(false);
   });
 });

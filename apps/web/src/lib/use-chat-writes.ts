@@ -8,6 +8,8 @@ import { permissionAnswer, questionAnswer, type ChatRequest } from "./chat-appro
 import {
   chatClosedNotice,
   chatFailure,
+  chatInactiveWords,
+  chatMarkingWords,
   chatOptionFailure,
   chatOptionSavedNotice,
   chatRestartingLine,
@@ -32,6 +34,8 @@ export type ChatWrites = {
    * the notice tells.
    */
   pick: (configId: string, value: string, name: string) => Promise<number | undefined>;
+  /** Never rejects: the notice tells the failure. */
+  markInactive: () => Promise<void>;
 };
 
 const NOT_SENT = "Not sent. The notice gives the reason.";
@@ -104,5 +108,18 @@ export function useChatWrites(place: ChatPlace): ChatWrites {
     }
   }
 
-  return { send, cancel, answer, pick };
+  async function markInactive(): Promise<void> {
+    try {
+      await write({
+        kind: "inactive",
+        failure: chatFailure(place, "inactive"),
+        marking: chatMarkingWords(place),
+        done: chatInactiveWords(place),
+      });
+    } catch {
+      // The failure notice is open.
+    }
+  }
+
+  return { send, cancel, answer, pick, markInactive };
 }

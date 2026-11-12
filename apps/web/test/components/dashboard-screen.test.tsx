@@ -21,6 +21,7 @@ import {
   itemLink,
   itemLinks,
   listItem,
+  menuItemNames,
   minutesAgo,
   newChatButton,
   NOW,
@@ -42,6 +43,7 @@ import {
   heldBack,
   pathsBeforeFeed,
   refusalReply,
+  stubAnimations,
   stubFocusVisible,
   stubScrollIntoView,
   stubThreadDom,
@@ -2241,14 +2243,26 @@ describe("the Chat menu", () => {
     return chatRecord({ chat: number, step, seq: 3 });
   }
 
+  const STEP_ROWS: readonly ChatListItem[] = [
+    listItem("SAGA-3", 2, 5, { title: "Build the parser", step: "research", status: { state: "needs-you" } }),
+    listItem("SAGA-3", 1, 90, { title: "Build the parser", step: "research" }),
+    listItem("ACME-7", 1, 120, { title: "Ship the release", step: "dev:test" }),
+  ];
+
+  /** The list with chat 2 busy: it cannot be marked, so a test of Restart alone sees the button go away. */
+  function busyRows(): TransportReply {
+    return pageReply([{ ...STEP_ROWS[0]!, busy: true }, ...STEP_ROWS.slice(1)]);
+  }
+
+  /** The list after chat 2 moves to Other chats. */
+  function movedRows(): TransportReply {
+    return pageReply([{ ...STEP_ROWS[0]!, status: undefined }, ...STEP_ROWS.slice(1)]);
+  }
+
   /** The daemon of SAGA-3 on the step `research`, with chats 1 and 2. */
   function stepDaemon(replies: Record<string, TransportReply | Promise<TransportReply>> = {}): DashboardStub {
     const stub = stubDashboard({
-      "/chats": pageReply([
-        listItem("SAGA-3", 2, 5, { title: "Build the parser", step: "research", status: { state: "needs-you" } }),
-        listItem("SAGA-3", 1, 90, { title: "Build the parser", step: "research" }),
-        listItem("ACME-7", 1, 120, { title: "Ship the release", step: "dev:test" }),
-      ]),
+      "/chats": pageReply(STEP_ROWS),
       [TASK_PATH]: ON_RESEARCH,
       [CHATS_PATH]: successReply([stepChat(1), stepChat(2)]),
       [chatPath()]: successReply(stepChat(2)),
@@ -2319,19 +2333,9 @@ describe("the Chat menu", () => {
     expect(button.hasAttribute("aria-disabled")).toBe(false);
   });
 
-  it.each<[string, Record<string, TransportReply | Promise<TransportReply>>, string]>([
-    ["an older chat", {}, "/?task=SAGA-3&chat=1"],
-    ["a chat of a past step", { [CHATS_PATH]: successReply([stepChat(1, "plan"), stepChat(2, "plan")]) }, OPEN_PATH],
-    ["a task with no workflow", { [TASK_PATH]: task() }, OPEN_PATH],
-    ["a task whose workflow is refused", { "/workflows/dev": BROKEN }, OPEN_PATH],
-    ["a task read that loads", { [TASK_PATH]: heldBack().reply }, OPEN_PATH],
-    ["a workflow read that loads", { "/workflows/dev": heldBack().reply }, OPEN_PATH],
-    ["a chats read that loads", { [CHATS_PATH]: heldBack().reply }, OPEN_PATH],
-    ["a task read that fails", { [TASK_PATH]: BROKEN }, OPEN_PATH],
-    ["a chats read that fails", { [CHATS_PATH]: BROKEN }, OPEN_PATH],
-  ])("does not show on %s", async (_name, replies, path) => {
-    const stub = stepDaemon(replies);
-    await renderDashboard(stub, path);
+  it("does not show on an older chat in Other chats", async () => {
+    const stub = stepDaemon();
+    await renderDashboard(stub, "/?task=SAGA-3&chat=1");
 
     await waitFor(() => {
       expect(stub.paths).toContain(TASK_PATH);
@@ -2341,6 +2345,117 @@ describe("the Chat menu", () => {
 
     expect(queryChatMenu()).toBeNull();
     expect(screen.getByRole("link", { name: "Open task" })).toBeTruthy();
+  });
+
+  it.each<[string, Record<string, TransportReply | Promise<TransportReply>>]>([
+    ["a chat of a past step", { [CHATS_PATH]: successReply([stepChat(1, "plan"), stepChat(2, "plan")]) }],
+    ["a task with no workflow", { [TASK_PATH]: task() }],
+    ["a task whose workflow is refused", { "/workflows/dev": BROKEN }],
+    ["a task read that loads", { [TASK_PATH]: heldBack().reply }],
+    ["a workflow read that loads", { "/workflows/dev": heldBack().reply }],
+    ["a chats read that loads", { [CHATS_PATH]: heldBack().reply }],
+    ["a task read that fails", { [TASK_PATH]: BROKEN }],
+    ["a chats read that fails", { [CHATS_PATH]: BROKEN }],
+  ])("holds only Mark as not active on %s", async (_name, replies) => {
+    const user = userEvent.setup();
+    const stub = stepDaemon(replies);
+    await renderDashboard(stub, OPEN_PATH);
+
+    await waitFor(() => {
+      expect(stub.paths).toContain(TASK_PATH);
+      expect(stub.paths).toContain(CHATS_PATH);
+    });
+    await frame();
+    await user.click(await chatMenu());
+
+    expect(menuItemNames(await screen.findByRole("menu"))).toEqual(["Mark as not active"]);
+    expect(screen.getByRole("link", { name: "Open task" })).toBeTruthy();
+  });
+
+  it("holds Restart research and Mark as not active, in this order", async () => {
+    const user = userEvent.setup();
+    await renderDashboard(stepDaemon(), OPEN_PATH);
+
+    await user.click(await chatMenu());
+
+    const menu = await screen.findByRole("menu");
+    expect(menuItemNames(menu)).toEqual(["Restart research", "Mark as not active"]);
+    expect(within(menu).getByRole("menuitem", { name: "Mark as not active" }).querySelector("svg")).not.toBeNull();
+  });
+
+  it("marks the chat from its second item, and returns the focus to the button that Restart keeps", async () => {
+    stubAnimations();
+    const user = userEvent.setup();
+    const stub = stepDaemon({ [`POST ${chatPath()}/inactive`]: successReply(stepChat(2)) });
+    await renderDashboard(stub, OPEN_PATH);
+    stub.replies["/chats"] = movedRows();
+
+    await user.click(await chatMenu());
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Mark as not active" }));
+
+    await waitFor(() => {
+      expect(spoken()).toContain("Chat 2 of SAGA-3 is in Other chats.");
+    });
+    expect(stub.requests.filter(({ method }) => method === "POST")).toEqual([
+      { method: "POST", path: `${chatPath()}/inactive`, body: { client: CHAT_CLIENT } },
+    ]);
+    expect(document.activeElement).toBe(await chatMenu());
+    await user.click(await chatMenu());
+    expect(menuItemNames(await screen.findByRole("menu"))).toEqual(["Restart research"]);
+  });
+
+  it("closes an open menu when Restart comes after Mark, and keeps the focus on the button", async () => {
+    const user = userEvent.setup();
+    const taskRead = heldBack();
+    const stub = stepDaemon({ [TASK_PATH]: taskRead.reply });
+    await renderDashboard(stub, OPEN_PATH);
+    await user.click(await chatMenu());
+    await screen.findByRole("menu");
+
+    await act(async () => {
+      taskRead.answer(ON_RESEARCH);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+    expect(document.activeElement).toBe(await chatMenu());
+    await user.click(await chatMenu());
+    expect(menuItemNames(await screen.findByRole("menu"))).toEqual(["Restart research", "Mark as not active"]);
+  });
+
+  it("closes an open menu when Mark goes away and Restart stays, and keeps the focus on the button", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon();
+    await renderDashboard(stub, OPEN_PATH);
+    await user.click(await chatMenu());
+    await screen.findByRole("menu");
+
+    stub.replies["/chats"] = busyRows();
+    await stub.send([NEW_CHAT_EVENT]);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+    expect(document.activeElement).toBe(await chatMenu());
+    await user.click(await chatMenu());
+    expect(menuItemNames(await screen.findByRole("menu"))).toEqual(["Restart research"]);
+  });
+
+  it("closes an open menu that holds only Mark when Mark goes away, and the focus goes to the heading", async () => {
+    const user = userEvent.setup();
+    const stub = stepDaemon({ [TASK_PATH]: task() });
+    await renderDashboard(stub, OPEN_PATH);
+    await user.click(await chatMenu());
+    await screen.findByRole("menu");
+
+    stub.replies["/chats"] = busyRows();
+    await sendUntilMenuGone(stub, NEW_CHAT_EVENT);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+    expect(document.activeElement).toBe(chatHeading());
   });
 
   it("wraps the step name in its menu, and the menu keeps to the width of the window", async () => {
@@ -2510,9 +2625,11 @@ describe("the Chat menu", () => {
     });
     expect(router.latestLocation.search.chat).toBe("2");
     expect(document.activeElement).toBe(composer);
-    await waitFor(() => {
-      expect(queryChatMenu()).toBeNull();
+    await waitFor(async () => {
+      expect((await chatMenu()).getAttribute("aria-label")).toBe("Chat menu");
     });
+    await user.click(await chatMenu());
+    expect(menuItemNames(await screen.findByRole("menu"))).toEqual(["Mark as not active"]);
   });
 
   it("moves nothing when another chat is selected during the wait", async () => {
@@ -2598,7 +2715,7 @@ describe("the Chat menu", () => {
 
   it("goes away after chat-not-current, and the focus goes to the heading", async () => {
     const user = userEvent.setup();
-    const stub = stepDaemon();
+    const stub = stepDaemon({ "/chats": busyRows() });
     await renderDashboard(stub, OPEN_PATH);
     const send = await restartHeld(user, stub);
     stub.replies[TASK_PATH] = ON_APPROVE;
@@ -2621,7 +2738,7 @@ describe("the Chat menu", () => {
 
   it("closes its menu when it goes away with the menu open, and the focus goes to the heading", async () => {
     const user = userEvent.setup();
-    const stub = stepDaemon();
+    const stub = stepDaemon({ "/chats": busyRows() });
     await renderDashboard(stub, OPEN_PATH);
     await user.click(await chatMenu());
     await screen.findByRole("menu");
@@ -2636,7 +2753,7 @@ describe("the Chat menu", () => {
   });
 
   it("sends the focus to the heading when a read fails with the focus on the button", async () => {
-    const stub = stepDaemon();
+    const stub = stepDaemon({ "/chats": busyRows() });
     await renderDashboard(stub, OPEN_PATH);
     const button = await chatMenu();
     act(() => {
@@ -2651,7 +2768,7 @@ describe("the Chat menu", () => {
 
   it("closes the dialog with Nothing restarted when chat 2 is no longer the chat of its step, and focuses the heading", async () => {
     const user = userEvent.setup();
-    const stub = stepDaemon();
+    const stub = stepDaemon({ "/chats": busyRows() });
     await renderDashboard(stub, OPEN_PATH);
     stub.replies[TASK_PATH] = ON_APPROVE;
 
@@ -2691,5 +2808,185 @@ describe("the Chat menu", () => {
     expect(startRequests(stub)).toHaveLength(1);
     expect(router.latestLocation.search).toEqual({ task: "ACME-7", chat: "1" });
     expect(document.activeElement).toBe(chatHeading());
+  });
+});
+
+describe("the right-click menu of a row", () => {
+  const MARK = `POST ${chatPath()}/inactive`;
+  const MARKED = "Chat 2 of SAGA-3 is in Other chats.";
+  const [ACME, , OLDER] = ITEMS as [ChatListItem, ChatListItem, ChatListItem];
+
+  function markItem(): Promise<HTMLElement> {
+    return screen.findByRole("menuitem", { name: "Mark as not active, chat 2 of SAGA-3" });
+  }
+
+  /** The list after chat 2 of SAGA-3 moves to Other chats. */
+  function movedRows(): TransportReply {
+    return pageReply([ACME, { ...OPEN, status: undefined }, OLDER]);
+  }
+
+  it("opens on a right click on an idle row in Active, and its item marks the chat without opening it", async () => {
+    const user = userEvent.setup();
+    const stub = stubDashboard({ [MARK]: successReply(chatRecord()) });
+    const router = await renderDashboard(stub);
+    const before = router.state.location.href;
+    const row = itemLink("SAGA-3", 2);
+    stub.replies["/chats"] = movedRows();
+
+    expect(fireEvent.contextMenu(row)).toBe(false);
+
+    const menu = await screen.findByRole("menu");
+    expect(menu.className).toContain("min-w-52");
+    expect(row.hasAttribute("data-popup-open")).toBe(true);
+    expect([...row.classList]).toEqual(expect.arrayContaining([
+      "data-[popup-open]:bg-surface-2",
+      "data-[popup-open]:inset-ring-1",
+      "data-[popup-open]:inset-ring-graphic",
+    ]));
+    expect(within(menu).getAllByRole("menuitem")).toEqual([await markItem()]);
+    expect((await markItem()).textContent).toBe("Mark as not active");
+
+    await user.click(await markItem());
+
+    await waitFor(() => {
+      expect(spoken()).toContain(MARKED);
+    });
+    expect(spoken()).toContain("Marking chat 2 of SAGA-3 as not active");
+    expect(stub.requests.filter(({ method }) => method === "POST")).toEqual([
+      { method: "POST", path: `${chatPath()}/inactive`, body: { client: CHAT_CLIENT } },
+    ]);
+    expect(itemLinks().map((link) => link.getAttribute("data-chat-key"))).toEqual(["ACME-7/1", "SAGA-3/2", "SAGA-3/1"]);
+    expect(itemState("SAGA-3", 2)).toBeNull();
+    expect(router.state.location.href).toBe(before);
+  });
+
+  it.each<[string, ChatListItem[], string, number]>([
+    ["a busy row", [{ ...ACME, busy: true }, OPEN, OLDER], "ACME-7", 1],
+    ["a row in Other chats", [...ITEMS], "SAGA-3", 1],
+  ])("does not open on %s, and leaves the right click to WebKit", async (_name, rows, task, chat) => {
+    await renderDashboard(stubDashboard({ "/chats": pageReply(rows) }));
+
+    expect(fireEvent.contextMenu(itemLink(task, chat))).toBe(true);
+    await frame();
+
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("does not open while the mark of its chat is pending", async () => {
+    const user = userEvent.setup();
+    await renderDashboard(stubDashboard({ [MARK]: heldBack().reply }));
+    fireEvent.contextMenu(itemLink("SAGA-3", 2));
+    await user.click(await markItem());
+    await waitFor(() => {
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+
+    expect(fireEvent.contextMenu(itemLink("SAGA-3", 2))).toBe(true);
+    await frame();
+
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("does not open the chat on a Control-click", async () => {
+    const router = await renderDashboard(stubDashboard());
+    const before = router.state.location.href;
+
+    expect(fireEvent.click(itemLink("SAGA-3", 2), { ctrlKey: true })).toBe(false);
+    await frame();
+
+    expect(router.state.location.href).toBe(before);
+  });
+
+  it("closes when its item goes away while it is open", async () => {
+    const stub = stubDashboard();
+    await renderDashboard(stub);
+    fireEvent.contextMenu(itemLink("SAGA-3", 2));
+    await screen.findByRole("menu");
+
+    stub.replies["/chats"] = pageReply([ACME, { ...OPEN, busy: true }, OLDER]);
+    await stub.send([LIST_EVENT]);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+    expect(itemLink("SAGA-3", 2).hasAttribute("data-popup-open")).toBe(false);
+  });
+
+  it("keeps the focus on a focused row when its busy changes", async () => {
+    const stub = stubDashboard();
+    await renderDashboard(stub);
+    const row = itemLink("SAGA-3", 2);
+    row.focus();
+
+    async function listAgain(rows: readonly ChatListItem[]): Promise<void> {
+      const reads = stub.readsOf("/chats");
+      stub.replies["/chats"] = pageReply(rows);
+      await stub.send([LIST_EVENT]);
+      await waitFor(() => {
+        expect(stub.readsOf("/chats")).toBeGreaterThan(reads);
+      });
+      await frame();
+    }
+
+    await listAgain([ACME, { ...OPEN, busy: true }, OLDER]);
+
+    expect(document.activeElement).toBe(row);
+    expect(itemLink("SAGA-3", 2)).toBe(row);
+    expect(fireEvent.contextMenu(row)).toBe(true);
+
+    await listAgain(ITEMS);
+
+    expect(document.activeElement).toBe(row);
+    expect(itemLink("SAGA-3", 2)).toBe(row);
+    expect(fireEvent.contextMenu(row)).toBe(false);
+  });
+
+  it("hands the focus to the next row when the marked chat moves past the loaded pages", async () => {
+    stubAnimations();
+    const user = userEvent.setup();
+    const first = listItem("BETA-41", 1, 5, { status: { state: "needs-you" } });
+    const stub = stubDashboard({
+      "/chats": pageReply([first, ...LONG], "c1", 30),
+      "/chats?after=c1": heldBack().reply,
+      "POST /projects/BETA/tasks/BETA-41/chats/1/inactive": successReply(chatRecord({ task: "BETA-41", chat: 1 })),
+    });
+    await renderDashboard(stub);
+    const row = itemLink("BETA-41", 1);
+    row.focus();
+    stub.replies["/chats"] = pageReply(LONG, "c1", 30, 0);
+
+    fireEvent.contextMenu(row);
+    await user.click(await screen.findByRole("menuitem", { name: "Mark as not active, chat 1 of BETA-41" }));
+
+    await waitFor(() => {
+      expect(chatList().querySelector('[data-chat-key="BETA-41/1"]')).toBeNull();
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(itemLink("BETA-40", 1));
+    });
+    expect(spoken()).toContain("Chat 1 of BETA-41 is in Other chats.");
+  });
+
+  it("opens the failure notice with the line of turn-running when the daemon refuses the mark", async () => {
+    const user = userEvent.setup();
+    await renderDashboard(stubDashboard({
+      [MARK]: refusalReply(409, { kind: "daemon", code: "turn-running", message: "a turn runs" }),
+    }));
+    fireEvent.contextMenu(itemLink("SAGA-3", 2));
+
+    await user.click(await markItem());
+
+    await waitFor(() => {
+      expect(useNoticeStore.getState().notices).toEqual([
+        expect.objectContaining({
+          key: "chat-write-failure:SAGA/SAGA-3/2:inactive",
+          form: "failure",
+          title: "Chat 2 of SAGA-3 did not move to Other chats.",
+          line: "The agent of chat 2 works or waits for an answer, so the chat stays in Active. "
+            + "Mark it again when the agent stops.",
+        }),
+      ]);
+    });
+    expect(spoken()).not.toContain(MARKED);
   });
 });

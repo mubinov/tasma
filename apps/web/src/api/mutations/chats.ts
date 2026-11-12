@@ -20,7 +20,16 @@ import { focusDropped } from "../../lib/use-focus-lost";
 import { NEW_CHAT_DRAFT, chatDraft, useChatDraftStore } from "../../store/chat-drafts";
 import { useNoticeStore } from "../../store/notices";
 import { useUiStore, type StartedChat } from "../../store/ui";
-import { chatListQuery, chatPlaceText, chatRecordKey, daemonKeys, projectsQuery, type ChatFilter, type ChatPlace } from "../queries";
+import {
+  chatItemQuery,
+  chatListQuery,
+  chatPlaceText,
+  chatRecordKey,
+  daemonKeys,
+  projectsQuery,
+  type ChatFilter,
+  type ChatPlace,
+} from "../queries";
 import { openWriteNotice, refusalWords, usePendingVariables, WriteError, type WriteFailure } from "./notices";
 
 /** The texts of the warning notice after `already-answered`. */
@@ -44,6 +53,8 @@ export type ChatWrite = { failure: WriteFailure } & (
   | { kind: "permission"; request: string; optionId: string; closed: ClosedNotice }
   | { kind: "question"; request: string; answer: ChatQuestionReply; closed: ClosedNotice }
   | { kind: "option"; configId: string; value: string; saved: SavedNotice }
+  /** `marking` and `done`: the announcements at the start and after a success. */
+  | { kind: "inactive"; marking: string; done: string }
 );
 
 export type ChatOptionWrite = Extract<ChatWrite, { kind: "option" }>;
@@ -104,6 +115,9 @@ async function send(
       return undefined;
     case "option":
       return client.setChatOption(tag, task, chat, { ...body, configId: write.configId, value: write.value });
+    case "inactive":
+      await client.markChatInactive(tag, task, chat, body);
+      return undefined;
   }
 }
 
@@ -123,9 +137,10 @@ function restartPending(queryClient: QueryClient, { tag, task, chat }: ChatPlace
 }
 
 /**
- * The writes into one chat. The log shows their result, so a write changes no
- * cache. No scope: a Stop does not wait for a write in flight, and the daemon
- * puts the commands of one chat in order.
+ * The writes into one chat. The log shows the result of each write except a
+ * mark as not active, which waits for the list and the item to be read again;
+ * no write edits a cache entry by hand. No scope: a Stop does not wait for a
+ * write in flight, and the daemon puts the commands of one chat in order.
  */
 export function chatWriteOptions(queryClient: QueryClient, client: Client, place: ChatPlace) {
   return mutationOptions<Success<Chat | ProjectChat> | undefined, WriteError, ChatWrite>({
@@ -139,7 +154,12 @@ export function chatWriteOptions(queryClient: QueryClient, client: Client, place
     },
     // A write whose answer is lost can be done already.
     retry: 0,
-    onSuccess: (answer, write) => {
+    onMutate: (write) => {
+      if (write.kind === "inactive") {
+        useNoticeStore.getState().announce(write.marking);
+      }
+    },
+    onSuccess: async (answer, write) => {
       const key = writeFailureKey(place, write);
       const diagnostics = answer?.diagnostics ?? [];
 
@@ -149,6 +169,14 @@ export function chatWriteOptions(queryClient: QueryClient, client: Client, place
         return;
       }
       useNoticeStore.getState().closeNotice(key);
+      if (write.kind === "inactive") {
+        // Awaited: the mark stays pending until the reads hold the move, so its menu item does not come back between
+        // the answer of the daemon and the reads. The header reads the item only when the list does not hold the chat,
+        // so the invalidation can leave the item unread.
+        await queryClient.invalidateQueries({ queryKey: daemonKeys.chats() });
+        await queryClient.query(chatItemQuery(client, place.tag, place.task, place.chat)).catch(() => undefined);
+        useNoticeStore.getState().announce(write.done);
+      }
     },
     onError: (error, write) => {
       const key = writeFailureKey(place, write);
@@ -477,6 +505,11 @@ export function projectChatStartOptions(queryClient: QueryClient, client: Client
 
 export function usePendingProjectChatStart(): ProjectChatStartWrite | undefined {
   return usePendingVariables<ProjectChatStartWrite>(projectChatStartKey()).at(-1)?.variables;
+}
+
+/** A mark of the chat as not active is pending in this window. */
+export function usePendingChatInactive(place: ChatPlace): boolean {
+  return usePendingVariables<ChatWrite>(chatWriteKey(place)).some(({ variables }) => variables.kind === "inactive");
 }
 
 /** The pending option writes of the chat, in the order they were sent. */

@@ -37,6 +37,11 @@ export function chatKey(one: OpenChat): string {
   return `${one.task ?? one.tag}/${String(one.chat)}`;
 }
 
+/** The daemon refuses a mark as not active with `turn-running` while the chat is busy. */
+export function markableChat(item: AnyChatListItem): boolean {
+  return isActiveChat(item.status) && item.busy !== true;
+}
+
 /** The New chat view where a `chatKey` names an open chat. A chat key holds "/", so the two never match. */
 export const NEW_CHAT_KEY = "new-chat";
 

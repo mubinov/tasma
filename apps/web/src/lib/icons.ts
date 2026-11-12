@@ -2,6 +2,7 @@ import { ArrowCircleUpIcon } from "@phosphor-icons/react/ArrowCircleUp";
 import { ArrowClockwiseIcon } from "@phosphor-icons/react/ArrowClockwise";
 import { ArrowLeftIcon } from "@phosphor-icons/react/ArrowLeft";
 import { ArrowUpIcon } from "@phosphor-icons/react/ArrowUp";
+import { BellSlashIcon } from "@phosphor-icons/react/BellSlash";
 import { CaretDownIcon } from "@phosphor-icons/react/CaretDown";
 import { CaretRightIcon } from "@phosphor-icons/react/CaretRight";
 import { CaretUpIcon } from "@phosphor-icons/react/CaretUp";
@@ -32,6 +33,7 @@ export {
   ArrowClockwiseIcon,
   ArrowLeftIcon,
   ArrowUpIcon,
+  BellSlashIcon,
   CaretDownIcon,
   CaretRightIcon,
   CaretUpIcon,

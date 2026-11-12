@@ -5,6 +5,8 @@ import {
   boardFailureLine,
   chatClosedNotice,
   chatFailure,
+  chatInactiveWords,
+  chatMarkingWords,
   chatOptionFailure,
   chatOptionSavedNotice,
   chatRestartFailure,
@@ -350,5 +352,42 @@ describe("chatRestartFailure", () => {
   it("tells to write to the new chat after a message to the chat that a restart replaces", () => {
     expect(chatRestartingLine({ tag: "SAGA", task: "SAGA-3", chat: 2 }))
       .toBe("Chat 2 stops for a restart. Write to the new chat when it opens.");
+  });
+});
+
+describe("the texts of a mark as not active", () => {
+  const PLACE = { tag: "ALPHA", task: "ALPHA-12", chat: 3 };
+  const PROJECT_PLACE = { tag: "ALPHA", task: undefined, chat: 3 };
+  const LINES: Record<FailureKind, string> = {
+    refused: "The daemon refused it, so the chat stays in Active. Its own words are below.",
+    unanswered: "No daemon answered. If the daemon marked the chat, it moves to Other chats.",
+    address: "The daemon did not answer through the address below. Start the daemon there if it is not running.",
+    unsent: "The request did not start, so nothing changed.",
+  };
+  const CASES = KINDS.map((kind) => ({ ...CAUSES[kind], line: LINES[kind] }));
+  const turnRunning = new ProtocolError({ kind: "daemon", code: "turn-running", message: "a turn runs" }, 409);
+
+  it("titles the failure with the chat", () => {
+    expect(chatFailure(PLACE, "inactive").title).toBe("Chat 3 of ALPHA-12 did not move to Other chats.");
+    expect(chatFailure(PROJECT_PLACE, "inactive").title).toBe("Chat 3 of ALPHA did not move to Other chats.");
+  });
+
+  it.each(CASES)("says where the chat is for $label", ({ cause, line }) => {
+    expect(chatFailure(PLACE, "inactive").line(new WriteError(cause))).toBe(line);
+  });
+
+  it("says that the agent works or waits for a refusal with turn-running", () => {
+    const line = "The agent of chat 3 works or waits for an answer, so the chat stays in Active. "
+      + "Mark it again when the agent stops.";
+
+    expect(chatFailure(PLACE, "inactive").line(new WriteError(turnRunning))).toBe(line);
+    expect(chatFailure(PROJECT_PLACE, "inactive").line(new WriteError(turnRunning))).toBe(line);
+  });
+
+  it("announces the start and the end of the mark", () => {
+    expect(chatMarkingWords(PLACE)).toBe("Marking chat 3 of ALPHA-12 as not active");
+    expect(chatInactiveWords(PLACE)).toBe("Chat 3 of ALPHA-12 is in Other chats.");
+    expect(chatMarkingWords(PROJECT_PLACE)).toBe("Marking chat 3 of ALPHA as not active");
+    expect(chatInactiveWords(PROJECT_PLACE)).toBe("Chat 3 of ALPHA is in Other chats.");
   });
 });

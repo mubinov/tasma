@@ -1,4 +1,4 @@
-import { MutationObserver, QueryClientProvider, type QueryClient } from "@tanstack/react-query";
+import { InfiniteQueryObserver, MutationObserver, QueryClientProvider, QueryObserver, type QueryClient } from "@tanstack/react-query";
 import {
   createClient,
   TransportError,
@@ -22,20 +22,22 @@ import {
   failureKind,
   projectChatStartKey,
   projectChatStartOptions,
+  usePendingChatInactive,
   usePendingChatOptions,
   usePendingProjectChatStart,
   WriteError,
   type ChatWrite,
   type StartChat,
 } from "../../../src/api/mutations";
-import { chatListQuery, daemonKeys, type ChatPlace } from "../../../src/api/queries";
-import { projectChatStartFailure } from "../../../src/lib/write-failure";
+import { chatItemQuery, chatListQuery, daemonKeys, type ChatPlace } from "../../../src/api/queries";
+import { chatFailure, projectChatStartFailure } from "../../../src/lib/write-failure";
 import { chatDraft, NEW_CHAT_DRAFT, useChatDraftStore } from "../../../src/store/chat-drafts";
 import { useNoticeStore } from "../../../src/store/notices";
 import { useUiStore } from "../../../src/store/ui";
 import { projectChatPath, projectChatRecord } from "../../chat-daemon";
 import {
   chatsPath,
+  listItem,
   pageReply,
   projectItem,
   renderDashboard,
@@ -81,6 +83,8 @@ const OPTION: ChatWrite = { kind: "option", configId: "mode", value: "auto", fai
 
 const MODEL: ChatWrite = { kind: "option", configId: "model", value: "model-b", failure: FAILURE, saved: SAVED };
 
+const INACTIVE: ChatWrite = { kind: "inactive", failure: FAILURE, marking: "Marking the chat", done: "The chat is in Other chats." };
+
 const NOT_SAVED: Diagnostic[] = [
   {
     code: "option-not-saved",
@@ -111,6 +115,11 @@ function refused(code: "turn-running" | "already-answered" | "malformed-request"
   return refusalReply(409, { kind: "daemon", code, message: `refused: ${code}` });
 }
 
+async function spoken(): Promise<string[]> {
+  await frame();
+  return useNoticeStore.getState().announced.map(({ words }) => words);
+}
+
 beforeEach(() => {
   useNoticeStore.setState({ notices: [], dismissed: new Map() });
 });
@@ -134,6 +143,7 @@ describe("chatWriteOptions", () => {
     ],
     ["a question decline", DECLINE, `${CHAT_PATH}/questions/r2`, { action: "decline", client: CHAT_CLIENT }],
     ["an option", OPTION, `${CHAT_PATH}/options`, { configId: "mode", value: "auto", client: CHAT_CLIENT }],
+    ["a mark as not active", INACTIVE, `${CHAT_PATH}/inactive`, { client: CHAT_CLIENT }],
   ])("posts %s to its route with the client of the window", async (_name, write, path, body) => {
     const { observer, requests } = setup({ [`POST ${path}`]: RECORD });
 
@@ -155,6 +165,7 @@ describe("chatWriteOptions", () => {
     ["a permission answer", PERMISSION, "permissions/r1"],
     ["a question answer", QUESTION, "questions/r2"],
     ["an option", OPTION, "options"],
+    ["a mark as not active", INACTIVE, "inactive"],
   ])("posts %s to a chat of a project on its project route, with the body of the task route", async (_name, write, route) => {
     const task = setup({ [`POST ${CHAT_PATH}/${route}`]: RECORD });
     const project = setup({ [`POST ${projectChatPath()}/${route}`]: successReply(projectChatRecord()) }, PROJECT_PLACE);
@@ -368,6 +379,189 @@ describe("chatWriteOptions", () => {
   });
 });
 
+describe("a mark as not active", () => {
+  const PATH = `POST ${CHAT_PATH}/inactive`;
+
+  it("announces the mark when it starts", async () => {
+    const { observer } = setup({ [PATH]: heldBack().reply });
+
+    void observer.mutate(INACTIVE);
+
+    expect(await spoken()).toEqual(["Marking the chat"]);
+  });
+
+  it("stays pending until the list is read again, and then announces the move", async () => {
+    const { observer, queryClient, client, requests, replies } = setup({ [PATH]: RECORD });
+    const list = new InfiniteQueryObserver(queryClient, chatListQuery(client, {}));
+    const unsubscribe = list.subscribe(() => {});
+    await waitFor(() => {
+      expect(list.getCurrentResult().isSuccess).toBe(true);
+    });
+    const read = heldBack();
+    replies["/chats"] = read.reply;
+    let settled = false;
+
+    const done = observer.mutate(INACTIVE).then(() => {
+      settled = true;
+    });
+
+    await waitFor(() => {
+      expect(requests.filter(({ path }) => path === "/chats")).toHaveLength(2);
+    });
+    expect(settled).toBe(false);
+    expect(observer.getCurrentResult().isPending).toBe(true);
+    expect(await spoken()).not.toContain("The chat is in Other chats.");
+
+    read.answer(pageReply([]));
+    await done;
+
+    expect(await spoken()).toContain("The chat is in Other chats.");
+    unsubscribe();
+  });
+
+  it.each<[string, ChatPlace, string, string]>([
+    ["a chat of a task", PLACE, PATH, "/chats/SAGA-3/2"],
+    ["a chat of a project", PROJECT_PLACE, `POST ${projectChatPath()}/inactive`, `${projectChatPath()}/item`],
+  ])("stays pending until the item of %s is read again, also while the header does not read it", async (
+    _name,
+    place,
+    path,
+    itemPath,
+  ) => {
+    const { observer, queryClient, client, requests, replies } = setup({ [path]: RECORD }, place);
+    const itemQuery = chatItemQuery(client, place.tag, place.task, place.chat);
+    const header = new QueryObserver(queryClient, { ...itemQuery, enabled: false });
+    const unsubscribe = header.subscribe(() => {});
+    const read = heldBack();
+    replies[itemPath] = read.reply;
+    let settled = false;
+
+    const done = observer.mutate(INACTIVE).then(() => {
+      settled = true;
+    });
+
+    await waitFor(() => {
+      expect(requests.filter(({ path: requested }) => requested === itemPath)).toHaveLength(1);
+    });
+    expect(settled).toBe(false);
+    expect(await spoken()).not.toContain("The chat is in Other chats.");
+
+    read.answer(successReply(place.task === undefined ? projectItem("SAGA", 2, 5) : listItem("SAGA-3", 2, 5)));
+    await done;
+
+    expect(header.getCurrentResult().data?.data.status).toBeUndefined();
+    expect(await spoken()).toContain("The chat is in Other chats.");
+    unsubscribe();
+  });
+
+  it("reads the item again only one time when a header reads it", async () => {
+    const { observer, queryClient, client, requests } = setup({
+      [PATH]: RECORD,
+      "/chats/SAGA-3/2": successReply(listItem("SAGA-3", 2, 5)),
+    });
+    const header = new QueryObserver(queryClient, chatItemQuery(client, "SAGA", "SAGA-3", 2));
+    const unsubscribe = header.subscribe(() => {});
+    await waitFor(() => {
+      expect(header.getCurrentResult().isSuccess).toBe(true);
+    });
+
+    await observer.mutate(INACTIVE);
+
+    expect(requests.filter(({ path }) => path === "/chats/SAGA-3/2")).toHaveLength(2);
+    unsubscribe();
+  });
+
+  it("opens the failure notice with its own line for turn-running", async () => {
+    const { observer } = setup({ [PATH]: refused("turn-running") });
+
+    await expect(observer.mutate({ ...INACTIVE, failure: chatFailure(PLACE, "inactive") })).rejects.toBeInstanceOf(WriteError);
+
+    expect(notices()).toEqual([
+      expect.objectContaining({
+        key: chatFailureKey(PLACE, "inactive"),
+        form: "failure",
+        title: "Chat 2 of SAGA-3 did not move to Other chats.",
+        line: "The agent of chat 2 works or waits for an answer, so the chat stays in Active. "
+          + "Mark it again when the agent stops.",
+        words: ["daemon/turn-running · refused: turn-running"],
+      }),
+    ]);
+    expect(await spoken()).not.toContain("The chat is in Other chats.");
+  });
+
+  it.each<[string, () => TransportReply | Promise<TransportReply>, string]>([
+    [
+      "another refusal",
+      () => refused("malformed-request"),
+      "The daemon refused it, so the chat stays in Active. Its own words are below.",
+    ],
+    [
+      "no answer",
+      () => {
+        const lost = Promise.reject(new TransportError("POST reached no daemon"));
+        lost.catch(() => {});
+        return lost;
+      },
+      "No daemon answered. If the daemon marked the chat, it moves to Other chats.",
+    ],
+  ])("opens the failure notice with the line of %s", async (_case, reply, line) => {
+    const { observer } = setup({ [PATH]: reply() });
+
+    await expect(observer.mutate({ ...INACTIVE, failure: chatFailure(PLACE, "inactive") })).rejects.toBeInstanceOf(WriteError);
+
+    expect(notices()).toEqual([expect.objectContaining({ key: chatFailureKey(PLACE, "inactive"), form: "failure", line })]);
+  });
+
+  it("closes its failure notice when a later mark succeeds", async () => {
+    const { observer, replies } = setup({ [PATH]: refused("turn-running") });
+    await expect(observer.mutate(INACTIVE)).rejects.toBeInstanceOf(WriteError);
+    replies[PATH] = RECORD;
+
+    await observer.mutate(INACTIVE);
+
+    expect(notices()).toEqual([]);
+  });
+});
+
+describe("usePendingChatInactive", () => {
+  it("is true only while a mark of the chat is pending", async () => {
+    const mark = heldBack();
+    const { queryClient, client } = setup({
+      [`POST ${CHAT_PATH}/inactive`]: mark.reply,
+      [`POST ${CHAT_PATH}/messages`]: heldBack().reply,
+      "POST /projects/SAGA/tasks/SAGA-3/chats/3/inactive": heldBack().reply,
+    });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+    const { result } = renderHook(() => usePendingChatInactive(PLACE), { wrapper });
+    let done: Promise<unknown> = Promise.resolve();
+
+    const chat3 = { ...PLACE, chat: 3 };
+
+    await act(async () => {
+      void new MutationObserver(queryClient, chatWriteOptions(queryClient, client, PLACE)).mutate(MESSAGE);
+      void new MutationObserver(queryClient, chatWriteOptions(queryClient, client, chat3)).mutate(INACTIVE);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(result.current).toBe(false);
+
+    await act(async () => {
+      done = new MutationObserver(queryClient, chatWriteOptions(queryClient, client, PLACE)).mutate(INACTIVE);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(result.current).toBe(true);
+
+    mark.answer(RECORD);
+    await act(async () => {
+      await done;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(result.current).toBe(false);
+  });
+});
+
 describe("chatSeenOptions", () => {
   it("keys the seen write of a chat of a project under the record of the chat", () => {
     const options = chatSeenOptions(createClient(stubTransport().transport), PROJECT_PLACE);
@@ -441,11 +635,6 @@ describe("projectChatStartOptions", () => {
     await act(async () => {
       await observer.mutate(variables(text)).catch(() => undefined);
     });
-  }
-
-  async function spoken(): Promise<string[]> {
-    await frame();
-    return useNoticeStore.getState().announced.map(({ words }) => words);
   }
 
   beforeEach(() => {

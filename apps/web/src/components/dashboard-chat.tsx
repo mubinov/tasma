@@ -3,10 +3,18 @@ import { useQuery, useSuspenseInfiniteQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
 import type { AnyChatListItem, ProjectSummary } from "@tasma/protocol";
 import { useId, useReducer, useRef, useState, type ReactNode, type RefObject } from "react";
-import { usePendingChatStart } from "../api/mutations";
-import { chatItemQuery, chatListQuery, taskChatsQuery, taskQuery, workflowQuery, type ChatFilter } from "../api/queries";
+import { usePendingChatInactive, usePendingChatStart } from "../api/mutations";
+import {
+  chatItemQuery,
+  chatListQuery,
+  taskChatsQuery,
+  taskQuery,
+  workflowQuery,
+  type ChatFilter,
+  type ChatPlace,
+} from "../api/queries";
 import { tagOf } from "../lib/board";
-import { chatKey, chatListItems, sameChat, type OpenChat } from "../lib/chat-list-announcements";
+import { chatKey, chatListItems, markableChat, sameChat, type OpenChat } from "../lib/chat-list-announcements";
 import { chatAgentName, isChatMissing } from "../lib/chat-messages";
 import type { FinalFocus } from "../lib/final-focus";
 import { CHAT_HEADING_MARK, focusInView } from "../lib/focus-in-view";
@@ -15,6 +23,7 @@ import { actionStep, STEP_ACTION_MARK, stepAction } from "../lib/step-action";
 import { useChatStart } from "../lib/use-chat-start";
 import { useFocusLost } from "../lib/use-focus-lost";
 import { usePendingFocus } from "../lib/use-pending-focus";
+import { MarkInactiveItem } from "./chat-list-item";
 import { ChatBody, StateMark } from "./chat-panel";
 import { ChatsLink } from "./chats-link";
 import { BUTTON_CLASS, CHAT_COLUMN_CLASS, ICON_BUTTON_CLASS, MENU_ITEM_CLASS, POPUP_CLASS, POSITIONER_CLASS } from "./control-classes";
@@ -83,15 +92,15 @@ export function DashboardChat(
   );
 }
 
-type ChatMenuState = { step: string; restarting: boolean };
+type RestartState = { step: string; restarting: boolean };
 
 /**
- * The Chat menu of a chat that "Open <step>" opens, or null. A pending start or
+ * The Restart of a chat that "Open <step>" opens, or null. A pending start or
  * restart of the task allows no second one, so while one is pending only the
- * chat that it replaces has the menu, whatever the reads show: the list can
+ * chat that it replaces has Restart, whatever the reads show: the list can
  * hold the new chat before the answer.
  */
-function useChatMenu(tag: string, task: string, chat: number): ChatMenuState | null {
+function useChatRestart(tag: string, task: string, chat: number): RestartState | null {
   const { client } = route.useRouteContext();
   const taskRead = useQuery(taskQuery(client, tag, task));
   const workflow = taskRead.data?.data.frontmatter.workflow;
@@ -147,6 +156,9 @@ function ChatSide({ open, listed, wide, headingRef, onBack }: ChatSideProps): Re
   }
 
   const item = found ?? (missing || lastFound === undefined || !sameChat(lastFound, open) ? undefined : lastFound);
+  const place: ChatPlace = { tag, task, chat };
+  const marking = usePendingChatInactive(place);
+  const markable = item !== undefined && markableChat(item) && !marking;
 
   // "Chats", "Open task" and the Chat menu can go away with the focus: after a resize, a live update or a failed read.
   function focusHeading(): void {
@@ -158,6 +170,11 @@ function ChatSide({ open, listed, wide, headingRef, onBack }: ChatSideProps): Re
   function closeRestart(ask: RestartAsk): void {
     restartFocusRef.current = menuRef.current ?? headingRef.current;
     setRestartAsk({ ...ask, open: false });
+  }
+
+  function menuFocusLost(): void {
+    focusHeading();
+    commitAgain();
   }
 
   return (
@@ -180,21 +197,30 @@ function ChatSide({ open, listed, wide, headingRef, onBack }: ChatSideProps): Re
           {item !== undefined && task !== undefined && (
             <OpenTaskLink tag={tag} task={task} onFocusLost={focusHeading} />
           )}
-          {task !== undefined && (
-            <TaskChatMenu
-              tag={tag}
-              task={task}
-              chat={chat}
-              buttonRef={menuRef}
-              onRestart={(step) => {
-                setRestartAsk({ tag, id: task, step, chat, open: true });
-              }}
-              onFocusLost={() => {
-                focusHeading();
-                commitAgain();
-              }}
-            />
-          )}
+          {task === undefined
+            ? markable && (
+              <ChatMenu
+                key={chatKey({ tag, chat })}
+                restart={null}
+                markable
+                place={place}
+                buttonRef={menuRef}
+                onFocusLost={menuFocusLost}
+              />
+            )
+            : (
+                <TaskChatMenu
+                  tag={tag}
+                  task={task}
+                  chat={chat}
+                  markable={markable}
+                  buttonRef={menuRef}
+                  onRestart={(step) => {
+                    setRestartAsk({ tag, id: task, step, chat, open: true });
+                  }}
+                  onFocusLost={menuFocusLost}
+                />
+              )}
         </div>
       </div>
       <ChatBody tag={tag} task={task} chat={chat} headingRef={headingRef} lineClassName={CHAT_COLUMN_CLASS} />
@@ -215,46 +241,67 @@ type TaskChatMenuProps = {
   tag: string;
   task: string;
   chat: number;
+  markable: boolean;
   buttonRef: RefObject<HTMLButtonElement | null>;
   onRestart: (step: string) => void;
   onFocusLost: () => void;
 };
 
 /** Its own component so that a chat of a project reads no task, no workflow and no chat list of a task. */
-function TaskChatMenu({ tag, task, chat, buttonRef, onRestart, onFocusLost }: TaskChatMenuProps): ReactNode {
-  const menu = useChatMenu(tag, task, chat);
+function TaskChatMenu({ tag, task, chat, markable, buttonRef, onRestart, onFocusLost }: TaskChatMenuProps): ReactNode {
+  const restart = useChatRestart(tag, task, chat);
 
-  return menu !== null && (
+  return (restart !== null || markable) && (
     <ChatMenu
       key={chatKey({ task, chat })}
-      {...menu}
+      restart={restart === null
+        ? null
+        : {
+            ...restart,
+            onRestart: () => {
+              onRestart(restart.step);
+            },
+          }}
+      markable={markable}
+      place={{ tag, task, chat }}
       buttonRef={buttonRef}
-      onRestart={() => {
-        onRestart(menu.step);
-      }}
       onFocusLost={onFocusLost}
     />
   );
 }
 
-type ChatMenuProps = ChatMenuState & {
+type ChatMenuProps = {
+  /** "Restart <step>", or null when the chat has no Restart. */
+  restart: (RestartState & { onRestart: () => void }) | null;
+  markable: boolean;
+  place: ChatPlace;
   buttonRef: RefObject<HTMLButtonElement | null>;
-  onRestart: () => void;
   onFocusLost: () => void;
 };
 
 /**
- * The step action of the dashboard. Base UI's menu trigger has no
- * `focusableWhenDisabled`, so a waiting trigger stays enabled, which keeps the
- * focus on it, and refuses to open.
+ * The step action of the dashboard and the mark as not active. Base UI's menu
+ * trigger has no `focusableWhenDisabled`, so a waiting trigger stays enabled,
+ * which keeps the focus on it, and refuses to open.
  */
-function ChatMenu({ step, restarting, buttonRef, onRestart, onFocusLost }: ChatMenuProps): ReactNode {
+function ChatMenu({ restart, markable, place, buttonRef, onFocusLost }: ChatMenuProps): ReactNode {
   const [open, setOpen] = useState(false);
+  const restarting = restart?.restarting === true;
+  const itemsKey = `${String(restart !== null)} ${String(markable)}`;
+  const [shownKey, setShownKey] = useState(itemsKey);
+  const actionsRef = useRef<Menu.Root.Actions>(null);
+
+  // Restart can come after Mark, so the highlight must not move to an item that the user did not choose.
+  if (itemsKey !== shownKey) {
+    setShownKey(itemsKey);
+    setOpen(false);
+  }
 
   useFocusLost(buttonRef, onFocusLost, open);
 
   return (
     <Menu.Root
+      actionsRef={actionsRef}
       highlightItemOnHover={false}
       open={open}
       onOpenChange={(next) => {
@@ -262,7 +309,7 @@ function ChatMenu({ step, restarting, buttonRef, onRestart, onFocusLost }: ChatM
       }}
     >
       {/* A tooltip that the end of the wait finds open must not keep saying that it waits. */}
-      <Tooltip content={restarting ? `Restarting ${step}` : "Chat menu"} canOpen={() => restarting}>
+      <Tooltip content={restarting ? `Restarting ${restart.step}` : "Chat menu"} canOpen={() => restarting}>
         <Menu.Trigger
           ref={buttonRef}
           {...STEP_ACTION_MARK}
@@ -278,10 +325,13 @@ function ChatMenu({ step, restarting, buttonRef, onRestart, onFocusLost }: ChatM
       <Menu.Portal>
         <Menu.Positioner align="end" sideOffset={4} className={POSITIONER_CLASS}>
           <Menu.Popup className={`max-w-(--available-width) min-w-52 ${POPUP_CLASS}`}>
-            <Menu.Item onClick={onRestart} className={MENU_ITEM_CLASS}>
-              <ArrowClockwiseIcon size={14} aria-hidden="true" className="shrink-0" />
-              <span className="min-w-0 wrap-anywhere">{`Restart ${step}`}</span>
-            </Menu.Item>
+            {restart !== null && (
+              <Menu.Item onClick={restart.onRestart} className={MENU_ITEM_CLASS}>
+                <ArrowClockwiseIcon size={14} aria-hidden="true" className="shrink-0" />
+                <span className="min-w-0 wrap-anywhere">{`Restart ${restart.step}`}</span>
+              </Menu.Item>
+            )}
+            {markable && <MarkInactiveItem place={place} actionsRef={actionsRef} />}
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>

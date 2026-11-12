@@ -1,13 +1,15 @@
 import type { AnyChatListItem, TransportReply } from "@tasma/protocol";
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CHAT_CLIENT } from "../../src/api/mutations";
 import { chatRecord, eventsPath, projectChatPath, projectChatRecord, projectEventsPath } from "../chat-daemon";
 import {
   chatHeading,
   itemLink,
   itemLinks,
   listItem,
+  menuItemNames,
   minutesAgo,
   NOW,
   OPEN,
@@ -17,12 +19,16 @@ import {
   stubDashboard,
   stubLayout,
 } from "../dashboard-fixtures";
-import { heldBack, pathsBeforeFeed, refusalReply, stubThreadDom, successReply } from "../helpers";
+import { heldBack, pathsBeforeFeed, refusalReply, stubAnimations, stubThreadDom, successReply } from "../helpers";
 import { stubWindowWidth } from "../setup/match-media";
+import { frame } from "../setup/notice-store";
 import { CHATS_PATH } from "../task-chats-daemon";
 import { TASK_PATH, task } from "../task-screen-fixtures";
+import { spoken } from "../update-fixtures";
 
 type Replies = Record<string, TransportReply | Promise<TransportReply>>;
+
+type User = ReturnType<typeof userEvent.setup>;
 
 const PROJECT_OPEN = projectItem("SAGA", 2, 3, { title: "Remove all drafts", status: { state: "needs-you" } });
 
@@ -54,7 +60,11 @@ function missing(code: "chat-not-found" | "project-not-found") {
 
 function expectNoTaskControls(): void {
   expect(screen.queryByRole("link", { name: "Open task" })).toBeNull();
-  expect(screen.queryByRole("button", { name: /^Chat menu/ })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: /^Restart/ })).toBeNull();
+}
+
+function queryChatMenu(): HTMLElement | null {
+  return screen.queryByRole("button", { name: /^Chat menu/ });
 }
 
 beforeEach(() => {
@@ -145,6 +155,8 @@ describe("the open chat of a project", () => {
     expect(projectHeading().textContent).toBe("SAGA Remove all drafts");
     expect(projectHeading().firstElementChild?.className).toContain("wrap-anywhere");
     expect(projectHeading().nextElementSibling?.textContent).toBe("Claude · Chat 2Needs you");
+    await user.click(queryChatMenu()!);
+    await screen.findByRole("menu");
     expectNoTaskControls();
     await waitFor(() => {
       expect(stub.paths).toContain(projectChatPath());
@@ -226,6 +238,7 @@ describe("the open chat of a project", () => {
       expect(projectHeading("SAGA").textContent).toBe("SAGA");
       expect(projectHeading("SAGA").nextElementSibling).toBeNull();
       expectNoTaskControls();
+      expect(queryChatMenu()).toBeNull();
     },
   );
 
@@ -241,6 +254,129 @@ describe("the open chat of a project", () => {
 
     expect(router.state.location.search).toEqual({ task: undefined, tag: undefined, chat: undefined });
     expect(screen.getByText("Select a chat in the list.")).toBeTruthy();
+  });
+});
+
+describe("Mark as not active on a chat of a project", () => {
+  const MARK = `POST ${projectChatPath()}/inactive`;
+
+  /** The list after chat 2 of SAGA moves to Other chats. */
+  function movedRows(): TransportReply {
+    return pageReply([OPEN, { ...PROJECT_OPEN, status: undefined }, NO_MARK]);
+  }
+
+  it("is the only item of the Chat menu", async () => {
+    const user = userEvent.setup();
+    await renderDashboard(projectDaemon(), PROJECT_OPEN_PATH);
+
+    await user.click(queryChatMenu()!);
+
+    expect(menuItemNames(await screen.findByRole("menu"))).toEqual(["Mark as not active"]);
+  });
+
+  it.each<[string, AnyChatListItem[]]>([
+    ["a busy chat", [{ ...PROJECT_OPEN, busy: true }, OPEN, NO_MARK]],
+    ["a chat in Other chats", [OPEN, { ...PROJECT_OPEN, status: undefined }, NO_MARK]],
+  ])("shows no Chat menu on %s", async (_name, rows) => {
+    await renderDashboard(projectDaemon({ "/chats": pageReply(rows) }), PROJECT_OPEN_PATH);
+
+    await frame();
+
+    expect(projectHeading().textContent).toBe("SAGA Remove all drafts");
+    expect(queryChatMenu()).toBeNull();
+  });
+
+  it("is the item of the right-click menu of the row, named with the tag", async () => {
+    const user = userEvent.setup();
+    const stub = projectDaemon({ [MARK]: successReply(projectChatRecord()) });
+    await renderDashboard(stub);
+    stub.replies["/chats"] = movedRows();
+
+    expect(fireEvent.contextMenu(itemLink("SAGA", 2))).toBe(false);
+    await user.click(await screen.findByRole("menuitem", { name: "Mark as not active, chat 2 of SAGA" }));
+
+    await waitFor(() => {
+      expect(stub.requests.filter(({ method }) => method === "POST")).toEqual([
+        { method: "POST", path: `${projectChatPath()}/inactive`, body: { client: CHAT_CLIENT } },
+      ]);
+    });
+    await waitFor(() => {
+      expect(spoken()).toContain("Chat 2 of SAGA is in Other chats.");
+    });
+    expect(spoken()).toContain("Marking chat 2 of SAGA as not active");
+  });
+
+  it.each([
+    ["the pointer", async (user: User) => {
+      await user.click(queryChatMenu()!);
+      await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Mark as not active" }));
+    }],
+    ["the keyboard", async (user: User) => {
+      queryChatMenu()!.focus();
+      await user.keyboard("{Enter}");
+      const item = within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Mark as not active" });
+      await waitFor(() => {
+        expect(document.activeElement).toBe(item);
+      });
+      await user.keyboard("{Enter}");
+    }],
+  ])("takes the Chat menu away after a mark with %s, moves the focus to the heading, and the menu does not come back", async (_name, markBy) => {
+    stubAnimations();
+    const user = userEvent.setup();
+    const mark = heldBack();
+    const stub = projectDaemon({ [MARK]: mark.reply });
+    await renderDashboard(stub, PROJECT_OPEN_PATH);
+    stub.replies["/chats"] = movedRows();
+
+    await markBy(user);
+
+    await waitFor(() => {
+      expect(queryChatMenu()).toBeNull();
+    });
+    expect(document.activeElement).toBe(projectHeading());
+
+    await act(async () => {
+      mark.answer(successReply(projectChatRecord()));
+    });
+    await waitFor(() => {
+      expect(spoken()).toContain("Chat 2 of SAGA is in Other chats.");
+    });
+    await frame();
+
+    expect(queryChatMenu()).toBeNull();
+    expect(document.activeElement).toBe(projectHeading());
+  });
+
+  it("keeps the Chat menu away when the chat moves past the loaded pages", async () => {
+    const user = userEvent.setup();
+    const item = heldBack();
+    const stub = projectDaemon({ [MARK]: successReply(projectChatRecord()) });
+    await renderDashboard(stub, PROJECT_OPEN_PATH);
+    stub.replies["/chats"] = pageReply([OPEN, NO_MARK], "c1", 3, 1);
+    stub.replies["/chats?after=c1"] = heldBack().reply;
+    stub.replies[`${projectChatPath()}/item`] = item.reply;
+
+    await user.click(queryChatMenu()!);
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Mark as not active" }));
+
+    await waitFor(() => {
+      expect(stub.paths).toContain(`${projectChatPath()}/item`);
+    });
+    await frame();
+
+    expect(queryChatMenu()).toBeNull();
+    expect(spoken()).not.toContain("Chat 2 of SAGA is in Other chats.");
+
+    await act(async () => {
+      item.answer(successReply({ ...PROJECT_OPEN, status: undefined }));
+    });
+    await waitFor(() => {
+      expect(spoken()).toContain("Chat 2 of SAGA is in Other chats.");
+    });
+    await frame();
+
+    expect(queryChatMenu()).toBeNull();
+    expect(document.activeElement).toBe(projectHeading());
   });
 });
 
