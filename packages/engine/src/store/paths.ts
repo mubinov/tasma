@@ -130,6 +130,11 @@ export function agentDefaultsPath(root: string): string {
   return join(root, "agent-defaults.json");
 }
 
+/** The file of the config options that each agent sent at its last new session, from a root already expanded. */
+export function agentOptionsPath(root: string): string {
+  return join(root, "agent-options.json");
+}
+
 /**
  * One path a file the user places states, against the directory holding that
  * file. An absolute path and a `~/` path each stand for themselves, which is

@@ -1,6 +1,8 @@
 import type {
+  AgentOptions,
   AgentStateReply,
   Chat,
+  ChatAgent,
   ChatCancelInput,
   ChatEventsReply,
   ChatInactiveInput,
@@ -218,6 +220,8 @@ export type Client = {
   startProjectChat(tag: string, input: ProjectChatStartInput): Promise<Success<ProjectChatStart>>;
   /** One chat of a project as a row of the list of the chats of all projects. */
   readProjectChatItem(tag: string, chat: number): Promise<Success<ProjectChatListItem>>;
+  /** The options of the agent for a new chat. Refused with `agent-unknown` for an agent that Tasma does not know. */
+  readAgentOptions(agent: ChatAgent): Promise<Success<AgentOptions>>;
   listWorkflows(): Promise<Success<string[]>>;
   createWorkflow(input: WorkflowInput): Promise<Success<Workflow>>;
   readWorkflow(name: string): Promise<Success<Workflow>>;
@@ -428,6 +432,7 @@ export function createClient(transport: Transport): Client {
       call<ProjectChatStart>(routes.startProjectChat, { project: tag }, { body: input }),
     readProjectChatItem: (tag, chat) =>
       call<ProjectChatListItem>(routes.readProjectChatItem, { project: tag, chat }),
+    readAgentOptions: (agent) => call<AgentOptions>(routes.readAgentOptions, { agent }),
     listWorkflows: () => call<string[]>(routes.listWorkflows, {}),
     createWorkflow: (input) => call<Workflow>(routes.createWorkflow, {}, { body: input }),
     readWorkflow: (name) => call<Workflow>(routes.readWorkflow, { workflow: name }),

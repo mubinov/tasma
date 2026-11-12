@@ -1,7 +1,7 @@
 // The change feed of one daemon run: what changed, never the new content, so a
 // client reads the data again after an event.
 
-import type { ChatStatus } from "./chat.js";
+import type { ChatAgent, ChatStatus } from "./chat.js";
 
 /**
  * One change the daemon found or made, also by a hand edit of the tree. An
@@ -11,7 +11,9 @@ import type { ChatStatus } from "./chat.js";
  * comes when `live` changes. A `chat` event never carries the text, and a
  * rename or a delete of its project or task sends none. A `project-chat` event
  * is the `chat` event of a chat of a project. It never carries the text, and a
- * rename or a delete of its project sends none.
+ * rename or a delete of its project sends none. An `agent-options` event comes
+ * at each write of the stored options of the agent and of its saved defaults;
+ * a hand edit of either file sends none.
  */
 export type FeedEvent
   = | { kind: "task"; tag: string; id: string; change: "created" | "changed" | "deleted" }
@@ -20,7 +22,8 @@ export type FeedEvent
     | ({ kind: "chat"; tag: string; task: string; chat: number; step: string } & ChatStatus)
     | ({ kind: "project-chat"; tag: string; chat: number } & ChatStatus)
     | { kind: "config" }
-    | { kind: "workflow"; name: string; change: "created" | "changed" | "deleted" };
+    | { kind: "workflow"; name: string; change: "created" | "changed" | "deleted" }
+    | { kind: "agent-options"; agent: ChatAgent };
 
 /**
  * The answer to a read of the feed.

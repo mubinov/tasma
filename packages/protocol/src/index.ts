@@ -28,6 +28,7 @@ export {
 } from "./chat.js";
 export type {
   AcpObject,
+  AgentOptions,
   AgentState,
   AgentStateReply,
   AnyChatListItem,

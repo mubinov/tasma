@@ -2,7 +2,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { PromptResponse } from "@agentclientprotocol/sdk";
-import { openAgentDefaults } from "@tasma/engine";
+import { openAgentDefaults, openAgentOptions } from "@tasma/engine";
 import type {
   Chat,
   ChatEntry,
@@ -124,6 +124,7 @@ async function world(
     env: {},
     spawn,
     defaults: openAgentDefaults(root),
+    agentOptions: openAgentOptions(root),
   });
   onTestFinished(async () => {
     await runner.close();

@@ -237,3 +237,26 @@ describe("the setup reads", () => {
     expect(keysMatched({ kind: "chat", tag: "SAGA", task: "SAGA-1", chat: 1, step: "build", state: "working" }, setup)).toEqual([]);
   });
 });
+
+describe("the options of an agent", () => {
+  const agentSample = {
+    claudeOptions: daemonKeys.agentOptions("claude"),
+    codexOptions: daemonKeys.agentOptions("codex"),
+  };
+
+  it("read again on an agent-options event of their agent, and nothing else reads again", () => {
+    const keys = { ...sample, ...chatSample, ...agentSample };
+
+    expect(keysMatched({ kind: "agent-options", agent: "claude" }, keys)).toEqual(["claudeOptions"]);
+  });
+
+  it("give an agent-options event the exact filter of the options of its agent alone", () => {
+    expect(filtersOf([{ kind: "agent-options", agent: "codex" }], FEED_MAPPINGS)).toEqual([
+      { queryKey: daemonKeys.agentOptions("codex"), exact: true },
+    ]);
+  });
+
+  it("read again on a config event", () => {
+    expect(keysMatched({ kind: "config" }, agentSample)).toEqual(["claudeOptions", "codexOptions"]);
+  });
+});

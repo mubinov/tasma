@@ -12,6 +12,7 @@ import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createAppQueryClient, createDaemonClient, shouldRetry } from "../../src/api/client";
 import { APP_PATH_PREFIX, DAEMON_PATH_PREFIX } from "../../src/api/paths";
 import {
+  agentOptionsQuery,
   appKeys,
   chatItemQuery,
   chatListQuery,
@@ -333,6 +334,26 @@ it("asks for one chat of the list by its project, with no task id", async () => 
   expect(paths).toEqual(["/projects/SAGA/chats/2/item"]);
   expect(success).toEqual({ data: item, diagnostics: [] });
   expect(queryClient.getQueryData(daemonKeys.projectChatItem("SAGA", 2))).toEqual(success);
+});
+
+describe("agentOptionsQuery", () => {
+  const options = { agent: "claude", options: [{ id: "mode", type: "select", currentValue: "auto" }], updated: "2026-09-01T10:00:00.000Z" };
+
+  it("asks for the options of one agent, and caches them under the key of the agent", async () => {
+    const { transport, paths } = stubTransport({ "/agents/claude/options": successReply(options) });
+    const queryClient = createAppQueryClient();
+
+    const success = await queryClient.query({ ...agentOptionsQuery(createClient(transport), "claude"), staleTime: "static" });
+
+    expect(paths).toEqual(["/agents/claude/options"]);
+    expect(success).toEqual({ data: options, diagnostics: [] });
+    expect(queryClient.getQueryData(daemonKeys.agentOptions("claude"))).toEqual(success);
+  });
+
+  it("keys the options of each agent apart, under the one prefix of the daemon", () => {
+    expect(daemonKeys.agentOptions("claude")).toEqual([...daemonKeys.all, "agent-options", "claude"]);
+    expect(daemonKeys.agentOptions("codex")).not.toEqual(daemonKeys.agentOptions("claude"));
+  });
 });
 
 it("asks for the tasks of one project, with no filter", async () => {

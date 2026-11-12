@@ -181,6 +181,13 @@ export const AGENT_OPTION_RULES: Readonly<Record<ChatAgent, { hidden: OptionValu
   codex: { hidden: {}, unsaved: {} },
 };
 
+/**
+ * The config options that the agent sent when it opened its last new session,
+ * with each current value replaced by the value that a new chat starts with.
+ * `updated` is the time of the write, absent with no stored list.
+ */
+export type AgentOptions = { agent: ChatAgent; options: AcpObject[]; updated?: string };
+
 /** `started` is false when the answer is a chat that the task already had. */
 export type ChatStart = { chat: Chat; started: boolean };
 

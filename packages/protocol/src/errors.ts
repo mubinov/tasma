@@ -88,6 +88,7 @@ export type DaemonErrorCode
     | "step-stale"
     | "project-has-no-folder"
     | "agent-not-supported"
+    | "agent-unknown"
     | "option-refused";
 
 /**

@@ -12,7 +12,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { RequestError } from "@agentclientprotocol/sdk";
 import type { RequestPermissionRequest, SessionConfigOption } from "@agentclientprotocol/sdk";
 import { readProjectDeclaration, TaskStoreError } from "@tasma/engine";
-import type { AgentDefaultsStore, TaskStoreErrorCode } from "@tasma/engine";
+import type { AgentDefaultsStore, AgentOptionsStore, TaskStoreErrorCode } from "@tasma/engine";
 import { chatBusy } from "@tasma/protocol";
 import type {
   AcpObject,
@@ -31,6 +31,7 @@ import type { AgentConnection, AgentEnd, AgentHandlers, AgentProcess, AgentSessi
 import type { AgentAdapter, AgentEnv, AgentLaunch, BackgroundCommands, BackgroundState } from "../agents/adapter.js";
 import { readShellEnv } from "../agents/shell-env.js";
 import type { ShellEnv } from "../agents/shell-env.js";
+import type { Publish } from "../events/feed.js";
 import { causeOf, DaemonError } from "../http/failure.js";
 import {
   AGENT_STEP_IDLE_MS,
@@ -429,12 +430,16 @@ export function createChatRunner(options: {
   stderr?: { write(text: string): unknown };
   /** The config option defaults of each agent. */
   defaults: AgentDefaultsStore;
+  /** The options that each agent sent at its last new session. */
+  agentOptions: AgentOptionsStore;
+  /** Where a write of the options or of the defaults of an agent is announced. */
+  publish?: Publish;
   /** How long `end` waits for a cancelled turn to end. */
   endGraceMs?: number;
   /** How long after the last activity a running `job` command keeps the agent. */
   jobHoldMs?: number;
 }): ChatRunner {
-  const { root, chats, adapters, env, defaults } = options;
+  const { root, chats, adapters, env, defaults, agentOptions, publish } = options;
   const endGraceMs = options.endGraceMs ?? END_GRACE_MS;
   const jobHoldMs = options.jobHoldMs ?? JOB_HOLD_MS;
   const spawn = options.spawn ?? spawnAgent;
@@ -442,7 +447,9 @@ export function createChatRunner(options: {
   const idleLimit = options.idleLimit ?? (() => Promise.resolve(AGENT_STEP_IDLE_MS));
   const projectIdleMs = options.projectIdleMs ?? PROJECT_CHAT_IDLE_MS;
   const stderr = options.stderr ?? process.stderr;
-  const files = optionFiles({ root, defaults, stderr });
+  const files = optionFiles({ root, defaults, agentOptions, stderr, publish });
+  /** The writes of the options of a new session that have not ended. */
+  const keeping = new Set<Promise<void>>();
   const runs = new Map<AnyLiveChat, Run>();
   /** Every agent process that has not exited, also of a chat that no longer runs. */
   const alive = new Set<AgentProcess>();
@@ -806,6 +813,12 @@ export function createChatRunner(options: {
     return true;
   }
 
+  /** Stores the options of a new session. The chat does not wait for the write; `close()` does. */
+  function keep(agent: ChatAgent, configOptions: SessionConfigOption[]): void {
+    const write: Promise<void> = files.keep(agent, configOptions).finally(() => keeping.delete(write));
+    keeping.add(write);
+  }
+
   /**
    * Gives a session that just opened the values of `applyPlan`: the defaults
    * of the agent for a new session, the picks of the chat, and the waiting
@@ -820,6 +833,7 @@ export function createChatRunner(options: {
     const { live } = run;
     const { agent } = live.chat;
     run.options = session.configOptions;
+    if (created) keep(agent, run.options);
     if (run.options.length > 0) await append(run, optionsEvent(run.options));
     const defaults = created && run.options.length > 0 ? await files.defaultsOf(agent, run.options) : {};
     const plan = applyPlan(run.options, { defaults, chosen: live.chat.options ?? {}, waiting: run.waiting });
@@ -1365,6 +1379,7 @@ export function createChatRunner(options: {
         return run.live.interrupt().catch((error: unknown) => report(run.live, error));
       });
       await Promise.all([...writes, ...[...alive].map((agentProcess) => agentProcess.end())]);
+      await Promise.all(keeping);
     },
   };
 }

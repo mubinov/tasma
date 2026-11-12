@@ -51,6 +51,8 @@ export const FEED_MAPPINGS: FeedMappings = {
     { queryKey: daemonKeys.projects() },
     { queryKey: daemonKeys.setup() },
   ],
+  // The stored options of the agent and its saved defaults give the start values.
+  "agent-options": ({ agent }) => [{ queryKey: daemonKeys.agentOptions(agent), exact: true }],
 };
 
 /**

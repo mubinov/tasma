@@ -1,10 +1,12 @@
 // The chat runner of the tests: a daemon over one project with a fake agent,
 // and the helpers that the runner tests share.
 
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, onTestFinished } from "vitest";
 import type { ContentBlock, PromptResponse, SessionConfigOption } from "@agentclientprotocol/sdk";
-import { openAgentDefaults } from "@tasma/engine";
+import { openAgentDefaults, openAgentOptions } from "@tasma/engine";
+import type { AgentOptionsStore } from "@tasma/engine";
 import type { AcpObject, ChatEvent, FeedEvent } from "@tasma/protocol";
 import type { AgentProcess } from "../../src/agents/acp.js";
 import type { AgentAdapter, AgentEnv, AgentLaunch } from "../../src/agents/adapter.js";
@@ -82,6 +84,8 @@ export type WorldOptions = {
   endGraceMs?: number;
   /** Without it, the runner uses its default hold of a running job. */
   jobHoldMs?: number;
+  /** Without it, the runner keeps the options of the agents in the file of the tree. */
+  agentOptions?: AgentOptionsStore;
 };
 
 /** A daemon over project ALPHA, whose folder is a directory, with the task ALPHA-1. */
@@ -94,7 +98,8 @@ export async function world(options: WorldOptions = {}): Promise<World> {
   onTestFinished(() => host.close());
   const writes = new WriteQueue();
   const feed: FeedEvent[] = [];
-  const registry = createChatRegistry({ root, host, writes, publish: (event) => feed.push(event) });
+  const publish = (event: FeedEvent) => feed.push(event);
+  const registry = createChatRegistry({ root, host, writes, publish });
   const chats = options.chats?.(registry) ?? registry;
   const server = await startTestServer([
     ...projectRoutes(host, writes, registry),
@@ -126,6 +131,8 @@ export async function world(options: WorldOptions = {}): Promise<World> {
     jobHoldMs: options.jobHoldMs,
     stderr: { write: (line: string) => errors.push(line) },
     defaults: openAgentDefaults(root),
+    agentOptions: options.agentOptions ?? openAgentOptions(root),
+    publish,
   });
   onTestFinished(() => runner.close());
   return { root, folder, chats, runner, writes, feed, errors, processes: agents.processes, envs, server };
@@ -134,6 +141,15 @@ export async function world(options: WorldOptions = {}): Promise<World> {
 /** The file of the config option defaults of the tree. */
 export function defaultsFile(root: string): string {
   return join(root, "agent-defaults.json");
+}
+
+export async function plantDefaults(root: string, value: unknown): Promise<void> {
+  await writeFile(defaultsFile(root), JSON.stringify(value));
+}
+
+/** The file of the options that each agent sent at its last new session. */
+export function optionsFile(root: string): string {
+  return join(root, "agent-options.json");
 }
 
 /** A saved mode `default`: a new session keeps the mode that it opens in, with no start mode. */

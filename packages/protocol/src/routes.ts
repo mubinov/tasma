@@ -54,6 +54,7 @@ export const routes = {
   markProjectChatSeen: { method: "POST", template: "/projects/{project}/chats/{chat}/seen" },
   markProjectChatInactive: { method: "POST", template: "/projects/{project}/chats/{chat}/inactive" },
   readProjectChatItem: { method: "GET", template: "/projects/{project}/chats/{chat}/item" },
+  readAgentOptions: { method: "GET", template: "/agents/{agent}/options" },
   listWorkflows: { method: "GET", template: "/workflows" },
   createWorkflow: { method: "POST", template: "/workflows" },
   readWorkflow: { method: "GET", template: "/workflows/{workflow}" },

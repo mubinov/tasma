@@ -1,17 +1,14 @@
 // The config options of the session of a chat: the rules of each agent, the
 // values that a session gets as it opens and their order, the fold of the
-// updates of the agent, and the files that keep a pick.
+// updates of the agent, and the files that keep a pick and the options of a
+// new session.
 
-import type {
-  SessionConfigOption,
-  SessionConfigSelectGroup,
-  SessionConfigSelectOption,
-  SessionUpdate,
-} from "@agentclientprotocol/sdk";
+import type { SessionConfigOption, SessionUpdate } from "@agentclientprotocol/sdk";
 import { chatRecordPath, projectChatRecordPath } from "@tasma/engine";
-import type { AgentDefaultsStore } from "@tasma/engine";
+import type { AgentDefaultsRead, AgentDefaultsStore, AgentOptionsStore } from "@tasma/engine";
 import { AGENT_OPTION_RULES, DAEMON_NAME, printable } from "@tasma/protocol";
 import type { AcpObject, ChatAgent, ChatEvent, Diagnostic } from "@tasma/protocol";
+import type { Publish } from "../events/feed.js";
 import { causeOf } from "../http/failure.js";
 import { isProjectChat } from "./registry.js";
 import type { AnyLiveChat } from "./registry.js";
@@ -31,21 +28,32 @@ function isUnsaved(agent: ChatAgent, configId: string, value: string): boolean {
   return listed(AGENT_OPTION_RULES[agent].unsaved, configId, value);
 }
 
-/** The option `configId` when it is a select that offers `value`. */
-export function offering(
-  options: SessionConfigOption[],
-  configId: string,
-  value: string,
-): SessionConfigOption | undefined {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The values of a list of select entries. A stored list holds any JSON, so a part of another shape offers nothing. */
+function valuesOf(entries: unknown): unknown[] {
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    if (!("group" in entry)) return [entry.value];
+    return Array.isArray(entry.options) ? entry.options.filter(isRecord).map((one) => one.value) : [];
+  });
+}
+
+/**
+ * The option `configId` when it is a select that offers `value`. The options
+ * are typed as any JSON object, as a stored list can hold one of any shape.
+ */
+export function offering<O extends AcpObject>(options: readonly O[], configId: string, value: string): O | undefined {
   const option = options.find((one) => one.id === configId);
   if (option?.type !== "select") return undefined;
-  const entries: (SessionConfigSelectOption | SessionConfigSelectGroup)[] = option.options;
-  const values = entries.flatMap((entry) => ("group" in entry ? entry.options : [entry]).map((one) => one.value));
-  return values.includes(value) ? option : undefined;
+  return valuesOf(option.options).includes(value) ? option : undefined;
 }
 
 /** Whether a default or a pick of the chat goes to the session: it is offered, not hidden, and not current. */
-export function wanted(agent: ChatAgent, options: SessionConfigOption[], configId: string, value: string): boolean {
+export function wanted(agent: ChatAgent, options: readonly AcpObject[], configId: string, value: string): boolean {
   const option = offering(options, configId, value);
   return option !== undefined && !isHidden(agent, configId, value) && option.currentValue !== value;
 }
@@ -100,20 +108,65 @@ export function applyPlan<P extends Pick>(
   return plan.sort((one, other) => applyOrder(options, one.configId) - applyOrder(options, other.configId));
 }
 
+/**
+ * The defaults of the agent for a new session that opened with `options`, from
+ * a read of the defaults file. A saved value that the rules leave unsaved goes
+ * to `ignored`. A session of claude that opened in the mode `default` gets the
+ * start mode `auto` while the read has no fault and holds no mode of claude,
+ * unsaved values included; nothing writes the start mode to a file.
+ */
+export function startDefaults(
+  agent: ChatAgent,
+  options: readonly AcpObject[],
+  read: AgentDefaultsRead,
+): { defaults: Record<string, string>; ignored: Pick[] } {
+  const saved = read.defaults[agent] ?? {};
+  const defaults: Record<string, string> = {};
+  const ignored: Pick[] = [];
+  for (const [configId, value] of Object.entries(saved)) {
+    if (isUnsaved(agent, configId, value)) {
+      ignored.push({ configId, value });
+    } else {
+      defaults[configId] = value;
+    }
+  }
+  const manual = options.find((option) => option.id === "mode")?.currentValue === "default";
+  if (agent === "claude" && manual && read.diagnostics.length === 0 && !Object.hasOwn(saved, "mode")) {
+    defaults.mode = "auto";
+  }
+  return { defaults, ignored };
+}
+
+/** `options` with the current value of each option set to its default, where `wanted` takes the default. */
+export function startOptions<O extends AcpObject>(
+  agent: ChatAgent,
+  options: readonly O[],
+  defaults: Record<string, string>,
+): O[] {
+  const taken = Object.entries(defaults).filter(([configId, value]) => wanted(agent, options, configId, value));
+  const start = new Map<unknown, string>(taken);
+  return options.map((option) => {
+    const value = start.get(option.id);
+    return value === undefined || option.type !== "select" ? option : { ...option, currentValue: value };
+  });
+}
+
 export type OptionFiles = {
   /**
-   * The defaults of the agent for a new session that opened with `options`. A
-   * file that cannot be used, and a default that the rules leave unsaved, each
-   * give a line on stderr. A session of claude that opened in the mode
-   * `default` gets the start mode `auto` while the file reads with no fault and
-   * holds no mode of claude, unsaved values included; nothing writes the start
-   * mode to a file.
+   * `startDefaults` over the defaults file. A file that cannot be used, and
+   * each ignored value, give a line on stderr.
    */
   defaultsOf(agent: ChatAgent, options: SessionConfigOption[]): Promise<Record<string, string>>;
   /**
+   * Stores the options that a new session of the agent opened with, and
+   * publishes `agent-options`. A failed write gives a line on stderr and
+   * publishes nothing. Never rejects.
+   */
+  keep(agent: ChatAgent, options: SessionConfigOption[]): Promise<void>;
+  /**
    * Writes an accepted pick to the chat, and to the defaults of the agent
    * unless the rules leave it unsaved. Gives a diagnostic for each file that a
-   * write missed.
+   * write missed. A written default publishes `agent-options`.
    */
   save(live: AnyLiveChat, configId: string, value: string): Promise<Diagnostic[]>;
 };
@@ -121,9 +174,11 @@ export type OptionFiles = {
 export function optionFiles(options: {
   root?: string;
   defaults: AgentDefaultsStore;
+  agentOptions: AgentOptionsStore;
   stderr: { write(text: string): unknown };
+  publish?: Publish;
 }): OptionFiles {
-  const { root, defaults, stderr } = options;
+  const { root, defaults, agentOptions, stderr, publish } = options;
 
   function fileLine(path: string, message: string): void {
     stderr.write(`${DAEMON_NAME}: ${printable(`${path}: ${message}`)}\n`);
@@ -147,20 +202,21 @@ export function optionFiles(options: {
     async defaultsOf(agent, options) {
       const read = await defaults.read();
       for (const diagnostic of read.diagnostics) fileLine(defaults.path, diagnostic.message);
-      const saved = read.defaults[agent] ?? {};
-      const own: Record<string, string> = {};
-      for (const [configId, value] of Object.entries(saved)) {
-        if (isUnsaved(agent, configId, value)) {
-          fileLine(defaults.path, `"${value}" of "${configId}" of ${agent} is not applied: this value is never a default`);
-        } else {
-          own[configId] = value;
-        }
-      }
-      const manual = options.find((option) => option.id === "mode")?.currentValue === "default";
-      if (agent === "claude" && manual && read.diagnostics.length === 0 && !Object.hasOwn(saved, "mode")) {
-        own.mode = "auto";
+      const { defaults: own, ignored } = startDefaults(agent, options, read);
+      for (const { configId, value } of ignored) {
+        fileLine(defaults.path, `"${value}" of "${configId}" of ${agent} is not applied: this value is never a default`);
       }
       return own;
+    },
+
+    async keep(agent, options) {
+      try {
+        await agentOptions.save(agent, options);
+      } catch (error) {
+        fileLine(agentOptions.path, `the options of ${agent} are not saved: ${causeOf(error)}`);
+        return;
+      }
+      publish?.({ kind: "agent-options", agent });
     },
 
     async save(live, configId, value) {
@@ -176,7 +232,9 @@ export function optionFiles(options: {
         await defaults.save(agent, configId, value);
       } catch (error) {
         diagnostics.push(notSaved(configId, value, `as the default of ${agent}`, defaults.path, error));
+        return diagnostics;
       }
+      publish?.({ kind: "agent-options", agent });
       return diagnostics;
     },
   };

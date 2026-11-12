@@ -11,7 +11,7 @@ import { delimiter, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { AnyMessage } from "@agentclientprotocol/sdk";
-import { openAgentDefaults } from "@tasma/engine";
+import { openAgentDefaults, openAgentOptions } from "@tasma/engine";
 import type { ChatEvent } from "@tasma/protocol";
 import { spawnAgent } from "../../src/agents/acp.js";
 import type { AgentProcess } from "../../src/agents/acp.js";
@@ -55,7 +55,8 @@ async function world(
   onTestFinished(() => host.close());
   const chats = createChatRegistry({ root, host, writes: new WriteQueue() });
   const defaults = openAgentDefaults(root);
-  const runner = createChatRunner({ root, chats, adapters: [adapter], env, idleLimit, defaults, spawn });
+  const agentOptions = openAgentOptions(root);
+  const runner = createChatRunner({ root, chats, adapters: [adapter], env, idleLimit, defaults, agentOptions, spawn });
   onTestFinished(() => runner.close());
   return { runner, folder, root };
 }

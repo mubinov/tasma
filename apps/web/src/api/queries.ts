@@ -4,6 +4,7 @@ import {
   ProtocolError,
   routes,
   type AnyChatListItem,
+  type ChatAgent,
   type ChatListPage,
   type ChatListQuery,
   type Client,
@@ -55,6 +56,7 @@ export const daemonKeys = {
   // A tag has no "-", so it is never the id of a task.
   projectChatItem: (tag: string, chat: number) => [...daemonKeys.chats(), tag, chat] as const,
   agentState: () => [...daemonKeys.chats(), "state"] as const,
+  agentOptions: (agent: ChatAgent) => [...daemonKeys.all, "agent-options", agent] as const,
   setup: () => [...daemonKeys.all, "setup"] as const,
 };
 
@@ -152,6 +154,13 @@ export function agentStateQuery(client: Client) {
   return queryOptions({
     queryKey: daemonKeys.agentState(),
     queryFn: () => client.readAgentState(),
+  });
+}
+
+export function agentOptionsQuery(client: Client, agent: ChatAgent) {
+  return queryOptions({
+    queryKey: daemonKeys.agentOptions(agent),
+    queryFn: () => client.readAgentOptions(agent),
   });
 }
 

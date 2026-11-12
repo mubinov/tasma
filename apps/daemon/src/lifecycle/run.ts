@@ -11,12 +11,13 @@ import { once } from "node:events";
 import type { Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { parseArgs } from "node:util";
-import { openAgentDefaults, type TreeWatch, watchTree } from "@tasma/engine";
+import { openAgentDefaults, openAgentOptions, type TreeWatch, watchTree } from "@tasma/engine";
 import { DAEMON_NAME, DEFAULT_DAEMON_HOST, printable } from "@tasma/protocol";
 import type { DaemonRecord } from "@tasma/protocol";
 import manifest from "../../../../package.json" with { type: "json" };
 import type { AgentAdapter, AgentEnv } from "../agents/adapter.js";
 import { claudeAdapter } from "../agents/claude.js";
+import { agentRoutes } from "../chats/agent-routes.js";
 import { idleLimit } from "../chats/idle.js";
 import { chatListRoutes } from "../chats/list-routes.js";
 import { createChatRegistry } from "../chats/registry.js";
@@ -204,6 +205,8 @@ export async function startDaemon(options: {
   const host = createProjectHost({ root, publish });
   const writes = new WriteQueue();
   const chats = createChatRegistry({ root, host, writes, publish, stderr });
+  const defaults = openAgentDefaults(root);
+  const agentOptions = openAgentOptions(root);
   const runner = createChatRunner({
     root,
     chats,
@@ -211,7 +214,9 @@ export async function startDaemon(options: {
     env,
     idleLimit: idleLimit({ root, host }),
     stderr,
-    defaults: openAgentDefaults(root),
+    defaults,
+    agentOptions,
+    publish,
   });
   const starts = createStepChats({ root, host, chats, runner });
   const setup = createSetupChecks({ root, host, adapters: AGENT_ADAPTERS, env });
@@ -222,6 +227,7 @@ export async function startDaemon(options: {
       ...taskRoutes(host, { writes, chats }),
       ...chatRoutes(chats, runner, starts),
       ...chatListRoutes({ root, host, chats }),
+      ...agentRoutes({ options: agentOptions, defaults }),
       ...workflowRoutes({ root, writes, publish }),
       ...configRoutes({ root, writes, publish }),
       ...setupRoutes(setup, installer),

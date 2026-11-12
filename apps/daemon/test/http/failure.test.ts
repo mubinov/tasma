@@ -186,6 +186,7 @@ describe("the status of a refusal", () => {
     ["step-stale", 409],
     ["project-has-no-folder", 409],
     ["agent-not-supported", 409],
+    ["agent-unknown", 404],
   ])("answers the daemon code %s with %i", (code, status) => {
     const failure: Failure = { kind: "daemon", code, message: code };
     expect(statusOf(failure)).toBe(status);

@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { RequestError } from "@agentclientprotocol/sdk";
@@ -16,8 +16,10 @@ import {
   heldTurns,
   modeUpdate,
   NEXT,
+  optionsFile,
   optionsUpdate,
   PICK,
+  plantDefaults,
   promptText,
   SAVED_MANUAL,
   slowEnd,
@@ -58,10 +60,6 @@ const MODE_WITHOUT_AUTO: SessionConfigOption = {
   currentValue: "default",
   options: ["default", "acceptEdits", "plan"].map((value) => ({ value, name: value })),
 };
-
-async function plantDefaults(root: string, value: unknown): Promise<void> {
-  await writeFile(defaultsFile(root), JSON.stringify(value));
-}
 
 async function storedDefaults(root: string): Promise<unknown> {
   return JSON.parse(await readFile(defaultsFile(root), "utf8"));
@@ -1503,5 +1501,113 @@ describe("a pick and the end of a chat for a restart", () => {
     expect((await logOf(live)).at(-1)).toEqual({ kind: "resumed" });
     expect(processes[1]?.endCalls).toBeGreaterThan(0);
     expect(runner.running(live)).toBeUndefined();
+  });
+});
+
+describe("the stored options of an agent", () => {
+  function optionEvents(feed: World["feed"]) {
+    return feed.filter((event) => event.kind === "agent-options");
+  }
+
+  async function storedOptions(root: string): Promise<unknown> {
+    return JSON.parse(await readFile(optionsFile(root), "utf8"));
+  }
+
+  it("are the list of a new session as it opened, before the defaults apply, and their write publishes agent-options", async () => {
+    const { script, seen } = recording();
+    const { runner, root, feed, errors } = await world({ script });
+    await plantDefaults(root, { claude: { model: "large" } });
+
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+    await until(() => optionEvents(feed).length === 1, "the options are stored");
+
+    expect(seen).toEqual(["model=large", "mode=auto", `prompt ${START.text}`]);
+    expect(await storedOptions(root)).toEqual({ claude: { options: OPTIONS, updated: expect.any(String) as string } });
+    expect(optionEvents(feed)).toEqual([{ kind: "agent-options", agent: "claude" }]);
+    expect(errors).toEqual([]);
+  });
+
+  it("are an empty list for a new session with no options", async () => {
+    const { runner, root, feed } = await world();
+
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+    await until(() => optionEvents(feed).length === 1, "the options are stored");
+
+    expect(await storedOptions(root)).toEqual({ claude: { options: [], updated: expect.any(String) as string } });
+  });
+
+  it("are not written by a resumed session", async () => {
+    const { runner, root, feed, processes } = await world({ script: { configOptions: OPTIONS } });
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+    await until(() => optionEvents(feed).length === 1, "the options are stored");
+    const before = await readFile(optionsFile(root), "utf8");
+    await runner.stop(live);
+
+    await runner.message(live, NEXT);
+    await logUntil(live, "turn-end");
+    await runner.close();
+
+    expect(processes[1]?.resumes).toHaveLength(1);
+    expect(optionEvents(feed)).toHaveLength(1);
+    await expect(readFile(optionsFile(root), "utf8")).resolves.toBe(before);
+  });
+
+  it("give one fault line when their write fails, publish nothing, and the chat runs on", async () => {
+    const { runner, root, feed, errors } = await world({ script: { configOptions: OPTIONS } });
+    await plantDefaults(root, SAVED_MANUAL);
+    await mkdir(join(optionsFile(root), "inside"), { recursive: true });
+
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+    await until(() => errors.length > 0, "the write failed");
+    await runner.message(live, NEXT);
+    await logUntil(live, "turn-end");
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(new RegExp(`^tasma-daemon: ${optionsFile(root)}: the options of claude are not saved: `));
+    expect(optionEvents(feed)).toEqual([]);
+  });
+
+  it("are written after the chat goes on, and close() waits for the write", async () => {
+    const held = gate();
+    const order: string[] = [];
+    const { runner } = await world({
+      script: { configOptions: OPTIONS },
+      agentOptions: {
+        path: "/srv/tree/agent-options.json",
+        read: async () => ({ lists: {}, diagnostics: [] }),
+        async save() {
+          await held.opened;
+          order.push("written");
+        },
+      },
+    });
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+
+    const closed = runner.close().then(() => order.push("closed"));
+    setTimeout(held.open, 50);
+    await closed;
+
+    expect(order).toEqual(["written", "closed"]);
+  });
+
+  it("are announced again by a saved pick, and not by a pick that is never a default", async () => {
+    const { runner, root, feed } = await world({ script: { configOptions: OPTIONS } });
+    await plantDefaults(root, SAVED_MANUAL);
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+    await until(() => optionEvents(feed).length === 1, "the options are stored");
+
+    await runner.setOption(live, { ...PICK, value: "bypassPermissions" });
+
+    expect(optionEvents(feed)).toHaveLength(1);
+
+    await runner.setOption(live, PICK);
+
+    expect(optionEvents(feed)).toHaveLength(2);
   });
 });
