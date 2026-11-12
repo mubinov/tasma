@@ -220,7 +220,12 @@ export type Client = {
   startProjectChat(tag: string, input: ProjectChatStartInput): Promise<Success<ProjectChatStart>>;
   /** One chat of a project as a row of the list of the chats of all projects. */
   readProjectChatItem(tag: string, chat: number): Promise<Success<ProjectChatListItem>>;
-  /** The options of the agent for a new chat. Refused with `agent-unknown` for an agent that Tasma does not know. */
+  /**
+   * The options of the agent for a new chat. Refused with `agent-unknown` for
+   * an agent that Tasma does not know. A read of a list that is missing or
+   * older than 7 days starts a refresh in the background, and the new list
+   * comes with an `agent-options` event.
+   */
   readAgentOptions(agent: ChatAgent): Promise<Success<AgentOptions>>;
   listWorkflows(): Promise<Success<string[]>>;
   createWorkflow(input: WorkflowInput): Promise<Success<Workflow>>;

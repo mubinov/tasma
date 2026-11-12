@@ -227,7 +227,11 @@ export async function startDaemon(options: {
       ...taskRoutes(host, { writes, chats }),
       ...chatRoutes(chats, runner, starts),
       ...chatListRoutes({ root, host, chats }),
-      ...agentRoutes({ options: agentOptions, defaults }),
+      ...agentRoutes({
+        options: agentOptions,
+        defaults,
+        refresh: (agent, entry) => runner.refreshOptions(agent, entry),
+      }),
       ...workflowRoutes({ root, writes, publish }),
       ...configRoutes({ root, writes, publish }),
       ...setupRoutes(setup, installer),

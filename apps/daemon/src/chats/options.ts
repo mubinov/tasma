@@ -160,9 +160,9 @@ export type OptionFiles = {
   /**
    * Stores the options that a new session of the agent opened with, and
    * publishes `agent-options`. A failed write gives a line on stderr and
-   * publishes nothing. Never rejects.
+   * publishes nothing. Resolves whether the write is done. Never rejects.
    */
-  keep(agent: ChatAgent, options: SessionConfigOption[]): Promise<void>;
+  keep(agent: ChatAgent, options: SessionConfigOption[]): Promise<boolean>;
   /**
    * Writes an accepted pick to the chat, and to the defaults of the agent
    * unless the rules leave it unsaved. Gives a diagnostic for each file that a
@@ -214,9 +214,10 @@ export function optionFiles(options: {
         await agentOptions.save(agent, options);
       } catch (error) {
         fileLine(agentOptions.path, `the options of ${agent} are not saved: ${causeOf(error)}`);
-        return;
+        return false;
       }
       publish?.({ kind: "agent-options", agent });
+      return true;
     },
 
     async save(live, configId, value) {

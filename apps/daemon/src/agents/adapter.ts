@@ -61,6 +61,11 @@ export type AgentAdapter = {
   sessionMeta?: AcpObject;
   /** The `_meta` of `session/new` and `session/resume` of a project chat. */
   projectSessionMeta?(tag: string): AcpObject;
+  /**
+   * The `_meta` of `session/new` of a refresh of the options: a session with no
+   * message that the agent must not keep. An adapter with no value gets no refresh.
+   */
+  optionsSessionMeta?: AcpObject;
   /** The background commands of one agent process. `log` takes each line for the log of the daemon. */
   backgroundCommands?(log: (cause: string) => void): BackgroundCommands;
 };

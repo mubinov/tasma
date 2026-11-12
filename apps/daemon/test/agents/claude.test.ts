@@ -591,6 +591,14 @@ describe("claudeAdapter.projectSessionMeta", () => {
   });
 });
 
+describe("claudeAdapter.optionsSessionMeta", () => {
+  it("opens a session that the CLI does not save, with the user settings alone", () => {
+    expect(claudeAdapter.optionsSessionMeta).toEqual({
+      claudeCode: { options: { persistSession: false, settingSources: ["user"] } },
+    });
+  });
+});
+
 describe("claudeAdapter background commands", () => {
   it("appends the rule of the two marks to the system prompt of each session", () => {
     expect(claudeAdapter.sessionMeta).toEqual({

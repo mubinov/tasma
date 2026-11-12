@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { RequestError } from "@agentclientprotocol/sdk";
@@ -16,6 +17,7 @@ import {
   heldTurns,
   modeUpdate,
   NEXT,
+  OPTIONS_META,
   optionsFile,
   optionsUpdate,
   PICK,
@@ -1593,6 +1595,36 @@ describe("the stored options of an agent", () => {
     await closed;
 
     expect(order).toEqual(["written", "closed"]);
+  });
+
+  it("are refreshed by refreshOptions: the agent opens a session in the work parent of the runner, and the list is written", async () => {
+    const { runner, root, feed, processes, workParent, errors } = await world({ script: { configOptions: OPTIONS } });
+
+    runner.refreshOptions("claude", undefined);
+    await until(() => optionEvents(feed).length === 1, "the options are stored");
+
+    const folder = join(await realpath(workParent), "tasma-options-claude");
+    expect(processes[0]?.newSession).toEqual({ cwd: folder, mcpServers: [], _meta: OPTIONS_META });
+    expect(await storedOptions(root)).toEqual({ claude: { options: OPTIONS, updated: expect.any(String) as string } });
+    await until(() => !existsSync(folder), "the work folder is removed");
+    expect(errors).toEqual([]);
+  });
+
+  it("are not refreshed after close(), which ends a refresh that runs and resolves after its folder is removed", async () => {
+    const { runner, processes, workParent, errors } = await world({ script: { newSession: () => forever() } });
+    runner.refreshOptions("claude", undefined);
+    await until(() => processes[0]?.newSession !== undefined, "the agent opens a session");
+
+    await runner.close();
+
+    expect(processes[0]?.endCalls).toBeGreaterThan(0);
+    expect(existsSync(join(await realpath(workParent), "tasma-options-claude"))).toBe(false);
+    expect(errors).toEqual([]);
+
+    runner.refreshOptions("claude", undefined);
+    await runner.close();
+
+    expect(processes).toHaveLength(1);
   });
 
   it("are announced again by a saved pick, and not by a pick that is never a default", async () => {

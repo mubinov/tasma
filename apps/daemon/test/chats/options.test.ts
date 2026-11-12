@@ -250,21 +250,21 @@ describe("offering", () => {
 });
 
 describe("keep", () => {
-  it("saves the options of the agent and publishes agent-options", async () => {
+  it("saves the options of the agent, publishes agent-options, and resolves true", async () => {
     const { files, lines, published, kept } = filesOver(saved({}));
 
-    await files.keep("claude", OPTIONS);
+    await expect(files.keep("claude", OPTIONS)).resolves.toBe(true);
 
     expect(kept).toEqual([{ agent: "claude", options: OPTIONS }]);
     expect(published).toEqual([{ kind: "agent-options", agent: "claude" }]);
     expect(lines).toEqual([]);
   });
 
-  it("writes one line on stderr for a write that fails, publishes nothing, and does not reject", async () => {
+  it("writes one line on stderr for a write that fails, publishes nothing, and resolves false", async () => {
     const { store } = optionsStore(new Error("EACCES: permission denied"));
     const { files, lines, published } = filesOver(saved({}), { agentOptions: store });
 
-    await expect(files.keep("codex", [])).resolves.toBeUndefined();
+    await expect(files.keep("codex", [])).resolves.toBe(false);
 
     expect(lines).toEqual([`tasma-daemon: ${OPTIONS_PATH}: the options of codex are not saved: EACCES: permission denied\n`]);
     expect(published).toEqual([]);

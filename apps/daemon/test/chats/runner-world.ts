@@ -29,6 +29,9 @@ export const START = { tag: "ALPHA", task: "ALPHA-1", step: "dev:build", agent: 
 
 export const LAUNCH: AgentLaunch = { command: "fake-agent", args: [], env: {} };
 
+/** The `_meta` of `session/new` of a refresh of the options of the fake adapter. */
+export const OPTIONS_META = { unsaved: true };
+
 /** An adapter that launches the fake agent, records the environment it gets, and marks each update it filters. */
 export function fakeAdapter(launch: AgentLaunch | { failed: string } = LAUNCH) {
   const envs: AgentEnv[] = [];
@@ -46,6 +49,7 @@ export function fakeAdapter(launch: AgentLaunch | { failed: string } = LAUNCH) {
     sessionGone: "The agent lost the chat",
     projectSessionGone: "The agent lost the project chat",
     filterUpdate: (update) => ({ ...update, filtered: true }),
+    optionsSessionMeta: OPTIONS_META,
   };
   return { adapter, envs };
 }
@@ -62,6 +66,8 @@ export type World = {
   processes: FakeProcess[];
   envs: AgentEnv[];
   server: TestServer;
+  /** The folder that holds the work folder of each refresh of the options. */
+  workParent: string;
 };
 
 export type WorldOptions = {
@@ -108,6 +114,7 @@ export async function world(options: WorldOptions = {}): Promise<World> {
   const agents = fakeAgent(options.script);
   const { adapter, envs } = fakeAdapter();
   const errors: string[] = [];
+  const workParent = join(root, "Caches");
   let unexpectedReads = 0;
   if (options.shellEnv === undefined) onTestFinished(() => expect(unexpectedReads, "reads of the shell").toBe(0));
   const unexpected = async (): Promise<ShellEnv> => {
@@ -133,9 +140,10 @@ export async function world(options: WorldOptions = {}): Promise<World> {
     defaults: openAgentDefaults(root),
     agentOptions: options.agentOptions ?? openAgentOptions(root),
     publish,
+    optionsWorkParent: workParent,
   });
   onTestFinished(() => runner.close());
-  return { root, folder, chats, runner, writes, feed, errors, processes: agents.processes, envs, server };
+  return { root, folder, chats, runner, writes, feed, errors, processes: agents.processes, envs, server, workParent };
 }
 
 /** The file of the config option defaults of the tree. */

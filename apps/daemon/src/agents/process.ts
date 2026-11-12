@@ -1,9 +1,12 @@
 // The `PATH` and the environment of a process that the daemon starts for the
-// user, the check of an executable, and the kill and the end of a process group.
+// user, the check of an executable and of a working folder, and the kill and
+// the end of a process group.
 
 import type { ChildProcess } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
-import { delimiter, isAbsolute, sep } from "node:path";
+import { mkdir, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { delimiter, dirname, isAbsolute, join, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { AgentEnv } from "./adapter.js";
 
@@ -64,6 +67,34 @@ export function isExecutableFile(path: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * The folder that holds the working folder of a command that the daemon runs
+ * for the user. Not the temporary folder: an agent sandbox of this user can
+ * usually write to it.
+ */
+export function cachesFolder(env: AgentEnv): string {
+  return join(env.HOME ?? homedir(), "Library", "Caches");
+}
+
+/**
+ * Makes the folder when it does not exist. Gives its real path when this user
+ * or root owns it and each folder above it, and no other account can write to
+ * them. A tool can read files of each folder above its working folder: `npm`
+ * reads `.npmrc` and `node_modules`, Claude Code reads `CLAUDE.md`.
+ */
+export async function safeWorkParent(folder: string): Promise<string | undefined> {
+  // Under a umask of 002, the default mode gives the group write access, which the check refuses.
+  await mkdir(folder, { recursive: true, mode: 0o700 }).catch(() => undefined);
+  const path = await realpath(folder).catch(() => undefined);
+  if (path === undefined) return undefined;
+  const uid = process.getuid?.();
+  for (let dir = path; ; dir = dirname(dir)) {
+    const info = await stat(dir);
+    if ((info.uid !== uid && info.uid !== 0) || (info.mode & 0o022) !== 0) return undefined;
+    if (dirname(dir) === dir) return path;
   }
 }
 

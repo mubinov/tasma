@@ -1,10 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import { openAgentDefaults, openAgentOptions } from "@tasma/engine";
-import type { AgentOptions } from "@tasma/protocol";
+import type { AgentOptionsEntry } from "@tasma/engine";
+import type { AgentOptions, ChatAgent } from "@tasma/protocol";
 import { agentRoutes } from "../../src/chats/agent-routes.js";
 import { failure, get, projectsRoot, startTestServer, success } from "../helpers.js";
-import type { TestServer } from "../helpers.js";
 import { modelOption, modeOption } from "../agents/fake-agent.js";
 import { defaultsFile, optionsFile, plantDefaults } from "./runner-world.js";
 
@@ -16,22 +16,37 @@ async function plantOptions(root: string, value: unknown): Promise<void> {
   await writeFile(optionsFile(root), JSON.stringify(value));
 }
 
-/** A daemon serving the agent routes over a tree, and the tree. */
-async function serving(): Promise<{ root: string; server: TestServer }> {
+/** A daemon serving the agent routes over a tree, the tree, and the refresh that the routes call. */
+async function serving() {
   const root = await projectsRoot();
-  const stores = { options: openAgentOptions(root), defaults: openAgentDefaults(root) };
-  const server = await startTestServer(agentRoutes(stores));
-  return { root, server };
+  const refresh = vi.fn<(agent: ChatAgent, entry: AgentOptionsEntry | undefined) => void>();
+  const server = await startTestServer(agentRoutes({
+    options: openAgentOptions(root),
+    defaults: openAgentDefaults(root),
+    refresh,
+  }));
+  return { root, server, refresh };
 }
 
 describe("GET /agents/{agent}/options", () => {
-  it("answers no options and no time for an agent with no stored list", async () => {
-    const { server } = await serving();
+  it("answers no options and no time for an agent with no stored list, and gives the refresh no list", async () => {
+    const { server, refresh } = await serving();
 
     const response = await get(server, "/agents/claude/options");
 
     expect(response.status).toBe(200);
     await expect(success<AgentOptions>(response)).resolves.toEqual({ data: { agent: "claude", options: [] }, diagnostics: [] });
+    expect(refresh.mock.calls).toEqual([["claude", undefined]]);
+  });
+
+  it("gives the refresh the stored list of the agent, as the file holds it", async () => {
+    const { root, server, refresh } = await serving();
+    await plantOptions(root, { claude: { options: OPENED, updated: WHEN } });
+    await plantDefaults(root, { claude: { model: "large" } });
+
+    await get(server, "/agents/claude/options");
+
+    expect(refresh.mock.calls).toEqual([["claude", { options: OPENED, updated: WHEN }]]);
   });
 
   it("answers the stored list with the values that a new chat starts with: a saved model, and the start mode auto", async () => {
@@ -104,7 +119,7 @@ describe("GET /agents/{agent}/options", () => {
   });
 
   it("answers the list of codex apart from the list of claude", async () => {
-    const { root, server } = await serving();
+    const { root, server, refresh } = await serving();
     await plantOptions(root, { claude: { options: OPENED, updated: WHEN } });
 
     await expect(success<AgentOptions>(await get(server, "/agents/codex/options"))).resolves.toEqual({
@@ -119,10 +134,11 @@ describe("GET /agents/{agent}/options", () => {
       data: { agent: "codex", options: [modelOption("large")], updated: WHEN },
       diagnostics: [],
     });
+    expect(refresh.mock.calls).toEqual([["codex", undefined], ["codex", { options: [modelOption()], updated: WHEN }]]);
   });
 
   it.each(["other", "__proto__", "constructor", "toString"])("refuses the agent %s with agent-unknown", async (agent) => {
-    const { root, server } = await serving();
+    const { root, server, refresh } = await serving();
     await plantOptions(root, { [agent]: { options: OPENED, updated: WHEN } });
 
     const response = await get(server, `/agents/${agent}/options`);
@@ -133,15 +149,17 @@ describe("GET /agents/{agent}/options", () => {
       code: "agent-unknown",
       message: `Tasma knows no agent "${agent}"`,
     });
+    expect(refresh).not.toHaveBeenCalled();
   });
 
-  it("refuses a query", async () => {
-    const { server } = await serving();
+  it("refuses a query, and calls no refresh", async () => {
+    const { server, refresh } = await serving();
 
     const response = await get(server, "/agents/claude/options?fresh=1");
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("writes nothing on stderr for the faults of the files", async () => {

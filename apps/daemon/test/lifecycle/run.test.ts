@@ -7,7 +7,16 @@ import { connect } from "node:net";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it, onTestFinished } from "vitest";
-import type { Chat, ChatEntry, DaemonRecord, EventsReply, FeedEvent, SetupStatus, SkillInstall } from "@tasma/protocol";
+import type {
+  AgentOptions,
+  Chat,
+  ChatEntry,
+  DaemonRecord,
+  EventsReply,
+  FeedEvent,
+  SetupStatus,
+  SkillInstall,
+} from "@tasma/protocol";
 import type { AgentEnv } from "../../src/agents/adapter.js";
 import { daemonAnswers } from "../../src/lifecycle/probe.js";
 import { readRecord, recordPath } from "../../src/lifecycle/record.js";
@@ -371,6 +380,27 @@ describe("the start of a chat", () => {
 
     expect(response.status).toBe(409);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "project-has-no-folder" });
+  });
+});
+
+describe("the options of an agent", () => {
+  it("are served, and a read of a list of now starts no refresh", async () => {
+    const root = await projectsRoot();
+    const home = await target();
+    const options = [{ id: "model", name: "Model", type: "select", currentValue: "small", options: [{ value: "small", name: "Small" }] }];
+    await writeFile(join(root, "agent-options.json"), JSON.stringify({ claude: { options, updated: new Date().toISOString() } }));
+    // A binary on the PATH: a refresh makes its work parent with no read of the login shell.
+    const bin = await target();
+    await writeFile(join(bin, "claude"), "#!/bin/sh\nexit 1\n");
+    await chmod(join(bin, "claude"), 0o755);
+    const start = await daemonOn(root, { env: { HOME: home, PATH: bin } });
+
+    const response = await fetch(`${start.url}/agents/claude/options`, { headers: bearer(await tokenOf(root)) });
+    const { data } = await success<AgentOptions>(response);
+    await start.stop();
+
+    expect(data).toEqual({ agent: "claude", options, updated: expect.any(String) as string });
+    expect(existsSync(join(home, "Library"))).toBe(false);
   });
 });
 

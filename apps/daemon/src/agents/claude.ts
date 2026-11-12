@@ -187,6 +187,7 @@ export function createClaudeAdapter(
     agent: "claude",
     sessionMeta: { systemPrompt: { append: BACKGROUND_RULE } },
     projectSessionMeta: (tag) => ({ systemPrompt: { append: `${BACKGROUND_RULE}\n\n${projectChatContext(tag)}` } }),
+    optionsSessionMeta: { claudeCode: { options: { persistSession: false, settingSources: ["user"] } } },
     backgroundCommands: (log) => claudeBackground({ log, lsof, timeoutMs: lsofTimeoutMs }),
     notLoggedIn: 'Claude is not logged in. Run "claude /login" in a terminal.',
     sessionGone: "Claude no longer has the conversation of this chat. Start a new chat for this step.",

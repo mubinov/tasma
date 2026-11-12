@@ -13,8 +13,11 @@ import type {
   Stream,
 } from "@agentclientprotocol/sdk";
 import type { AcpObject } from "@tasma/protocol";
-import type { AgentLaunch } from "./adapter.js";
+import { causeOf } from "../http/failure.js";
+import type { AgentAdapter, AgentLaunch } from "./adapter.js";
 import { endGroup } from "./process.js";
+
+const AUTH_REQUIRED = RequestError.authRequired().code;
 
 const REQUEST_CANCELLED = RequestError.requestCancelled().code;
 
@@ -95,6 +98,20 @@ export class SessionNotFound extends Error {
     super(`the agent has no session ${sessionId}`);
     this.name = "SessionNotFound";
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/** The SDK sends an error that a handler of the agent throws as `Internal error`, its message in `data.details`. */
+export function errorReason(adapter: AgentAdapter, error: unknown): string {
+  if (error instanceof RequestError) {
+    if (error.code === AUTH_REQUIRED) return adapter.notLoggedIn;
+    const data: unknown = error.data;
+    if (isRecord(data) && typeof data.details === "string") return data.details;
+  }
+  return causeOf(error);
 }
 
 /** A process that did not start. Its connection closes at once. */

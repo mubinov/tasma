@@ -5,13 +5,12 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
 import type { Readable } from "node:stream";
 import type { SkillInstall } from "@tasma/protocol";
 import type { AgentAdapter, AgentEnv } from "../agents/adapter.js";
-import { childEnv, childPath, isExecutableFile, killGroup } from "../agents/process.js";
+import { cachesFolder, childEnv, childPath, isExecutableFile, killGroup, safeWorkParent } from "../agents/process.js";
 import { readShellEnv } from "../agents/shell-env.js";
 import type { ShellEnv } from "../agents/shell-env.js";
 import { HOLD_MS } from "../events/hold.js";
@@ -154,33 +153,12 @@ async function missingSkill(adapters: readonly AgentAdapter[], env: AgentEnv): P
   return undefined;
 }
 
-/**
- * The real path of the folder, when this user or root owns it and each folder
- * above it, and no other account can write to them. `npm` reads the `.npmrc`
- * and the `node_modules` of each folder above its working folder, and puts each
- * `node_modules/.bin` on the `PATH` of the CLI.
- */
-async function safeFolder(folder: string): Promise<string | undefined> {
-  const path = await realpath(folder).catch(() => undefined);
-  if (path === undefined) return undefined;
-  const uid = process.getuid?.();
-  for (let dir = path; ; dir = dirname(dir)) {
-    const info = await stat(dir);
-    if ((info.uid !== uid && info.uid !== 0) || (info.mode & 0o022) !== 0) return undefined;
-    if (dirname(dir) === dir) return path;
-  }
-}
-
 export function createSkillInstaller(options: {
   adapters: readonly AgentAdapter[];
   /** The environment of the daemon, which the login shell starts from. */
   env: AgentEnv;
   shellEnv?: (signal: AbortSignal) => Promise<ShellEnv>;
-  /**
-   * The folder that holds the working folder of the command, made when it does
-   * not exist. Not the temporary folder: an agent sandbox of this user can
-   * usually write to it.
-   */
+  /** The folder that holds the working folder of the command, made when it does not exist. */
   workParent?: string;
   limitMs?: number;
   holdMs?: number;
@@ -188,7 +166,7 @@ export function createSkillInstaller(options: {
   const {
     adapters,
     env,
-    workParent = join(env.HOME ?? homedir(), "Library", "Caches"),
+    workParent = cachesFolder(env),
     limitMs = LIMIT_MS,
     holdMs = HOLD_MS,
   } = options;
@@ -206,9 +184,7 @@ export function createSkillInstaller(options: {
     const path = childPath(shell.env.PATH);
     const npx = path.map((dir) => join(dir, "npx")).find(isExecutableFile);
     if (npx === undefined) return { result: "npx-missing" };
-    // Under a umask of 002, the default mode gives the group write access, which the check refuses.
-    await mkdir(workParent, { recursive: true, mode: 0o700 }).catch(() => undefined);
-    const parent = await safeFolder(workParent);
+    const parent = await safeWorkParent(workParent);
     if (parent === undefined) {
       return failed(
         `Tasma did not run the command, because ${workParent} is not a safe folder for it. `

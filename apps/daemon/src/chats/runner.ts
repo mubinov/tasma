@@ -9,10 +9,9 @@
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
-import { RequestError } from "@agentclientprotocol/sdk";
 import type { RequestPermissionRequest, SessionConfigOption } from "@agentclientprotocol/sdk";
 import { readProjectDeclaration, TaskStoreError } from "@tasma/engine";
-import type { AgentDefaultsStore, AgentOptionsStore, TaskStoreErrorCode } from "@tasma/engine";
+import type { AgentDefaultsStore, AgentOptionsEntry, AgentOptionsStore, TaskStoreErrorCode } from "@tasma/engine";
 import { chatBusy } from "@tasma/protocol";
 import type {
   AcpObject,
@@ -26,9 +25,10 @@ import type {
   ProjectChat,
   QuestionAnswer,
 } from "@tasma/protocol";
-import { AgentClosed, connectAgent, SessionNotFound, spawnAgent } from "../agents/acp.js";
+import { AgentClosed, connectAgent, errorReason, SessionNotFound, spawnAgent } from "../agents/acp.js";
 import type { AgentConnection, AgentEnd, AgentHandlers, AgentProcess, AgentSession } from "../agents/acp.js";
 import type { AgentAdapter, AgentEnv, AgentLaunch, BackgroundCommands, BackgroundState } from "../agents/adapter.js";
+import { cachesFolder } from "../agents/process.js";
 import { readShellEnv } from "../agents/shell-env.js";
 import type { ShellEnv } from "../agents/shell-env.js";
 import type { Publish } from "../events/feed.js";
@@ -43,11 +43,10 @@ import {
   stopNote,
 } from "./idle.js";
 import type { IdleLimit, IdleTimer } from "./idle.js";
+import { createOptionRefresh } from "./option-refresh.js";
 import { applyPlan, foldOptions, isHidden, offering, optionFiles, optionsEvent, wanted } from "./options.js";
 import { CANCELLED, chatFault, chatName, isProjectChat, resolution } from "./registry.js";
 import type { AnyLiveChat, ChatRegistry, LiveChat, RequestKind } from "./registry.js";
-
-const AUTH_REQUIRED = RequestError.authRequired().code;
 
 /** The refusals of a chat write that mean the chat is gone: a delete of its project or of its task. */
 const GONE: ReadonlySet<TaskStoreErrorCode> = new Set(["chat-not-found", "task-not-found", "project-not-found"]);
@@ -185,18 +184,25 @@ export type ChatRunner = {
    */
   end(live: LiveChat, input: ChatCancelInput): Promise<void>;
   /**
+   * Starts a refresh of the stored options of the agent in the background when
+   * `entry`, its stored list, is missing or old. Never throws.
+   */
+  refreshOptions(agent: ChatAgent, entry: AgentOptionsEntry | undefined): void;
+  /**
    * Aborts a read of the login shell in progress and does not wait for it, and
    * clears every idle timer, so no idle stop starts after it. A start that has
    * not spawned its agent yet then spawns none, a restart and a message that
    * joined a start get no prompt, a text that waits at the end of a prompt
-   * gets no next prompt, and a later message is refused. `close()` does the
-   * same.
+   * gets no next prompt, and a later message is refused. The agent of a
+   * refresh of the options ends, and no refresh starts after it. `close()`
+   * does the same.
    */
   stopStarts(): void;
   /**
    * Interrupts each chat in a turn or with an open request, as `LiveChat.interrupt`
-   * does, and ends every agent process. Resolves when every process has ended
-   * and every write is done; a fault of a write is reported.
+   * does, and ends every agent process. Resolves when every process has ended,
+   * every refresh of the options has ended and its folder is removed, and every
+   * write is done; a fault of a write is reported.
    */
   close(): Promise<void>;
 };
@@ -303,10 +309,6 @@ type Run = RunningChat & {
   turnEnded: (() => void) | undefined;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 async function isDirectory(path: string): Promise<boolean> {
   try {
     return (await stat(path)).isDirectory();
@@ -324,15 +326,6 @@ function endReason(end: AgentEnd): string {
   return end.signal === null
     ? `The agent process ended with exit code ${String(end.code)}`
     : `The agent process ended with signal ${end.signal}`;
-}
-
-function errorReason(adapter: AgentAdapter, error: unknown): string {
-  if (error instanceof RequestError) {
-    if (error.code === AUTH_REQUIRED) return adapter.notLoggedIn;
-    const data: unknown = error.data;
-    if (isRecord(data) && typeof data.details === "string") return data.details;
-  }
-  return causeOf(error);
 }
 
 /** The SDK checks the params of a permission request against the ACP schema before a handler gets them. */
@@ -438,6 +431,8 @@ export function createChatRunner(options: {
   endGraceMs?: number;
   /** How long after the last activity a running `job` command keeps the agent. */
   jobHoldMs?: number;
+  /** The folder that holds the work folder of each refresh of the options. */
+  optionsWorkParent?: string;
 }): ChatRunner {
   const { root, chats, adapters, env, defaults, agentOptions, publish } = options;
   const endGraceMs = options.endGraceMs ?? END_GRACE_MS;
@@ -449,7 +444,7 @@ export function createChatRunner(options: {
   const stderr = options.stderr ?? process.stderr;
   const files = optionFiles({ root, defaults, agentOptions, stderr, publish });
   /** The writes of the options of a new session that have not ended. */
-  const keeping = new Set<Promise<void>>();
+  const keeping = new Set<Promise<unknown>>();
   const runs = new Map<AnyLiveChat, Run>();
   /** Every agent process that has not exited, also of a chat that no longer runs. */
   const alive = new Set<AgentProcess>();
@@ -468,6 +463,15 @@ export function createChatRunner(options: {
   let kept: AgentEnv | undefined;
   /** The read of the shell in progress, which every start shares. */
   let reading: Promise<ShellEnv> | undefined;
+  const refresh = createOptionRefresh({
+    adapters,
+    launch: launchOf,
+    spawn,
+    keep: (agent, configOptions) => files.keep(agent, configOptions),
+    signal: stopping.signal,
+    stderr,
+    workParent: options.optionsWorkParent ?? cachesFolder(env),
+  });
 
   async function readShell(): Promise<ShellEnv> {
     try {
@@ -815,7 +819,7 @@ export function createChatRunner(options: {
 
   /** Stores the options of a new session. The chat does not wait for the write; `close()` does. */
   function keep(agent: ChatAgent, configOptions: SessionConfigOption[]): void {
-    const write: Promise<void> = files.keep(agent, configOptions).finally(() => keeping.delete(write));
+    const write: Promise<unknown> = files.keep(agent, configOptions).finally(() => keeping.delete(write));
     keeping.add(write);
   }
 
@@ -1367,6 +1371,10 @@ export function createChatRunner(options: {
       }
     },
 
+    refreshOptions(agent, entry) {
+      refresh.ask(agent, entry);
+    },
+
     stopStarts() {
       stopping.abort();
       for (const run of runs.values()) run.idle?.clear();
@@ -1378,7 +1386,7 @@ export function createChatRunner(options: {
         silence(run, daemonStopping(run.live));
         return run.live.interrupt().catch((error: unknown) => report(run.live, error));
       });
-      await Promise.all([...writes, ...[...alive].map((agentProcess) => agentProcess.end())]);
+      await Promise.all([...writes, ...[...alive].map((agentProcess) => agentProcess.end()), refresh.settled()]);
       await Promise.all(keeping);
     },
   };
