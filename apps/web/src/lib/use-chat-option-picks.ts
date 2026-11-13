@@ -38,8 +38,13 @@ export function withPickSuccess(kept: KeptLog, configId: string, seq: number): K
 }
 
 /** An option id comes from the agent, so a name of an `Object.prototype` member must find nothing. */
-function byOptionId<T>(record: Readonly<Record<string, T>>, configId: string): T | undefined {
+export function byOptionId<T>(record: Readonly<Record<string, T>>, configId: string): T | undefined {
   return Object.hasOwn(record, configId) ? record[configId] : undefined;
+}
+
+/** The values of an option of the agent that are not offered. */
+export function hiddenValues(agent: ChatAgent, configId: string): readonly string[] {
+  return byOptionId(AGENT_OPTION_RULES[agent].hidden, configId) ?? [];
 }
 
 function periodStart(view: ChatView): PickPeriod {
@@ -123,10 +128,9 @@ export function useChatOptionPicks(
   const [lastSuccesses, setLastSuccesses] = useState(NO_PICK_SUCCESSES);
   // The successful picks whose answer the log has not reached yet.
   const unseenPicks = Object.fromEntries(Object.entries(lastSuccesses).filter(([, { seq }]) => view.seq < seq));
-  const hiddenByOption = AGENT_OPTION_RULES[agent].hidden;
   const picks = chatPickerOptions(view).map((option): ChatOptionPick => ({
     option,
-    hidden: byOptionId(hiddenByOption, option.id) ?? [],
+    hidden: hiddenValues(agent, option.id),
     pending: pendingOptions.findLast((one) => one.configId === option.id)?.value
       ?? byOptionId(unseenPicks, option.id)?.value,
   }));

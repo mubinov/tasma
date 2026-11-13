@@ -661,6 +661,20 @@ describe("projectChatStartOptions", () => {
     expect(stub.requests.filter(({ method }) => method === "POST")).toEqual([
       { method: "POST", path: "/projects/SAGA/chats", body: { text: "  Plan the release\n", client: CHAT_CLIENT } },
     ]);
+    expect(stub.requests.find(({ method }) => method === "POST")?.body).not.toHaveProperty("options");
+  });
+
+  it("posts the options of the start with the text", async () => {
+    const { stub, observer } = await view("/?new=1");
+    const options = { model: "large", mode: "acceptEdits" };
+
+    await act(async () => {
+      await observer.mutate({ ...variables(), start: { tag: "SAGA", text: "Plan the release", options } }).catch(() => undefined);
+    });
+
+    expect(stub.requests.filter(({ method }) => method === "POST")).toEqual([
+      { method: "POST", path: "/projects/SAGA/chats", body: { text: "Plan the release", client: CHAT_CLIENT, options } },
+    ]);
   });
 
   it("says the start at Send and closes the last failure notice", async () => {

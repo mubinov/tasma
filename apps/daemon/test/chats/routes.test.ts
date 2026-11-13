@@ -12,6 +12,7 @@ import type {
   FeedEvent,
   ProjectChat,
   ProjectChatStart,
+  ProjectChatStartInput,
 } from "@tasma/protocol";
 import type { AgentAdapter } from "../../src/agents/adapter.js";
 import { createChatRegistry } from "../../src/chats/registry.js";
@@ -20,6 +21,7 @@ import { chatRoutes } from "../../src/chats/routes.js";
 import { createChatRunner } from "../../src/chats/runner.js";
 import type { ChatRunner } from "../../src/chats/runner.js";
 import { createStepChats } from "../../src/chats/start.js";
+import type { StepChats } from "../../src/chats/start.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import { projectRoutes } from "../../src/projects/routes.js";
 import { taskRoutes } from "../../src/tasks/routes.js";
@@ -93,6 +95,10 @@ type World = {
   server: TestServer;
   events: FeedEvent[];
   processes: FakeProcess[];
+  /** The input of each start of a project chat that the route gives, in call order. */
+  projectStarts: ProjectChatStartInput[];
+  /** The lines that the runner writes on stderr. */
+  errors: string[];
 };
 
 /** A tree holding project ALPHA with the tasks ALPHA-1 and ALPHA-2. */
@@ -117,12 +123,14 @@ async function world(
   const publish = (event: FeedEvent) => events.push(event);
   const chats = createChatRegistry({ root, host, writes, publish, holdMs: options.holdMs ?? LONG_HOLD_MS });
   const { spawn, processes } = fakeAgent(options.script);
+  const errors: string[] = [];
   const runner = createChatRunner({
     root,
     chats,
     adapters: options.adapters ?? [ADAPTER],
     env: {},
     spawn,
+    stderr: { write: (line: string) => errors.push(line) },
     defaults: openAgentDefaults(root),
     agentOptions: openAgentOptions(root),
   });
@@ -131,12 +139,21 @@ async function world(
     chats.close();
     await host.close();
   });
+  const steps = createStepChats({ root, host, chats, runner });
+  const projectStarts: ProjectChatStartInput[] = [];
+  const starts: StepChats = {
+    ...steps,
+    startProject(tag, input) {
+      projectStarts.push(input);
+      return steps.startProject(tag, input);
+    },
+  };
   const server = await startTestServer([
     ...projectRoutes(host, writes, chats),
     ...taskRoutes(host, { writes, chats }),
-    ...chatRoutes(chats, runner, createStepChats({ root, host, chats, runner })),
+    ...chatRoutes(chats, runner, starts),
   ]);
-  return { chats, runner, server, events, processes };
+  return { chats, runner, server, events, processes, projectStarts, errors };
 }
 
 /** A daemon whose project ALPHA has a folder. */
@@ -978,6 +995,86 @@ describe("POST /projects/{project}/chats", () => {
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+  });
+
+  it("starts a chat with options, whose agent gets them before the first prompt", async () => {
+    const script = { configOptions: [modeOption()] };
+    const { server, chats, processes, projectStarts } = await projectWorld({ script });
+    const options = { mode: "acceptEdits" };
+
+    const response = await send(server, "POST", PROJECT_CHATS, { ...FIRST_MESSAGE, options });
+
+    expect(response.status).toBe(200);
+    expect((await success<ProjectChatStart>(response)).data.chat).toMatchObject({ chat: 1, title: "Plan the release" });
+    expect(projectStarts).toEqual([{ ...FIRST_MESSAGE, options }]);
+    await logUntil(await chats.getProjectChat("ALPHA", 1), "turn-end");
+    expect(processes[0]?.configSets).toEqual([expect.objectContaining({ configId: "mode", value: "acceptEdits" })]);
+  });
+
+  it("starts a chat with empty options as a start with no options", async () => {
+    const { server, projectStarts } = await projectWorld();
+
+    const response = await send(server, "POST", PROJECT_CHATS, { ...FIRST_MESSAGE, options: {} });
+
+    expect(response.status).toBe(200);
+    expect(projectStarts).toEqual([FIRST_MESSAGE]);
+    expect(projectStarts[0]).not.toHaveProperty("options");
+  });
+
+  it("takes options of 16 entries", async () => {
+    const { server, chats, projectStarts, errors } = await projectWorld();
+    const options = Object.fromEntries(Array.from({ length: 16 }, (_, index) => [`option-${String(index)}`, "on"]));
+
+    const response = await send(server, "POST", PROJECT_CHATS, { ...FIRST_MESSAGE, options });
+
+    expect(response.status).toBe(200);
+    expect(projectStarts).toEqual([{ ...FIRST_MESSAGE, options }]);
+    await logUntil(await chats.getProjectChat("ALPHA", 1), "turn-end");
+    // The session of the fake agent offers no option.
+    expect(errors).toHaveLength(16);
+  });
+
+  it.each([
+    ["options that are a string", "auto"],
+    ["options that are an array", [["mode", "auto"]]],
+    ["options that are null", null],
+    ["options of 17 entries", Object.fromEntries(Array.from({ length: 17 }, (_, index) => [`option-${String(index)}`, "on"]))],
+    ["an option with an empty id", { "": "auto" }],
+    ["a value that is not a string", { mode: 1 }],
+    ["an empty value", { mode: "" }],
+  ])("refuses %s with 400, and creates no chat", async (_case, options) => {
+    const { server, chats, projectStarts } = await projectWorld();
+
+    const response = await send(server, "POST", PROJECT_CHATS, { ...FIRST_MESSAGE, options });
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+    expect(projectStarts).toEqual([]);
+    await expect(chats.getProjectChat("ALPHA", 1)).rejects.toMatchObject({ code: "chat-not-found" });
+  });
+
+  it("refuses options with an extra key with 400", async () => {
+    const { server, projectStarts } = await projectWorld();
+
+    const response = await send(server, "POST", PROJECT_CHATS, { ...FIRST_MESSAGE, options: { mode: "auto" }, restart: true });
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+    expect(projectStarts).toEqual([]);
+  });
+
+  it("refuses a hidden value with option-refused and 422, and creates no chat", async () => {
+    const { server, chats } = await projectWorld();
+
+    const response = await send(server, "POST", PROJECT_CHATS, { ...FIRST_MESSAGE, options: { mode: "plan" } });
+
+    expect(response.status).toBe(422);
+    await expect(failure(response)).resolves.toMatchObject({
+      kind: "daemon",
+      code: "option-refused",
+      message: 'the agent claude offers no value "plan" for "mode"',
+    });
+    await expect(chats.getProjectChat("ALPHA", 1)).rejects.toMatchObject({ code: "chat-not-found" });
   });
 
   it("refuses a query with 400", async () => {

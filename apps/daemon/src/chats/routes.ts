@@ -19,6 +19,7 @@ import type {
   PermissionAnswer,
   ProjectChat,
   ProjectChatStart,
+  ProjectChatStartInput,
   QuestionAnswer,
   QuestionValue,
   Route,
@@ -38,11 +39,17 @@ const CHAT_NUMBER = /^[1-9]\d*$/;
 
 const CLIENT_MAX_LENGTH = 100;
 
+const START_OPTIONS_MAX = 16;
+
 type Accept = Extract<QuestionAnswer, { action: "accept" }>;
 
 type Decline = Extract<QuestionAnswer, { action: "decline" }>;
 
 const MESSAGE_KEYS = Object.keys({ text: true, client: true } satisfies Record<keyof ChatMessageInput, true>);
+
+const PROJECT_START_KEYS = Object.keys(
+  { text: true, client: true, options: true } satisfies Record<keyof ProjectChatStartInput, true>,
+);
 
 const CANCEL_KEYS = Object.keys({ client: true } satisfies Record<keyof ChatCancelInput, true>);
 
@@ -109,14 +116,41 @@ function isQuestionValue(value: unknown): value is QuestionValue {
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
 }
 
-function readMessage(raw: unknown): ChatMessageInput {
-  const body = objectBody(raw);
-  assertKeys(body, MESSAGE_KEYS);
+function messageOf(body: Record<string, unknown>): ChatMessageInput {
   const { text } = body;
   if (typeof text !== "string" || !/\S/.test(text)) {
     throw malformed('"text" takes a string with at least one character that is not whitespace');
   }
   return { text, client: clientOf(body) };
+}
+
+function readMessage(raw: unknown): ChatMessageInput {
+  const body = objectBody(raw);
+  assertKeys(body, MESSAGE_KEYS);
+  return messageOf(body);
+}
+
+function isFilled(value: unknown): value is string {
+  return typeof value === "string" && value !== "";
+}
+
+function startOptionsOf(options: unknown): Record<string, string> {
+  const entries = isObject(options) ? Object.entries(options) : undefined;
+  if (entries === undefined || entries.length > START_OPTIONS_MAX || !entries.every(([key, value]) => key !== "" && isFilled(value))) {
+    throw malformed(`"options" takes an object of at most ${START_OPTIONS_MAX} entries, each a non-empty string by a non-empty key`);
+  }
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+/** Empty `options` are the same as none. */
+function readProjectStart(raw: unknown): ProjectChatStartInput {
+  const body = objectBody(raw);
+  const picking = Object.hasOwn(body, "options");
+  assertKeys(body, picking ? PROJECT_START_KEYS : MESSAGE_KEYS);
+  const message = messageOf(body);
+  if (!picking) return message;
+  const options = startOptionsOf(body.options);
+  return Object.keys(options).length === 0 ? message : { ...message, options };
 }
 
 function readCancel(raw: unknown): ChatCancelInput {
@@ -288,7 +322,7 @@ export function chatRoutes(chats: ChatRegistry, runner: ChatRunner, starts: Step
       route: routes.startProjectChat,
       handler: async (request): Promise<Success<ProjectChatStart>> => {
         assertNoQuery(request.query);
-        const input = readMessage(request.body);
+        const input = readProjectStart(request.body);
         const live = await starts.startProject(request.params.project!, input);
         return { data: { chat: live.chat }, diagnostics: live.diagnostics };
       },

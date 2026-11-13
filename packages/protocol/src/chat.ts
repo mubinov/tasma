@@ -159,8 +159,11 @@ export type ChatInactiveInput = { client: string };
  */
 export type ChatStartInput = { client: string; restart?: boolean };
 
-/** `text` is the first message of the chat. */
-export type ProjectChatStartInput = { text: string; client: string };
+/**
+ * `text` is the first message of the chat. `options` holds the picks of the
+ * user by option id; the session gets them before the first prompt.
+ */
+export type ProjectChatStartInput = { text: string; client: string; options?: Readonly<Record<string, string>> };
 
 /** A value for one config option of the agent of a chat, as ACP's `session/set_config_option` takes it. */
 export type ChatOptionChange = { configId: string; value: string; client: string };

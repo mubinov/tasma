@@ -1,3 +1,4 @@
+import type { TransportReply } from "@tasma/protocol";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -669,6 +670,405 @@ describe("a refused start", () => {
       expect(posts(stub)).toHaveLength(2);
     });
     expect(useNoticeStore.getState().notices).toEqual([]);
+  });
+});
+
+describe("the Mode and Model pickers", () => {
+  const OPTIONS_PATH = "/agents/claude/options";
+
+  const MODE = {
+    id: "mode",
+    name: "Mode",
+    category: "mode",
+    type: "select",
+    currentValue: "auto",
+    options: [
+      { value: "default", name: "Manual" },
+      { value: "acceptEdits", name: "Accept edits" },
+      { value: "plan", name: "Plan" },
+      { value: "auto", name: "Auto" },
+      { value: "bypassPermissions", name: "Bypass permissions" },
+    ],
+  };
+
+  const MODEL = {
+    id: "model",
+    name: "Model",
+    category: "model",
+    type: "select",
+    currentValue: "small",
+    options: [{ value: "small", name: "Small" }, { value: "large", name: "Large" }],
+  };
+
+  /** The model list after a change that drops Large. */
+  const NO_LARGE = { ...MODEL, options: [{ value: "small", name: "Small" }, { value: "medium", name: "Medium" }] };
+
+  const CHANGED = { kind: "agent-options", agent: "claude" } as const;
+
+  const REFUSED = refusalReply(409, { kind: "daemon", code: "project-has-no-folder", message: "SAGA has no folder" });
+
+  function listReply(options: readonly object[] = [MODEL, MODE]) {
+    return successReply({ agent: "claude", options, updated: "2026-01-01T00:00:00.000Z" });
+  }
+
+  function region(): HTMLElement {
+    return screen.getByRole("region", { name: "New chat" });
+  }
+
+  function findTrigger(name: RegExp | string): Promise<HTMLElement> {
+    return within(region()).findByRole("button", { name });
+  }
+
+  function noOptionTriggers(): boolean {
+    return within(region()).queryByRole("button", { name: /^(Mode|Model) / }) === null;
+  }
+
+  async function pickValue(user: ReturnType<typeof userEvent.setup>, name: RegExp | string, value: string) {
+    await user.click(trigger(name));
+    await user.click(await screen.findByRole("menuitemradio", { name: value }));
+    await waitFor(() => {
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+  }
+
+  async function withList(path = WITH_PROJECT, replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
+    const opened = await open(path, startDaemon({ [OPTIONS_PATH]: listReply(), ...replies }));
+    await findTrigger("Model Small");
+    return opened;
+  }
+
+  async function changeList(stub: DashboardStub, reply: TransportReply): Promise<void> {
+    const reads = stub.readsOf(OPTIONS_PATH);
+    stub.replies[OPTIONS_PATH] = reply;
+    await stub.send([CHANGED]);
+    await waitFor(() => {
+      expect(stub.readsOf(OPTIONS_PATH)).toBe(reads + 1);
+    });
+  }
+
+  async function settled(stub: DashboardStub): Promise<void> {
+    await waitFor(() => {
+      expect(stub.paths).toContain(OPTIONS_PATH);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+  }
+
+  function startBody(stub: DashboardStub): unknown {
+    return posts(stub).find(({ path }) => path === "/projects/SAGA/chats")?.body;
+  }
+
+  async function waiting(user: ReturnType<typeof userEvent.setup>) {
+    await user.type(field(), "Plan the release{Enter}");
+    await waitFor(() => {
+      expect(screen.getByText("Plan the release")).toBeTruthy();
+    });
+  }
+
+  async function mountAgain(router: Awaited<ReturnType<typeof open>>["router"]) {
+    await act(async () => {
+      await router.navigate({ to: "/settings" });
+    });
+    await act(async () => {
+      await router.navigate({ to: "/", search: { new: "1", project: "SAGA" } });
+    });
+  }
+
+  async function refuse(answer: (reply: TransportReply) => void) {
+    await act(async () => {
+      answer(REFUSED);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(field().value).toBe("Plan the release");
+    });
+  }
+
+  it("shows Project, Mode and Model in this order, each with its start value, and offers no Plan", async () => {
+    const { user } = await withList();
+
+    const project = trigger(/^Project/);
+    const mode = trigger("Mode Auto");
+    const model = trigger("Model Small");
+    expect(project.compareDocumentPosition(mode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(mode.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.click(mode);
+    const menu = await screen.findByRole("menu", { name: "Mode" });
+    expect(within(menu).getAllByRole("menuitemradio").map((item) => item.textContent))
+      .toEqual(["Manual", "Accept edits", "Auto", "Bypass permissions"]);
+  });
+
+  it.each([
+    ["an empty list", listReply([])],
+    ["a first read that fails", refusalReply(500, { kind: "daemon", code: "internal", message: "the disk is full" })],
+  ])("shows Project alone with %s, and a start works", async (_case, reply) => {
+    const { user, stub } = await open(WITH_PROJECT, startDaemon({ [OPTIONS_PATH]: reply }));
+    await settled(stub);
+
+    expect(noOptionTriggers()).toBe(true);
+    await user.type(field(), "Plan the release{Enter}");
+    await waitFor(() => {
+      expect(startBody(stub)).toEqual({ text: "Plan the release", client: CHAT_CLIENT });
+    });
+  });
+
+  it("shows Project alone while no read has given a list", async () => {
+    const { reply } = heldBack();
+    const { stub } = await open(WITH_PROJECT, startDaemon({ [OPTIONS_PATH]: reply }));
+    await settled(stub);
+
+    expect(noOptionTriggers()).toBe(true);
+  });
+
+  it("keeps the list and the picks when a later read fails", async () => {
+    const { user, stub } = await withList();
+    await pickValue(user, /^Model /, "Large");
+
+    await changeList(stub, refusalReply(500, { kind: "daemon", code: "internal", message: "the disk is full" }));
+    await settled(stub);
+
+    expect(trigger("Model Large")).toBeTruthy();
+    expect(trigger("Mode Auto")).toBeTruthy();
+  });
+
+  it("shows a pick in the trigger and sends only the changed values", async () => {
+    const { user, stub } = await withList();
+
+    await pickValue(user, /^Model /, "Large");
+    expect(document.activeElement).toBe(trigger("Model Large"));
+    await user.type(field(), "Plan the release{Enter}");
+
+    await waitFor(() => {
+      expect(startBody(stub)).toEqual({ text: "Plan the release", client: CHAT_CLIENT, options: { model: "large" } });
+    });
+  });
+
+  it("sends no options after a pick of the start value", async () => {
+    const { user, stub } = await withList();
+
+    await pickValue(user, /^Model /, "Large");
+    await pickValue(user, /^Model /, "Small");
+    await user.type(field(), "Plan the release{Enter}");
+
+    await waitFor(() => {
+      expect(startBody(stub)).toEqual({ text: "Plan the release", client: CHAT_CLIENT });
+    });
+    expect(startBody(stub)).not.toHaveProperty("options");
+  });
+
+  it("keeps a pick after a change of the project", async () => {
+    const { user, stub } = await withList("/?new=1&project=ACME");
+
+    await pickValue(user, /^Mode /, "Accept edits");
+    await pickValue(user, /^Project/, "Saga SAGA");
+    expect(trigger("Mode Accept edits")).toBeTruthy();
+    await user.type(field(), "Plan the release{Enter}");
+
+    await waitFor(() => {
+      expect(startBody(stub)).toEqual({ text: "Plan the release", client: CHAT_CLIENT, options: { mode: "acceptEdits" } });
+    });
+  });
+
+  it("keeps an offered pick at a change of the list, drops another and says the dropped pick one time", async () => {
+    const { user, stub } = await withList();
+    await pickValue(user, /^Model /, "Large");
+    await pickValue(user, /^Mode /, "Accept edits");
+
+    await changeList(stub, listReply([NO_LARGE, MODE]));
+    await findTrigger("Model Small");
+    await frame();
+
+    expect(trigger("Mode Accept edits")).toBeTruthy();
+    expect(words("Large is not offered anymore. Model: Small.")).toHaveLength(1);
+    await user.type(field(), "Plan the release{Enter}");
+    await waitFor(() => {
+      expect(startBody(stub)).toEqual({ text: "Plan the release", client: CHAT_CLIENT, options: { mode: "acceptEdits" } });
+    });
+  });
+
+  it("says a dropped pick one time also when the composer docks for the wait after it", async () => {
+    const { reply } = heldBack();
+    const { user, stub } = await withList(WITH_PROJECT, { [START_POST]: reply });
+    await pickValue(user, /^Model /, "Large");
+    await changeList(stub, listReply([NO_LARGE, MODE]));
+    await findTrigger("Model Small");
+    await frame();
+
+    await user.type(field(), "Plan the release{Enter}");
+    await waitFor(() => {
+      expect(isDocked()).toBe(true);
+    });
+    await frame();
+
+    expect(words("Large is not offered anymore. Model: Small.")).toHaveLength(1);
+  });
+
+  it("moves the focus to the heading before it says a dropped pick whose picker had the focus", async () => {
+    const line = "Model is not offered anymore.";
+    const { user, stub } = await withList();
+    await pickValue(user, /^Model /, "Large");
+    expect(document.activeElement).toBe(trigger("Model Large"));
+    const focusAtWords: (Element | null)[] = [];
+    const unsubscribe = useNoticeStore.subscribe(({ announced }) => {
+      if (focusAtWords.length === 0 && announced.some((one) => one.words === line)) {
+        focusAtWords.push(document.activeElement);
+      }
+    });
+
+    await changeList(stub, listReply([MODE]));
+    await waitFor(() => {
+      expect(noOptionTriggers()).toBe(false);
+      expect(within(region()).queryByRole("button", { name: /^Model / })).toBeNull();
+    });
+    await frame();
+    unsubscribe();
+
+    expect(document.activeElement).toBe(viewHeading());
+    expect(focusAtWords).toEqual([viewHeading()]);
+    expect(words(line)).toHaveLength(1);
+  });
+
+  it("keeps the focus in the message field and says the opening one time when the list comes after the view opens", async () => {
+    const { reply, answer } = heldBack();
+    await open(WITH_PROJECT, startDaemon({ [OPTIONS_PATH]: reply }));
+    expect(document.activeElement).toBe(field());
+
+    await act(async () => {
+      answer(listReply());
+      await Promise.resolve();
+    });
+    await findTrigger("Model Small");
+    await frame();
+
+    expect(document.activeElement).toBe(field());
+    expect(words("New chat in SAGA")).toHaveLength(1);
+  });
+
+  describe("while the start waits", () => {
+    it("shows the values of the start in triggers that do not open, also after the view mounts again", async () => {
+      const { reply } = heldBack();
+      const { user, router } = await withList(WITH_PROJECT, { [START_POST]: reply });
+      await pickValue(user, /^Model /, "Large");
+
+      await waiting(user);
+
+      for (const name of ["Mode Auto", "Model Large"]) {
+        expect(trigger(name).getAttribute("aria-disabled")).toBe("true");
+        await user.click(trigger(name));
+        expect(screen.queryByRole("menu")).toBeNull();
+      }
+      await mountAgain(router);
+      expect((await findTrigger("Model Large")).getAttribute("aria-disabled")).toBe("true");
+      expect(trigger("Mode Auto").getAttribute("aria-disabled")).toBe("true");
+    });
+
+    it("drops and says nothing at a change of the list", async () => {
+      const { reply } = heldBack();
+      const { user, stub } = await withList(WITH_PROJECT, { [START_POST]: reply });
+      await pickValue(user, /^Model /, "Large");
+      await waiting(user);
+
+      await changeList(stub, listReply([NO_LARGE, MODE]));
+      await settled(stub);
+      await frame();
+
+      // The new list has no name for the value that the start sent.
+      expect(trigger("Model large")).toBeTruthy();
+      expect(words("Large is not offered anymore. Model: Small.")).toEqual([]);
+    });
+  });
+
+  describe("a refused start", () => {
+    it("keeps the picks, and a second Send sends them again", async () => {
+      const { user, stub } = await withList(WITH_PROJECT, { [START_POST]: REFUSED });
+      await pickValue(user, /^Model /, "Large");
+
+      await user.type(field(), "Plan the release{Enter}");
+      await waitFor(() => {
+        expect(field().value).toBe("Plan the release");
+      });
+
+      expect(trigger("Model Large").hasAttribute("aria-disabled")).toBe(false);
+      stub.replies[START_POST] = START_ANSWER;
+      await user.type(field(), "{Enter}");
+      await waitFor(() => {
+        expect(posts(stub).filter(({ path }) => path === "/projects/SAGA/chats")).toHaveLength(2);
+      });
+      expect(posts(stub).at(-1)?.body).toEqual({ text: "Plan the release", client: CHAT_CLIENT, options: { model: "large" } });
+    });
+
+    it("keeps the picks when the view mounts again during the wait", async () => {
+      const { reply, answer } = heldBack();
+      const { user, stub, router } = await withList(WITH_PROJECT, { [START_POST]: reply });
+      await pickValue(user, /^Model /, "Large");
+      await pickValue(user, /^Mode /, "Accept edits");
+      await waiting(user);
+      await mountAgain(router);
+      await findTrigger("Model Large");
+
+      await refuse(answer);
+
+      expect(trigger("Model Large").hasAttribute("aria-disabled")).toBe(false);
+      expect(trigger("Mode Accept edits")).toBeTruthy();
+      stub.replies[START_POST] = START_ANSWER;
+      await user.type(field(), "{Enter}");
+      await waitFor(() => {
+        expect(posts(stub).filter(({ path }) => path === "/projects/SAGA/chats")).toHaveLength(2);
+      });
+      expect(posts(stub).at(-1)?.body).toEqual({
+        text: "Plan the release",
+        client: CHAT_CLIENT,
+        options: { mode: "acceptEdits", model: "large" },
+      });
+    });
+
+    it("drops and says a pick that the list stopped offering during the wait", async () => {
+      const { reply, answer } = heldBack();
+      const { user, stub } = await withList(WITH_PROJECT, { [START_POST]: reply });
+      await pickValue(user, /^Model /, "Large");
+      await waiting(user);
+      await changeList(stub, listReply([NO_LARGE, MODE]));
+      await settled(stub);
+
+      await refuse(answer);
+      await frame();
+
+      expect(trigger("Model Small")).toBeTruthy();
+      expect(words("Large is not offered anymore. Model: Small.")).toHaveLength(1);
+    });
+
+    it("drops and says that pick also when the view mounts again after the change of the list", async () => {
+      const { reply, answer } = heldBack();
+      const { user, stub, router } = await withList(WITH_PROJECT, { [START_POST]: reply });
+      await pickValue(user, /^Model /, "Large");
+      await pickValue(user, /^Mode /, "Accept edits");
+      await waiting(user);
+      await changeList(stub, listReply([NO_LARGE, MODE]));
+      await settled(stub);
+      await mountAgain(router);
+      await findTrigger("Model large");
+
+      await refuse(answer);
+      await frame();
+
+      expect(trigger("Model Small")).toBeTruthy();
+      expect(trigger("Mode Accept edits")).toBeTruthy();
+      // The view that mounts again names the value by the list of that time, which has no name for it.
+      expect(words("large is not offered anymore. Model: Small.")).toHaveLength(1);
+
+      await changeList(stub, listReply());
+      await settled(stub);
+      await frame();
+      expect(trigger("Model Small")).toBeTruthy();
+
+      stub.replies[START_POST] = START_ANSWER;
+      await user.type(field(), "{Enter}");
+      await waitFor(() => {
+        expect(posts(stub).filter(({ path }) => path === "/projects/SAGA/chats")).toHaveLength(2);
+      });
+      expect(posts(stub).at(-1)?.body).toEqual({ text: "Plan the release", client: CHAT_CLIENT, options: { mode: "acceptEdits" } });
+    });
   });
 });
 

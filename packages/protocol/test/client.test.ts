@@ -376,6 +376,13 @@ const invocations: Invocation[] = [
     body: { text: "Plan the parser", client: "app" },
   },
   {
+    name: "startProjectChat with options",
+    send: (client) => client.startProjectChat("SAGA", { text: "Plan the parser", client: "app", options: { model: "large" } }),
+    method: "POST",
+    path: "/projects/SAGA/chats",
+    body: { text: "Plan the parser", client: "app", options: { model: "large" } },
+  },
+  {
     name: "readProjectChatItem",
     send: (client) => client.readProjectChatItem("SAGA", 2),
     method: "GET",

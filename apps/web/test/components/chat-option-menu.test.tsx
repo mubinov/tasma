@@ -86,6 +86,36 @@ describe("the trigger", () => {
   });
 });
 
+describe("a menu that waits", () => {
+  it("marks the trigger aria-disabled and does not open at a click or at Enter", async () => {
+    renderMenu({ waiting: true });
+    const user = userEvent.setup();
+
+    expect(trigger().getAttribute("aria-disabled")).toBe("true");
+    expect(trigger().hasAttribute("disabled")).toBe(false);
+    await user.click(trigger());
+    trigger().focus();
+    await user.keyboard("{Enter}");
+
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(trigger().getAttribute("aria-expanded")).not.toBe("true");
+  });
+
+  it("opens again once the wait ends", async () => {
+    const { rerender } = renderMenu({ waiting: true });
+    rerender({ waiting: false });
+
+    expect(trigger().hasAttribute("aria-disabled")).toBe(false);
+    await openMenu();
+  });
+
+  it("has no aria-disabled without the prop", () => {
+    renderMenu();
+
+    expect(trigger().hasAttribute("aria-disabled")).toBe(false);
+  });
+});
+
 describe("the menu", () => {
   it("is named by the label, and lists the names and the descriptions without the hidden values", async () => {
     renderMenu();

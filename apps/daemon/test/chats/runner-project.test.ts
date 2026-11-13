@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { RequestError } from "@agentclientprotocol/sdk";
@@ -6,16 +7,20 @@ import type { ChatEvent, FeedEvent } from "@tasma/protocol";
 import type { AgentAdapter } from "../../src/agents/adapter.js";
 import { ChatStartRefusal } from "../../src/chats/runner.js";
 import { logOf, logUntil, projectChatFolder, send, target, until } from "../helpers.js";
-import { forever, modeOption, PERMISSION, QUESTION, SESSION, text } from "../agents/fake-agent.js";
+import { actAsAdapter, forever, modelOption, modeOption, PERMISSION, QUESTION, SESSION, text } from "../agents/fake-agent.js";
+import type { Script } from "../agents/fake-agent.js";
 import {
+  defaultsFile,
   endedByRunner,
   fakeAdapter,
   filtered,
   heldTurns,
   NEXT,
   PICK,
+  plantDefaults,
   promptText,
   requestOf,
+  SAVED_MANUAL,
   world,
 } from "./runner-world.js";
 
@@ -76,6 +81,153 @@ describe("createChatRunner.startProjectChat", () => {
 
     expect(await logOf(live)).toEqual([USER_EVENT, { kind: "failed", reason: "No agent here" }]);
     expect(processes).toEqual([]);
+  });
+});
+
+describe("the options of the start of a project chat", () => {
+  const OPTIONS = [modeOption(), modelOption()];
+
+  /** A script with `OPTIONS` that records each set as `<configId>=<value>` and each prompt as `prompt <text>`. */
+  function recording(extra: Script = {}): { script: Script; seen: string[] } {
+    const seen: string[] = [];
+    const script: Script = {
+      configOptions: OPTIONS,
+      ...extra,
+      setConfigOption(params, fake) {
+        seen.push(`${params.configId}=${String(params.value)}`);
+        return (extra.setConfigOption ?? actAsAdapter)(params, fake);
+      },
+      async prompt(params) {
+        seen.push(`prompt ${promptText(params)}`);
+        return { stopReason: "end_turn" };
+      },
+    };
+    return { script, seen };
+  }
+
+  async function storedChat(root: string): Promise<unknown> {
+    return JSON.parse(await readFile(join(projectChatFolder(root, "ALPHA", 1), "chat.json"), "utf8"));
+  }
+
+  async function storedDefaults(root: string): Promise<unknown> {
+    return JSON.parse(await readFile(defaultsFile(root), "utf8"));
+  }
+
+  it("sets the picks before the first prompt, the model first, and saves them to the chat and to the defaults", async () => {
+    const { script, seen } = recording();
+    const { runner, root, errors } = await world({ script });
+    await plantDefaults(root, SAVED_MANUAL);
+
+    const live = await runner.startProjectChat({ ...PROJECT_START, options: { mode: "acceptEdits", model: "large" } });
+    await logUntil(live, "turn-end");
+
+    expect(seen).toEqual(["model=large", "mode=acceptEdits", `prompt ${PROJECT_START.text}`]);
+    expect(await storedChat(root)).toMatchObject({ options: { mode: "acceptEdits", model: "large" } });
+    expect(await storedDefaults(root)).toEqual({ claude: { mode: "acceptEdits", model: "large" } });
+    expect(errors).toEqual([]);
+  });
+
+  it("sets bypassPermissions and saves it to the chat, not to the defaults", async () => {
+    const { script, seen } = recording();
+    const { runner, root, errors } = await world({ script });
+    await plantDefaults(root, SAVED_MANUAL);
+
+    const live = await runner.startProjectChat({ ...PROJECT_START, options: { mode: "bypassPermissions" } });
+    await logUntil(live, "turn-end");
+
+    expect(seen).toEqual(["mode=bypassPermissions", `prompt ${PROJECT_START.text}`]);
+    expect(await storedChat(root)).toMatchObject({ options: { mode: "bypassPermissions" } });
+    expect(await storedDefaults(root)).toEqual(SAVED_MANUAL);
+    expect(errors).toEqual([]);
+  });
+
+  it("replaces a saved default of the same option", async () => {
+    const { script, seen } = recording();
+    const { runner, root } = await world({ script });
+    await plantDefaults(root, { claude: { mode: "acceptEdits" } });
+
+    const live = await runner.startProjectChat({ ...PROJECT_START, options: { mode: "auto" } });
+    await logUntil(live, "turn-end");
+
+    expect(seen).toEqual(["mode=auto", `prompt ${PROJECT_START.text}`]);
+    expect(await storedDefaults(root)).toEqual({ claude: { mode: "auto" } });
+  });
+
+  it("does not set or save a value that the session does not offer, writes one fault line and sends the prompt", async () => {
+    const { script, seen } = recording();
+    const { runner, root, errors } = await world({ script });
+    await plantDefaults(root, SAVED_MANUAL);
+
+    const live = await runner.startProjectChat({ ...PROJECT_START, options: { model: "huge" } });
+    await logUntil(live, "turn-end");
+
+    expect(seen).toEqual([`prompt ${PROJECT_START.text}`]);
+    expect(await storedChat(root)).not.toHaveProperty("options");
+    expect(await storedDefaults(root)).toEqual(SAVED_MANUAL);
+    expect(errors).toEqual([
+      'tasma-daemon: chat 1 of project ALPHA: the pick "huge" of "model" at the start did not apply: '
+      + 'the agent of chat 1 of project ALPHA offers no value "huge" for "model"\n',
+    ]);
+  });
+
+  it("writes a fault line when the agent refuses a pick, and sends the prompt", async () => {
+    const { script, seen } = recording({
+      setConfigOption: () => Promise.reject(new Error("auto needs another model")),
+    });
+    const { runner, root, errors } = await world({ script });
+    await plantDefaults(root, SAVED_MANUAL);
+
+    const live = await runner.startProjectChat({ ...PROJECT_START, options: { mode: "auto" } });
+    await logUntil(live, "turn-end");
+
+    expect(seen).toEqual(["mode=auto", `prompt ${PROJECT_START.text}`]);
+    expect(await storedDefaults(root)).toEqual(SAVED_MANUAL);
+    expect(errors).toEqual([
+      'tasma-daemon: chat 1 of project ALPHA: the pick "auto" of "mode" at the start did not apply: '
+      + 'the agent of chat 1 of project ALPHA refused "auto" for "mode": auto needs another model\n',
+    ]);
+  });
+
+  it("writes one fault line for a pick whose save to the defaults fails", async () => {
+    const { script, seen } = recording();
+    const { runner, root, errors } = await world({ script });
+    await mkdir(join(defaultsFile(root), "inside"), { recursive: true });
+
+    const live = await runner.startProjectChat({ ...PROJECT_START, options: { mode: "acceptEdits" } });
+    await logUntil(live, "turn-end");
+
+    expect(seen).toEqual(["mode=acceptEdits", `prompt ${PROJECT_START.text}`]);
+    expect(await storedChat(root)).toMatchObject({ options: { mode: "acceptEdits" } });
+    const lines = errors.filter((line) => line.startsWith("tasma-daemon: chat 1 of project ALPHA: "));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^tasma-daemon: chat 1 of project ALPHA: the value "acceptEdits" of "mode" is not saved as the default of claude: /);
+  });
+
+  it("refuses a hidden value with option-refused before it makes a chat", async () => {
+    const { runner, chats, processes } = await world();
+
+    const error = await refusal(runner.startProjectChat({ ...PROJECT_START, options: { model: "large", mode: "plan" } }));
+
+    expect(error).toMatchObject({ code: "option-refused", message: 'the agent claude offers no value "plan" for "mode"' });
+    await expect(chats.getProjectChat("ALPHA", 1)).rejects.toMatchObject({ code: "chat-not-found" });
+    expect(processes).toEqual([]);
+  });
+
+  it("applies and saves nothing when the daemon stops before the session opens", async () => {
+    const script: Script = { configOptions: OPTIONS, newSession: () => forever() };
+    const { runner, root, processes, errors } = await world({ script });
+
+    const live = await runner.startProjectChat({ ...PROJECT_START, options: { mode: "acceptEdits" } });
+    await until(() => processes[0]?.newSession !== undefined, "the agent opens the session");
+    await runner.close();
+
+    expect(processes[0]?.configSets).toEqual([]);
+    expect(live.chat.options).toBeUndefined();
+    expect(existsSync(defaultsFile(root))).toBe(false);
+    expect(errors).toEqual([
+      'tasma-daemon: chat 1 of project ALPHA: the pick "acceptEdits" of "mode" at the start did not apply: '
+      + "chat 1 of project ALPHA cannot run: the daemon is stopping\n",
+    ]);
   });
 });
 

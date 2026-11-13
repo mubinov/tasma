@@ -7,22 +7,24 @@ import {
 } from "@assistant-ui/react";
 import { Menu } from "@base-ui/react/menu";
 import { Thread, type ThreadComponents } from "@kit/components/assistant-ui/elements/thread.aui";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import type { ProjectSummary } from "@tasma/protocol";
+import type { ChatAgent, ProjectSummary } from "@tasma/protocol";
 import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { projectChatStartOptions, usePendingProjectChatStart } from "../api/mutations";
+import { agentOptionsQuery } from "../api/queries";
 import { chatAgentName, messageText } from "../lib/chat-messages";
 import { CHAT_HEADING_MARK, focusInView, KIT_INPUT, NEW_CHAT_MARK } from "../lib/focus-in-view";
 import { CaretDownIcon } from "../lib/icons";
 import { useChatThreadFocus } from "../lib/use-chat-thread-focus";
 import { useFocusLost } from "../lib/use-focus-lost";
+import { useNewChatOptionPicks, type DroppedPicks, type NewChatOption } from "../lib/use-new-chat-option-picks";
 import { usePendingFocus } from "../lib/use-pending-focus";
 import { projectChatStartFailure } from "../lib/write-failure";
 import { NEW_CHAT_DRAFT } from "../store/chat-drafts";
 import { useNoticeStore } from "../store/notices";
 import { useUiStore } from "../store/ui";
-import { ChatPickerRow } from "./chat-option-menu";
+import { ChatOptionMenu, ChatPickerRow } from "./chat-option-menu";
 import { ChatDraft } from "./chat-panel";
 import { ChatsLink } from "./chats-link";
 import {
@@ -39,6 +41,8 @@ import { ProjectName } from "./project-select";
 import { RadioIndicator } from "./radio-indicator";
 
 const NO_PROJECTS = "No projects yet. Add one on the Projects screen.";
+
+const NEW_CHAT_AGENT: ChatAgent = "claude";
 
 type NewChatProps = {
   /** The project of the Dashboard filter. */
@@ -61,7 +65,19 @@ type NewChatExtras = {
   openWords: string;
   onPick: (tag: string) => void;
   onFocusLost: () => void;
+  options: readonly NewChatOption[];
+  onOptionPick: (option: NewChatOption, value: string) => void;
+  /** Moves the focus to the heading at once. */
+  onOptionFocusLost: () => void;
+  /**
+   * The picks that the last change of the list dropped. The slot says them
+   * after it renders the row, so after the focus leaves a menu that the change
+   * removed.
+   */
+  dropped: DroppedPicks | null;
 };
+
+type ProjectPickerProps = Pick<NewChatExtras, "projects" | "selected" | "waiting" | "onPick" | "onFocusLost">;
 
 const NO_MESSAGES: readonly ThreadMessageLike[] = [];
 
@@ -87,7 +103,7 @@ function openWords(selected: string | null, projects: readonly ProjectSummary[])
   return projects.length === 0 ? "New chat. No projects yet." : "New chat. Select a project.";
 }
 
-function ProjectPicker({ projects, selected, waiting, onPick, onFocusLost }: Omit<NewChatExtras, "openWords">): ReactNode {
+function ProjectPicker({ projects, selected, waiting, onPick, onFocusLost }: ProjectPickerProps): ReactNode {
   const labelId = useId();
   const triggerId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -162,12 +178,47 @@ function OpenWords({ words }: { words: string }): null {
 }
 
 function NewChatComposerStart(): ReactNode {
-  const { openWords: words, ...picker } = useAuiState((s) => s.thread.extras) as NewChatExtras;
+  const {
+    projects,
+    selected,
+    waiting,
+    openWords: words,
+    onPick,
+    onFocusLost,
+    options,
+    onOptionPick,
+    onOptionFocusLost,
+    dropped,
+  } = useAuiState((s) => s.thread.extras) as NewChatExtras;
+
+  useEffect(() => {
+    for (const one of dropped?.words ?? []) {
+      useNoticeStore.getState().announce(one);
+    }
+  }, [dropped]);
 
   return (
     <ChatPickerRow>
-      <ProjectPicker {...picker} />
+      <ProjectPicker
+        projects={projects}
+        selected={selected}
+        waiting={waiting}
+        onPick={onPick}
+        onFocusLost={onFocusLost}
+      />
       <OpenWords words={words} />
+      {options.map((option) => (
+        <ChatOptionMenu
+          key={option.listed.category}
+          option={option.shown}
+          hidden={option.hidden}
+          waiting={waiting}
+          onPick={(value) => {
+            onOptionPick(option, value);
+          }}
+          onFocusLost={onOptionFocusLost}
+        />
+      ))}
     </ChatPickerRow>
   );
 }
@@ -234,6 +285,12 @@ export function NewChat({ filterProject, projects, wide, headingRef, onBack, onS
   // A project that leaves the list, or loses its folder, while the view is open is not selected.
   const selected = pending?.start.tag ?? (hasFolder(projects, picked) ? picked : null);
   const waiting = pending !== undefined;
+  const { data: agentOptions } = useQuery(agentOptionsQuery(client, NEW_CHAT_AGENT), queryClient);
+  const { options, dropped, changed, pick } = useNewChatOptionPicks({
+    agent: NEW_CHAT_AGENT,
+    configOptions: agentOptions?.data.options,
+    sent: pending === undefined ? null : (pending.start.options ?? {}),
+  });
   const headingId = useId();
   const pendingFocus = usePendingFocus();
 
@@ -250,6 +307,13 @@ export function NewChat({ filterProject, projects, wide, headingRef, onBack, onS
     openWords: openWords(selected, projects),
     onPick: setPicked,
     onFocusLost: focusHeading,
+    options,
+    onOptionPick: pick,
+    // A menu leaves in a render of the kit store, which does not render the view, so a pending move would not run.
+    onOptionFocusLost: () => {
+      focusInView(headingRef.current);
+    },
+    dropped,
   };
   const runtime = useExternalStoreRuntime({
     messages: pending === undefined
@@ -263,7 +327,10 @@ export function NewChat({ filterProject, projects, wide, headingRef, onBack, onS
       const tag = selected!;
 
       onStart(tag);
-      await start({ start: { tag, text: messageText(message) }, failure: projectChatStartFailure(tag) });
+      await start({
+        start: { tag, text: messageText(message), ...(changed === undefined ? {} : { options: changed }) },
+        failure: projectChatStartFailure(tag),
+      });
     },
     extras,
   });
@@ -285,7 +352,7 @@ export function NewChat({ filterProject, projects, wide, headingRef, onBack, onS
               New chat
             </h2>
             <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-              <span className="text-subtle">{chatAgentName("claude")}</span>
+              <span className="text-subtle">{chatAgentName(NEW_CHAT_AGENT)}</span>
             </p>
           </div>
         </div>

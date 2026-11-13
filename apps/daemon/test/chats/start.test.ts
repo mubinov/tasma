@@ -514,7 +514,31 @@ describe("a start of a project chat", () => {
     expect(calls).toEqual([]);
   });
 
-  it.each(["project-has-no-folder", "agent-not-supported"] as const)(
+  it("gives the runner the options of the start", async () => {
+    const { starts, projectCalls } = await world();
+    const options = { model: "large", mode: "acceptEdits" };
+
+    await starts.startProject("ALPHA", { ...INPUT, options });
+
+    expect(projectCalls).toEqual([{
+      tag: "ALPHA",
+      title: "Plan the release",
+      agent: "claude",
+      text: INPUT.text,
+      client: "app",
+      options,
+    }]);
+  });
+
+  it("gives the runner no options when the start has none", async () => {
+    const { starts, projectCalls } = await world();
+
+    await starts.startProject("ALPHA", INPUT);
+
+    expect(projectCalls[0]).not.toHaveProperty("options");
+  });
+
+  it.each(["project-has-no-folder", "agent-not-supported", "option-refused"] as const)(
     "turns the runner refusal %s into a refusal of the daemon with the same code and message",
     async (code) => {
       const { starts, next } = await world();

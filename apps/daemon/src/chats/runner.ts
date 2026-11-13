@@ -59,7 +59,7 @@ const END_GRACE_MS = 10_000;
 const OWN_TURN_OUTPUT: ReadonlySet<unknown> = new Set(["agent_message_chunk", "agent_thought_chunk", "tool_call"]);
 
 export class ChatStartRefusal extends Error {
-  readonly code: "agent-not-supported" | "project-has-no-folder";
+  readonly code: "agent-not-supported" | "project-has-no-folder" | "option-refused";
 
   constructor(code: ChatStartRefusal["code"], message: string) {
     super(message);
@@ -111,6 +111,9 @@ export type ChatRunner = {
   /**
    * As `start`, for a project chat in the folder of the project. The agent
    * gets `text` as its first prompt. The chat stores `title` as it is given.
+   * Each entry of `options` waits for the session as a pick does, and applies
+   * before the first prompt; no caller waits for it, so a fault of it is a
+   * line on stderr. A hidden value in `options` is an `option-refused` refusal.
    */
   startProjectChat(input: {
     tag: string;
@@ -118,6 +121,7 @@ export type ChatRunner = {
     agent: ChatAgent;
     text: string;
     client: string;
+    options?: Readonly<Record<string, string>>;
   }): Promise<LiveChat<ProjectChat>>;
   running(live: AnyLiveChat): RunningChat | undefined;
   /**
@@ -1246,13 +1250,30 @@ export function createChatRunner(options: {
     return { adapter, path };
   }
 
-  /** Starts the agent of a chat just created, unless the daemon stops or the launch failed. */
+  function startPick(live: AnyLiveChat, configId: string, value: string): WaitingPick {
+    return {
+      configId,
+      value,
+      resolve(diagnostics) {
+        for (const { message } of diagnostics) stderr.write(chatFault(live, message));
+      },
+      reject(error) {
+        stderr.write(chatFault(live, `the pick "${value}" of "${configId}" at the start did not apply: ${causeOf(error)}`));
+      },
+    };
+  }
+
+  /**
+   * Starts the agent of a chat just created, unless the daemon stops or the
+   * launch failed. `picks` wait for the session before it can open.
+   */
   async function launchCreated(
     live: AnyLiveChat,
     adapter: AgentAdapter,
     launch: AgentLaunch | { failed: string },
     folder: string,
     limitMs: number,
+    picks: Readonly<Record<string, string>> = {},
   ): Promise<void> {
     // After `stopStarts()`, the chat stays with no agent, as a daemon stop leaves every other chat.
     if (stopping.signal.aborted) return;
@@ -1266,6 +1287,7 @@ export function createChatRunner(options: {
     }
 
     const run = register(live);
+    for (const [configId, value] of Object.entries(picks)) run.waiting.push(startPick(live, configId, value));
     void begin(run, spawnRun(run, adapter, launch, folder, limitMs));
   }
 
@@ -1279,11 +1301,16 @@ export function createChatRunner(options: {
       return live;
     },
 
-    async startProjectChat({ tag, title, agent, text, client }) {
+    async startProjectChat({ tag, title, agent, text, client, options: picks }) {
+      for (const [configId, value] of Object.entries(picks ?? {})) {
+        if (isHidden(agent, configId, value)) {
+          throw new ChatStartRefusal("option-refused", `the agent ${agent} offers no value "${value}" for "${configId}"`);
+        }
+      }
       const { adapter, path } = await startSetup(tag, agent);
       const launch = await launchOf(adapter);
       const live = await chats.createProjectChat(tag, { title, agent, folder: path }, { text, client });
-      await launchCreated(live, adapter, launch, path, projectIdleMs);
+      await launchCreated(live, adapter, launch, path, projectIdleMs, picks);
       return live;
     },
 

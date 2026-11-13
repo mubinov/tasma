@@ -144,10 +144,17 @@ export function createStepChats(options: {
   return {
     start: (tag, task, client, restart) => locked(taskKey(tag, task), () => startOf(tag, task, client, restart)),
 
-    async startProject(tag, { text, client }) {
+    async startProject(tag, { text, client, options }) {
       // The runner answers `project-invalid` for a tag with an invalid form.
       await host.open(tag);
-      return withDaemonRefusal(runner.startProjectChat({ tag, title: titleOf(text), agent: AGENT, text, client }));
+      return withDaemonRefusal(runner.startProjectChat({
+        tag,
+        title: titleOf(text),
+        agent: AGENT,
+        text,
+        client,
+        ...(options === undefined ? {} : { options }),
+      }));
     },
   };
 }

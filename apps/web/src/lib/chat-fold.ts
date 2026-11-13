@@ -197,7 +197,7 @@ function foldOptions(options: readonly ChatOption[], event: ChatEntry["event"]):
 
   const { sessionUpdate, configOptions, currentModeId } = event.update;
   if (sessionUpdate === "config_option_update" && Array.isArray(configOptions)) {
-    return configOptions.flatMap(chatOption);
+    return chatOptions(configOptions);
   }
   if (sessionUpdate !== "current_mode_update" || typeof currentModeId !== "string") {
     return options;
@@ -208,6 +208,11 @@ function foldOptions(options: readonly ChatOption[], event: ChatEntry["event"]):
   return mode === undefined || mode.current === currentModeId
     ? options
     : options.with(index, { ...mode, current: currentModeId });
+}
+
+/** The `select` options of an ACP list of config options. An item of another shape gives nothing. */
+export function chatOptions(configOptions: readonly unknown[]): ChatOption[] {
+  return configOptions.flatMap(chatOption);
 }
 
 function chatOption(item: unknown): ChatOption[] {

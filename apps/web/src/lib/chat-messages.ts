@@ -281,7 +281,7 @@ function spoken(text: string): string {
 const PICKER_CATEGORIES = ["mode", "model"] as const;
 
 /** The options of the picker row: the first of each category of `PICKER_CATEGORIES`, in that order. */
-export function chatPickerOptions(view: ChatView): ChatOption[] {
+export function chatPickerOptions(view: Pick<ChatView, "options">): ChatOption[] {
   return PICKER_CATEGORIES.flatMap((category) => view.options.find((option) => option.category === category) ?? []);
 }
 

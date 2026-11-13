@@ -20,6 +20,8 @@ type ChatOptionMenuProps = {
   hidden: readonly string[];
   /** The value of the pick in progress. */
   pending?: string | undefined;
+  /** While true, the trigger is `aria-disabled` and the menu does not open. */
+  waiting?: boolean;
   onPick: (value: string) => void;
   /** Called when the menu leaves the page with focus in it. */
   onFocusLost: () => void;
@@ -35,7 +37,9 @@ export function ChatPickerRow({ children }: { children: ReactNode }): ReactNode 
  * descriptions that the agent sends. The wait for a pick stands in the
  * trigger's own name, as in `PropertyMenu`.
  */
-export function ChatOptionMenu({ option, hidden, pending, onPick, onFocusLost }: ChatOptionMenuProps): ReactNode {
+export function ChatOptionMenu(
+  { option, hidden, pending, waiting = false, onPick, onFocusLost }: ChatOptionMenuProps,
+): ReactNode {
   const labelId = useId();
   const triggerId = useId();
   const itemId = useId();
@@ -51,12 +55,19 @@ export function ChatOptionMenu({ option, hidden, pending, onPick, onFocusLost }:
       <span id={labelId} className={LABEL_CLASS}>
         {option.name}
       </span>
-      <Menu.Root highlightItemOnHover={false} open={open} onOpenChange={setOpen}>
+      <Menu.Root
+        highlightItemOnHover={false}
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next && !waiting);
+        }}
+      >
         <Menu.Trigger
           ref={triggerRef}
           id={triggerId}
           aria-labelledby={`${labelId} ${triggerId}`}
-          className={TRIGGER_CLASS}
+          aria-disabled={waiting || undefined}
+          className={`${TRIGGER_CLASS} aria-disabled:hover:border-line`}
         >
           <span className="min-w-0 wrap-anywhere">
             {chatOptionValueName(option, shown)}
