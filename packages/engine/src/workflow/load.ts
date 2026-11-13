@@ -20,7 +20,7 @@ import type {
 } from "./types.js";
 
 /** The one file a workflow directory must hold. */
-const WORKFLOW_FILE = "workflow.yml";
+export const WORKFLOW_FILE = "workflow.yml";
 
 /**
  * The form of a workflow name. It is narrower than the form of a step name: the

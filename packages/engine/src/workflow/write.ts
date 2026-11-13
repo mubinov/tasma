@@ -1,22 +1,27 @@
+import { dirname, isAbsolute, join, normalize } from "node:path";
 import { Document, type Node, type YAMLMap } from "yaml";
 import { isPlainMapping } from "../format/values.js";
 import {
   createExclusive,
   createExclusiveDirectory,
+  discard,
   discardDirectory,
+  entryAt,
   makeDirectory,
   removeTree,
   replaceFile,
+  syncDirectory,
 } from "../store/atomic.js";
 import { declaredWorkflows, readDeclared, resolveWorkflowsPath } from "../store/config.js";
 import { applyWrites, checkAnchor, cleared, openDeclaration, storedValues } from "../store/declaration.js";
 import { asStoreRefusal, errnoOf, fail } from "../store/errors.js";
 import { checkedFilePath, expandRoot, projectPaths, userConfigPath } from "../store/paths.js";
 import { discoverProjects } from "../store/projects.js";
-import { openWorkflows, readWorkflowText, shapeWorkflow } from "./load.js";
+import { openWorkflows, readWorkflowText, shapeWorkflow, WORKFLOW_FILE } from "./load.js";
 import type {
   StepInput,
   StepOwner,
+  Workflow,
   WorkflowChange,
   WorkflowInput,
   WorkflowPaths,
@@ -136,15 +141,27 @@ function withStepNodes(
 }
 
 /**
- * Refuses a text the reader would refuse. The message is the reader's, under
- * the code of a bad request: the text is the one this write built.
+ * Refuses a text the reader would refuse, and returns the workflow the reader
+ * shapes from it. The message is the reader's, under the code of a bad request:
+ * the text is the input of the write.
  */
-function checkShape(text: string, paths: WorkflowPaths, name: string): void {
+function checkShape(text: string, paths: WorkflowPaths, name: string): WorkflowResult {
   try {
-    shapeWorkflow(text, paths, name);
+    return shapeWorkflow(text, paths, name);
   } catch (error) {
     const fault = asStoreRefusal(error);
     fail("workflow-change-invalid", fault.description, paths.file, fault);
+  }
+}
+
+/** Makes the directory of a new workflow. A directory that exists refuses the write. */
+async function claimWorkflowDirectory(workflows: Workflows, paths: WorkflowPaths, name: string): Promise<void> {
+  await makeDirectory(workflows.directory);
+  try {
+    await createExclusiveDirectory(paths.directory);
+  } catch (error) {
+    if (errnoOf(error) === "EEXIST") fail("workflow-exists", `the workflow "${name}" exists`, paths.directory);
+    throw error;
   }
 }
 
@@ -169,18 +186,138 @@ export async function createWorkflow(
   const text = doc.toString({ lineWidth: 0 });
   checkShape(text, paths, name);
 
-  await makeDirectory(workflows.directory);
-  try {
-    await createExclusiveDirectory(paths.directory);
-  } catch (error) {
-    if (errnoOf(error) === "EEXIST") fail("workflow-exists", `the workflow "${name}" exists`, paths.directory);
-    throw error;
-  }
+  await claimWorkflowDirectory(workflows, paths, name);
   try {
     await createExclusive(paths.file, text);
   } catch (error) {
     await discardDirectory(paths.directory);
     throw error;
+  }
+  return workflows.read(name);
+}
+
+/** A relative path as the default macOS volume compares it: normalized, with no regard to case or Unicode form. */
+function folded(path: string): string {
+  return normalize(path).normalize("NFC").toLowerCase();
+}
+
+/**
+ * Refuses a file path that leaves the workflow folder, names its `workflow.yml`,
+ * or names the same entry as a different path, as the default macOS volume
+ * compares them.
+ */
+function checkFolderPaths(filePaths: string[]): void {
+  const files = new Map<string, string>();
+  const folders = new Map<string, string>();
+  for (const path of filePaths) {
+    if (isAbsolute(path) || path.endsWith("/") || path.split("/").includes("..") || normalize(path) === ".") {
+      refuse(`the file path "${path}" must name a file inside the workflow folder`);
+    }
+    const key = folded(path);
+    if (key === WORKFLOW_FILE) refuse(`the file path "${path}" names the ${WORKFLOW_FILE} of the workflow folder`);
+    const same = files.get(key);
+    if (same !== undefined) refuse(`the file paths "${same}" and "${path}" name the same file`);
+    files.set(key, path);
+    for (let folder = dirname(normalize(path)); folder !== "."; folder = dirname(folder)) {
+      const other = folders.get(folded(folder));
+      if (other !== undefined && other !== folder) {
+        refuse(`the folders "${other}" and "${folder}" differ only by case or Unicode form`);
+      }
+      folders.set(folded(folder), folder);
+    }
+  }
+  for (const [key, path] of files) {
+    if (folders.has(key)) refuse(`the file path "${path}" is also the folder of a different file`);
+  }
+}
+
+/** Refuses a workflow that names a document its folder will not hold. */
+function checkDocumentsInFolder(workflow: Workflow, directory: string, filePaths: string[]): void {
+  const written = new Set(filePaths.map((path) => join(directory, path)));
+  for (const document of [...workflow.instructions, ...workflow.steps.map((step) => step.file)]) {
+    if (!written.has(document)) refuse(`the document "${document}" is not a file of the workflow folder`);
+  }
+}
+
+/** What one run made, which is all that its cleanup can remove. Folders stand in the order they were made. */
+type Made = { files: string[]; folders: string[] };
+
+/** Makes `folder` and each folder above it that this run has not made, the highest first, and flushes each name. */
+async function makeFolders(folder: string, made: Made): Promise<void> {
+  if (made.folders.includes(folder)) return;
+  await makeFolders(dirname(folder), made);
+  await createExclusiveDirectory(folder);
+  made.folders.push(folder);
+  await syncDirectory(dirname(folder));
+}
+
+/** Removes what the run made, the deepest folder first. A folder that holds a file of a different writer stays. */
+async function removeMade(made: Made): Promise<void> {
+  for (const file of made.files) await discard(file);
+  for (const folder of made.folders.toReversed()) await discardDirectory(folder);
+}
+
+/** `EEXIST` inside a new workflow folder: a different writer took a name in it. */
+function refuseTaken(error: unknown, name: string, directory: string): never {
+  if (errnoOf(error) === "EEXIST") {
+    fail("workflow-exists", `a different writer wrote into the folder of the workflow "${name}"`, directory, error);
+  }
+  throw error;
+}
+
+/**
+ * Whether a failed create left `workflow.yml`, which then names the files. A look
+ * that fails counts as yes: files with no workflow make the next install refuse
+ * and name the folder, but a workflow with no files loads with steps that cannot
+ * be read.
+ */
+async function standsAfterFailure(file: string): Promise<boolean> {
+  try {
+    return (await entryAt(file))?.isFile() === true;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Creates a workflow folder with its files, then its `workflow.yml` with
+ * `definition` unchanged, so the paths it states stay relative to the folder.
+ * Every check runs before anything is written. An exclusive create never
+ * overwrites and never follows a link, and each file and folder is flushed
+ * before the `workflow.yml` that names it. A failure before `workflow.yml`
+ * stands removes what the run made.
+ */
+export async function createWorkflowFolder(
+  workflows: Workflows,
+  name: string,
+  content: { definition: string; files: [string, string][] },
+): Promise<WorkflowResult> {
+  const paths = workflows.pathsOf(name);
+  const { definition, files } = content;
+  const filePaths = files.map(([path]) => path);
+  checkFolderPaths(filePaths);
+  checkDocumentsInFolder(checkShape(definition, paths, name).workflow, paths.directory, filePaths);
+
+  await claimWorkflowDirectory(workflows, paths, name);
+  const made: Made = { files: [], folders: [paths.directory] };
+  try {
+    await syncDirectory(workflows.directory);
+    for (const [path, text] of files) {
+      const file = join(paths.directory, path);
+      await makeFolders(dirname(file), made);
+      await createExclusive(file, text);
+      made.files.push(file);
+    }
+  } catch (error) {
+    await removeMade(made);
+    refuseTaken(error, name, paths.directory);
+  }
+
+  try {
+    await createExclusive(paths.file, definition);
+  } catch (error) {
+    if (errnoOf(error) === "EEXIST" || !(await standsAfterFailure(paths.file))) await removeMade(made);
+    refuseTaken(error, name, paths.directory);
   }
   return workflows.read(name);
 }

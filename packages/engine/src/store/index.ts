@@ -2,7 +2,6 @@ export { openAgentDefaults } from "./agent-defaults.js";
 export type { AgentDefaults, AgentDefaultsRead, AgentDefaultsStore } from "./agent-defaults.js";
 export { openAgentOptions } from "./agent-options.js";
 export type { AgentOptionsEntry, AgentOptionsRead, AgentOptionsStore } from "./agent-options.js";
-export { createExclusive, createExclusiveDirectory, sameNode, syncDirectory } from "./atomic.js";
 export {
   chatFinding,
   chatPath,

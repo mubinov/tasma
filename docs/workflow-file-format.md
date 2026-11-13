@@ -245,9 +245,11 @@ A project's `config.yml` that cannot be read leaves the directory where the user
 named it.
 
 **The directory holds workflow directories and nothing else.** Section 2 applies
-to it unchanged, so a directory that is no workflow is reported. The scripts and
-the shared documents a flow refers to therefore stand outside it, and are reached
-by the paths in section 5.
+to it unchanged, so a directory that is no workflow is reported. A workflow
+directory can hold the documents of that workflow, for example the documents that
+`tasma workflow install` copies. The documents and the scripts that more than one
+workflow uses stand outside the workflows directory, and are reached by the paths
+in section 5.
 
 ## 8. The project side
 
@@ -424,6 +426,12 @@ A write:
   document or an instruction document that is not a regular file;
 - refuses a `workflow.yml` that is a symbolic link, because the write replaces
   the file.
+
+`tasma workflow install` is the exception to the path rule. It writes the shipped
+`workflow.yml` unchanged, with paths relative to the workflow directory, and the
+documents that it names are in that directory. A later `tasma workflow edit` that
+states steps or instructions stores them as absolute or `~/` paths, as for every
+workflow.
 
 `tasma workflow delete` removes the workflow directory. It refuses a directory
 that holds no `workflow.yml`, and a workflow that a project lists. After an edit

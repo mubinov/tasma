@@ -1,9 +1,10 @@
 import { existsSync, writeFileSync } from "node:fs";
-import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createWorkflow,
+  createWorkflowFolder,
   openWritableWorkflows,
   removeWorkflow,
   type StepInput,
@@ -21,6 +22,77 @@ import {
   workflows,
   workflowsDir,
 } from "./helpers.js";
+
+/** The path of each `sync` of an opened file or folder, in order. */
+const flushed = vi.hoisted(() => [] as string[]);
+
+/** A different writer that lands after the mkdir of one path, once a test sets it. */
+const race = vi.hoisted(() => ({
+  after: undefined as { path: string; land: () => Promise<void> } | undefined,
+}));
+
+/**
+ * The calls that fail with `EIO` on one path, one time each and in this order: a
+ * create is an exclusive open, a read is any other open, and a close is the close
+ * of any handle.
+ */
+const faults = vi.hoisted(() => [] as { call: "create" | "read" | "close" | "lstat"; path: string }[]);
+
+vi.mock("node:fs/promises", async (importActual) => {
+  const actual = await importActual<typeof import("node:fs/promises")>();
+  const faulting = (call: (typeof faults)[number]["call"], path: unknown) => {
+    if (faults[0]?.call !== call || faults[0].path !== path) return;
+
+    faults.shift();
+    throw Object.assign(new Error(`EIO: i/o error: ${String(path)}`), { code: "EIO" });
+  };
+
+  return {
+    ...actual,
+    async lstat(...args: Parameters<typeof actual.lstat>) {
+      faulting("lstat", args[0]);
+
+      return actual.lstat(...args);
+    },
+    async mkdir(...args: Parameters<typeof actual.mkdir>) {
+      const first = await actual.mkdir(...args);
+      const after = race.after;
+
+      if (after?.path === args[0]) {
+        race.after = undefined;
+        await after.land();
+      }
+
+      return first;
+    },
+    async open(...args: Parameters<typeof actual.open>) {
+      const create = args[1] === "wx";
+
+      faulting(create ? "create" : "read", args[0]);
+
+      const handle = await actual.open(...args);
+      const sync = handle.sync.bind(handle);
+      const close = handle.close.bind(handle);
+
+      handle.sync = async () => {
+        await sync();
+        flushed.push(args[0] as string);
+      };
+      handle.close = async () => {
+        await close();
+        faulting("close", args[0]);
+      };
+
+      return handle;
+    },
+  };
+});
+
+afterEach(() => {
+  faults.length = 0;
+  race.after = undefined;
+  flushed.length = 0;
+});
 
 /** A step document outside the workflows tree, which a step entry can name. */
 async function stepDocument(root: string, name: string): Promise<string> {
@@ -188,6 +260,258 @@ describe("creating a workflow", () => {
     await expect(createWorkflow({ ...store, pathsOf }, "flow-a", input)).rejects.toThrow();
 
     expect(await readdir(workflowDir(root, "flow-a"))).toEqual(["other.md"]);
+  });
+});
+
+const FOLDER_DEFINITION = `title: Flow A
+instructions:
+  - rules.md
+steps:
+  - {name: "a:one", file: steps/one.md, owner: agent}
+  - {name: "a:two", file: steps/deep/two.md, owner: human}
+`;
+
+const FOLDER_FILES: [string, string][] = [
+  ["rules.md", "Rules.\n"],
+  ["steps/one.md", "Do one.\n"],
+  ["steps/deep/two.md", "Do two.\n"],
+];
+
+function createFolder(root: string, definition = FOLDER_DEFINITION, files = FOLDER_FILES) {
+  return createWorkflowFolder(workflows(root), "flow-a", { definition, files });
+}
+
+/** Every entry under a folder, by its path from there. */
+async function listing(folder: string): Promise<string[]> {
+  return (await readdir(folder, { recursive: true })).sort();
+}
+
+async function modeOf(path: string): Promise<number> {
+  return (await stat(path)).mode & 0o777;
+}
+
+describe("creating a workflow folder", () => {
+  it("writes each file, then workflow.yml with the text unchanged, and reads the paths inside the folder", async () => {
+    const root = await tempRoot();
+    const folder = workflowDir(root, "flow-a");
+
+    const { workflow, diagnostics } = await createFolder(root);
+
+    expect(diagnostics).toEqual([]);
+    expect(workflow).toEqual({
+      name: "flow-a",
+      file: workflowFile(root, "flow-a"),
+      title: "Flow A",
+      instructions: [join(folder, "rules.md")],
+      steps: [
+        { name: "a:one", file: join(folder, "steps", "one.md"), owner: "agent" },
+        { name: "a:two", file: join(folder, "steps", "deep", "two.md"), owner: "human" },
+      ],
+    });
+    expect(await readFile(workflowFile(root, "flow-a"), "utf8")).toBe(FOLDER_DEFINITION);
+    expect(await listing(folder)).toEqual(
+      ["rules.md", "steps", "steps/deep", "steps/deep/two.md", "steps/one.md", "workflow.yml"],
+    );
+
+    for (const [path, text] of FOLDER_FILES) {
+      expect(await readFile(join(folder, path), "utf8"), path).toBe(text);
+      expect(await modeOf(join(folder, path)), path).toBe(0o600);
+    }
+
+    for (const path of [folder, join(folder, "steps"), join(folder, "steps", "deep")]) {
+      expect(await modeOf(path), path).toBe(0o700);
+    }
+  });
+
+  it("flushes each file and each folder it made before the workflow.yml that names them", async () => {
+    const root = await tempRoot();
+    const folder = workflowDir(root, "flow-a");
+
+    flushed.length = 0;
+    await createFolder(root);
+
+    const created = flushed.indexOf(workflowFile(root, "flow-a"));
+
+    expect(created).toBeGreaterThan(-1);
+
+    const files = FOLDER_FILES.map(([path]) => join(folder, path));
+
+    for (const path of [...files, join(folder, "steps", "deep"), join(folder, "steps"), folder, workflowsDir(root)]) {
+      expect(flushed, path).toContain(path);
+      expect(flushed.indexOf(path), path).toBeLessThan(created);
+    }
+  });
+
+  it("refuses a workflow folder that exists with workflow-exists, and leaves it as it is", async () => {
+    const root = await tempRoot();
+    const folder = workflowDir(root, "flow-a");
+
+    await plant(join(folder, "note.md"), "A file of the user.\n");
+
+    const error = await storeError(createFolder(root));
+
+    expect(error).toMatchObject({ code: "workflow-exists", path: folder });
+    expect(await listing(folder)).toEqual(["note.md"]);
+  });
+
+  it("refuses a bad workflow name with workflow-unknown", async () => {
+    const root = await tempRoot();
+
+    const error = await storeError(createWorkflowFolder(workflows(root), "../flow", {
+      definition: FOLDER_DEFINITION,
+      files: FOLDER_FILES,
+    }));
+
+    expect(error.code).toBe("workflow-unknown");
+  });
+
+  const withFile = (path: string): [string, string][] => [...FOLDER_FILES, [path, "Text.\n"]];
+
+  it.each<[string, string, [string, string][], string]>([
+    ["a step document that is not a file of the folder", FOLDER_DEFINITION, FOLDER_FILES.slice(0, 2), "steps/deep/two.md"],
+    ["an instruction document that is not a file of the folder", FOLDER_DEFINITION, FOLDER_FILES.slice(1), "rules.md"],
+    [
+      "a document outside the folder",
+      FOLDER_DEFINITION.replace("rules.md", "/nowhere/rules.md"),
+      FOLDER_FILES,
+      "/nowhere/rules.md",
+    ],
+    ["an absolute file path", FOLDER_DEFINITION, withFile("/nowhere/extra.md"), "/nowhere/extra.md"],
+    ["a file path that goes up", FOLDER_DEFINITION, withFile("../extra.md"), "../extra.md"],
+    ["a file path that goes up inside it", FOLDER_DEFINITION, withFile("steps/../../extra.md"), "steps/../../extra.md"],
+    ["an empty file path", FOLDER_DEFINITION, withFile(""), '""'],
+    ["a file path of the folder itself", FOLDER_DEFINITION, withFile("."), '"."'],
+    ["a file path with a trailing /", FOLDER_DEFINITION, withFile("extra/"), "extra/"],
+    ["a file path of workflow.yml", FOLDER_DEFINITION, withFile("workflow.yml"), "workflow.yml"],
+    ["a file path of workflow.yml in a different case", FOLDER_DEFINITION, withFile("Workflow.yml"), "Workflow.yml"],
+    ["a file path of workflow.yml in a different form", FOLDER_DEFINITION, withFile("./workflow.yml"), "./workflow.yml"],
+    ["a duplicate file path", FOLDER_DEFINITION, withFile("steps/one.md"), "the same file"],
+    ["a file path that differs only by case", FOLDER_DEFINITION, withFile("Steps/One.md"), "the same file"],
+    ["a file path that differs only by form", FOLDER_DEFINITION, withFile("steps//one.md"), "the same file"],
+    ["a file path that is a folder of a different entry", FOLDER_DEFINITION, withFile("steps/deep"), "also the folder"],
+    ["folder names that differ only by case", FOLDER_DEFINITION, withFile("Steps/three.md"), "differ only by case"],
+    [
+      "folder names that differ only by Unicode form",
+      FOLDER_DEFINITION,
+      [...FOLDER_FILES, ["café/a.md", "A.\n"], ["café/b.md", "B.\n"]],
+      "differ only by case",
+    ],
+    ["a definition the reader refuses", "steps: [\n", FOLDER_FILES, "not valid YAML"],
+  ])("refuses %s with workflow-change-invalid and writes nothing", async (_case, definition, files, fragment) => {
+    const root = await tempRoot();
+
+    const error = await storeError(createFolder(root, definition, files));
+
+    expect(error.code).toBe("workflow-change-invalid");
+    expect(error.description).toContain(fragment);
+    await expect(readdir(workflowsDir(root))).rejects.toThrow();
+  });
+
+  it("removes what it made when a file cannot be written, and passes the failure on", async () => {
+    const root = await tempRoot();
+
+    faults.push({ call: "create", path: join(workflowDir(root, "flow-a"), "steps", "deep", "two.md") });
+
+    await expect(createFolder(root)).rejects.toMatchObject({ code: "EIO" });
+    expect(await readdir(workflowsDir(root))).toEqual([]);
+  });
+
+  it("removes the workflow folder when the flush of its name fails", async () => {
+    const root = await tempRoot();
+
+    faults.push({ call: "close", path: workflowsDir(root) });
+
+    await expect(createFolder(root)).rejects.toMatchObject({ code: "EIO" });
+    expect(await readdir(workflowsDir(root))).toEqual([]);
+  });
+
+  it("removes what it made when workflow.yml cannot be created and does not stand", async () => {
+    const root = await tempRoot();
+
+    faults.push({ call: "create", path: workflowFile(root, "flow-a") });
+
+    await expect(createFolder(root)).rejects.toMatchObject({ code: "EIO" });
+    expect(await readdir(workflowsDir(root))).toEqual([]);
+  });
+
+  it("keeps a file of a different writer and the folder that holds it, and removes the rest", async () => {
+    const root = await tempRoot();
+    const folder = workflowDir(root, "flow-a");
+    const note = join(folder, "steps", "note.md");
+
+    race.after = { path: join(folder, "steps"), land: () => writeFile(note, "A file of someone else.\n") };
+    faults.push({ call: "create", path: join(folder, "steps", "deep", "two.md") });
+
+    await expect(createFolder(root)).rejects.toMatchObject({ code: "EIO" });
+    expect(await listing(folder)).toEqual(["steps", "steps/note.md"]);
+    expect(await readFile(note, "utf8")).toBe("A file of someone else.\n");
+  });
+
+  it("keeps everything when the create of workflow.yml fails after the file stands", async () => {
+    const root = await tempRoot();
+
+    faults.push({ call: "close", path: workflowFile(root, "flow-a") });
+
+    await expect(createFolder(root)).rejects.toMatchObject({ code: "EIO" });
+    expect((await workflows(root).read("flow-a")).workflow.steps).toHaveLength(2);
+    expect(await listing(workflowDir(root, "flow-a"))).toContain("steps/deep/two.md");
+  });
+
+  it("counts workflow.yml as standing when the look at it fails, and keeps the files", async () => {
+    const root = await tempRoot();
+    const file = workflowFile(root, "flow-a");
+
+    faults.push({ call: "create", path: file }, { call: "lstat", path: file });
+
+    await expect(createFolder(root)).rejects.toMatchObject({ code: "EIO" });
+    expect(await listing(workflowDir(root, "flow-a"))).toEqual(
+      ["rules.md", "steps", "steps/deep", "steps/deep/two.md", "steps/one.md"],
+    );
+  });
+
+  it("keeps everything when the read that ends the create fails", async () => {
+    const root = await tempRoot();
+
+    faults.push({ call: "read", path: workflowFile(root, "flow-a") });
+
+    expect((await storeError(createFolder(root))).code).toBe("workflow-invalid");
+    expect((await workflows(root).read("flow-a")).workflow.instructions).toHaveLength(1);
+  });
+
+  it("never uses a folder that a different writer puts at a copy path, and removes only what it wrote", async () => {
+    const root = await tempRoot();
+    const folder = workflowDir(root, "flow-a");
+
+    race.after = { path: folder, land: () => mkdir(join(folder, "steps")) };
+
+    const error = await storeError(createFolder(root));
+
+    expect(error).toMatchObject({ code: "workflow-exists", path: folder });
+    expect(await listing(folder)).toEqual(["steps"]);
+  });
+
+  it("never overwrites a file that a different writer puts at a copy path, and removes only what it wrote", async () => {
+    const root = await tempRoot();
+    const folder = workflowDir(root, "flow-a");
+    const planted = join(folder, "steps", "one.md");
+
+    race.after = { path: join(folder, "steps"), land: () => writeFile(planted, "A file of the user.\n") };
+
+    expect((await storeError(createFolder(root))).code).toBe("workflow-exists");
+    expect(await listing(folder)).toEqual(["steps", "steps/one.md"]);
+    expect(await readFile(planted, "utf8")).toBe("A file of the user.\n");
+  });
+
+  it("removes only what it wrote when a different writer takes workflow.yml during the run", async () => {
+    const root = await tempRoot();
+    const folder = workflowDir(root, "flow-a");
+    const file = workflowFile(root, "flow-a");
+
+    race.after = { path: join(folder, "steps", "deep"), land: () => writeFile(file, "steps: []\n") };
+
+    expect((await storeError(createFolder(root))).code).toBe("workflow-exists");
+    expect(await listing(folder)).toEqual(["workflow.yml"]);
+    expect(await readFile(file, "utf8")).toBe("steps: []\n");
   });
 });
 

@@ -222,7 +222,7 @@ A name that exists is refused. The rules for the paths and for the check are tho
 
 ### `tasma workflow install <name>`
 
-Install a workflow that ships with Tasma, for example `dev`. The command copies the documents of the workflow to a folder outside `$HOME/.tasma` and creates the workflow with the paths of the copies. It does not add the workflow to a project. Prints `installed  <folder>`, or `exists` when a workflow of this name is already there, and then nothing changes. Both exit 0. A name that Tasma does not ship is refused. When a folder that the install needs is not free, the install is refused, and the error names the folder.
+Install a workflow that ships with Tasma, for example `dev`. The command makes the workflow folder `<workflows_path>/<name>/`, copies the documents of the workflow into it, and writes the `workflow.yml` that ships with the workflow. The paths in that file are relative to the workflow folder. It does not add the workflow to a project. Prints `installed  <folder>`, where `<folder>` is the workflow folder, or `exists` when a workflow of this name is already there, and then nothing changes. Both exit 0. A name that Tasma does not ship is refused. When something already stands at the workflow folder path and it holds no `workflow.yml`, the install is refused, and the error names the folder. `tasma workflow delete` removes the documents with the folder.
 
 ### `tasma workflow edit <name> [options]`
 

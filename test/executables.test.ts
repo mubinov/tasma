@@ -400,7 +400,7 @@ describe("the built executables", () => {
     const dir = mkdtempSync(join(tmpdir(), "tasma-compiled-"));
     const binary = join(dir, "tasma-daemon");
     const home = join(dir, "home");
-    const folder = join(home, "tasma-workflows", "dev");
+    const folder = join(home, ".tasma", "workflows", "dev");
     const env = treeEnv(home);
 
     try {
@@ -420,6 +420,7 @@ describe("the built executables", () => {
         const first = await node(executable(CLI), ["workflow", "install", "dev"], { env, cwd: dir });
 
         expect(first).toEqual({ code: 0, stdout: `installed  ${folder}\n`, stderr: "" });
+        expect(existsSync(join(home, "tasma-workflows"))).toBe(false);
 
         const shown = await node(executable(CLI), ["workflow", "show", "dev"], { env, cwd: dir });
         const steps = shown.stdout.trimEnd().split("\n\n").at(-1)?.split("\n") ?? [];

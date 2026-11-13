@@ -27,7 +27,7 @@ export const FILE_MODE = 0o600;
 const DIRECTORY_MODE = 0o700;
 
 /** Removes a file the caller no longer wants. The write that led here already failed. */
-async function discard(path: string): Promise<void> {
+export async function discard(path: string): Promise<void> {
   try {
     await unlink(path);
   } catch {
