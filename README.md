@@ -1,11 +1,20 @@
-# tasma
-Local task engine that runs your dev and design workflows with agents
+# Tasma
+
+The local workflow manager for coding agents.
+
+**Every step gets a fresh agent. The task remembers the work.**
+
+You define the workflow. Each step of a task runs in a fresh chat, reads the task, and writes its report on the task for the next one.
+
+[![The Tasma board: tasks in columns, and each card shows its workflow step.](https://tasma.dev/screenshots/01-board-light.png)](https://tasma.dev)
+
+More at **[tasma.dev](https://tasma.dev)**.
 
 ## Install
 
 Tasma is a macOS app for macOS 14.5 or later.
 
-Requires Claude Code, logged in.
+It runs your own Claude Code, installed and logged in, on the plan you already have. No API key.
 
 1. Download the DMG for your Mac:
    - [Apple Silicon (M1 and later)](https://github.com/mubinov/tasma/releases/latest/download/Tasma-arm64.dmg)
