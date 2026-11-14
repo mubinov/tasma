@@ -15,8 +15,10 @@ import {
   DAEMON_PATH_PREFIX,
   DOCK_ROUTE,
   FOLDER_ROUTE,
+  THEME_ROUTE,
   UPDATE_EVENT,
 } from "../apps/web/src/api/paths.js";
+import { THEME_PREFERENCES } from "../apps/web/src/lib/theme-preference.js";
 import { readManifest, workspaceRoot } from "../workspace.js";
 
 /** The crate's location, as the root scripts have to spell it. */
@@ -168,6 +170,15 @@ describe("the macOS shell", () => {
 
     expect(["OFF", "RUNNING", "NEEDS_YOU"].map((name) => rustConstant("dock.rs", name)).toSorted())
       .toEqual(Object.keys(states).toSorted());
+  });
+
+  it("answers the window theme route the board asks", () => {
+    expect(rustConstant("theme.rs", "PATH")).toBe(THEME_ROUTE);
+  });
+
+  it("names the theme settings the board stores", () => {
+    expect(["LIGHT", "DARK", "SYSTEM"].map((name) => rustConstant("theme.rs", name)).toSorted())
+      .toEqual([...THEME_PREFERENCES].toSorted());
   });
 
   it("installs an update only of its own bundle identifier", () => {

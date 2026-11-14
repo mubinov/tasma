@@ -15,6 +15,7 @@ use tauri::{AppHandle, Runtime};
 use crate::daemon::Daemon;
 use crate::dock;
 use crate::folder;
+use crate::theme;
 use crate::update::{self, Updater};
 
 /// Where the renderer writes every daemon call, and where the Vite dev and
@@ -146,6 +147,7 @@ pub async fn serve<R: Runtime>(
         Target::Daemon(target) => daemon.forward(&target, &request).await,
         Target::App(path) if path == folder::PATH => folder::serve(app, request.method()).await,
         Target::App(path) if dock::handles(&path) => dock::serve(app, request.method(), &path),
+        Target::App(path) if theme::handles(&path) => theme::serve(app, request.method(), &path),
         Target::App(path) => update::serve(updater, request.method(), &path),
         Target::Asset(path) => asset(app, &path),
     }
@@ -467,6 +469,14 @@ mod tests {
         assert_a_get_is_refused_by_its_module(
             "the-dock-route",
             "tasma-app://localhost/app/dock/running",
+        );
+    }
+
+    #[test]
+    fn the_theme_route_is_served_by_the_theme_module() {
+        assert_a_get_is_refused_by_its_module(
+            "the-theme-route",
+            "tasma-app://localhost/app/theme/dark",
         );
     }
 }

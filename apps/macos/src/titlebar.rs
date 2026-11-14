@@ -195,7 +195,10 @@ struct Installed {
     last_full_screen: LastFullScreen,
 }
 
-fn native<R: Runtime>(window: &WebviewWindow<R>) -> Option<Retained<NSWindow>> {
+pub(crate) fn native<R: Runtime>(
+    _marker: MainThreadMarker,
+    window: &WebviewWindow<R>,
+) -> Option<Retained<NSWindow>> {
     let pointer = window.ns_window().ok()?;
 
     // Safety: on the main thread, `ns_window` gives the live `NSWindow` of the
@@ -228,7 +231,7 @@ fn measure(window: &NSWindow, full_screen: bool) -> TitleBarMetrics {
 /// Adds the band above the webview. Called on the main thread, once the window
 /// holds the parent view of the webview.
 pub(crate) fn install(marker: MainThreadMarker, window: &WebviewWindow) {
-    let Some(ns_window) = native(window) else {
+    let Some(ns_window) = native(marker, window) else {
         return;
     };
     let Some(parent) = ns_window.contentView() else {
@@ -249,7 +252,8 @@ pub(crate) fn install(marker: MainThreadMarker, window: &WebviewWindow) {
 }
 
 fn sync_on_main_thread<R: Runtime>(marker: MainThreadMarker, window: &WebviewWindow<R>) {
-    let (Ok(full_screen), Some(ns_window)) = (window.is_fullscreen(), native(window)) else {
+    let (Ok(full_screen), Some(ns_window)) = (window.is_fullscreen(), native(marker, window))
+    else {
         return;
     };
     let installed = window.state::<Installed>();

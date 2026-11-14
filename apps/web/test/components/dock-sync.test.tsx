@@ -5,7 +5,7 @@ import { createAppQueryClient } from "../../src/api/client";
 import { dockAvailable, sendDockState } from "../../src/api/dock";
 import { daemonKeys } from "../../src/api/queries";
 import { DockSync } from "../../src/components/dock-sync";
-import { refusalReply, stubTransport, successReply } from "../helpers";
+import { refusalReply, stubShell, stubTransport, successReply } from "../helpers";
 
 const STATE = "/chats/state";
 const REFUSAL = refusalReply(500, { kind: "store", code: "chat-unreadable", message: "broken" });
@@ -13,15 +13,6 @@ const PAGE = "The rest of the page";
 
 function stateReply(state: AgentState) {
   return successReply({ state });
-}
-
-function stubShell(answer: () => Promise<Response> = () => Promise.resolve(new Response(null, { status: 202 }))) {
-  const fetch = vi.fn<(input: string, init?: RequestInit) => Promise<Response>>(answer);
-  vi.stubGlobal("fetch", fetch);
-
-  return {
-    posted: () => fetch.mock.calls.map(([input, init]) => `${init?.method ?? "GET"} ${input}`),
-  };
 }
 
 function mount(stub: ReturnType<typeof stubTransport>) {

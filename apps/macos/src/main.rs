@@ -28,6 +28,7 @@ mod record;
 mod supervisor;
 #[cfg(test)]
 mod testing;
+mod theme;
 mod titlebar;
 mod uninstall;
 mod update;

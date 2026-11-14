@@ -1,10 +1,10 @@
 import { useEffect, useEffectEvent, useState } from "react";
 import { create } from "zustand";
 import { ALL_PROJECTS, boardValue, readBoard, splitList } from "../lib/board";
+import { THEME_PREFERENCES, type ThemePreference } from "../lib/theme-preference";
 
-export const THEME_PREFERENCES = ["system", "light", "dark"] as const;
-
-export type ThemePreference = (typeof THEME_PREFERENCES)[number];
+export { THEME_PREFERENCES };
+export type { ThemePreference };
 
 export const THEME_PREFERENCE_LABELS: Record<ThemePreference, string> = {
   system: "System",

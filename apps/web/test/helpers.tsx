@@ -64,6 +64,18 @@ export function stubSystemTheme(initial: "light" | "dark") {
   };
 }
 
+/** Replaces fetch with a stand-in for the macOS app, and lists the requests it got. */
+export function stubShell(
+  answer: () => Promise<Response> = () => Promise.resolve(new Response(null, { status: 202 })),
+) {
+  const fetch = vi.fn<(input: string, init?: RequestInit) => Promise<Response>>(answer);
+  vi.stubGlobal("fetch", fetch);
+
+  return {
+    posted: () => fetch.mock.calls.map(([input, init]) => `${init?.method ?? "GET"} ${input}`),
+  };
+}
+
 /** Replaces matchMedia with one that answers the reduced-motion query alone. */
 export function stubReducedMotion(reduce: boolean) {
   vi.stubGlobal("matchMedia", (media: string) => ({

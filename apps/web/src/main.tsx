@@ -3,6 +3,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { dockAvailable } from "./api/dock";
+import { windowThemeAvailable } from "./api/window-theme";
 import { DockSync } from "./components/dock-sync";
 import { ErrorBoundary } from "./components/error-boundary";
 import { FeedSubscriber } from "./components/feed-subscriber";
@@ -10,6 +11,7 @@ import { FindShortcut } from "./components/find-shortcut";
 import { KeyWatch } from "./components/key-watch";
 import { ThemeSync } from "./components/theme-sync";
 import { UpdateEvents } from "./components/update-events";
+import { WindowThemeSync } from "./components/window-theme-sync";
 import { applyTheme, resolveTheme } from "./lib/theme";
 import { router } from "./router";
 import { hydrateUiStore } from "./store/ui";
@@ -39,6 +41,7 @@ createRoot(container).render(
           <DockSync queryClient={router.options.context.queryClient} client={router.options.context.client} />
         )
       : null}
+    {windowThemeAvailable() ? <WindowThemeSync /> : null}
     <FindShortcut router={router} />
     <KeyWatch />
     <ErrorBoundary>

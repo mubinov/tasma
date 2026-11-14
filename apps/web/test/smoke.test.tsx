@@ -164,6 +164,53 @@ it("sends nothing to the Dock outside the macOS app", async () => {
   expect(posted).toEqual([]);
 });
 
+/** Starts the entry on the light setting, with the window theme available or not. */
+async function startWithWindowTheme(available: boolean) {
+  vi.doMock("../src/api/window-theme", async (importOriginal) => ({
+    ...await importOriginal<typeof import("../src/api/window-theme")>(),
+    windowThemeAvailable: () => available,
+  }));
+  onTestFinished(() => {
+    vi.doUnmock("../src/api/window-theme");
+  });
+
+  const posted: string[] = [];
+  const daemon = fetch;
+  vi.stubGlobal("fetch", (input: string, init?: RequestInit) => {
+    if (input.startsWith("/app/theme")) {
+      posted.push(`${init?.method ?? "GET"} ${input}`);
+      return Promise.resolve(new Response(null, { status: 202 }));
+    }
+
+    return daemon(input, init);
+  });
+  window.localStorage.setItem("tasma.theme", "light");
+  document.body.innerHTML = '<div id="root"></div>';
+
+  await act(async () => {
+    await import("../src/main");
+  });
+  // A send starts after the previous one settles, so a post that would come is in by the next task.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  return posted;
+}
+
+// StrictMode runs the effect of the entry twice, so the setting can arrive twice.
+it("sends the stored theme setting to the window in the macOS app", async () => {
+  const posted = await startWithWindowTheme(true);
+
+  expect(new Set(posted)).toEqual(new Set(["POST /app/theme/light"]));
+});
+
+it("sends nothing to the window outside the macOS app", async () => {
+  const posted = await startWithWindowTheme(false);
+
+  expect(posted).toEqual([]);
+});
+
 /*
  * The theme subscription sits above the router and outside the error boundary,
  * because either one replaces the tree below it when a screen throws. Once the
