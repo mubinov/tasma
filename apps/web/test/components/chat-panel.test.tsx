@@ -330,6 +330,18 @@ it("shows the user text, the agent text and the plan", async () => {
   expect(screen.getByText("Update the imports")).toBeTruthy();
 });
 
+it("shows a line break between the two lines of a user message", async () => {
+  await renderPanel(logOf(chatEntries([userMessage("Rename the module.\nUpdate the imports."), turnEnd()])));
+
+  const paragraph = (await screen.findByText(/^Rename the module\./)).closest("p")!;
+  expect(paragraph.closest('[data-role="user"]')).not.toBeNull();
+  expect([...paragraph.childNodes].map((node) => (node instanceof Text ? node.data : node.nodeName))).toEqual([
+    "Rename the module.",
+    "BR",
+    "Update the imports.",
+  ]);
+});
+
 it("shows a diff in its tool group, with the path in the chat folder and the changed lines", async () => {
   const user = userEvent.setup();
   await renderPanel(logOf(EDIT_LOG));

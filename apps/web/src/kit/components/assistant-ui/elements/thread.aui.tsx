@@ -72,6 +72,9 @@ import {
   type FC,
   type PropsWithChildren,
 } from "react";
+// tasma-edit: a user message shows its line breaks as `<br>`, so a copy keeps them
+import { ChatUserText } from "../../../../components/chat-user-text";
+// tasma-edit end
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 
@@ -767,7 +770,9 @@ const UserMessage: FC = () => {
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
         <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
           <MessagePrimitive.Parts
-            components={{ File: UserFilePart, Image: UserImagePart }}
+            // tasma-edit: a user message shows its line breaks as `<br>`, so a copy keeps them
+            components={{ Text: ChatUserText, File: UserFilePart, Image: UserImagePart }}
+            // tasma-edit end
           />
         </div>
         <div className="aui-user-action-bar-wrapper absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">
