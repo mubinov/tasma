@@ -47,6 +47,9 @@
   }
 }
 
+/* `InputModeSync` records the last input mode as `data-input` on `<html>`. */
+@custom-variant keyboard (&:where([data-input="keyboard"] *));
+
 /*
  * The page's top scroll padding, which the task page's top bar sets. A length,
  * so it computes to px for script, also while the page has the band's alone.

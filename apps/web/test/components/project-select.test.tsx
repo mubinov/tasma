@@ -176,17 +176,19 @@ it("highlights the checked item on open, and another item on the arrow keys, not
   expect(highlighted(listbox)).toEqual([option("ACME")]);
 });
 
-it("marks a hovered item by its background and a highlighted item by the ring the pickers draw", async () => {
+it("marks a hovered item by its background, a highlighted item by the ring the pickers draw after keyboard input and not while the list closes, and shows the arrow cursor", async () => {
   const user = userEvent.setup();
   await renderBoard("/tasks?projects=SAGA");
   await open(user);
 
   expect([...option("ACME").classList]).toEqual(
     expect.arrayContaining([
+      "cursor-default",
       "hover:bg-surface-2",
-      "data-[highlighted]:outline-2",
-      "data-[highlighted]:-outline-offset-2",
-      "data-[highlighted]:outline-focus",
+      "keyboard:not-in-data-[ending-style]:data-[highlighted]:bg-surface-2",
+      "keyboard:not-in-data-[ending-style]:data-[highlighted]:outline-2",
+      "keyboard:not-in-data-[ending-style]:data-[highlighted]:-outline-offset-2",
+      "keyboard:not-in-data-[ending-style]:data-[highlighted]:outline-focus",
     ]),
   );
 });

@@ -148,7 +148,7 @@ it("selects nothing on a press on the trigger, a drag to a label and a release",
   expect(screen.getByRole("listbox")).toBe(listbox);
 });
 
-it("marks a hovered option by its background and a highlighted option by the ring the pickers draw", async () => {
+it("marks a hovered option by its background, a highlighted option by the ring the pickers draw after keyboard input and not while the list closes, and shows the arrow cursor", async () => {
   const user = userEvent.setup();
   await renderBoard("");
   const listbox = await open(user);
@@ -156,10 +156,12 @@ it("marks a hovered option by its background and a highlighted option by the rin
   const [option] = within(listbox).getAllByRole("option");
   expect([...option!.classList]).toEqual(
     expect.arrayContaining([
+      "cursor-default",
       "hover:bg-surface-2",
-      "data-[highlighted]:outline-2",
-      "data-[highlighted]:-outline-offset-2",
-      "data-[highlighted]:outline-focus",
+      "keyboard:not-in-data-[ending-style]:data-[highlighted]:bg-surface-2",
+      "keyboard:not-in-data-[ending-style]:data-[highlighted]:outline-2",
+      "keyboard:not-in-data-[ending-style]:data-[highlighted]:-outline-offset-2",
+      "keyboard:not-in-data-[ending-style]:data-[highlighted]:outline-focus",
     ]),
   );
   expect(option!.className).toBe(PICKER_ITEM_CLASS);

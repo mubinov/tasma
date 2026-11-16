@@ -5,9 +5,12 @@ import { CheckIcon, MagnifyingGlassIcon } from "../lib/icons";
 import { FIELD_BORDER_CLASS, POPUP_CLASS, POSITIONER_CLASS } from "./control-classes";
 
 // The input keeps DOM focus, so the ring marks the highlighted item; it is
-// inset because the scrolling list clips outside it.
+// inset because the scrolling list clips outside it. The highlight shows only
+// after keyboard input: Base UI also highlights the selected item when the
+// mouse opens the popup. It is hidden while the popup closes, because Base UI
+// keeps the highlight until the popup unmounts.
 export const PICKER_ITEM_CLASS
-  = "flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-sm text-text hover:bg-surface-2 data-[highlighted]:bg-surface-2 data-[highlighted]:outline-2 data-[highlighted]:-outline-offset-2 data-[highlighted]:outline-focus";
+  = "flex min-h-8 cursor-default items-center gap-2 rounded-control px-2 py-1 text-sm text-text hover:bg-surface-2 keyboard:not-in-data-[ending-style]:data-[highlighted]:bg-surface-2 keyboard:not-in-data-[ending-style]:data-[highlighted]:outline-2 keyboard:not-in-data-[ending-style]:data-[highlighted]:-outline-offset-2 keyboard:not-in-data-[ending-style]:data-[highlighted]:outline-focus";
 
 /**
  * The check of an item. It keeps its width while unchecked, so the items stand

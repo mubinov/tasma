@@ -17,7 +17,7 @@ export const POPUP_CLASS
 // an item, so the ring is never a hover mark. A mouse press focuses and
 // highlights the item, so the ring is hidden while the button is held.
 export const MENU_ITEM_CLASS
-  = "flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-sm text-text hover:bg-surface-2 data-[highlighted]:bg-surface-2 data-[highlighted]:outline-2 data-[highlighted]:-outline-offset-2 data-[highlighted]:outline-focus data-[highlighted]:active:outline-hidden";
+  = "flex min-h-8 cursor-default items-center gap-2 rounded-control px-2 py-1 text-sm text-text hover:bg-surface-2 data-[highlighted]:bg-surface-2 data-[highlighted]:outline-2 data-[highlighted]:-outline-offset-2 data-[highlighted]:outline-focus data-[highlighted]:active:outline-hidden";
 
 export const MENU_RADIO_ITEM_CLASS = `${MENU_ITEM_CLASS} data-[checked]:text-dim`;
 

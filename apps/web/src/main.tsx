@@ -8,6 +8,7 @@ import { DockSync } from "./components/dock-sync";
 import { ErrorBoundary } from "./components/error-boundary";
 import { FeedSubscriber } from "./components/feed-subscriber";
 import { FindShortcut } from "./components/find-shortcut";
+import { InputModeSync } from "./components/input-mode-sync";
 import { KeyWatch } from "./components/key-watch";
 import { ThemeSync } from "./components/theme-sync";
 import { UpdateEvents } from "./components/update-events";
@@ -44,6 +45,7 @@ createRoot(container).render(
     {windowThemeAvailable() ? <WindowThemeSync /> : null}
     <FindShortcut router={router} />
     <KeyWatch />
+    <InputModeSync />
     <ErrorBoundary>
       <QueryClientProvider client={router.options.context.queryClient}>
         <RouterProvider router={router} />

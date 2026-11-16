@@ -322,6 +322,19 @@ it("notes a key press from the entry, for a screen that mounts after it", async 
   expect(useUiStore.getState().keyPressed).toBe(true);
 });
 
+it("records the last input mode from the entry", async () => {
+  document.body.innerHTML = '<div id="root"></div>';
+
+  await act(async () => {
+    await import("../src/main");
+  });
+
+  fireEvent.keyDown(window, { key: "Tab" });
+  expect(document.documentElement.getAttribute("data-input")).toBe("keyboard");
+  fireEvent.pointerDown(window);
+  expect(document.documentElement.getAttribute("data-input")).toBe("pointer");
+});
+
 it("fails loudly when the document carries no #root", async () => {
   await expect(import("../src/main")).rejects.toThrow("#root");
 });

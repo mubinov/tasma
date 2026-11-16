@@ -41,6 +41,10 @@ it("sets the grab cursor on every element under a dragging root, outside every l
   expect(unlayered(GLOBAL_CSS)).toMatch(/html\.cursor-grabbing \*\s*\{[^}]*cursor:\s*grabbing/);
 });
 
+it("defines the keyboard variant on the input mode that the root records, outside every layer", () => {
+  expect(unlayered(GLOBAL_CSS)).toContain('@custom-variant keyboard (&:where([data-input="keyboard"] *));');
+});
+
 it("draws the focus ring in the focus role, inside a layer so a control can drop it", () => {
   expect(GLOBAL_CSS).toMatch(/:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--color-focus\)[^}]*outline-offset:\s*2px/);
   expect(unlayered(GLOBAL_CSS)).not.toContain(":focus-visible");

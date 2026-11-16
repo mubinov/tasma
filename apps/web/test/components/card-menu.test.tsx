@@ -103,6 +103,10 @@ describe("the items", () => {
     expect(remove?.className).toBe(MENU_ITEM_CLASS);
   });
 
+  it("show the arrow cursor over their text", () => {
+    expect(MENU_ITEM_CLASS.split(" ")).toContain("cursor-default");
+  });
+
   it("name the task in the Delete item, beginning with its visible label", async () => {
     await renderMenu();
     const { menu } = await openFromButton();
