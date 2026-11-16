@@ -6,7 +6,7 @@ The local workflow manager for coding agents.
 
 You define the workflow. Each step of a task runs in a fresh chat, reads the task, and writes its report on the task for the next one.
 
-[![The Tasma board: tasks in columns, and each card shows its workflow step.](https://tasma.dev/screenshots/01-board-light.png)](https://tasma.dev)
+[![The Tasma board: tasks in columns, and each card shows its workflow step.](https://tasma.dev/readme/board.png)](https://tasma.dev)
 
 More at **[tasma.dev](https://tasma.dev)**.
 
