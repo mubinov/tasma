@@ -28,15 +28,24 @@ let indexHtml = "";
 let assets: string[] = [];
 let css = "";
 let js = "";
-const warnings: string[] = [];
+const loggerWarnings: string[] = [];
+const consoleWarnings: string[] = [];
 
 beforeAll(async () => {
   outDir = mkdtempSync(join(tmpdir(), "tasma-web-build-"));
   const logger = createLogger("silent");
   logger.warn = (message) => {
-    warnings.push(message);
+    loggerWarnings.push(message);
   };
-  await build({ root, logLevel: "silent", customLogger: logger, build: { outDir, emptyOutDir: true } });
+  // Tailwind writes the warnings of its CSS optimization to the console, not to the Vite logger.
+  const consoleWarn = vi.spyOn(console, "warn").mockImplementation((message: unknown) => {
+    consoleWarnings.push(String(message));
+  });
+  try {
+    await build({ root, logLevel: "silent", customLogger: logger, build: { outDir, emptyOutDir: true } });
+  } finally {
+    consoleWarn.mockRestore();
+  }
   indexHtml = readFileSync(join(outDir, "index.html"), "utf8");
   assets = readdirSync(join(outDir, "assets"));
   css = assets
@@ -112,7 +121,13 @@ describe("the built bundle", () => {
   });
 
   it("prints no warning for the component the compiler skips on purpose", () => {
-    expect(warnings.filter((message) => message.includes("IncompatibleLibrary"))).toEqual([]);
+    expect(loggerWarnings.filter((message) => message.includes("IncompatibleLibrary"))).toEqual([]);
+  });
+
+  it("keeps the find highlight rules and writes no warning to the console", () => {
+    expect(consoleWarnings).toEqual([]);
+    expect(css).toContain("::highlight(task-find){");
+    expect(css).toContain("::highlight(task-find-current){");
   });
 
   it("lets no chunk import the entry chunk of the highlighter worker, which WebKit would run again", () => {
