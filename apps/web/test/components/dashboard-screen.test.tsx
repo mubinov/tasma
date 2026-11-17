@@ -1687,6 +1687,49 @@ describe("the search and the project in the address", () => {
   });
 });
 
+describe("the record of the address for the back link of a task page", () => {
+  beforeEach(() => {
+    useUiStore.setState({ lastDashboard: null });
+  });
+
+  it("holds the address of the screen at mount", async () => {
+    await renderDashboard(stubDashboard(), "/?project=SAGA&q=parser&task=SAGA-3&chat=2");
+
+    expect(useUiStore.getState().lastDashboard)
+      .toStrictEqual({ project: "SAGA", q: "parser", task: "SAGA-3", chat: "2" });
+  });
+
+  it("follows the address when an item opens another chat", async () => {
+    const user = userEvent.setup();
+    await renderDashboard(stubDashboard(), "/?project=SAGA&q=parser&task=SAGA-3&chat=2");
+
+    await user.click(itemLink("SAGA-3", 1));
+
+    await waitFor(() => {
+      expect(useUiStore.getState().lastDashboard)
+        .toStrictEqual({ project: "SAGA", q: "parser", task: "SAGA-3", chat: "1" });
+    });
+  });
+
+  it("holds no key at mount on the address with no search", async () => {
+    await renderDashboard(stubDashboard(), "/");
+
+    expect(useUiStore.getState().lastDashboard).toStrictEqual({});
+  });
+
+  it("holds the open chat of a project", async () => {
+    await renderDashboard(stubDashboard(), "/?tag=SAGA&chat=2");
+
+    expect(useUiStore.getState().lastDashboard).toStrictEqual({ tag: "SAGA", chat: "2" });
+  });
+
+  it("holds the New chat view", async () => {
+    await renderDashboard(stubDashboard(), "/?project=SAGA&new=1");
+
+    expect(useUiStore.getState().lastDashboard).toStrictEqual({ project: "SAGA", new: "1" });
+  });
+});
+
 describe("the search", () => {
   it("names the field, and stands with the project filter between the hidden heading and the list", async () => {
     await renderDashboard(stubDashboard());

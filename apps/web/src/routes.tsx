@@ -44,7 +44,7 @@ import { WorkflowsScreen } from "./components/workflows-screen";
 import { boardValue, isSeveral, openedBoard, readBoard, workflowNames } from "./lib/board";
 import { newestSetup, SETUP_PATH, setupNeeded } from "./lib/setup-steps";
 import { chatFilterOf } from "./lib/use-chat-filter";
-import { useUiStore } from "./store/ui";
+import { useUiStore, type LastDashboard } from "./store/ui";
 
 /** What every loader and every screen is handed: the cache, and the daemon. */
 export type RouterContext = { queryClient: QueryClient; client: Client };
@@ -107,7 +107,7 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
  * of a project. An address with both `task` and `tag` names no chat. `new` opens
  * the New chat view, and an address that names a chat opens the chat instead.
  */
-type DashboardSearch = { project?: string; q?: string; task?: string; tag?: string; chat?: string; new?: "1" };
+type DashboardSearch = LastDashboard;
 
 /** A tag of the engine. */
 const PROJECT_TAG = /^[A-Z0-9]+$/;

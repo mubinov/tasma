@@ -79,6 +79,9 @@ export type LastBoard = {
   q?: string;
 };
 
+/** The address of the Chats screen. */
+export type LastDashboard = { project?: string; q?: string; task?: string; tag?: string; chat?: string; new?: "1" };
+
 /** A board as a card open left it: its address, where it was scrolled, and the card that was opened. */
 export type BoardReturn = LastBoard & {
   scrollX: number;
@@ -123,9 +126,20 @@ type UiState = {
   boardRestorePending: boolean;
   setBoardReturn: (record: BoardReturn) => void;
   endBoardRestore: () => void;
-  /** The address of the last board shown, where a task page's back link leads. Never persisted. */
+  /**
+   * The address of the last board shown. A task page's back link leads there
+   * while `lastDashboard` is null. Never persisted.
+   */
   lastBoard: LastBoard | null;
+  /** Also clears `lastDashboard`: the board is then the later of the two list screens. */
   setLastBoard: (board: LastBoard) => void;
+  /**
+   * The address of the last Chats screen shown, while Chats is the later of
+   * Chats and the board, with no key that has no value. A task page's back
+   * link leads there. Never persisted.
+   */
+  lastDashboard: LastDashboard | null;
+  setLastDashboard: (address: LastDashboard) => void;
   /** The final columns "Show all" has opened, by `revealedColumnKey`. Never persisted: a reload folds them again. */
   revealedColumns: ReadonlySet<string>;
   revealColumn: (board: string, columnKey: string) => void;
@@ -257,7 +271,11 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
   lastBoard: null,
   setLastBoard: (board) => {
-    set({ lastBoard: board });
+    set({ lastBoard: board, lastDashboard: null });
+  },
+  lastDashboard: null,
+  setLastDashboard: (address) => {
+    set({ lastDashboard: address });
   },
   revealedColumns: new Set<string>(),
   revealColumn: (board, columnKey) => {

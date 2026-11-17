@@ -54,9 +54,10 @@ function isWatchedChat(item: AnyChatListItem, { tag, snapshot }: ChatStartWatch)
 export function DashboardScreen(): ReactNode {
   const { client } = route.useRouteContext();
   const search = route.useSearch();
-  const open = openChatOf(search.task, search.tag, search.chat);
+  const { project, q, task, tag, chat, new: newMark } = search;
+  const open = openChatOf(task, tag, chat);
   const openKey = open === undefined ? undefined : chatKey(open);
-  const newChat = search.new === "1";
+  const newChat = newMark === "1";
   const { data: { data: projects } } = useSuspenseQuery(projectsQuery(client));
   const { requested, applied: latestApplied, failures, announceFailure, failed, failedFields, retry }
     = useChatFilter(client, search, projects);
@@ -118,11 +119,11 @@ export function DashboardScreen(): ReactNode {
     announceChanges(chatListItems(data.pages), data.pages[0]!.data.total);
   }, [data, dataUpdatedAt]);
 
-  function watchStart(tag: string): void {
+  function watchStart(startTag: string): void {
     const known = [...lastResultRef.current!.known.values()];
-    const snapshot = new Set(known.filter((item) => !("task" in item) && item.tag === tag).map(chatKey));
+    const snapshot = new Set(known.filter((item) => !("task" in item) && item.tag === startTag).map(chatKey));
 
-    useUiStore.getState().setChatStartWatch({ tag, snapshot, answeredAt: null });
+    useUiStore.getState().setChatStartWatch({ tag: startTag, snapshot, answeredAt: null });
   }
 
   const sayFailure = useEffectEvent(() => {
@@ -136,6 +137,17 @@ export function DashboardScreen(): ReactNode {
       sayFailure();
     }
   }, [failures]);
+
+  useEffect(() => {
+    useUiStore.getState().setLastDashboard({
+      ...(project === undefined ? {} : { project }),
+      ...(q === undefined ? {} : { q }),
+      ...(task === undefined ? {} : { task }),
+      ...(tag === undefined ? {} : { tag }),
+      ...(chat === undefined ? {} : { chat }),
+      ...(newMark === undefined ? {} : { new: newMark }),
+    });
+  }, [project, q, task, tag, chat, newMark]);
 
   useDocumentTitle(TITLE);
 

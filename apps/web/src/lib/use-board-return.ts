@@ -28,8 +28,8 @@ function focusReturnCard(taskId: string): void {
  * A waiting restore acts only while its record is still the pending one: a
  * card opened meanwhile records a restore of its own.
  *
- * It also keeps the board's address in `lastBoard`, where a task page's back
- * link leads.
+ * It also keeps the board's address in `lastBoard`, which makes the board the
+ * screen that a task page's back link leads to.
  */
 export function useBoardReturn(
   board: string,

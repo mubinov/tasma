@@ -24,7 +24,7 @@ type User = ReturnType<typeof userEvent.setup>;
 
 beforeEach(() => {
   window.localStorage.clear();
-  useUiStore.setState({ boardReturn: null, boardRestorePending: false });
+  useUiStore.setState({ boardReturn: null, boardRestorePending: false, lastDashboard: null });
   useNoticeStore.setState({ notices: [], dismissed: new Map() });
   stubThreadDom();
 });

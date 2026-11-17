@@ -48,6 +48,7 @@ import { useTaskProperties } from "../lib/use-task-properties";
 import { useTopBarLengths } from "../lib/use-top-bar-lengths";
 import { useUnsavedGuard } from "../lib/use-unsaved-guard";
 import { warningCount } from "../lib/warning-count";
+import { NAVIGATION_BY_PATH } from "../navigation";
 import { noticeWords, useNotice } from "../store/notices";
 import { useFindRequest, useUiStore } from "../store/ui";
 import { CommentCard } from "./comment-card";
@@ -108,6 +109,22 @@ const STEP_ACTION_FLOOR = {
   line: "@max-step-floor:data-step-action-shown:gap-1 @max-step-floor:data-step-action-shown:px-2",
   controls: "@max-step-floor:group-data-step-action-shown/top-bar:gap-1",
 } as const;
+
+const BACK_LINK_CLASS = `inline-flex items-center gap-1.5 text-sm text-dim hover:text-text ${FIND_OPEN_WIDTHS.back}`;
+
+const { label: DASHBOARD_LABEL } = NAVIGATION_BY_PATH["/"];
+
+const { label: BOARD_LABEL } = NAVIGATION_BY_PATH["/tasks"];
+
+function BackLabel({ children }: { children: string }): ReactNode {
+  return (
+    <>
+      <ArrowLeftIcon size={16} aria-hidden="true" />
+      {/* At 320 CSS px the word does not fit beside the bar's controls. */}
+      <span className="max-sm:sr-only">{children}</span>
+    </>
+  );
+}
 
 /** The text of the element that is on the screen. */
 function visibleText(element: Element): string {
@@ -480,8 +497,9 @@ export function TaskScreen(): ReactNode {
     enabled: workflowName !== undefined,
   });
   const lastBoard = useUiStore((state) => state.lastBoard);
-  // "Tasks" opens the last board shown when it holds this project, else this
-  // project's board, unfiltered.
+  const lastDashboard = useUiStore((state) => state.lastDashboard);
+  // Without a Chats address, the back link and Delete lead to the last board
+  // shown when it holds this project, else to this project's board, unfiltered.
   const boardSearch = lastBoard !== null && boardHolds(lastBoard.projects, tag) ? lastBoard : { projects: tag };
   const { config } = project;
   const workflow = workflowRead === null ? null : workflowRead?.data;
@@ -578,14 +596,19 @@ export function TaskScreen(): ReactNode {
   const deleteFocusRef = useRef<FinalFocus>(null);
 
   /**
-   * Closes the dialog, leaves for the board and starts the write, in that
-   * order. The route change moves focus, and the comment drafts of the page go
-   * with the task, so they ask nothing.
+   * Closes the dialog, leaves for the screen of the back link and starts the
+   * write, in that order. The route change moves focus, and the comment drafts
+   * of the page go with the task, so they ask nothing.
    */
   function confirmDelete(): void {
     deleteFocusRef.current = "keep";
     setDeleteAsked(false);
-    void navigate({ to: "/tasks", search: boardSearch, replace: true, ignoreBlocker: true });
+    if (lastDashboard === null) {
+      void navigate({ to: "/tasks", search: boardSearch, replace: true, ignoreBlocker: true });
+    } else {
+      const search = lastDashboard.task === id ? { ...lastDashboard, task: undefined, chat: undefined } : lastDashboard;
+      void navigate({ to: "/", search, replace: true, ignoreBlocker: true });
+    }
     sendDelete({ id });
   }
 
@@ -646,15 +669,17 @@ export function TaskScreen(): ReactNode {
           data-step-action-shown={actionShows ? "" : undefined}
           className={`group/top-bar flex h-top-bar items-center gap-4 px-6 sm:px-10 ${FIND_OPEN_FLOOR.line} ${STEP_ACTION_FLOOR.line}`}
         >
-          <Link
-            to="/tasks"
-            search={boardSearch}
-            className={`inline-flex items-center gap-1.5 text-sm text-dim hover:text-text ${FIND_OPEN_WIDTHS.back}`}
-          >
-            <ArrowLeftIcon size={16} aria-hidden="true" />
-            {/* At 320 CSS px the word does not fit beside the bar's controls. */}
-            <span className="max-sm:sr-only">Tasks</span>
-          </Link>
+          {lastDashboard === null
+            ? (
+                <Link to="/tasks" search={boardSearch} className={BACK_LINK_CLASS}>
+                  <BackLabel>{BOARD_LABEL}</BackLabel>
+                </Link>
+              )
+            : (
+                <Link to="/" search={lastDashboard} className={BACK_LINK_CLASS}>
+                  <BackLabel>{DASHBOARD_LABEL}</BackLabel>
+                </Link>
+              )}
           {/* It repeats the h1, so a screen reader skips it. */}
           <span
             aria-hidden="true"
@@ -901,7 +926,10 @@ export function TaskScreen(): ReactNode {
           finalFocus={restartFocusRef}
         />
       )}
-      {/* A sent delete leaves the page, which stays until the board commits: the task read can refuse until then. */}
+      {/*
+        A sent delete leaves the page, which stays until the screen of the back
+        link commits: the task read can refuse until then.
+      */}
       {deleteUnsent && <TaskRefusalNotice tag={tag} id={taskId} />}
     </div>
   );

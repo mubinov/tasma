@@ -31,6 +31,7 @@ beforeEach(() => {
     boardReturn: null,
     boardRestorePending: false,
     lastBoard: null,
+    lastDashboard: null,
     revealedColumns: new Set(),
     editRequest: null,
     startedChat: null,
@@ -387,6 +388,42 @@ describe("the last board shown", () => {
     useUiStore.getState().setLastBoard({ projects: "DELTA" });
 
     expect(useUiStore.getState().boardRestorePending).toBe(true);
+  });
+});
+
+describe("the last Chats address shown", () => {
+  it("starts on null", () => {
+    expect(useUiStore.getInitialState().lastDashboard).toBeNull();
+    expect(useUiStore.getState().lastDashboard).toBeNull();
+  });
+
+  it("is replaced by each write, and leaves the last board as it is", () => {
+    useUiStore.getState().setLastBoard({ projects: "DELTA", q: "parser" });
+
+    useUiStore.getState().setLastDashboard({ project: "SAGA", task: "SAGA-3", chat: "2" });
+    useUiStore.getState().setLastDashboard({ q: "parser", tag: "DELTA", chat: "1" });
+
+    expect(useUiStore.getState().lastDashboard).toStrictEqual({ q: "parser", tag: "DELTA", chat: "1" });
+    expect(useUiStore.getState().lastBoard).toEqual({ projects: "DELTA", q: "parser" });
+  });
+
+  it("is cleared by a write of the last board", () => {
+    useUiStore.getState().setLastDashboard({ project: "SAGA" });
+
+    useUiStore.getState().setLastBoard({ projects: "SAGA" });
+
+    expect(useUiStore.getState().lastDashboard).toBeNull();
+  });
+
+  it("writes nothing to storage, and is no part of what a reload hydrates", () => {
+    const written: [string, string][] = [];
+    setPreferenceStorage({ read: () => null, write: (key, value) => void written.push([key, value]) });
+
+    useUiStore.getState().setLastDashboard({ project: "SAGA", new: "1" });
+
+    expect(written).toEqual([]);
+    expect(hydrateUiStore()).not.toHaveProperty("lastDashboard");
+    expect(useUiStore.getState().lastDashboard).toStrictEqual({ project: "SAGA", new: "1" });
   });
 });
 

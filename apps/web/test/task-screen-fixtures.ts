@@ -100,8 +100,13 @@ export function backLink(): HTMLElement {
   return within(screen.getByRole("main")).getByRole("link", { name: "Tasks" });
 }
 
+/** The back link while the last list screen shown is Chats. The sidebar holds a link of the same name. */
+export function chatsBackLink(): HTMLElement {
+  return within(screen.getByRole("main")).getByRole("link", { name: "Chats" });
+}
+
 export function topBar(): HTMLElement {
-  return backLink().parentElement!.parentElement!;
+  return within(screen.getByRole("main")).getByRole("link", { name: /^(?:Tasks|Chats)$/ }).parentElement!.parentElement!;
 }
 
 export function commentCard(title: string): HTMLElement {

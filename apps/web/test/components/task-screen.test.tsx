@@ -7,6 +7,7 @@ import { FIND_OPEN_WIDTHS } from "../../src/components/find-open-classes";
 import { formatClock } from "../../src/lib/clock";
 import { useNoticeStore } from "../../src/store/notices";
 import { useUiStore } from "../../src/store/ui";
+import { chatsPath, pageReply } from "../dashboard-fixtures";
 import { frame } from "../setup/notice-store";
 import {
   countReads,
@@ -27,6 +28,7 @@ import {
   TASK_PATH,
   backLink,
   caret,
+  chatsBackLink,
   comment,
   commentCard,
   daemon,
@@ -56,6 +58,7 @@ beforeEach(() => {
     boardReturn: null,
     boardRestorePending: false,
     lastBoard: null,
+    lastDashboard: null,
     revealedColumns: new Set(),
   });
   useNoticeStore.setState({ notices: [], dismissed: new Map() });
@@ -181,6 +184,33 @@ describe("the page", () => {
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
 
     expect(backLink().getAttribute("href")).toBe("/tasks?projects=SAGA");
+  });
+
+  it("returns to the last Chats address shown through the back link", async () => {
+    const user = userEvent.setup();
+    useUiStore.setState({ lastDashboard: { project: "SAGA", task: "SAGA-3", chat: "2" } });
+    const { transport } = daemon({ [chatsPath({ project: "SAGA" })]: pageReply([]) });
+    const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    const back = chatsBackLink();
+    expect(back.getAttribute("href")).toBe("/?project=SAGA&task=SAGA-3&chat=2");
+    expect(within(back).getByText("Chats").className).toBe("max-sm:sr-only");
+    expect(back.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect(back.hasAttribute("aria-current")).toBe(false);
+    expect(within(screen.getByRole("main")).queryByRole("link", { name: "Tasks" })).toBeNull();
+
+    await user.click(back);
+
+    expect(router.state.location.pathname).toBe("/");
+    expect(router.state.location.search).toEqual({ project: "SAGA", task: "SAGA-3", chat: "2" });
+  });
+
+  it("leads to the last Chats address over the last board", async () => {
+    useUiStore.setState({ lastBoard: { projects: "SAGA", labels: "web" }, lastDashboard: { q: "parser" } });
+    const { transport } = daemon();
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    expect(chatsBackLink().getAttribute("href")).toBe("/?q=parser");
   });
 
   it("mutes a priority that is not the top one, and shows a stale step as its name alone", async () => {
@@ -1203,7 +1233,14 @@ describe("the notice for a refused read", () => {
     expect(useNoticeStore.getState().notices.filter(({ key }) => key === "task-refusal:SAGA-3")).toEqual([]);
   });
 
-  it("opens no notice when the delete of the page makes the task read refuse before the board replaces the page", async () => {
+  it.each([
+    { target: "the board", lastDashboard: null, pathname: "/tasks" },
+    { target: "Chats", lastDashboard: {}, pathname: "/" },
+  ])("opens no notice when the delete of the page makes the task read refuse before $target replaces the page", async ({
+    lastDashboard,
+    pathname,
+  }) => {
+    useUiStore.setState({ lastDashboard });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     const board = heldBack();
     const stub = daemon({ [`DELETE ${TASK_PATH}`]: successReply({ id: "SAGA-3" }) });
@@ -1229,7 +1266,7 @@ describe("the notice for a refused read", () => {
 
     board.answer(successReply([{ tag: "SAGA", name: "Saga", path: "/repos/saga" }]));
     await vi.waitFor(() => {
-      expect(router.state.location.pathname).toBe("/tasks");
+      expect(router.state.location.pathname).toBe(pathname);
     });
   });
 
@@ -1385,6 +1422,43 @@ describe("deleting the task", () => {
     await vi.waitFor(() => {
       expect(deletes(requests)).toBe(1);
     });
+  });
+
+  it("replaces the page with the last Chats address without the chat of the deleted task", async () => {
+    const user = userEvent.setup();
+    useUiStore.setState({
+      lastBoard: { projects: "SAGA" },
+      lastDashboard: { project: "SAGA", task: "SAGA-3", chat: "2" },
+    });
+    const { transport, requests } = daemon({ [DELETE]: successReply({ id: "SAGA-3" }), [chatsPath({ project: "SAGA" })]: pageReply([]) });
+    const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    const entries = router.history.length;
+
+    await user.click(within(await askDelete(user)).getByRole("button", { name: "Delete" }));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await vi.waitFor(() => {
+      expect(router.state.location.pathname).toBe("/");
+    });
+    expect(router.state.location.search).toEqual({ project: "SAGA" });
+    expect(router.history.length).toBe(entries);
+    await vi.waitFor(() => {
+      expect(deletes(requests)).toBe(1);
+    });
+  });
+
+  it("keeps the open chat of another task in the last Chats address", async () => {
+    const user = userEvent.setup();
+    useUiStore.setState({ lastDashboard: { task: "SAGA-5", chat: "1" } });
+    const { transport } = daemon({ [DELETE]: successReply({ id: "SAGA-3" }) });
+    const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    await user.click(within(await askDelete(user)).getByRole("button", { name: "Delete" }));
+
+    await vi.waitFor(() => {
+      expect(router.state.location.pathname).toBe("/");
+    });
+    expect(router.state.location.search).toEqual({ task: "SAGA-5", chat: "1" });
   });
 
   it("leaves without asking about a comment draft, which goes with the task", async () => {

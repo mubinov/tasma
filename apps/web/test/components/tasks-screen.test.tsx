@@ -41,6 +41,7 @@ beforeEach(() => {
     boardReturn: null,
     boardRestorePending: false,
     lastBoard: null,
+    lastDashboard: null,
     revealedColumns: new Set(),
   });
   useNoticeStore.setState({ notices: [], dismissed: new Map() });
@@ -82,6 +83,15 @@ describe("the address", () => {
 
     expect(router.state.location.search).toEqual({ projects: "SAGA" });
     expect(screen.getByRole("combobox", { name: "Project Saga SAGA" })).toBeTruthy();
+  });
+
+  it("becomes the last list screen shown, over Chats", async () => {
+    useUiStore.setState({ lastDashboard: { project: "SAGA", task: "SAGA-3", chat: "2" } });
+    const { transport } = daemon();
+    await renderWithRouter("/tasks?projects=SAGA", transport);
+
+    expect(useUiStore.getState().lastBoard).toEqual({ projects: "SAGA" });
+    expect(useUiStore.getState().lastDashboard).toBeNull();
   });
 
   it.each([
