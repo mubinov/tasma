@@ -24,6 +24,8 @@
     background-color: var(--color-bg);
     color: var(--color-text);
     scroll-padding-top: var(--title-band);
+    /* In a bounce past the page edge, the macOS webview shows white, not the page colour. */
+    overscroll-behavior: none;
   }
 
   /*

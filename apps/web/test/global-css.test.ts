@@ -75,6 +75,10 @@ it("gives the page a top scroll padding of the band on every screen, inside a la
   expect(unlayered(GLOBAL_CSS)).not.toContain("scroll-padding-top");
 });
 
+it("stops the bounce of the page at its edges", () => {
+  expect(GLOBAL_CSS).toMatch(/@layer base\s*\{\s*html\s*\{[^}]*overscroll-behavior:\s*none;/);
+});
+
 it("gives a browser no band and no width for the window buttons", () => {
   expect(THEME_CSS).toMatch(/:root\s*\{[^}]*--title-band:\s*0px;[^}]*--title-controls:\s*0px;/);
 });
