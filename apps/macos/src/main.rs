@@ -22,6 +22,7 @@ mod external;
 mod folder;
 mod geometry;
 mod install;
+mod links;
 mod log;
 mod menu;
 mod protocol;
@@ -311,6 +312,7 @@ fn main() {
         .manage(shell)
         .manage(zoom::Level::default())
         .manage(dock::Dock::default())
+        .manage(links::Links::default())
         .on_menu_event(|app, event| menu::dispatch(app, event.id()))
         // Asynchronous, so a daemon call never holds the main thread.
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |context, request, responder| {

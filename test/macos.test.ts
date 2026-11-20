@@ -15,9 +15,11 @@ import {
   DAEMON_PATH_PREFIX,
   DOCK_ROUTE,
   FOLDER_ROUTE,
+  LINKS_ROUTE,
   THEME_ROUTE,
   UPDATE_EVENT,
 } from "../apps/web/src/api/paths.js";
+import { DEFAULT_LINK_SETTINGS } from "../apps/web/src/lib/link-settings.js";
 import { THEME_PREFERENCES } from "../apps/web/src/lib/theme-preference.js";
 import { readManifest, workspaceRoot } from "../workspace.js";
 
@@ -179,6 +181,15 @@ describe("the macOS shell", () => {
   it("names the theme settings the board stores", () => {
     expect(["LIGHT", "DARK", "SYSTEM"].map((name) => rustConstant("theme.rs", name)).toSorted())
       .toEqual([...THEME_PREFERENCES].toSorted());
+  });
+
+  it("answers the link settings route the board asks", () => {
+    expect(rustConstant("links.rs", "PATH")).toBe(LINKS_ROUTE);
+  });
+
+  it("reads the link settings fields the board sends", () => {
+    expect(["BROWSER", "DEV_BROWSER", "DEV_DOMAINS", "FILE_APP"].map((name) => rustConstant("links.rs", name)).toSorted())
+      .toEqual(Object.keys(DEFAULT_LINK_SETTINGS).toSorted());
   });
 
   it("installs an update only of its own bundle identifier", () => {

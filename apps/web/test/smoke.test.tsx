@@ -211,6 +211,61 @@ it("sends nothing to the window outside the macOS app", async () => {
   expect(posted).toEqual([]);
 });
 
+const STORED_LINKS = {
+  browser: "com.example.browser",
+  devBrowser: "com.example.dev-browser",
+  devDomains: ["example.test"],
+  fileApp: "com.example.editor",
+};
+
+/**
+ * Starts the entry on stored link settings, in the macOS app or not. In the app
+ * the Dock and the window syncs send too; only the link posts are recorded.
+ */
+async function startWithLinks(available: boolean) {
+  vi.doMock("../src/api/app", () => ({ appAvailable: () => available }));
+  onTestFinished(() => {
+    vi.doUnmock("../src/api/app");
+  });
+
+  const posted: { request: string; body: unknown }[] = [];
+  const daemon = fetch;
+  vi.stubGlobal("fetch", (input: string, init?: RequestInit) => {
+    if (input.startsWith("/app/links")) {
+      posted.push({ request: `${init?.method ?? "GET"} ${input}`, body: init?.body });
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+
+    return daemon(input, init);
+  });
+  window.localStorage.setItem("tasma.links", JSON.stringify(STORED_LINKS));
+  document.body.innerHTML = '<div id="root"></div>';
+
+  await act(async () => {
+    await import("../src/main");
+  });
+  // A send starts after the previous one settles, so a post that would come is in by the next task.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  return posted;
+}
+
+// StrictMode runs the effect of the entry twice, so the settings can arrive twice.
+it("sends the stored link settings to the app at start in the macOS app", async () => {
+  const posted = await startWithLinks(true);
+
+  expect(new Set(posted.map(({ request }) => request))).toEqual(new Set(["POST /app/links"]));
+  expect(new Set(posted.map(({ body }) => body))).toEqual(new Set([JSON.stringify(STORED_LINKS)]));
+});
+
+it("sends no link settings outside the macOS app", async () => {
+  const posted = await startWithLinks(false);
+
+  expect(posted).toEqual([]);
+});
+
 /*
  * The theme subscription sits above the router and outside the error boundary,
  * because either one replaces the tree below it when a screen throws. Once the

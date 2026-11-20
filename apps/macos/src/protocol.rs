@@ -15,6 +15,7 @@ use tauri::{AppHandle, Runtime};
 use crate::daemon::Daemon;
 use crate::dock;
 use crate::folder;
+use crate::links;
 use crate::theme;
 use crate::update::{self, Updater};
 
@@ -148,6 +149,9 @@ pub async fn serve<R: Runtime>(
         Target::App(path) if path == folder::PATH => folder::serve(app, request.method()).await,
         Target::App(path) if dock::handles(&path) => dock::serve(app, request.method(), &path),
         Target::App(path) if theme::handles(&path) => theme::serve(app, request.method(), &path),
+        Target::App(path) if links::handles(&path) => {
+            links::serve(app, request.method(), &path, request.body())
+        }
         Target::App(path) => update::serve(updater, request.method(), &path),
         Target::Asset(path) => asset(app, &path),
     }
@@ -478,5 +482,10 @@ mod tests {
             "the-theme-route",
             "tasma-app://localhost/app/theme/dark",
         );
+    }
+
+    #[test]
+    fn the_links_route_is_served_by_the_links_module() {
+        assert_a_get_is_refused_by_its_module("the-links-route", "tasma-app://localhost/app/links");
     }
 }

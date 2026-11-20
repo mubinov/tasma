@@ -1,9 +1,10 @@
 import type { AgentState } from "@tasma/protocol";
-import { APP_PATH_PREFIX, APP_SCHEME, DOCK_ROUTE } from "./paths";
+import { appAvailable } from "./app";
+import { APP_PATH_PREFIX, DOCK_ROUTE } from "./paths";
 
 /** True only when the page runs in the macOS app, on the tasma-app: origin. */
 export function dockAvailable(): boolean {
-  return location.protocol === `${APP_SCHEME}:`;
+  return appAvailable();
 }
 
 const DOCK_STATES: Record<AgentState, true> = { "off": true, "running": true, "needs-you": true };

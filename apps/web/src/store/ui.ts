@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useState } from "react";
 import { create } from "zustand";
 import { ALL_PROJECTS, boardValue, readBoard, splitList } from "../lib/board";
+import { DEFAULT_LINK_SETTINGS, type LinkSettings, readLinkSettings } from "../lib/link-settings";
 import { THEME_PREFERENCES, type ThemePreference } from "../lib/theme-preference";
 
 export { THEME_PREFERENCES };
@@ -18,6 +19,7 @@ const TASKS_PROJECT_STORAGE_KEY = "tasma.tasks.project";
 const CREATE_PROJECT_STORAGE_KEY = "tasma.tasks.createProject";
 const CHAT_PROJECT_STORAGE_KEY = "tasma.chats.startProject";
 const SKILL_CHECK_STORAGE_KEY = "tasma.setup.skillCheck";
+const LINKS_STORAGE_KEY = "tasma.links";
 
 const PROJECT_TAG = /^[A-Z0-9]+$/;
 
@@ -102,6 +104,8 @@ type UiState = {
   setThemePreference: (preference: ThemePreference) => void;
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (collapsed: boolean) => void;
+  linkSettings: LinkSettings;
+  setLinkSettings: (settings: LinkSettings) => void;
   /** The board value of the last board shown: one tag, a comma list of tags, or `all`. */
   lastTasksProject: string | null;
   setLastTasksProject: (board: string) => void;
@@ -225,6 +229,11 @@ export const useUiStore = create<UiState>((set, get) => ({
   setSidebarCollapsed: (collapsed) => {
     storage.write(SIDEBAR_STORAGE_KEY, collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED);
     set({ sidebarCollapsed: collapsed });
+  },
+  linkSettings: DEFAULT_LINK_SETTINGS,
+  setLinkSettings: (settings) => {
+    storage.write(LINKS_STORAGE_KEY, JSON.stringify(settings));
+    set({ linkSettings: settings });
   },
   lastTasksProject: null,
   setLastTasksProject: (board) => {
@@ -404,7 +413,20 @@ export type HydratedUi = {
   lastCreateProject: string | null;
   lastChatProject: string | null;
   skillCheckStopped: boolean;
+  linkSettings: LinkSettings;
 };
+
+function readStoredLinks(stored: string | null): LinkSettings {
+  if (stored === null) {
+    return DEFAULT_LINK_SETTINGS;
+  }
+
+  try {
+    return readLinkSettings(JSON.parse(stored));
+  } catch {
+    return DEFAULT_LINK_SETTINGS;
+  }
+}
 
 function readStoredBoard(stored: string | null): string | null {
   const value = stored ?? "";
@@ -428,6 +450,7 @@ export function hydrateUiStore(): HydratedUi {
   const lastCreateProject = readStoredTag(storage.read(CREATE_PROJECT_STORAGE_KEY));
   const lastChatProject = readStoredTag(storage.read(CHAT_PROJECT_STORAGE_KEY));
   const skillCheckStopped = storage.read(SKILL_CHECK_STORAGE_KEY) === SKILL_CHECK_STOPPED;
+  const linkSettings = readStoredLinks(storage.read(LINKS_STORAGE_KEY));
   const hydrated = {
     themePreference,
     sidebarCollapsed,
@@ -435,6 +458,7 @@ export function hydrateUiStore(): HydratedUi {
     lastCreateProject,
     lastChatProject,
     skillCheckStopped,
+    linkSettings,
   };
 
   useUiStore.setState(hydrated);

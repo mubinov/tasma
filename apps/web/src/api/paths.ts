@@ -27,5 +27,8 @@ export const DOCK_ROUTE = "/dock";
 /** The window appearance's route under `APP_PATH_PREFIX`. */
 export const THEME_ROUTE = "/theme";
 
+/** The link settings' route under `APP_PATH_PREFIX`. */
+export const LINKS_ROUTE = "/links";
+
 /** The event the macOS app dispatches on the window when the update changes. */
 export const UPDATE_EVENT = "tasma:update";

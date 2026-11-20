@@ -1,5 +1,6 @@
 import { useUiStore } from "../store/ui";
-import { APP_PATH_PREFIX, APP_SCHEME, FOLDER_ROUTE } from "./paths";
+import { appAvailable } from "./app";
+import { APP_PATH_PREFIX, FOLDER_ROUTE } from "./paths";
 
 /** The dialog is not available, the app refused, or the reply is not one the app sends. */
 export class FolderDialogError extends Error {
@@ -11,7 +12,7 @@ export class FolderDialogError extends Error {
 
 /** True only when the page runs in the macOS app, on the tasma-app: origin. */
 export function folderDialogAvailable(): boolean {
-  return location.protocol === `${APP_SCHEME}:`;
+  return appAvailable();
 }
 
 const UNKNOWN_REPLY = "The app answered the folder request with a reply it does not send.";

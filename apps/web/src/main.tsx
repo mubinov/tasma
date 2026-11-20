@@ -2,6 +2,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { appAvailable } from "./api/app";
 import { dockAvailable } from "./api/dock";
 import { windowThemeAvailable } from "./api/window-theme";
 import { ContextSelectGuard } from "./components/context-select-guard";
@@ -11,6 +12,7 @@ import { FeedSubscriber } from "./components/feed-subscriber";
 import { FindShortcut } from "./components/find-shortcut";
 import { InputModeSync } from "./components/input-mode-sync";
 import { KeyWatch } from "./components/key-watch";
+import { LinkSettingsSync } from "./components/link-settings-sync";
 import { ThemeSync } from "./components/theme-sync";
 import { UpdateEvents } from "./components/update-events";
 import { WindowThemeSync } from "./components/window-theme-sync";
@@ -44,6 +46,7 @@ createRoot(container).render(
         )
       : null}
     {windowThemeAvailable() ? <WindowThemeSync /> : null}
+    {appAvailable() ? <LinkSettingsSync /> : null}
     <FindShortcut router={router} />
     <KeyWatch />
     <InputModeSync />

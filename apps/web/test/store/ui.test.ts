@@ -1,5 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_LINK_SETTINGS } from "../../src/lib/link-settings";
 import {
   browserPreferenceStorage,
   hydrateUiStore,
@@ -17,12 +18,14 @@ const TASKS_PROJECT_KEY = "tasma.tasks.project";
 const CREATE_PROJECT_KEY = "tasma.tasks.createProject";
 const SKILL_CHECK_KEY = "tasma.setup.skillCheck";
 const CHAT_PROJECT_KEY = "tasma.chats.startProject";
+const LINKS_KEY = "tasma.links";
 
 beforeEach(() => {
   window.localStorage.clear();
   setPreferenceStorage(browserPreferenceStorage);
   useUiStore.setState({
     themePreference: "system",
+    linkSettings: DEFAULT_LINK_SETTINGS,
     sidebarCollapsed: false,
     lastTasksProject: null,
     lastCreateProject: null,
@@ -53,6 +56,45 @@ describe("the project of the last new chat", () => {
     window.localStorage.setItem(CHAT_PROJECT_KEY, "not a tag");
 
     expect(hydrateUiStore().lastChatProject).toBeNull();
+  });
+});
+
+describe("the link settings", () => {
+  const SETTINGS = {
+    browser: "com.example.browser",
+    devBrowser: "com.example.dev-browser",
+    devDomains: ["example.test"],
+    fileApp: "com.example.editor",
+  };
+
+  it("start on the defaults", () => {
+    expect(useUiStore.getInitialState().linkSettings).toEqual(DEFAULT_LINK_SETTINGS);
+  });
+
+  it("are stored under their own key and hydrated", () => {
+    useUiStore.getState().setLinkSettings(SETTINGS);
+
+    expect(useUiStore.getState().linkSettings).toEqual(SETTINGS);
+    expect(window.localStorage.getItem(LINKS_KEY)).toBe(JSON.stringify(SETTINGS));
+    useUiStore.setState({ linkSettings: DEFAULT_LINK_SETTINGS });
+    expect(hydrateUiStore().linkSettings).toEqual(SETTINGS);
+    expect(useUiStore.getState().linkSettings).toEqual(SETTINGS);
+  });
+
+  it("hydrate to the defaults when nothing is stored", () => {
+    expect(hydrateUiStore().linkSettings).toEqual(DEFAULT_LINK_SETTINGS);
+  });
+
+  it("hydrate to the defaults from stored text that is not JSON", () => {
+    window.localStorage.setItem(LINKS_KEY, "{browser");
+
+    expect(hydrateUiStore().linkSettings).toEqual(DEFAULT_LINK_SETTINGS);
+  });
+
+  it("keep the other fields when one stored field is invalid", () => {
+    window.localStorage.setItem(LINKS_KEY, JSON.stringify({ ...SETTINGS, devDomains: "example.test" }));
+
+    expect(hydrateUiStore().linkSettings).toEqual({ ...SETTINGS, devDomains: [] });
   });
 });
 
@@ -128,6 +170,7 @@ describe("the ui store", () => {
       lastCreateProject: null,
       lastChatProject: null,
       skillCheckStopped: false,
+      linkSettings: DEFAULT_LINK_SETTINGS,
     });
   });
 
@@ -160,6 +203,7 @@ describe("the ui store", () => {
       lastCreateProject: null,
       lastChatProject: null,
       skillCheckStopped: false,
+      linkSettings: DEFAULT_LINK_SETTINGS,
     });
     useUiStore.getState().setThemePreference("light");
     useUiStore.getState().setSidebarCollapsed(false);
@@ -357,6 +401,7 @@ describe("the restore a card open asks for", () => {
       lastCreateProject: null,
       lastChatProject: null,
       skillCheckStopped: false,
+      linkSettings: DEFAULT_LINK_SETTINGS,
     });
     expect(useUiStore.getState().lastBoard).toEqual({ projects: "DELTA,SAGA", labels: "web" });
   });

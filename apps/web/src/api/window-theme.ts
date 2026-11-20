@@ -1,9 +1,10 @@
 import type { ThemePreference } from "../lib/theme-preference";
-import { APP_PATH_PREFIX, APP_SCHEME, THEME_ROUTE } from "./paths";
+import { appAvailable } from "./app";
+import { APP_PATH_PREFIX, THEME_ROUTE } from "./paths";
 
 /** True only when the page runs in the macOS app, on the tasma-app: origin. */
 export function windowThemeAvailable(): boolean {
-  return location.protocol === `${APP_SCHEME}:`;
+  return appAvailable();
 }
 
 let lastSend: Promise<void> = Promise.resolve();
