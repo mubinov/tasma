@@ -9,6 +9,7 @@
 //! `app.windows` empty every property below is a builder call. A property
 //! written as a configuration key instead is read by nothing.
 
+mod accounts;
 mod alert;
 mod backspace;
 mod command;
@@ -138,8 +139,8 @@ fn may_navigate(url: &Url, dev_server: Option<&Url>) -> bool {
     dev_server.is_some_and(|dev_server| dev_server.origin() == url.origin())
 }
 
-/// The window's navigation policy: its own origin loads in the window, a web or
-/// mail link goes to `open`, and nothing else goes anywhere.
+/// The window's navigation policy: its own origin loads in the window, a web,
+/// mail or editor link goes to `open`, and nothing else goes anywhere.
 ///
 /// A click on a `target="_blank"` link reaches this first, and WebKit asks
 /// `new_window` only when this returns true. "Open Link" in the context menu
@@ -156,8 +157,8 @@ fn navigate(url: &Url, dev_server: Option<&Url>, open: impl Fn(&Url)) -> bool {
     false
 }
 
-/// The window's new-window policy: a web or mail link goes to `open`, and no
-/// second window ever opens.
+/// The window's new-window policy: a web, mail or editor link goes to `open`,
+/// and no second window ever opens.
 fn new_window<R: Runtime>(url: &Url, open: impl Fn(&Url)) -> NewWindowResponse<R> {
     if external::opens_outside(url) {
         open(url);

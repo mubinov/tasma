@@ -1,9 +1,10 @@
 import type { Heading, Nodes, Parents, PhrasingContent, Root, RootContent, Text } from "mdast";
 import type { ExtraProps } from "react-markdown";
+import { EDITOR_SCHEMES, LINK_SCHEMES, linkKind } from "./link-kind";
 
 const FLOW_PARENTS = new Set<Parents["type"]>(["root", "blockquote", "listItem", "footnoteDefinition"]);
 
-const LINK_SCHEMES = new Set(["http:", "https:", "mailto:"]);
+const KEPT_SCHEMES = new Set([...LINK_SCHEMES, ...EDITOR_SCHEMES, "tasma:"]);
 
 const IMAGE_SCHEMES = new Set(["http:", "https:"]);
 
@@ -257,13 +258,14 @@ function removeBidiOverrides(node: HastContent): void {
 }
 
 /**
- * The absolute URL a link keeps, or `undefined` to drop it: only `http:`,
- * `https:` and `mailto:` are kept. A relative or `#…` URL is dropped too,
+ * The absolute URL a link keeps, or `undefined` to drop it: only a URL that
+ * `linkKind` gives a kind is kept. A relative or `#…` URL is dropped too,
  * because the URL hash holds the route.
  */
 export function markdownUrl(url: string): string | undefined {
   // The markdown parser percent-encodes the brackets of an IPv6 host.
-  return allowedUrl(url.replace(/^([a-z][\d+.a-z-]*:\/\/(?:[^/?#@]*@)?)%5B([^/?#]*?)%5D/i, "$1[$2]"), LINK_SCHEMES);
+  const kept = allowedUrl(url.replace(/^([a-z][\d+.a-z-]*:\/\/(?:[^/?#@]*@)?)%5B([^/?#]*?)%5D/i, "$1[$2]"), KEPT_SCHEMES);
+  return kept !== undefined && linkKind(kept) !== undefined ? kept : undefined;
 }
 
 /**

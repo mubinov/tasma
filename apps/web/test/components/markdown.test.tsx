@@ -1,4 +1,12 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+} from "@tanstack/react-router";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Markdown } from "../../src/components/markdown";
@@ -20,6 +28,27 @@ function renderMarkdown(text: string, base: HeadingBase = 2, title?: string): HT
 
 function classOf(element: Element | null | undefined): string | null | undefined {
   return element?.getAttribute("class");
+}
+
+/** Renders the text on `/` and on the task page, as the chats, task bodies and comments do. */
+async function renderInRouter(text: string, path = "/") {
+  const view = () => <Markdown text={text} base={2} />;
+  const rootRoute = createRootRoute({ component: Outlet });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([
+      createRoute({ getParentRoute: () => rootRoute, path: "/", component: view }),
+      createRoute({ getParentRoute: () => rootRoute, path: "/tasks/$project/$task", component: view }),
+    ]),
+    history: createMemoryHistory({ initialEntries: [path] }),
+  });
+
+  await router.load();
+  render(<RouterProvider router={router} />);
+  return router;
+}
+
+function descriptionOf(link: HTMLElement): string | undefined {
+  return document.getElementById(link.getAttribute("aria-describedby") ?? "")?.textContent;
 }
 
 afterEach(() => {
@@ -142,7 +171,20 @@ describe("a link", () => {
     expect(link.querySelector(".sr-only")).toBeNull();
   });
 
-  it.each(["javascript:alert(1)", "relative/path", "#x", "http:/api/items", "http:page.invalid/../daemon/items", "http:/page.invalid/../items"])(
+  it.each([
+    "javascript:alert(1)",
+    "relative/path",
+    "#x",
+    "http:/api/items",
+    "http:page.invalid/../daemon/items",
+    "http:/page.invalid/../items",
+    "foo://x",
+    "vscode://vscode.git/clone?url=https://example.com/r.git",
+    "cursor://anysphere.cursor-deeplink/mcp/install?name=x",
+    "vscode://file/Users/x/proj/",
+    "vscode://file/Users/x/w.code-workspace",
+    "tasma://project/AB",
+  ])(
     "to %s renders its text with no element",
     (url) => {
       const wrapper = renderMarkdown(`[the text](${url})`);
@@ -289,6 +331,102 @@ describe("a link", () => {
       expect(wrapper.querySelector("[hidden]")).toBeNull();
     },
   );
+});
+
+describe("a task link", () => {
+  it.each([
+    "http://127.0.0.1:8278/task/AB-1",
+    "http://localhost:8278/task/ab-1",
+    "http://[::1]:8278/task/AB-1",
+    "tasma://task/AB-1",
+  ])("to %s opens the task in the same window", async (url) => {
+    const user = userEvent.setup();
+    const router = await renderInRouter(`See [the task](${url}).`);
+
+    const link = screen.getByRole("link");
+    expect(link.getAttribute("href")).toBe("/tasks/AB/AB-1");
+    expect(link.hasAttribute("target")).toBe(false);
+    expect(link.hasAttribute("rel")).toBe(false);
+    expect(link.getAttribute("dir")).toBe("ltr");
+    expect(classOf(link)).toBe("underline underline-offset-2");
+    await user.click(link);
+
+    await waitFor(() => {
+      expect(router.state.location.href).toBe("/tasks/AB/AB-1");
+    });
+  });
+
+  it("shows its original href in a tooltip on keyboard focus", async () => {
+    const user = userEvent.setup();
+    await renderInRouter("[the task](http://127.0.0.1:8278/task/AB-1)");
+
+    await user.tab();
+
+    expect(document.activeElement).toBe(screen.getByRole("link"));
+    const popup = await screen.findByRole("presentation");
+    expect(popup.textContent).toBe("http://127.0.0.1:8278/task/AB-1");
+  });
+
+  it("keeps the id its tooltip gives the trigger", async () => {
+    await renderInRouter("[the task](tasma://task/AB-1)");
+
+    expect(screen.getByRole("link").id).not.toBe("");
+  });
+
+  it("has its original href as its description", async () => {
+    await renderInRouter("[the task](tasma://task/AB-1)");
+
+    expect(descriptionOf(screen.getByRole("link"))).toBe("tasma://task/AB-1");
+  });
+
+  it("named by its own URL has no description", async () => {
+    await renderInRouter("<http://127.0.0.1:8278/task/AB-1>");
+
+    const link = screen.getByRole("link");
+    expect(link.textContent).toBe("http://127.0.0.1:8278/task/AB-1");
+    expect(link.hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  it("whose text shows another host has no host warning", async () => {
+    await renderInRouter("[https://github.com/acme/repo](http://127.0.0.1:8278/task/AB-1)");
+
+    expect(screen.getByRole("link").textContent).toBe("https://github.com/acme/repo");
+    expect(document.querySelector("svg")).toBeNull();
+  });
+
+  it("to the task on show keeps the search, so its chat stays open", async () => {
+    const user = userEvent.setup();
+    const router = await renderInRouter("[this task](tasma://task/AB-1)", "/tasks/AB/AB-1?chat=2");
+
+    const link = screen.getByRole("link");
+    expect(link.getAttribute("href")).toBe("/tasks/AB/AB-1?chat=2");
+    await user.click(link);
+
+    expect(router.state.location.href).toBe("/tasks/AB/AB-1?chat=2");
+  });
+
+  it("to another task drops the search", async () => {
+    const user = userEvent.setup();
+    const router = await renderInRouter("[the next task](tasma://task/AB-2)", "/tasks/AB/AB-1?chat=2");
+
+    await user.click(screen.getByRole("link"));
+
+    await waitFor(() => {
+      expect(router.state.location.href).toBe("/tasks/AB/AB-2");
+    });
+  });
+});
+
+describe("an editor link", () => {
+  it("opens outside the window, with its URL as its description", () => {
+    renderMarkdown("[open](vscode://file/Users/x/proj/a.ts:3)");
+
+    const link = screen.getByRole("link");
+    expect(link.getAttribute("href")).toBe("vscode://file/Users/x/proj/a.ts:3");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toBe("noreferrer");
+    expect(descriptionOf(link)).toBe("vscode://file/Users/x/proj/a.ts:3");
+  });
 });
 
 describe("an image", () => {

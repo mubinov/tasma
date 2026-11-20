@@ -12,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use semver::Version;
 
+use crate::accounts::{ADMINISTRATORS, ROOT};
 use crate::command::bundle_of;
 
 /// The argument of the child that asks for the administrator password, and of
@@ -172,11 +173,6 @@ pub(crate) fn writable(installed: &Path) -> bool {
             // Safety: the name lives across the call.
             .is_some_and(|folder| unsafe { libc::access(folder.as_ptr(), libc::W_OK) } == 0)
 }
-
-const ROOT: u32 = 0;
-
-/// The groups `wheel` and `admin`, whose members can act as root already.
-const ADMINISTRATORS: [u32; 2] = [0, 80];
 
 /// Whether no account other than root and the administrators can change
 /// `folder` or a folder above it. Root works on paths under the folder, and an

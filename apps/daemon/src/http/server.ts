@@ -18,7 +18,7 @@ import type { RouteEntry } from "./router.js";
 import { taskLinkSegment, writeTaskLinkPage } from "./task-link.js";
 
 /** The names the daemon answers to. It binds the loopback address and no other. */
-const SERVED_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
+export const SERVED_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
 
 /**
  * What a request may declare it came from. A browser states this on every

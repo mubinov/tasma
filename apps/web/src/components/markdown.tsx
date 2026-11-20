@@ -1,8 +1,11 @@
-import { useId, type ReactNode } from "react";
+import { useId, type ComponentProps, type ReactNode } from "react";
+import { Link, useParams } from "@tanstack/react-router";
 import { normalizeUri } from "micromark-util-sanitize-uri";
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { tagOf } from "../lib/board";
 import { WarningIcon } from "../lib/icons";
+import { linkKind } from "../lib/link-kind";
 import {
   hiddenHost,
   markdownUrl,
@@ -54,6 +57,19 @@ function MarkdownHeading({ node, children }: ChildrenProps & ExtraProps): ReactN
   return <Tag data-level={depth} className={headingClass(depth)}>{children}</Tag>;
 }
 
+/** A link to the task on show keeps the search, so its open chat stays open. */
+function TaskLink({ task, ...props }: ComponentProps<"a"> & { task: string }): ReactNode {
+  const shown = useParams({ strict: false }).task === task;
+  return (
+    <Link
+      {...props}
+      to="/tasks/$project/$task"
+      params={{ project: tagOf(task), task }}
+      search={shown ? true : {}}
+    />
+  );
+}
+
 export function MarkdownLink(
   { node, href, children }: ChildrenProps & ExtraProps & { href?: string | undefined },
 ): ReactNode {
@@ -66,30 +82,34 @@ export function MarkdownLink(
   if (href === undefined) {
     return children;
   }
+  const link = linkKind(href);
   const named = node?.children.some(hasText) === true;
   const text = String(node?.properties.dataText);
-  const host = named ? hiddenHost(text, href) : undefined;
+  const host = named && link?.kind === "web" ? hiddenHost(text, href) : undefined;
   // A link named by its own URL gets no description, so a screen reader does not read the URL twice. The href is
   // the output of normalizeUri and then markdownUrl, so the text goes through both. A GFM `www.` literal gets
   // `http://`, and an email autolink gets `mailto:`.
   const describe = named && ["", "http://", "mailto:"].every((prefix) => markdownUrl(normalizeUri(prefix + text)) !== href);
+  const linkProps = {
+    "dir": "ltr",
+    "aria-describedby": describe ? descriptionId : undefined,
+    "className": "underline underline-offset-2",
+  };
+  const content = (
+    <>
+      {named ? children : href}
+      {host !== undefined && <span className="sr-only">{` (warning: goes to ${host})`}</span>}
+    </>
+  );
   return (
     // The isolates keep a bidi control in the text around the link, or in the link text, from reordering the link
     // and its mark. `dir` on the `<a>` gives it `unicode-bidi: isolate`. They hold because rehypeLinkText removes
     // every PDI from the link text.
     <bdi dir="ltr">
       <Tooltip content={<span className="font-mono">{href}</span>}>
-        <a
-          dir="ltr"
-          href={href}
-          target="_blank"
-          rel="noreferrer"
-          aria-describedby={describe ? descriptionId : undefined}
-          className="underline underline-offset-2"
-        >
-          {named ? children : href}
-          {host !== undefined && <span className="sr-only">{` (warning: goes to ${host})`}</span>}
-        </a>
+        {link?.kind === "task"
+          ? <TaskLink {...linkProps} task={link.id}>{content}</TaskLink>
+          : <a {...linkProps} href={href} target="_blank" rel="noreferrer">{content}</a>}
       </Tooltip>
       {/* A hidden element still gives the description, and the virtual cursor does not read it as text. */}
       {describe && <span id={descriptionId} hidden>{href}</span>}
@@ -173,8 +193,9 @@ const sourceComponents: Components = { ...components, pre: (props) => <CodeBlock
 
 /**
  * Renders the markdown of a task body or a comment body: GitHub-flavoured, raw
- * HTML shown as source, a single newline shown as a line break, links opened
- * outside the app, no image loaded, Mermaid blocks drawn as diagrams.
+ * HTML shown as source, a single newline shown as a line break, task links
+ * opened in the app and other links outside it, no image loaded, Mermaid
+ * blocks drawn as diagrams.
  */
 export function Markdown({ text, base, title, diagrams = true }: MarkdownProps): ReactNode {
   return (

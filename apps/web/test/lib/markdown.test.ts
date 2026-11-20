@@ -435,6 +435,10 @@ describe("a URL", () => {
     { url: "https:\\\\example.com/a", href: "https://example.com/a" },
     { url: "http:\\/example.com/a", href: "http://example.com/a" },
     { url: "mailto:someone@example.com", href: "mailto:someone@example.com" },
+    { url: "vscode://file/Users/x/proj/a.ts:3", href: "vscode://file/Users/x/proj/a.ts:3" },
+    { url: "zed://file/Users/x/proj/a.ts", href: "zed://file/Users/x/proj/a.ts" },
+    { url: "tasma://task/AB-1", href: "tasma://task/AB-1" },
+    { url: "http://%5B::1%5D:8278/task/AB-1", href: "http://[::1]:8278/task/AB-1" },
   ])("of a link is kept as its absolute form when its scheme is allowed: $url", ({ url, href }) => {
     expect(markdownUrl(url)).toBe(href);
   });
@@ -457,7 +461,13 @@ describe("a URL", () => {
     "HTTPS:B.Invalid:443/%2e%2e/items",
     "http:%5B::1%5D/../items",
     "http://%5B::1/items",
-  ])("of a link is removed for any other scheme, none, or a path the page resolves: %j", (url) => {
+    "foo://x",
+    "vscode://vscode.git/clone?url=https://example.com/r.git",
+    "cursor://anysphere.cursor-deeplink/mcp/install?name=x",
+    "vscode://file/x/proj/",
+    "tasma://project/AB",
+    "tasma://task/AB-1?x=1",
+  ])("of a link is removed for any other scheme, none, a path the page resolves, or no link kind: %j", (url) => {
     expect(markdownUrl(url)).toBeUndefined();
   });
 });
