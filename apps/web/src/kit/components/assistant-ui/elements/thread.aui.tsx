@@ -56,9 +56,11 @@ import {
   DownloadIcon,
   MicIcon,
   MoreHorizontalIcon,
-  PencilIcon,
+  // tasma-edit: no edit handler, so no Edit button on a user message
+  // tasma-edit end
   PhoneIcon,
-  RefreshCwIcon,
+  // tasma-edit: no reload handler, so no Refresh button on an agent message
+  // tasma-edit end
   SquareIcon,
   ThumbsDownIcon,
   ThumbsUpIcon,
@@ -712,7 +714,8 @@ const AssistantActionBar: FC = () => {
         <ActionBarPrimitive.FeedbackPositive render={<TooltipIconButton tooltip="Helpful" className="data-[submitted=true]:bg-accent data-[submitted=true]:text-accent-foreground" />}><ThumbsUpIcon /></ActionBarPrimitive.FeedbackPositive>
         <ActionBarPrimitive.FeedbackNegative render={<TooltipIconButton tooltip="Not helpful" className="data-[submitted=true]:bg-accent data-[submitted=true]:text-accent-foreground" />}><ThumbsDownIcon /></ActionBarPrimitive.FeedbackNegative>
       </AuiIf>
-      <ActionBarPrimitive.Reload render={<TooltipIconButton tooltip="Refresh" />}><RefreshCwIcon /></ActionBarPrimitive.Reload>
+      {/* tasma-edit: no reload handler, so no Refresh button on an agent message */}
+      {/* tasma-edit end */}
       <ActionBarMorePrimitive.Root>
         <ActionBarMorePrimitive.Trigger render={<TooltipIconButton tooltip="More" className="data-[state=open]:bg-accent" />}><MoreHorizontalIcon /></ActionBarMorePrimitive.Trigger>
         <ActionBarMorePrimitive.Content
@@ -775,9 +778,8 @@ const UserMessage: FC = () => {
             // tasma-edit end
           />
         </div>
-        <div className="aui-user-action-bar-wrapper absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">
-          <UserActionBar />
-        </div>
+        {/* tasma-edit: no edit handler, so no Edit button on a user message */}
+        {/* tasma-edit end */}
       </div>
 
       <BranchPicker
@@ -788,17 +790,8 @@ const UserMessage: FC = () => {
   );
 };
 
-const UserActionBar: FC = () => {
-  return (
-    <ActionBarPrimitive.Root
-      hideWhenRunning
-      autohide="not-last"
-      className="aui-user-action-bar-root flex flex-col items-end"
-    >
-      <ActionBarPrimitive.Edit render={<TooltipIconButton tooltip="Edit" className="aui-user-action-edit" />}><PencilIcon /></ActionBarPrimitive.Edit>
-    </ActionBarPrimitive.Root>
-  );
-};
+// tasma-edit: no edit handler, so no Edit button on a user message
+// tasma-edit end
 
 const EditComposer: FC = () => {
   return (

@@ -966,6 +966,20 @@ it("shows a composer with no attachment button", async () => {
   expect(screen.queryByRole("button", { name: /attachment/i })).toBeNull();
 });
 
+it("shows no Edit button on a sent user message", async () => {
+  await renderPanel(logOf(chatEntries([userMessage("Build the parser."), turnEnd()])));
+
+  expect(await screen.findByText("Build the parser.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+});
+
+it("shows Copy and no Refresh button under the last agent message", async () => {
+  await renderPanel(logOf(TEXT_LOG));
+
+  expect(await screen.findByRole("button", { name: "Copy" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
+});
+
 it("calls onClose from the close button", async () => {
   const user = userEvent.setup();
   const onClose = vi.fn();
