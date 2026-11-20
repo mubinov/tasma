@@ -4,6 +4,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { dockAvailable } from "./api/dock";
 import { windowThemeAvailable } from "./api/window-theme";
+import { ContextSelectGuard } from "./components/context-select-guard";
 import { DockSync } from "./components/dock-sync";
 import { ErrorBoundary } from "./components/error-boundary";
 import { FeedSubscriber } from "./components/feed-subscriber";
@@ -46,6 +47,7 @@ createRoot(container).render(
     <FindShortcut router={router} />
     <KeyWatch />
     <InputModeSync />
+    <ContextSelectGuard />
     <ErrorBoundary>
       <QueryClientProvider client={router.options.context.queryClient}>
         <RouterProvider router={router} />

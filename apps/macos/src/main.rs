@@ -12,6 +12,7 @@
 mod alert;
 mod backspace;
 mod command;
+mod context_menu;
 mod daemon;
 mod daemon_stop;
 mod deeplink;
@@ -407,6 +408,7 @@ fn main() {
                 &window,
             );
             backspace::install(&window);
+            context_menu::install(&window);
             window.on_window_event({
                 let window = window.clone();
                 move |event| match event {

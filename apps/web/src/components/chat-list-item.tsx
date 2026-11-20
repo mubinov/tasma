@@ -9,6 +9,7 @@ import type { ChatPlace } from "../api/queries";
 import { chatKey, markableChat } from "../lib/chat-list-announcements";
 import { chatStateText } from "../lib/chat-messages";
 import { fullChatTime, shortChatTime } from "../lib/chat-time";
+import { NO_CONTEXT_SELECT_MARK } from "../lib/context-select";
 import { BellSlashIcon } from "../lib/icons";
 import { matchRanges } from "../lib/match-ranges";
 import { useChatWrites } from "../lib/use-chat-writes";
@@ -131,7 +132,7 @@ export function ChatListItem({ item, selected, now, tabIndex, words, band }: Cha
   return (
     <>
       {band !== undefined && <GroupBand {...band} />}
-      {/* Disabled, the root leaves `contextmenu` alone, so WebKit shows its own menu. */}
+      {/* Disabled, the root leaves `contextmenu` alone, and the shell empties WebKit's link menu: none opens. */}
       <ContextMenu.Root
         actionsRef={menuActionsRef}
         highlightItemOnHover={false}
@@ -157,6 +158,7 @@ export function ChatListItem({ item, selected, now, tabIndex, words, band }: Cha
               aria-label={label.join(", ")}
               aria-current={selected ? "page" : undefined}
               data-chat-key={chatKey(item)}
+              {...NO_CONTEXT_SELECT_MARK}
               onClick={(event) => {
                 // A Control-click is a right click on macOS, and the link would follow its address.
                 if (event.ctrlKey) {

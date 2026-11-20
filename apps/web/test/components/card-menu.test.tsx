@@ -263,6 +263,12 @@ describe("Move up and Move down", () => {
 });
 
 describe("right click", () => {
+  it("is marked for the guard that stops its text selection", async () => {
+    await renderMenu();
+
+    expect(screen.getByTestId("card").getAttribute("data-no-context-select")).toBe("");
+  });
+
   it("opens the same items on the card", async () => {
     await renderMenu();
 

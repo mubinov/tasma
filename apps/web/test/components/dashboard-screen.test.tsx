@@ -2915,6 +2915,16 @@ describe("the right-click menu of a row", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
+  it.each<[string, ChatListItem[], string, number]>([
+    ["an idle row in Active", [...ITEMS], "SAGA-3", 2],
+    ["a busy row", [{ ...ACME, busy: true }, OPEN, OLDER], "ACME-7", 1],
+    ["a row in Other chats", [...ITEMS], "SAGA-3", 1],
+  ])("is marked for the selection guard on %s", async (_name, rows, task, chat) => {
+    await renderDashboard(stubDashboard({ "/chats": pageReply(rows) }));
+
+    expect(itemLink(task, chat).getAttribute("data-no-context-select")).toBe("");
+  });
+
   it("does not open while the mark of its chat is pending", async () => {
     const user = userEvent.setup();
     await renderDashboard(stubDashboard({ [MARK]: heldBack().reply }));

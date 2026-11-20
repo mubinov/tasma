@@ -5,6 +5,7 @@ import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState, type ComponentProps, type ReactNode, type Ref } from "react";
 import { usePendingChatStart } from "../api/mutations";
 import { taskChatsQuery, workflowQuery } from "../api/queries";
+import { NO_CONTEXT_SELECT_MARK } from "../lib/context-select";
 import { ArrowClockwiseIcon, ChatCircleIcon, CircleNotchIcon, DotsThreeVerticalIcon, PlayIcon } from "../lib/icons";
 import { actionStep, openFromBoard, stepAction, stepActionVerb, type StepAction } from "../lib/step-action";
 import { useChatStart } from "../lib/use-chat-start";
@@ -305,6 +306,7 @@ export function CardContextMenu({ menu, onOpenChange, children, ...card }: CardC
     <ContextMenu.Root highlightItemOnHover={false} onOpenChange={onOpenChange}>
       <ContextMenu.Trigger
         {...card}
+        {...NO_CONTEXT_SELECT_MARK}
         onContextMenu={(event) => {
           if (fromOutside(event)) {
             event.preventBaseUIHandler();
