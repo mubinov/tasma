@@ -12,7 +12,7 @@ import { Thread, type ThreadComponents } from "@kit/components/assistant-ui/elem
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { chatBusy, turnRuns, type Chat, type ChatStatus, type Client, type ProjectChat } from "@tasma/protocol";
-import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useChatLog } from "../api/chat-log";
 import { chatQuery, type ChatPlace } from "../api/queries";
 import { chatRequestOf } from "../lib/chat-approval";
@@ -45,8 +45,8 @@ type ChatPanelProps = {
   focusOnMount?: boolean;
 };
 
-/** What the panel shows of the log that its transcript reads. `busy` is from `chatBusy`. */
-type LogState = { status: ChatStatus; busy: boolean; ready: boolean; failures: number };
+/** What the panel shows of its transcript and of the log that it reads. `busy` is from `chatBusy`. */
+type LogState = { status: ChatStatus; busy: boolean; threadShown: boolean; failures: number };
 
 type RoundProps = ChatPlace & {
   headingRef: RefObject<HTMLHeadingElement | null>;
@@ -180,7 +180,7 @@ function statusText(failed: boolean, missing: boolean, log: LogState | null): st
   if (log !== null && log.failures >= 2) {
     return "The chat cannot be read now. Tasma tries again.";
   }
-  return log?.ready === true ? "" : "Loading the chat";
+  return log?.threadShown === true ? "" : "Loading the chat";
 }
 
 /**
@@ -225,7 +225,7 @@ function ChatPanelBody({ tag, task, chat, marked, onClose, focusOnMount = false 
           </h2>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
             {record !== undefined && <span className="text-subtle">{`Chat ${String(chat)}`}</span>}
-            {log?.ready === true && (marked || log.busy) && <StateMark status={log.status} />}
+            {log?.threadShown === true && (marked || log.busy) && <StateMark status={log.status} />}
           </p>
         </div>
         <Tooltip content="Close the chat">
@@ -360,6 +360,8 @@ function ChatTranscript(
   const [opening, setOpening] = useState<ChatOpening | null>(null);
   const [autoScroll, setAutoScroll] = useState(false);
   const [runtimeReady, setRuntimeReady] = useState(false);
+  const [gateOpen, setGateOpen] = useState(false);
+  const threadShown = ready && gateOpen;
 
   // One time per round: a later change of `seen`, `busy` or the messages does not move the open place.
   if (ready && opening === null) {
@@ -387,8 +389,8 @@ function ChatTranscript(
         },
       };
   const runtime = useExternalStoreRuntime({
-    // One view for the whole log: the thread mounts before the kit store takes the ready view, and a
-    // message that the thread first sees as running shows its text only after the open scroll.
+    // One view for the whole log: a message that the kit first sees as running shows its text only
+    // after the open scroll.
     messages: ready ? view.messages : NO_MESSAGES,
     convertMessage: (message: ChatMessage) => chatThreadMessage(message, folder),
     // The whole turn, also while it waits at a request: the kit shows Stop when the message input is empty.
@@ -410,7 +412,7 @@ function ChatTranscript(
     extras,
   });
   const report = useEffectEvent(() => {
-    onLog({ status, busy, ready, failures });
+    onLog({ status, busy, threadShown, failures });
   });
   const endRound = useEffectEvent(onReset);
 
@@ -425,9 +427,10 @@ function ChatTranscript(
     }
   }, [ready]);
 
-  useEffect(() => {
+  // A layout effect: the status line of the host goes away in the frame where the thread shows.
+  useLayoutEffect(() => {
     report();
-  }, [statusKey, busy, ready, failures]);
+  }, [statusKey, busy, threadShown, failures]);
 
   useEffect(() => {
     if (resets > 0) {
@@ -439,9 +442,38 @@ function ChatTranscript(
     <AssistantRuntimeProvider runtime={runtime}>
       <ChatDataViews tag={tag} task={task} chat={chat} />
       <ChatDraft place={place} />
-      {ready && runtimeReady && <ChatThread place={place} headingRef={headingRef} autoScroll={autoScroll} />}
+      {ready && opening !== null && runtimeReady && (
+        <ChatThreadGate
+          lastId={opening.lastId}
+          onShow={() => {
+            setGateOpen(true);
+          }}
+        >
+          <ChatThread place={place} headingRef={headingRef} autoScroll={autoScroll} />
+        </ChatThreadGate>
+      )}
     </AssistantRuntimeProvider>
   );
+}
+
+type ThreadGateProps = { lastId: string | undefined; onShow: () => void; children: ReactNode };
+
+/**
+ * The kit thread with no messages shows its new-chat layout, so the thread
+ * mounts only when the kit holds `lastId`. `onShow` stays in a layout effect:
+ * from a passive effect, a frame of the thread can paint before the open scroll.
+ */
+function ChatThreadGate({ lastId, onShow, children }: ThreadGateProps): ReactNode {
+  const holds = useAuiState((s) => lastId === undefined || s.thread.messages.some(({ id }) => id === lastId));
+  const show = useEffectEvent(onShow);
+
+  useLayoutEffect(() => {
+    if (holds) {
+      show();
+    }
+  }, [holds]);
+
+  return holds ? children : null;
 }
 
 /** Keeps the composer text and the draft of the place the same, both ways, from the mount on. */

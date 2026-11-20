@@ -320,6 +320,87 @@ it("shows Loading the chat until the log reaches the seq of the record, and the 
   });
 });
 
+/** One state of the DOM. `line` is the first `role="status"` of the page: the status line of the host. */
+type DomState = {
+  hasComposer: boolean;
+  messages: number;
+  empty: boolean;
+  line: string;
+  needsYou: boolean;
+  reading: boolean;
+};
+
+function readDom(log: ChatLogStub): DomState {
+  return {
+    hasComposer: screen.queryByRole("textbox", COMPOSER) !== null,
+    messages: document.querySelectorAll("[data-message-id]").length,
+    empty: screen.queryByText("This chat has no messages yet.") !== null,
+    line: document.querySelector('[role="status"]')?.textContent ?? "",
+    needsYou: screen.queryByText("Needs you") !== null,
+    reading: log.readsOf(eventsPath(0)) > 0,
+  };
+}
+
+const BODY_HOST = <ChatBody tag="SAGA" task="SAGA-3" chat={2} headingRef={{ current: null }} />;
+
+/**
+ * Renders the panel, or the host, of a chat with `TEXT_LOG`, served in one or
+ * two reads, and gives each state of the DOM until the thread shows, one for
+ * each batch of mutations.
+ */
+async function watchOpen(host: ReactNode | undefined, reads: 1 | 2): Promise<{ states: DomState[]; end: DomState }> {
+  const log = stubChatLog({ [chatPath()]: successReply(chatRecord({ seq: TEXT_LOG.length })) });
+  const states: DomState[] = [];
+  const observer = new MutationObserver(() => {
+    states.push(readDom(log));
+  });
+  observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
+  onTestFinished(() => {
+    observer.disconnect();
+  });
+  if (reads === 1) {
+    log.serve(0, { cursor: TEXT_LOG.length, entries: [...TEXT_LOG] });
+  }
+
+  await renderPanel(log, host === undefined ? {} : { host });
+  if (reads === 2) {
+    await readStarted(log, eventsPath(0));
+    log.answer(0, { cursor: 3, entries: TEXT_LOG.slice(0, 3) });
+    await readStarted(log, eventsPath(3));
+    log.answer(3, { cursor: TEXT_LOG.length, entries: TEXT_LOG.slice(3) });
+  }
+  await waitFor(() => {
+    expect(readDom(log)).toMatchObject({ hasComposer: true, line: "" });
+  });
+  await settle();
+
+  return { states, end: readDom(log) };
+}
+
+const HOSTS_AND_READS: [string, 1 | 2, ReactNode | undefined][] = [
+  ["the chat panel", 1, undefined],
+  ["the chat panel", 2, undefined],
+  ["a host of the chat body", 1, BODY_HOST],
+  ["a host of the chat body", 2, BODY_HOST],
+];
+
+it.each(HOSTS_AND_READS)("adds the message field of %s only with the messages, for a log in %i read(s)", async (_host, reads, host) => {
+  const { states, end } = await watchOpen(host, reads);
+
+  expect(states.filter(({ hasComposer, messages }) => hasComposer && messages === 0)).toEqual([]);
+  expect(states.filter(({ empty }) => empty)).toEqual([]);
+  expect(end).toMatchObject({ hasComposer: true, messages: 2, empty: false });
+});
+
+it.each(HOSTS_AND_READS)("shows Loading the chat in %s until the thread shows, for a log in %i read(s)", async (_host, reads, host) => {
+  const { states, end } = await watchOpen(host, reads);
+
+  expect(states.filter(({ hasComposer, line }) => hasComposer && line !== "")).toEqual([]);
+  expect(states.filter(({ hasComposer, line, reading }) => reading && !hasComposer && line !== "Loading the chat")).toEqual([]);
+  expect(states.filter(({ hasComposer, needsYou }) => !hasComposer && needsYou)).toEqual([]);
+  expect(end).toMatchObject({ hasComposer: true, line: "", needsYou: host === undefined });
+});
+
 it("shows the user text, the agent text and the plan", async () => {
   await renderPanel(logOf(TEXT_LOG));
 
@@ -544,6 +625,9 @@ it("shows a chat with no messages as empty", async () => {
   await renderPanel(logOf([]));
 
   expect(await screen.findByText("This chat has no messages yet.")).toBeTruthy();
+  await waitFor(() => {
+    expect(statusLine().textContent).toBe("");
+  });
 });
 
 it("says that the log cannot be read after two failed reads, before and after it is ready, until a read succeeds", async () => {
