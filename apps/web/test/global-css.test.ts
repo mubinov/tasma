@@ -45,6 +45,11 @@ it("defines the keyboard variant on the input mode that the root records, outsid
   expect(unlayered(GLOBAL_CSS)).toContain('@custom-variant keyboard (&:where([data-input="keyboard"] *));');
 });
 
+it("loads a real font file for each bold weight that the chat asks for", () => {
+  expect(GLOBAL_CSS).toContain('@import "@fontsource/inter/600.css";');
+  expect(GLOBAL_CSS).toContain('@import "@fontsource/jetbrains-mono/700.css";');
+});
+
 it("draws the focus ring in the focus role, inside a layer so a control can drop it", () => {
   expect(GLOBAL_CSS).toMatch(/:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--color-focus\)[^}]*outline-offset:\s*2px/);
   expect(unlayered(GLOBAL_CSS)).not.toContain(":focus-visible");

@@ -5,12 +5,19 @@
 @import "../kit/kit.css";
 @import "./kit-theme.css";
 
-/* Self-hosted and bundled from node_modules: no CDN, so the app works offline. */
+/*
+ * Self-hosted and bundled from node_modules: no CDN, so the app works offline.
+ * Each family that the UI draws at weight 600 or more needs a file at 600 or
+ * more here: with none, WebKit draws a synthetic bold, which smears on a 1x
+ * display.
+ */
 @import "@fontsource/inter/400.css";
 @import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
 @import "@fontsource/inter-tight/500.css";
 @import "@fontsource/inter-tight/600.css";
 @import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/700.css";
 
 @layer base {
   html {
