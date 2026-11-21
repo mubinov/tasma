@@ -1,10 +1,12 @@
 import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
 import { useId, type ReactNode } from "react";
+import { appAvailable } from "../api/app";
 import { useDocumentTitle } from "../lib/document-title";
 import { CheckIcon, MonitorIcon, MoonIcon, SunIcon, type IconComponent } from "../lib/icons";
 import { NAVIGATION_BY_PATH } from "../navigation";
 import { THEME_PREFERENCE_LABELS, THEME_PREFERENCES, useUiStore, type ThemePreference } from "../store/ui";
+import { FileLinksGroup, WebLinksGroup } from "./link-groups";
 import { TopRow, TopRowTitle } from "./top-row";
 
 const THEME_PREFERENCE_ICONS: Record<ThemePreference, IconComponent> = {
@@ -67,6 +69,13 @@ export function SettingsScreen(): ReactNode {
           );
         })}
       </RadioGroup>
+
+      {appAvailable() && (
+        <>
+          <WebLinksGroup />
+          <FileLinksGroup />
+        </>
+      )}
     </>
   );
 }

@@ -7,17 +7,20 @@ type RetryButtonProps = {
   onRetry: () => void;
   /** Called when the button goes away while it has the focus. */
   onFocusLost: () => void;
+  label?: ReactNode;
+  /** The id of the line that states the failure. */
+  describedBy?: string;
 };
 
-/** "Try again" for a failed read, which a later read can remove while it has the focus. */
-export function RetryButton({ onRetry, onFocusLost }: RetryButtonProps): ReactNode {
+/** A retry of a failed read, which a later read can remove while it has the focus. */
+export function RetryButton({ onRetry, onFocusLost, label = "Try again", describedBy }: RetryButtonProps): ReactNode {
   const ref = useRef<HTMLButtonElement>(null);
 
   useFocusLost(ref, onFocusLost);
 
   return (
-    <Button ref={ref} type="button" onClick={onRetry} className={`${BUTTON_CLASS} shrink-0`}>
-      Try again
+    <Button ref={ref} type="button" onClick={onRetry} aria-describedby={describedBy} className={`${BUTTON_CLASS} shrink-0`}>
+      {label}
     </Button>
   );
 }

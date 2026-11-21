@@ -101,6 +101,10 @@ export const FIELD_KBD_CLASS = "rounded-control border border-line bg-surface-2 
 
 export const FIELD_ERROR_CLASS = "mt-1.5 text-sm text-signal";
 
+// The value is user-authored text of no bounded length, so the chip breaks
+// mid-token and grows down instead of holding a fixed height.
+export const VALUE_CHIP_CLASS = "inline-flex min-h-5.5 items-center rounded-control border border-line bg-surface-2 px-2 text-sm wrap-anywhere";
+
 // One prop holds both a wait and a refusal, so the line takes no state colour.
 export const DIALOG_STATUS_CLASS = "mt-4 text-sm font-medium text-subtle wrap-anywhere";
 

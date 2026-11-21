@@ -1,8 +1,8 @@
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { useUiStore } from "../../src/store/ui";
-import { renderWithRouter } from "../helpers";
+import { renderWithRouter, stubShell } from "../helpers";
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -84,4 +84,41 @@ it("switches the theme from the settings screen", async () => {
 
   expect(useUiStore.getState().themePreference).toBe("light");
   expect(screen.getByRole("radio", { checked: true }).textContent).toBe("Light");
+});
+
+describe("the link groups", () => {
+  async function renderIn(available: boolean) {
+    vi.doMock("../../src/api/app", () => ({ appAvailable: () => available }));
+    onTestFinished(() => {
+      vi.doUnmock("../../src/api/app");
+    });
+    vi.resetModules();
+    const shell = stubShell(() => Promise.resolve(Response.json([])));
+    const { renderWithRouter: render } = await import("../helpers");
+    await render("/settings");
+
+    return shell;
+  }
+
+  it("are not shown, and request no list, outside the macOS app", async () => {
+    const shell = await renderIn(false);
+
+    expect(screen.queryByRole("group", { name: "Web links" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "File links" })).toBeNull();
+    expect(shell.posted().filter((request) => /\/app\/(browsers|editors)$/.test(request))).toEqual([]);
+  });
+
+  it("are shown below Theme in the macOS app", async () => {
+    const shell = await renderIn(true);
+
+    const theme = screen.getByRole("radiogroup", { name: "Theme" });
+    const web = screen.getByRole("group", { name: "Web links" });
+    const files = screen.getByRole("group", { name: "File links" });
+
+    expect(theme.compareDocumentPosition(web) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(web.compareDocumentPosition(files) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(await within(files).findByRole("button", { name: "Open files in macOS default app" })).toBeDefined();
+    expect(shell.posted().filter((request) => /\/app\/(browsers|editors)$/.test(request)).toSorted())
+      .toEqual(["GET /app/browsers", "GET /app/editors"]);
+  });
 });

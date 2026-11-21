@@ -15,6 +15,8 @@ import {
   type Workflow,
 } from "@tasma/protocol";
 
+import { listBrowsers } from "./browsers";
+import { listEditors } from "./files";
 import { APP_PATH_PREFIX } from "./paths";
 
 /** The chats the dashboard lists. A field that is absent is left out, so the filter of all chats is `{}`. */
@@ -230,6 +232,8 @@ export type Update = {
 /** The keys of what the app answers itself, apart from everything the daemon said. */
 export const appKeys = {
   update: () => ["app", "update"] as const,
+  browsers: () => ["app", "browsers"] as const,
+  editors: () => ["app", "editors"] as const,
 };
 
 function stringOrEmpty(value: unknown): string {
@@ -279,6 +283,14 @@ export function updateQuery() {
       }
     },
   });
+}
+
+export function browsersQuery() {
+  return queryOptions({ queryKey: appKeys.browsers(), queryFn: listBrowsers });
+}
+
+export function editorsQuery() {
+  return queryOptions({ queryKey: appKeys.editors(), queryFn: listEditors });
 }
 
 export type WorkflowRead

@@ -7,6 +7,7 @@ import { useDocumentTitle } from "../lib/document-title";
 import { ArrowLeftIcon } from "../lib/icons";
 import { warningCount } from "../lib/warning-count";
 import { AgentHint } from "./agent-hint";
+import { VALUE_CHIP_CLASS } from "./control-classes";
 import { Diagnostics } from "./diagnostics";
 import { InstructionLines, NoValue } from "./instruction-lines";
 import { LiveNotice } from "./live-notice";
@@ -19,9 +20,6 @@ import { TopRow } from "./top-row";
 // this component, so importing the route back would close a cycle.
 const route = getRouteApi("/projects/$project");
 
-// A configuration value is user-authored text of no bounded length, so the chip
-// breaks mid-token and grows down instead of holding a fixed height.
-const VALUE_CHIP_CLASS = "inline-flex min-h-5.5 items-center rounded-control border border-line bg-surface-2 px-2 text-sm wrap-anywhere";
 const CHIPS_CLASS = "flex flex-wrap gap-1.5";
 
 function ConfigurationRow({ term, children }: { term: string; children: ReactNode }): ReactNode {
