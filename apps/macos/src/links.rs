@@ -38,7 +38,6 @@ impl Links {
 }
 
 /// The last settings the board sent, or the defaults before its first send.
-#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) fn settings<R: Runtime>(app: &AppHandle<R>) -> Settings {
     app.state::<Links>().lock().clone()
 }

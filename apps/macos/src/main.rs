@@ -12,6 +12,7 @@
 mod accounts;
 mod alert;
 mod backspace;
+mod browsers;
 mod command;
 mod context_menu;
 mod daemon;
@@ -143,8 +144,7 @@ fn may_navigate(url: &Url, dev_server: Option<&Url>) -> bool {
 /// mail or editor link goes to `open`, and nothing else goes anywhere.
 ///
 /// A click on a `target="_blank"` link reaches this first, and WebKit asks
-/// `new_window` only when this returns true. "Open Link" in the context menu
-/// skips this and goes straight to `new_window`.
+/// `new_window` only when this returns true.
 fn navigate(url: &Url, dev_server: Option<&Url>, open: impl Fn(&Url)) -> bool {
     if may_navigate(url, dev_server) {
         return true;
@@ -367,8 +367,14 @@ fn main() {
                 .on_document_title_changed(|window, title| {
                     let _ = window.set_title(&title);
                 })
-                .on_navigation(move |url| navigate(url, dev_server.as_ref(), external::open))
-                .on_new_window(|url, _| new_window(&url, external::open))
+                .on_navigation({
+                    let app = app.handle().clone();
+                    move |url| navigate(url, dev_server.as_ref(), |link| external::open(&app, link))
+                })
+                .on_new_window({
+                    let app = app.handle().clone();
+                    move |url, _| new_window(&url, |link| external::open(&app, link))
+                })
                 .on_page_load(move |window, payload| {
                     let mut delivery = loading.lock().unwrap_or_else(PoisonError::into_inner);
                     let route = match payload.event() {

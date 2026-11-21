@@ -12,8 +12,10 @@ use tauri::http::header::{CONTENT_SECURITY_POLICY, CONTENT_TYPE};
 use tauri::http::{Request, Response, StatusCode, Uri};
 use tauri::{AppHandle, Runtime};
 
+use crate::browsers;
 use crate::daemon::Daemon;
 use crate::dock;
+use crate::external;
 use crate::folder;
 use crate::links;
 use crate::theme;
@@ -152,6 +154,10 @@ pub async fn serve<R: Runtime>(
         Target::App(path) if links::handles(&path) => {
             links::serve(app, request.method(), &path, request.body())
         }
+        Target::App(path) if browsers::handles(&path) => browsers::serve(request.method(), &path),
+        Target::App(path) if external::handles(&path) => {
+            external::serve(request.method(), &path, request.body()).await
+        }
         Target::App(path) => update::serve(updater, request.method(), &path),
         Target::Asset(path) => asset(app, &path),
     }
@@ -283,6 +289,7 @@ mod tests {
     use std::borrow::Cow;
     use std::collections::HashMap;
 
+    use tauri::http::Method;
     use tauri::test::{MockRuntime, mock_builder, mock_context};
     use tauri::utils::assets::{AssetKey, AssetsIter, CspHash};
     use tauri::utils::config::Csp;
@@ -447,11 +454,15 @@ mod tests {
         assert_eq!(answer.status(), StatusCode::BAD_GATEWAY);
     }
 
-    fn assert_a_get_is_refused_by_its_module(label: &str, uri: &str) {
+    fn assert_refused_by_its_module(label: &str, method: Method, uri: &str) {
         let app = app_holding(&[("index.html", b"<!doctype html>")]);
         let daemon = crate::daemon::fixtures::daemon_on_a_dead_port(label);
         let updater = Arc::new(crate::update::fixtures::updater(label));
-        let request = Request::builder().uri(uri).body(Vec::new()).unwrap();
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Vec::new())
+            .unwrap();
 
         let answer =
             tauri::async_runtime::block_on(serve(app.handle(), &daemon, &updater, request));
@@ -462,30 +473,55 @@ mod tests {
 
     #[test]
     fn the_folder_route_is_served_by_the_folder_panel() {
-        assert_a_get_is_refused_by_its_module(
+        assert_refused_by_its_module(
             "the-folder-route",
+            Method::GET,
             "tasma-app://localhost/app/folder",
         );
     }
 
     #[test]
     fn the_dock_route_is_served_by_the_dock_module() {
-        assert_a_get_is_refused_by_its_module(
+        assert_refused_by_its_module(
             "the-dock-route",
+            Method::GET,
             "tasma-app://localhost/app/dock/running",
         );
     }
 
     #[test]
     fn the_theme_route_is_served_by_the_theme_module() {
-        assert_a_get_is_refused_by_its_module(
+        assert_refused_by_its_module(
             "the-theme-route",
+            Method::GET,
             "tasma-app://localhost/app/theme/dark",
         );
     }
 
     #[test]
     fn the_links_route_is_served_by_the_links_module() {
-        assert_a_get_is_refused_by_its_module("the-links-route", "tasma-app://localhost/app/links");
+        assert_refused_by_its_module(
+            "the-links-route",
+            Method::GET,
+            "tasma-app://localhost/app/links",
+        );
+    }
+
+    #[test]
+    fn the_browsers_route_is_served_by_the_browsers_module() {
+        assert_refused_by_its_module(
+            "the-browsers-route",
+            Method::POST,
+            "tasma-app://localhost/app/browsers",
+        );
+    }
+
+    #[test]
+    fn the_open_route_is_served_by_the_external_module() {
+        assert_refused_by_its_module(
+            "the-open-route",
+            Method::GET,
+            "tasma-app://localhost/app/open",
+        );
     }
 }

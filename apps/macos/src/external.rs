@@ -1,19 +1,39 @@
-//! Links that a document opens outside the window: in the default browser,
-//! the default mail app or an editor.
+//! Links that a document opens outside the window: a web link in the browser
+//! that the link settings choose, a mail link in the default mail app and an
+//! editor link in its editor. Also `POST /app/open`, which opens a web link in a
+//! named browser.
 
+use std::cell::Cell;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+use std::sync::mpsc::{self, Sender};
 
-use objc2_app_kit::NSWorkspace;
-use objc2_foundation::{NSString, NSURL};
+use block2::RcBlock;
+use objc2::rc::autoreleasepool;
+use objc2_app_kit::{NSRunningApplication, NSWorkspace, NSWorkspaceOpenConfiguration};
+use objc2_foundation::{NSArray, NSError, NSString, NSURL};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
-use tauri::Url;
+use serde_json::Value;
+use tauri::http::{Method, Response, StatusCode};
+use tauri::{AppHandle, Runtime, Url};
 
 use crate::accounts::{ADMINISTRATORS, ROOT};
+use crate::browsers::{self, Browser};
+use crate::links;
 use crate::log;
+use crate::update::plain;
+
+/// The route under `/app`. Held to `OPEN_URL_ROUTE` in `apps/web` by a repo
+/// test.
+pub(crate) const PATH: &str = "/open";
 
 /// `LINK_SCHEMES` in `apps/web/src/lib/link-kind.ts`, without the colon.
 const SCHEMES: [&str; 3] = ["http", "https", "mailto"];
+
+const WEB_SCHEMES: [&str; 2] = ["http", "https"];
+
+const NOT_OPENED: &str = "a link could not be opened";
+const NO_APP: &str = "macOS could not find the app or read the link";
 
 /// `EDITOR_SCHEMES` in `apps/web/src/lib/link-kind.ts`, without the colon.
 const EDITOR_SCHEMES: [&str; 5] = ["vscode", "vscode-insiders", "cursor", "vscodium", "zed"];
@@ -179,32 +199,204 @@ fn failure(url: &Url, launch: impl FnOnce(&Url) -> bool) -> Option<&'static str>
         launch(url)
     };
 
-    (!opened).then_some("a link could not be opened")
+    (!opened).then_some(NOT_OPENED)
 }
 
-/// Hands a link to Launch Services. A link that is held back or does not open
-/// is one line in the log, the only place a bundle's own output can be read.
-pub fn open(url: &Url) {
+fn is_web(url: &Url) -> bool {
+    WEB_SCHEMES.contains(&url.scheme())
+}
+
+/// The browser of the link settings that a link opens in, or `None` for the
+/// default app of its scheme.
+fn browser_for<R: Runtime>(app: &AppHandle<R>, url: &Url) -> Option<Browser> {
+    if !is_web(url) {
+        return None;
+    }
+
+    let settings = links::settings(app);
+    // Spares a click the Launch Services query on the main thread.
+    if settings.browser.is_empty() && settings.dev_browser.is_empty() {
+        return None;
+    }
+
+    browsers::choose(url, &settings, &browsers::installed()).cloned()
+}
+
+/// The log line of a link that `open_with` did not open in the app `id`.
+fn not_opened_in(id: &str, url: &Url, cause: &str) -> String {
+    format!(
+        "{NOT_OPENED} in {}: {}: {}",
+        log::quoted(id),
+        log::quoted(url.as_str()),
+        log::quoted(cause)
+    )
+}
+
+fn note(line: &str) {
+    let file = log::open(std::env::home_dir().as_deref()).ok();
+    log::note(file.as_ref(), line);
+}
+
+/// The result of an open, from the error that its completion handler gets.
+fn opened(error: Option<&NSError>) -> Result<(), String> {
+    match error {
+        None => Ok(()),
+        Some(error) => Err(error.localizedDescription().to_string()),
+    }
+}
+
+/// Opens `url` in the app with the bundle id `id`, with no fall back to the
+/// default browser. `done` gets the result once: on the calling thread, before
+/// `open_with` returns, when macOS finds no app or cannot read the link;
+/// otherwise on a queue that macOS chooses.
+fn open_with(url: &Url, id: &str, done: impl FnOnce(Result<(), String>) + Send + 'static) {
+    // A worker thread of the async runtime has no autorelease pool.
+    autoreleasepool(|_| {
+        let workspace = NSWorkspace::sharedWorkspace();
+        let target = NSURL::URLWithString(&NSString::from_str(url.as_str()));
+        let app = workspace.URLForApplicationWithBundleIdentifier(&NSString::from_str(id));
+        let (Some(target), Some(app)) = (target, app) else {
+            done(Err(NO_APP.to_string()));
+            return;
+        };
+
+        // Nothing here may panic: an unwind out of a block aborts the process.
+        let done = Cell::new(Some(done));
+        let handler = RcBlock::new(move |_: *mut NSRunningApplication, error: *mut NSError| {
+            if let Some(done) = done.take() {
+                // Safety: the error macOS hands over is null or a live `NSError`.
+                done(opened(unsafe { error.as_ref() }));
+            }
+        });
+
+        workspace.openURLs_withApplicationAtURL_configuration_completionHandler(
+            &NSArray::from_retained_slice(&[target]),
+            &app,
+            &NSWorkspaceOpenConfiguration::configuration(),
+            Some(&handler),
+        );
+    });
+}
+
+/// Hands a link to Launch Services: a web link to the browser that the link
+/// settings choose, any other link to the default app of its scheme. A link
+/// that is held back or does not open is one line in the log, the only place a
+/// bundle's own output can be read.
+pub fn open<R: Runtime>(app: &AppHandle<R>, url: &Url) {
+    if let Some(browser) = browser_for(app, url) {
+        let (id, link) = (browser.id.clone(), url.clone());
+        open_with(url, &browser.id, move |result| {
+            if let Err(cause) = result {
+                note(&not_opened_in(&id, &link, &cause));
+            }
+        });
+        return;
+    }
+
     let failed = failure(url, |target| {
         NSURL::URLWithString(&NSString::from_str(target.as_str()))
             .is_some_and(|link| NSWorkspace::sharedWorkspace().openURL(&link))
     });
 
     if let Some(reason) = failed {
-        let file = log::open(std::env::home_dir().as_deref()).ok();
-        log::note(
-            file.as_ref(),
-            &format!("{reason}: {}", log::quoted(url.as_str())),
-        );
+        note(&format!("{reason}: {}", log::quoted(url.as_str())));
+    }
+}
+
+/// The web link and the bundle id of a request body, or `None` for a body that
+/// is not a JSON object with a string `url` of a web link and a string
+/// `browser`.
+fn read(body: &[u8]) -> Option<(Url, String)> {
+    let Ok(Value::Object(fields)) = serde_json::from_slice(body) else {
+        return None;
+    };
+    let (Some(Value::String(url)), Some(Value::String(browser))) =
+        (fields.get("url"), fields.get("browser"))
+    else {
+        return None;
+    };
+
+    let url = Url::parse(url).ok().filter(is_web)?;
+    Some((url, browser.clone()))
+}
+
+pub(crate) fn handles(path: &str) -> bool {
+    path.strip_prefix(PATH)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
+/// The status of a request to open a link, or the log line of an open that
+/// failed.
+async fn respond(
+    method: &Method,
+    path: &str,
+    body: &[u8],
+    installed: impl FnOnce() -> Vec<Browser>,
+    open: impl FnOnce(&Url, &str, Sender<Result<(), String>>),
+) -> Result<StatusCode, String> {
+    if path != PATH {
+        return Ok(StatusCode::NOT_FOUND);
+    }
+
+    if *method != Method::POST {
+        return Ok(StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    let Some((url, id)) = read(body) else {
+        return Ok(StatusCode::BAD_REQUEST);
+    };
+
+    if !installed().iter().any(|browser| browser.id == id) {
+        return Ok(StatusCode::NOT_FOUND);
+    }
+
+    let (sender, receiver) = mpsc::channel();
+    open(&url, &id, sender);
+
+    // Off the async runtime's workers, so a browser that starts slowly holds
+    // none.
+    tauri::async_runtime::spawn_blocking(move || receiver.recv())
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_else(|| Err("the open gave no answer".to_string()))
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(|cause| not_opened_in(&id, &url, &cause))
+}
+
+/// `POST /app/open`: opens a web link in a browser of the list. The answer
+/// comes once the browser has the link.
+pub(crate) async fn serve(method: &Method, path: &str, body: &[u8]) -> Response<Vec<u8>> {
+    let answer = respond(
+        method,
+        path,
+        body,
+        browsers::installed,
+        |url, id, sender| {
+            open_with(url, id, move |result| {
+                let _ = sender.send(result);
+            });
+        },
+    )
+    .await;
+
+    match answer {
+        Ok(status) => plain(status),
+        Err(line) => {
+            note(&line);
+            plain(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
     use std::collections::BTreeSet;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
+
+    use serde_json::json;
+    use tauri::Manager as _;
 
     use super::*;
     use crate::testing::directory;
@@ -641,6 +833,276 @@ mod tests {
             launched(&link, false),
             (Some("a link could not be opened"), Some(link))
         );
+    }
+
+    const BROWSER: &str = "com.example.browser";
+    const NOT_INSTALLED: &str = "com.example.not-installed";
+
+    fn example_browsers() -> Vec<Browser> {
+        vec![Browser {
+            id: BROWSER.to_string(),
+            name: "Example Browser".to_string(),
+            default: false,
+        }]
+    }
+
+    fn request(link: &str, browser: &str) -> Vec<u8> {
+        json!({ "url": link, "browser": browser })
+            .to_string()
+            .into_bytes()
+    }
+
+    fn served(method: Method, path: &str, body: &[u8]) -> StatusCode {
+        tauri::async_runtime::block_on(serve(&method, path, body)).status()
+    }
+
+    /// The answer of a request to open `link` in the listed browser, from an
+    /// open that sends `result`, or that sends nothing for `None`, and the link
+    /// and the bundle id that the open got.
+    fn opened_by(
+        link: &str,
+        result: Option<Result<(), String>>,
+    ) -> (Result<StatusCode, String>, Option<(Url, String)>) {
+        let handed = Cell::new(None);
+        let answer = tauri::async_runtime::block_on(respond(
+            &Method::POST,
+            PATH,
+            &request(link, BROWSER),
+            example_browsers,
+            |url, id, sender| {
+                handed.set(Some((url.clone(), id.to_string())));
+                if let Some(result) = result {
+                    sender.send(result).unwrap();
+                }
+            },
+        ));
+
+        (answer, handed.take())
+    }
+
+    fn app_with_settings(settings: Value) -> tauri::App<tauri::test::MockRuntime> {
+        let app = tauri::test::mock_app();
+        app.manage(links::Links::default());
+        let stored = links::serve(
+            app.handle(),
+            &Method::POST,
+            links::PATH,
+            settings.to_string().as_bytes(),
+        );
+        assert_eq!(stored.status(), StatusCode::NO_CONTENT);
+
+        app
+    }
+
+    #[test]
+    fn a_web_link_opens_in_the_browser_that_the_settings_choose() {
+        let installed = browsers::installed();
+        let browser = installed.first().expect("Safari is on every Mac");
+        let app = app_with_settings(json!({ "browser": browser.id }));
+
+        assert_eq!(
+            browser_for(app.handle(), &url("https://example.invalid/")),
+            Some(browser.clone())
+        );
+    }
+
+    #[test]
+    fn a_mail_link_never_opens_in_the_chosen_browser() {
+        let installed = browsers::installed();
+        let browser = installed.first().expect("Safari is on every Mac");
+        let app = app_with_settings(json!({ "browser": browser.id }));
+
+        assert_eq!(
+            browser_for(app.handle(), &url("mailto:someone@example.invalid")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_development_link_opens_in_the_development_browser_with_no_browser_saved() {
+        let installed = browsers::installed();
+        let browser = installed.first().expect("Safari is on every Mac");
+        let app = app_with_settings(json!({ "devBrowser": browser.id }));
+
+        assert_eq!(
+            browser_for(app.handle(), &url("http://localhost:3000/")),
+            Some(browser.clone())
+        );
+        assert_eq!(
+            browser_for(app.handle(), &url("https://example.invalid/")),
+            None
+        );
+    }
+
+    #[test]
+    fn with_no_settings_a_web_link_opens_in_the_default_browser() {
+        let app = app_with_settings(json!({}));
+
+        assert_eq!(
+            browser_for(app.handle(), &url("https://example.invalid/")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_link_not_opened_in_a_browser_is_one_line_with_the_id_the_link_and_the_cause() {
+        assert_eq!(
+            not_opened_in(
+                "com.example.browser\n",
+                &url("https://example.invalid/a b"),
+                "the app quit\ntasma-app: forged"
+            ),
+            "a link could not be opened in com.example.browser\\u000a: \
+             https://example.invalid/a%20b: the app quit\\u000atasma-app: forged"
+        );
+    }
+
+    #[test]
+    fn an_open_with_no_error_succeeds_and_one_with_an_error_fails_with_its_description() {
+        let error = NSError::new(7, &NSString::from_str("ExampleDomain"));
+
+        assert_eq!(opened(None), Ok(()));
+        assert_eq!(
+            opened(Some(&error)),
+            Err(error.localizedDescription().to_string())
+        );
+    }
+
+    #[test]
+    fn an_open_in_an_app_that_is_not_installed_fails_at_once() {
+        let (sender, receiver) = mpsc::channel();
+
+        open_with(
+            &url("https://example.invalid/"),
+            NOT_INSTALLED,
+            move |result| {
+                sender.send(result).unwrap();
+            },
+        );
+
+        assert_eq!(receiver.try_recv(), Ok(Err(NO_APP.to_string())));
+    }
+
+    #[test]
+    fn a_link_that_the_browser_opens_is_answered_with_nothing() {
+        assert_eq!(
+            opened_by("https://example.invalid/a?b=c", Some(Ok(()))),
+            (
+                Ok(StatusCode::NO_CONTENT),
+                Some((url("https://example.invalid/a?b=c"), BROWSER.to_string()))
+            )
+        );
+    }
+
+    #[test]
+    fn a_link_that_the_browser_does_not_open_is_a_failure_with_its_line() {
+        let link = url("http://localhost:3000/");
+
+        assert_eq!(
+            opened_by(link.as_str(), Some(Err("the app quit".to_string()))).0,
+            Err(not_opened_in(BROWSER, &link, "the app quit"))
+        );
+    }
+
+    #[test]
+    fn an_open_that_gives_no_answer_is_a_failure() {
+        let (answer, handed) = opened_by("https://example.invalid/", None);
+
+        assert!(matches!(answer, Err(line) if line.starts_with(NOT_OPENED)));
+        assert!(handed.is_some());
+    }
+
+    #[test]
+    fn a_method_other_than_post_is_not_allowed() {
+        for method in [Method::GET, Method::PUT, Method::DELETE] {
+            assert_eq!(
+                served(
+                    method.clone(),
+                    PATH,
+                    &request("https://example.invalid/", NOT_INSTALLED)
+                ),
+                StatusCode::METHOD_NOT_ALLOWED,
+                "{method}"
+            );
+        }
+    }
+
+    #[test]
+    fn another_path_under_the_route_is_not_found() {
+        for path in ["/open/", "/open/x"] {
+            assert_eq!(
+                served(
+                    Method::POST,
+                    path,
+                    &request("https://example.invalid/", NOT_INSTALLED)
+                ),
+                StatusCode::NOT_FOUND,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_body_that_names_no_web_link_and_browser_is_a_bad_request() {
+        let link = "https://example.invalid/";
+
+        for body in [
+            "{url".to_string(),
+            String::new(),
+            "[]".to_string(),
+            "null".to_string(),
+            json!([link, BROWSER]).to_string(),
+            json!({ "browser": BROWSER }).to_string(),
+            json!({ "url": link }).to_string(),
+            json!({ "url": 7, "browser": BROWSER }).to_string(),
+            json!({ "url": link, "browser": null }).to_string(),
+        ] {
+            assert_eq!(
+                served(Method::POST, PATH, body.as_bytes()),
+                StatusCode::BAD_REQUEST,
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_link_that_is_not_a_web_link_is_a_bad_request() {
+        for link in [
+            "example.invalid",
+            "https://",
+            "file:///etc/hosts",
+            "mailto:someone@example.invalid",
+            "javascript:alert(1)",
+        ] {
+            assert_eq!(
+                served(Method::POST, PATH, &request(link, BROWSER)),
+                StatusCode::BAD_REQUEST,
+                "{link}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_browser_that_is_not_in_the_list_is_not_found() {
+        for browser in [NOT_INSTALLED, ""] {
+            assert_eq!(
+                served(
+                    Method::POST,
+                    PATH,
+                    &request("https://example.invalid/", browser)
+                ),
+                StatusCode::NOT_FOUND,
+                "{browser}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_open_route_is_a_whole_segment() {
+        assert!(handles("/open"));
+        assert!(handles("/open/x"));
+        assert!(!handles("/openx"));
+        assert!(!handles("/browsers"));
     }
 
     #[test]

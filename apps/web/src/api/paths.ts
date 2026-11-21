@@ -30,5 +30,11 @@ export const THEME_ROUTE = "/theme";
 /** The link settings' route under `APP_PATH_PREFIX`. */
 export const LINKS_ROUTE = "/links";
 
+/** The installed browsers' route under `APP_PATH_PREFIX`. */
+export const BROWSERS_ROUTE = "/browsers";
+
+/** The route under `APP_PATH_PREFIX` that opens a web link in a named browser. */
+export const OPEN_URL_ROUTE = "/open";
+
 /** The event the macOS app dispatches on the window when the update changes. */
 export const UPDATE_EVENT = "tasma:update";

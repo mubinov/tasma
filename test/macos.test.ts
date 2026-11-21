@@ -12,10 +12,12 @@ import { TASK_LINK_PREFIX } from "../apps/daemon/src/http/task-link.js";
 import {
   APP_PATH_PREFIX,
   APP_SCHEME,
+  BROWSERS_ROUTE,
   DAEMON_PATH_PREFIX,
   DOCK_ROUTE,
   FOLDER_ROUTE,
   LINKS_ROUTE,
+  OPEN_URL_ROUTE,
   THEME_ROUTE,
   UPDATE_EVENT,
 } from "../apps/web/src/api/paths.js";
@@ -190,6 +192,14 @@ describe("the macOS shell", () => {
   it("reads the link settings fields the board sends", () => {
     expect(["BROWSER", "DEV_BROWSER", "DEV_DOMAINS", "FILE_APP"].map((name) => rustConstant("links.rs", name)).toSorted())
       .toEqual(Object.keys(DEFAULT_LINK_SETTINGS).toSorted());
+  });
+
+  it("answers the browser list route the board asks", () => {
+    expect(rustConstant("browsers.rs", "PATH")).toBe(BROWSERS_ROUTE);
+  });
+
+  it("answers the route the board asks to open a link in a named browser", () => {
+    expect(rustConstant("external.rs", "PATH")).toBe(OPEN_URL_ROUTE);
   });
 
   it("installs an update only of its own bundle identifier", () => {

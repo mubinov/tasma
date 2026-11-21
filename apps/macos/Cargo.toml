@@ -33,8 +33,9 @@ libc = "0.2"
 # The alerts, the folder panel, the Dock icon, the drag band, the appearance of
 # the window, the AppleScript that asks for administrator rights, the move to
 # the Trash, the defaults Uninstall clears, the links a document opens outside
-# the window and the filter of the context menu, which reads the identifier of
-# a menu item. The versions Tauri already resolves, so no second copy is built.
+# the window, the list of the installed browsers, the open of a link in a named
+# browser and the filter of the context menu, which reads the identifier of a
+# menu item. The versions Tauri already resolves, so no second copy is built.
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
   "std",
@@ -52,6 +53,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
   "NSOpenPanel",
   "NSPanel",
   "NSResponder",
+  "NSRunningApplication",
   "NSSavePanel",
   "NSUserInterfaceItemIdentification",
   "NSUserInterfaceLayout",
@@ -59,8 +61,8 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
   "NSWindow",
   "NSWorkspace",
 ] }
-# The completion handler of the folder panel. The version Tauri already
-# resolves, so no second copy is built.
+# The completion handlers of the folder panel and of the open of a link in a
+# named browser. The version Tauri already resolves, so no second copy is built.
 block2 = "0.6.2"
 # Holds the drag band in state that any thread can reach. The version Tauri
 # already resolves, so no second copy is built.
@@ -69,8 +71,11 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
   "std",
   "NSAppleEventDescriptor",
   "NSAppleScript",
+  "NSArray",
+  "NSBundle",
   "NSData",
   "NSDictionary",
+  "NSEnumerator",
   "NSError",
   "NSFileManager",
   "NSObject",
