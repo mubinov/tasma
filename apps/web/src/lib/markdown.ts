@@ -1,6 +1,6 @@
 import type { Heading, Nodes, Parents, PhrasingContent, Root, RootContent, Text } from "mdast";
 import type { ExtraProps } from "react-markdown";
-import { EDITOR_SCHEMES, LINK_SCHEMES, linkKind } from "./link-kind";
+import { EDITOR_SCHEMES, fileLinkPath, LINK_SCHEMES, linkKind } from "./link-kind";
 
 const FLOW_PARENTS = new Set<Parents["type"]>(["root", "blockquote", "listItem", "footnoteDefinition"]);
 
@@ -11,7 +11,7 @@ const IMAGE_SCHEMES = new Set(["http:", "https:"]);
 const WEB_SCHEMES = new Set(["http:", "https:"]);
 
 // The bidi embeddings, overrides and isolates: every bidi control except the LRM, RLM and ALM marks.
-const BIDI_OVERRIDES = /[\u202A-\u202E\u2066-\u2069]/;
+const BIDI_OVERRIDES = /[‪-‮⁦-⁩]/;
 
 // Leading and trailing punctuation and symbols, except a slash, which can start a protocol-relative URL or end a path.
 const EDGE_MARKS = /^(?:(?!\/)[\p{P}\p{S}])+|(?:(?!\/)[\p{P}\p{S}])+$/gu;
@@ -257,15 +257,49 @@ function removeBidiOverrides(node: HastContent): void {
   }
 }
 
+export type FileLinksOptions = { folder: string | undefined };
+
 /**
- * The absolute URL a link keeps, or `undefined` to drop it: only a URL that
- * `linkKind` gives a kind is kept. A relative or `#…` URL is dropped too,
- * because the URL hash holds the route.
+ * Gives each file link the absolute path of its file in `dataPath`, against
+ * `folder` for a relative path. It reads the href as the parser gives it,
+ * before `urlTransform`.
+ */
+export function rehypeFileLinks({ folder }: FileLinksOptions): (tree: { children: HastContent[] }) => void {
+  return (tree) => {
+    withFilePaths(tree.children, folder);
+  };
+}
+
+function withFilePaths(nodes: HastContent[], folder: string | undefined): void {
+  for (const node of nodes) {
+    if (node.type !== "element") {
+      continue;
+    }
+    if (node.tagName !== "a") {
+      withFilePaths(node.children, folder);
+      continue;
+    }
+    const { href } = node.properties;
+    const link = typeof href === "string" ? linkKind(href) : undefined;
+    const path = link?.kind === "file" ? fileLinkPath(link.path, folder) : undefined;
+    if (path !== undefined) {
+      node.properties.dataPath = path;
+    }
+  }
+}
+
+/**
+ * The URL a link keeps, or `undefined` to drop it: only a URL that `linkKind`
+ * gives a kind is kept, and a file path stays as written. A `#…` URL is
+ * dropped, because the URL hash holds the route.
  */
 export function markdownUrl(url: string): string | undefined {
   // The markdown parser percent-encodes the brackets of an IPv6 host.
   const kept = allowedUrl(url.replace(/^([a-z][\d+.a-z-]*:\/\/(?:[^/?#@]*@)?)%5B([^/?#]*?)%5D/i, "$1[$2]"), KEPT_SCHEMES);
-  return kept !== undefined && linkKind(kept) !== undefined ? kept : undefined;
+  if (kept !== undefined && linkKind(kept) !== undefined) {
+    return kept;
+  }
+  return linkKind(url)?.kind === "file" ? url : undefined;
 }
 
 /**
@@ -283,6 +317,11 @@ export function hiddenHost(text: string, href: string): string | undefined {
     return undefined;
   }
   return destination.hostname;
+}
+
+/** Whether the text of a link shows a URL or a domain, by the rules of `hiddenHost`. */
+export function showsUrl(text: string): boolean {
+  return shownHost(text) !== undefined;
 }
 
 /**

@@ -6,12 +6,15 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { appAvailable } from "../../src/api/app";
 import { Markdown } from "../../src/components/markdown";
 import { MermaidDiagram } from "../../src/components/mermaid-diagram";
 import { remarkTaskHeadings, type HeadingBase } from "../../src/lib/markdown";
+
+vi.mock(import("../../src/api/app"), () => ({ appAvailable: vi.fn(() => false) }));
 
 vi.mock(import("../../src/components/mermaid-diagram"), () => ({
   MermaidDiagram: vi.fn(({ source }: { source: string }) => <div data-diagram>{source}</div>),
@@ -50,6 +53,10 @@ async function renderInRouter(text: string, path = "/") {
 function descriptionOf(link: HTMLElement): string | undefined {
   return document.getElementById(link.getAttribute("aria-describedby") ?? "")?.textContent;
 }
+
+beforeEach(() => {
+  vi.mocked(appAvailable).mockReturnValue(false);
+});
 
 afterEach(() => {
   cleanup();
@@ -426,6 +433,174 @@ describe("an editor link", () => {
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toBe("noreferrer");
     expect(descriptionOf(link)).toBe("vscode://file/Users/x/proj/a.ts:3");
+  });
+});
+
+describe("a file link", () => {
+  const FOLDER = "/work/saga";
+
+  function renderInFolder(text: string, folder: string | undefined): HTMLElement {
+    return render(<Markdown text={text} base={2} folder={folder} />).container.firstElementChild as HTMLElement;
+  }
+
+  function opening() {
+    const fetch = vi.fn<(input: string, init?: RequestInit) => Promise<Response>>(
+      () => Promise.resolve(new Response(null, { status: 204 })),
+    );
+    vi.stubGlobal("fetch", fetch);
+    return fetch;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  describe("in the app", () => {
+    beforeEach(() => {
+      vi.mocked(appAvailable).mockReturnValue(true);
+    });
+
+    it("links to the absolute path of a relative link in the folder", () => {
+      renderInFolder("[spec](.specs/AB-1.md)", FOLDER);
+
+      const link = screen.getByRole("link");
+      expect(link.textContent).toBe("spec");
+      expect(link.getAttribute("href")).toBe("file:///work/saga/.specs/AB-1.md");
+      expect(link.hasAttribute("target")).toBe(false);
+      expect(link.hasAttribute("rel")).toBe(false);
+      expect(link.getAttribute("dir")).toBe("ltr");
+      expect(classOf(link)).toBe("underline underline-offset-2");
+    });
+
+    it("opens the file through the app on a click, with no navigation", () => {
+      const fetch = opening();
+      renderInFolder("[spec](.specs/AB-1.md)", FOLDER);
+
+      const navigates = fireEvent.click(screen.getByRole("link"));
+
+      expect(navigates).toBe(false);
+      expect(fetch).toHaveBeenCalledExactlyOnceWith(
+        "/app/files/open",
+        { method: "POST", body: JSON.stringify({ path: "/work/saga/.specs/AB-1.md" }) },
+      );
+    });
+
+    it("opens the file at the line of its #L<n> fragment", async () => {
+      const user = userEvent.setup();
+      const fetch = opening();
+      renderInFolder("[a.ts:42](src/a.ts#L42)", FOLDER);
+
+      await user.click(screen.getByRole("link"));
+
+      expect(fetch).toHaveBeenCalledExactlyOnceWith(
+        "/app/files/open",
+        { method: "POST", body: JSON.stringify({ path: "/work/saga/src/a.ts", line: 42 }) },
+      );
+    });
+
+    it("opens the file with Enter", async () => {
+      const user = userEvent.setup();
+      const fetch = opening();
+      renderInFolder("[spec](<docs/a b.md>)", FOLDER);
+
+      await user.tab();
+      await user.keyboard("{Enter}");
+
+      expect(fetch).toHaveBeenCalledExactlyOnceWith(
+        "/app/files/open",
+        { method: "POST", body: JSON.stringify({ path: "/work/saga/docs/a b.md" }) },
+      );
+    });
+
+    it.each([
+      { text: "[spec](.specs/AB-1.md)", shown: "/work/saga/.specs/AB-1.md", described: "/work/saga/.specs/AB-1.md" },
+      { text: "[a.ts](src/a.ts#L42-L50)", shown: "/work/saga/src/a.ts#L42", described: "/work/saga/src/a.ts, line 42" },
+    ])("shows its absolute target in the tooltip and the description: $text", async ({ text, shown, described }) => {
+      const user = userEvent.setup();
+      renderInFolder(text, FOLDER);
+
+      await user.tab();
+
+      const link = screen.getByRole("link");
+      expect(document.activeElement).toBe(link);
+      expect((await screen.findByRole("presentation")).textContent).toBe(shown);
+      expect(descriptionOf(link)).toBe(described);
+    });
+
+    it.each([
+      { text: "[src/a.ts](src/a.ts)", described: "/work/saga/src/a.ts" },
+      { text: "[](src/a.ts)", described: "/work/saga/src/a.ts" },
+      { text: "[/work/saga/a.ts#L4](/work/saga/a.ts#L4)", described: "/work/saga/a.ts, line 4" },
+    ])("named by its relative path or its href is described by its absolute target: $text", ({ text, described }) => {
+      renderInFolder(text, FOLDER);
+
+      expect(descriptionOf(screen.getByRole("link"))).toBe(described);
+    });
+
+    it("named by its absolute path has no description", () => {
+      renderInFolder("[/work/saga/a.ts](/work/saga/a.ts)", FOLDER);
+
+      expect(screen.getByRole("link").hasAttribute("aria-describedby")).toBe(false);
+    });
+
+    it("with no text shows its href", () => {
+      renderInFolder("[](src/a.ts)", FOLDER);
+
+      expect(screen.getByRole("link").textContent).toBe("src/a.ts");
+    });
+
+    it.each([
+      {
+        text: "[https://github.com/acme/app/pull/7](docs/pr.html)",
+        name: "https://github.com/acme/app/pull/7",
+        path: "/work/saga/docs/pr.html",
+      },
+      { text: "[](github.com/acme/app)", name: "github.com/acme/app", path: "/work/saga/github.com/acme/app" },
+    ])("whose text shows a URL names its absolute path in the link name and in a mark after it: $text", ({ text, name, path }) => {
+      const wrapper = renderInFolder(text, FOLDER);
+
+      const link = screen.getByRole("link");
+      expect(link.textContent).toBe(`${name} (warning: goes to ${path})`);
+      const mark = wrapper.querySelector("[aria-hidden='true']:has(svg)");
+      expect(link.contains(mark)).toBe(false);
+      expect(link.parentElement?.contains(mark)).toBe(true);
+      expect(mark?.textContent).toBe(`(${path})`);
+      expect(classOf(mark)).toBe("ml-1.5 text-signal wrap-anywhere");
+    });
+
+    it.each(["[docs/a.md](docs/a.md)", "[README.md](README.md)", "[spec](.specs/AB-1.md)", "[a.ts:42](src/a.ts#L42)", "[](docs/a.md)"])(
+      "whose text shows a path has no mark: %s",
+      (text) => {
+        const wrapper = renderInFolder(text, FOLDER);
+
+        expect(screen.getByRole("link").textContent).not.toContain("warning");
+        expect(wrapper.querySelector("svg")).toBeNull();
+      },
+    );
+
+    it("of an absolute path links to it with no folder", () => {
+      renderInFolder("[a](/work/other/a.md)", undefined);
+
+      expect(screen.getByRole("link").getAttribute("href")).toBe("file:///work/other/a.md");
+    });
+
+    it.each([
+      { text: "[a](docs/a.md)", folder: undefined },
+      { text: "[top](#top)", folder: FOLDER },
+      { text: "[home](~/a.md)", folder: FOLDER },
+      { text: "[file](file:///work/saga/a.md)", folder: FOLDER },
+    ])("renders its text with no element when it does not resolve: $text in $folder", ({ text, folder }) => {
+      const wrapper = renderInFolder(text, folder);
+
+      expect(wrapper.querySelector("a")).toBeNull();
+    });
+  });
+
+  it("renders its text with no element in the browser", () => {
+    const wrapper = renderInFolder("[spec](.specs/AB-1.md)", FOLDER);
+
+    expect(wrapper.querySelector("a")).toBeNull();
+    expect(wrapper.querySelector("p")?.innerHTML).toBe("spec");
   });
 });
 

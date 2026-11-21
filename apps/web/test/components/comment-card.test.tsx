@@ -520,6 +520,7 @@ describe("the find of the page", () => {
             onDeleted={() => {}}
             findActive={findActive}
             revealRequest={revealRequest}
+            folder="/repos/saga"
           />
         </ol>
       </QueryClientProvider>

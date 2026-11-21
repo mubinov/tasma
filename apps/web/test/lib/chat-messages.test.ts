@@ -124,7 +124,15 @@ describe("chatThreadMessage", () => {
         { type: "data-question", data: question },
       ],
       status: { type: "complete", reason: "stop" },
+      metadata: { custom: { folder: FOLDER } },
     });
+  });
+
+  it("gives an assistant message the folder of its chat, and a user message no metadata", () => {
+    const user = chatThreadMessage({ role: "user", id: "u1", seq: 1, at: AT, text: "Run the tests." }, FOLDER);
+
+    expect(chatThreadMessage(agentMessage([]), FOLDER).metadata).toEqual({ custom: { folder: FOLDER } });
+    expect(user).not.toHaveProperty("metadata");
   });
 
   it("gives a tool part its id, its name, its input and the tool with the folder", () => {

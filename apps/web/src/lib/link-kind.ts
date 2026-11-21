@@ -4,7 +4,8 @@ export type LinkKind
   = | { kind: "web"; url: string }
     | { kind: "mail"; address: string }
     | { kind: "task"; id: string }
-    | { kind: "editor"; url: string };
+    | { kind: "editor"; url: string }
+    | { kind: "file"; path: string; line?: number };
 
 // The macOS part reads both lists at compile time: each stays one `Set` literal on one line.
 export const LINK_SCHEMES = new Set(["http:", "https:", "mailto:"]);
@@ -32,11 +33,20 @@ const NUMBER = /^[0-9]+$/;
 /** One position suffix that every editor reads: `:<line>` or `:<line>:<column>`. */
 const POSITION = /:(\d+)(?::(\d+))?$/;
 
+/** Invented schemes of the bases that `hasNoScheme` resolves an href against. */
+const PROBE_BASE_SCHEMES = ["relative-a:", "relative-b:"];
+
+const LINE_FRAGMENT = /^L(\d+)(?:-L\d+)?$/;
+
 /**
- * The kind of an absolute URL, with its data, or `undefined` for a URL that
- * is no link.
+ * The kind of a URL or a path, with its data, or `undefined` for one that is
+ * no link.
  */
 export function linkKind(href: string): LinkKind | undefined {
+  if (hasNoScheme(href)) {
+    return fileLink(href);
+  }
+
   const url = URL.parse(href);
   if (url === null) {
     return undefined;
@@ -56,6 +66,53 @@ export function linkKind(href: string): LinkKind | undefined {
     return { kind: "editor", url: href };
   }
   return undefined;
+}
+
+/**
+ * Whether the href resolves against each base in the scheme of that base. An
+ * href with a scheme keeps its own scheme or does not parse, also one whose host
+ * or port does not parse. Two bases, so that an href naming one of these schemes
+ * fails the other.
+ */
+function hasNoScheme(href: string): boolean {
+  return PROBE_BASE_SCHEMES.every((scheme) => URL.parse(href, `${scheme}/`)?.protocol === scheme);
+}
+
+/**
+ * The parser gives the href percent-encoded, so one decode gives the path as
+ * written. A `~` path stays no link: the web part does not know the home folder.
+ * A path with a bidi control stays no link: the tooltip shows the path, and the
+ * control can show it in another order.
+ */
+function fileLink(href: string): LinkKind | undefined {
+  const hash = href.indexOf("#");
+  const part = hash < 0 ? href : href.slice(0, hash);
+  if (part === "" || part.includes("?") || part.startsWith("//")) {
+    return undefined;
+  }
+  const path = decoded(part);
+  if (path === undefined || path.startsWith("~") || /\p{Bidi_Control}/u.test(path)) {
+    return undefined;
+  }
+  const digits = hash < 0 ? undefined : LINE_FRAGMENT.exec(href.slice(hash + 1))?.[1];
+  const line = Number(digits);
+  return line >= 1 && Number.isSafeInteger(line) ? { kind: "file", path, line } : { kind: "file", path };
+}
+
+/**
+ * The absolute path of a file link, from the folder of its text, or `undefined`
+ * for a relative path with no folder. A `..` segment stays: only the file system
+ * resolves it correctly through a symlink.
+ */
+export function fileLinkPath(path: string, folder: string | undefined): string | undefined {
+  if (path.startsWith("/")) {
+    return withoutEmptyOrDotSegments(path);
+  }
+  return folder === undefined ? undefined : withoutEmptyOrDotSegments(`${folder}/${path}`);
+}
+
+function withoutEmptyOrDotSegments(path: string): string {
+  return `/${path.split("/").filter((segment) => segment !== "" && segment !== ".").join("/")}`;
 }
 
 /** The grammar of `route()` in the macOS part. */

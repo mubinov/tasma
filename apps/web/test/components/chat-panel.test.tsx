@@ -12,6 +12,7 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import { useRef, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { appAvailable } from "../../src/api/app";
 import { CHAT_CLIENT } from "../../src/api/mutations";
 import { daemonKeys } from "../../src/api/queries";
 import { ChatBody, ChatPanel } from "../../src/components/chat-panel";
@@ -63,9 +64,12 @@ import { bareBorders, KIT_BORDER_SELECTOR } from "../kit/borders";
 import { colouredTokens, SHIKI_LOAD } from "../kit/shiki";
 import { frame } from "../setup/notice-store";
 
+vi.mock(import("../../src/api/app"), () => ({ appAvailable: vi.fn(() => false) }));
+
 beforeEach(() => {
   stubThreadDom();
   useChatDraftStore.setState({ drafts: new Map() });
+  vi.mocked(appAvailable).mockReturnValue(false);
 });
 
 afterEach(() => {
@@ -1031,6 +1035,22 @@ it("shows where a link in agent text goes, and keeps no link to an address of th
   expect(link.textContent).toContain("(warning: goes to evil.example)");
   expect(screen.getAllByRole("link")).toHaveLength(1);
   expect(screen.getByText(/the projects/)).toBeTruthy();
+});
+
+it("links a file in agent text and in reasoning to its path in the chat folder, in the app", async () => {
+  vi.mocked(appAvailable).mockReturnValue(true);
+  const user = userEvent.setup();
+  await renderPanel(logOf(chatEntries([
+    userMessage("Write the spec."),
+    thoughtChunk("Read [the notes](notes.md#L3).", "msg_01"),
+    textChunk("See [spec](.specs/AB-1.md).", "msg_02"),
+    turnEnd(),
+  ])));
+
+  const link = await screen.findByRole("link", { name: "spec" });
+  expect(link.getAttribute("href")).toBe("file:///work/saga/.specs/AB-1.md");
+  await user.click(screen.getByRole("button", { name: /^Reasoning/ }));
+  expect((await screen.findByRole("link", { name: "the notes" })).getAttribute("href")).toBe("file:///work/saga/notes.md");
 });
 
 it("shows an image in agent text as a link, and loads no image", async () => {

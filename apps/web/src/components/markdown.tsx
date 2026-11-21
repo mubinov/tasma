@@ -1,20 +1,24 @@
-import { useId, type ComponentProps, type ReactNode } from "react";
+import { useId, type ComponentProps, type ReactElement, type ReactNode } from "react";
 import { Link, useParams } from "@tanstack/react-router";
 import { normalizeUri } from "micromark-util-sanitize-uri";
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { appAvailable } from "../api/app";
 import { tagOf } from "../lib/board";
+import { fileUrl, openFileLink } from "../lib/file-link";
 import { WarningIcon } from "../lib/icons";
 import { linkKind } from "../lib/link-kind";
 import {
   hiddenHost,
   markdownUrl,
   mermaidSource,
+  rehypeFileLinks,
   rehypeLinkText,
   remarkImagesAsLinks,
   remarkRawAsSource,
   remarkSoftBreaks,
   remarkTaskHeadings,
+  showsUrl,
   type TaskHeadingsOptions,
 } from "../lib/markdown";
 import { MermaidDiagram } from "./mermaid-diagram";
@@ -24,6 +28,8 @@ type MarkdownProps = TaskHeadingsOptions & {
   text: string;
   /** Draws the Mermaid blocks. False shows their source, for a text that has no layout yet. */
   diagrams?: boolean;
+  /** The folder that a relative file link resolves against. */
+  folder?: string | undefined;
 };
 
 type HeadingTag = "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
@@ -70,6 +76,35 @@ function TaskLink({ task, ...props }: ComponentProps<"a"> & { task: string }): R
   );
 }
 
+type FileTarget = { path: string; line: number | undefined };
+
+/** Opens the file through the app, with no navigation. `onClick` is the handler of the tooltip trigger. */
+function FileLink({ file, onClick, ...props }: ComponentProps<"a"> & { file: FileTarget }): ReactNode {
+  return (
+    <a
+      {...props}
+      href={fileUrl(file.path)}
+      onClick={(event) => {
+        onClick?.(event);
+        event.preventDefault();
+        void openFileLink(file.path, file.line);
+      }}
+    />
+  );
+}
+
+/** What the tooltip and the description show: the href, or for a file link its absolute path. */
+function linkTarget(href: string, file: FileTarget | undefined): { shown: string; described: string } {
+  if (file === undefined) {
+    return { shown: href, described: href };
+  }
+  if (file.line === undefined) {
+    return { shown: file.path, described: file.path };
+  }
+  // The description names the line in words, so a screen reader does not read "number sign L".
+  return { shown: `${file.path}#L${String(file.line)}`, described: `${file.path}, line ${String(file.line)}` };
+}
+
 export function MarkdownLink(
   { node, href, children }: ChildrenProps & ExtraProps & { href?: string | undefined },
 ): ReactNode {
@@ -83,13 +118,34 @@ export function MarkdownLink(
     return children;
   }
   const link = linkKind(href);
+  let file: FileTarget | undefined;
+  if (link?.kind === "file") {
+    // rehypeFileLinks sets no path when the text has no folder for a relative link.
+    const path = node?.properties.dataPath;
+    if (typeof path !== "string" || !appAvailable()) {
+      return children;
+    }
+    file = { path, line: link.line };
+  }
+  const { shown, described } = linkTarget(href, file);
   const named = node?.children.some(hasText) === true;
   const text = String(node?.properties.dataText);
-  const host = named && link?.kind === "web" ? hiddenHost(text, href) : undefined;
+  const label = named ? text : href;
+  // The target that the text of the link hides. A text that shows a URL or a domain hides that a file link opens a
+  // file.
+  let hidden: string | undefined;
+  if (file !== undefined) {
+    hidden = showsUrl(label) ? file.path : undefined;
+  } else if (named && link?.kind === "web") {
+    hidden = hiddenHost(text, href);
+  }
   // A link named by its own URL gets no description, so a screen reader does not read the URL twice. The href is
   // the output of normalizeUri and then markdownUrl, so the text goes through both. A GFM `www.` literal gets
-  // `http://`, and an email autolink gets `mailto:`.
-  const describe = named && ["", "http://", "mailto:"].every((prefix) => markdownUrl(normalizeUri(prefix + text)) !== href);
+  // `http://`, and an email autolink gets `mailto:`. The href of a file link can be relative, so the text it shows
+  // is compared with its absolute target.
+  const describe = file === undefined
+    ? named && ["", "http://", "mailto:"].every((prefix) => markdownUrl(normalizeUri(prefix + text)) !== href)
+    : label !== described;
   const linkProps = {
     "dir": "ltr",
     "aria-describedby": describe ? descriptionId : undefined,
@@ -98,26 +154,30 @@ export function MarkdownLink(
   const content = (
     <>
       {named ? children : href}
-      {host !== undefined && <span className="sr-only">{` (warning: goes to ${host})`}</span>}
+      {hidden !== undefined && <span className="sr-only">{` (warning: goes to ${hidden})`}</span>}
     </>
   );
+  let anchor: ReactElement;
+  if (link?.kind === "task") {
+    anchor = <TaskLink {...linkProps} task={link.id}>{content}</TaskLink>;
+  } else if (file === undefined) {
+    anchor = <a {...linkProps} href={href} target="_blank" rel="noreferrer">{content}</a>;
+  } else {
+    anchor = <FileLink {...linkProps} file={file}>{content}</FileLink>;
+  }
   return (
     // The isolates keep a bidi control in the text around the link, or in the link text, from reordering the link
     // and its mark. `dir` on the `<a>` gives it `unicode-bidi: isolate`. They hold because rehypeLinkText removes
     // every PDI from the link text.
     <bdi dir="ltr">
-      <Tooltip content={<span className="font-mono">{href}</span>}>
-        {link?.kind === "task"
-          ? <TaskLink {...linkProps} task={link.id}>{content}</TaskLink>
-          : <a {...linkProps} href={href} target="_blank" rel="noreferrer">{content}</a>}
-      </Tooltip>
+      <Tooltip content={<span className="font-mono">{shown}</span>}>{anchor}</Tooltip>
       {/* A hidden element still gives the description, and the virtual cursor does not read it as text. */}
-      {describe && <span id={descriptionId} hidden>{href}</span>}
-      {host !== undefined && (
+      {describe && <span id={descriptionId} hidden>{described}</span>}
+      {hidden !== undefined && (
         <span aria-hidden="true" className="ml-1.5 text-signal wrap-anywhere">
           (
           <WarningIcon size="1em" className="mr-0.5 inline align-[-0.125em]" />
-          {host}
+          {hidden}
           )
         </span>
       )}
@@ -194,10 +254,10 @@ const sourceComponents: Components = { ...components, pre: (props) => <CodeBlock
 /**
  * Renders the markdown of a task body or a comment body: GitHub-flavoured, raw
  * HTML shown as source, a single newline shown as a line break, task links
- * opened in the app and other links outside it, no image loaded, Mermaid
- * blocks drawn as diagrams.
+ * opened in the app, file links opened through the app and other links outside
+ * it, no image loaded, Mermaid blocks drawn as diagrams.
  */
-export function Markdown({ text, base, title, diagrams = true }: MarkdownProps): ReactNode {
+export function Markdown({ text, base, title, diagrams = true, folder }: MarkdownProps): ReactNode {
   return (
     <div className="wrap-anywhere [&>:first-child]:mt-0">
       <ReactMarkdown
@@ -209,7 +269,7 @@ export function Markdown({ text, base, title, diagrams = true }: MarkdownProps):
           remarkSoftBreaks,
         ]}
         // The footnote label is added after the remark plugins run, so no heading rank reaches it.
-        rehypePlugins={[rehypeLinkText]}
+        rehypePlugins={[rehypeLinkText, [rehypeFileLinks, { folder }]]}
         remarkRehypeOptions={{ footnoteLabelTagName: "p" }}
         urlTransform={markdownUrl}
         components={diagrams ? components : sourceComponents}

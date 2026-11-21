@@ -134,6 +134,8 @@ export function chatThreadMessage(message: ChatMessage, folder: string): ThreadM
     createdAt,
     content: message.parts.map((part) => threadPart(part, folder)),
     status: messageStatus(message),
+    // The agent text resolves a relative file link against it.
+    metadata: { custom: { folder } },
   };
 }
 

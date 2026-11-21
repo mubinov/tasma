@@ -753,7 +753,7 @@ export function TaskScreen(): ReactNode {
                     />
                     {body.trim() !== "" && (
                       <div ref={bodyRef} data-find-scope="body" className={`${chats.length > 0 ? "mt-10" : "mt-8"} max-w-2xl`}>
-                        <Markdown text={body} base={2} title={title} />
+                        <Markdown text={body} base={2} title={title} folder={project.path} />
                       </div>
                     )}
                   </>
@@ -841,6 +841,7 @@ export function TaskScreen(): ReactNode {
                   }}
                   findActive={find.findActive}
                   revealRequest={find.reveal?.commentId === comment.id ? find.reveal.count : undefined}
+                  folder={project.path}
                 />
               ))}
             </Comments>

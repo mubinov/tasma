@@ -48,6 +48,8 @@ export type CommentCardProps = {
   findActive: boolean;
   /** A new number opens the comment, as its caret does. */
   revealRequest: number | undefined;
+  /** The folder of the project, which a relative file link resolves against. */
+  folder: string | undefined;
 };
 
 type CommentFoldProps = {
@@ -59,9 +61,12 @@ type CommentFoldProps = {
   header: ReactNode;
   /** The comment text, `null` for a comment that has none. */
   text: string | null;
+  folder: string | undefined;
 };
 
-function CommentFold({ id, titleId, startOpen, findActive, revealRequest, header, text }: CommentFoldProps): ReactNode {
+function CommentFold(
+  { id, titleId, startOpen, findActive, revealRequest, header, text, folder }: CommentFoldProps,
+): ReactNode {
   const [open, setOpen] = useState(startOpen);
   const [seenRequest, setSeenRequest] = useState(revealRequest);
 
@@ -93,7 +98,7 @@ function CommentFold({ id, titleId, startOpen, findActive, revealRequest, header
           data-comment-text=""
           className="px-4 pt-2.5 pb-3.5 [&_*]:scroll-mt-(--comment-header-height)"
         >
-          <Markdown text={text} base={4} diagrams={open} />
+          <Markdown text={text} base={4} diagrams={open} folder={folder} />
         </Collapsible.Panel>
       )}
     </Collapsible.Root>
@@ -117,6 +122,7 @@ export function CommentCard({
   onDeleted,
   findActive,
   revealRequest,
+  folder,
 }: CommentCardProps): ReactNode {
   const titleId = useId();
   const itemRef = useRef<HTMLLIElement>(null);
@@ -232,6 +238,7 @@ export function CommentCard({
         findActive={findActive}
         revealRequest={revealRequest}
         text={hasBody ? body : null}
+        folder={folder}
         // A sticky header needs every box around it without overflow clipping, the card included.
         header={(
           <div

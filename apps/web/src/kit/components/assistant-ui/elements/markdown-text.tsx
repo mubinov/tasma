@@ -19,7 +19,8 @@ import { useCopyToClipboard } from "@kit/hooks/use-copy-to-clipboard";
 import { cn } from "@kit/lib/utils";
 // tasma-edit: agent text follows the link, image and line break rules of a task body
 import { MarkdownLink } from "../../../../components/markdown";
-import { markdownUrl, rehypeLinkText, remarkImagesAsLinks, remarkSoftBreaks } from "../../../../lib/markdown";
+import { markdownUrl, rehypeFileLinks, rehypeLinkText, remarkImagesAsLinks, remarkSoftBreaks } from "../../../../lib/markdown";
+import { useChatFolder } from "../../../../lib/use-chat-folder";
 // tasma-edit end
 // tasma-edit: fenced code in chat messages is highlighted by Shiki, loaded on first use
 import { ChatCode } from "../../../../components/chat-code";
@@ -59,13 +60,16 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({
       ...memoizeMarkdownComponents(stableComponents),
     };
   }, [stableComponents]);
+  // tasma-edit: agent text resolves a file link against the folder of its chat
+  const folder = useChatFolder();
+  // tasma-edit end
 
   return (
     <MarkdownTextPrimitive
       // tasma-edit: agent text follows the link, image and line break rules of a task body; the link reads its node, which a memoized component does not get
       remarkPlugins={[remarkGfm, remarkImagesAsLinks, remarkSoftBreaks]}
       className="aui-md"
-      rehypePlugins={[rehypeLinkText]}
+      rehypePlugins={[rehypeLinkText, [rehypeFileLinks, { folder }]]}
       urlTransform={markdownUrl}
       components={{ ...markdownComponents, a: MarkdownLink }}
       // tasma-edit end

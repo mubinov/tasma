@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EDITOR_SCHEMES, linkKind } from "../../src/lib/link-kind";
+import { EDITOR_SCHEMES, fileLinkPath, linkKind } from "../../src/lib/link-kind";
 
 function taskIdOf(href: string): string | undefined {
   const kind = linkKind(href);
@@ -183,8 +183,91 @@ describe("an editor link", () => {
   });
 });
 
+describe("a file link", () => {
+  it.each([
+    { href: ".specs/AB-1.md", path: ".specs/AB-1.md" },
+    { href: "src/a.ts#L42", path: "src/a.ts", line: 42 },
+    { href: "/Users/x/a.ts#L10-L20", path: "/Users/x/a.ts", line: 10 },
+    { href: "docs/a.md#install", path: "docs/a.md" },
+    { href: "a.ts#L0", path: "a.ts" },
+    { href: "a%20b.md", path: "a b.md" },
+    { href: "not%20a%20url", path: "not a url" },
+    { href: "not a url", path: "not a url" },
+    { href: "a%3Fb%23c.md", path: "a?b#c.md" },
+  ])("is a path with no scheme: $href", ({ href, path, line }) => {
+    expect(linkKind(href)).toEqual(line === undefined ? { kind: "file", path } : { kind: "file", path, line });
+  });
+
+  it.each([
+    { fragment: "L1", line: 1 },
+    { fragment: "L42-L50", line: 42 },
+    { fragment: "L0", line: undefined },
+    { fragment: "L00", line: undefined },
+    { fragment: "L9007199254740992", line: undefined },
+    { fragment: "l42", line: undefined },
+    { fragment: "L42-50", line: undefined },
+    { fragment: "", line: undefined },
+  ])("reads a line only from the #L<n> form: #$fragment", ({ fragment, line }) => {
+    expect(linkKind(`src/a.ts#${fragment}`)).toEqual(
+      line === undefined ? { kind: "file", path: "src/a.ts" } : { kind: "file", path: "src/a.ts", line },
+    );
+  });
+
+  it.each(["#top", "?x", "a.md?x=1", "//host/a", "~/a.md", "%7E/a.md", "a%E0.md", ""])(
+    "has no kind for an href that is not a path: %s",
+    (href) => {
+      expect(linkKind(href)).toBeUndefined();
+    },
+  );
+
+  it.each([
+    "docs/notes%E2%80%AEdm.html",
+    "docs/notes\u202Edm.html",
+    "a%E2%80%AAb.md",
+    "a%E2%81%A6b.md",
+    "a%E2%81%A9b.md",
+    "a%E2%80%8F/1/2.md",
+    "a%D8%9C/1/2.md",
+    "a%E2%80%8E/1/2.md",
+  ])("has no kind for a path with a bidi control: %s", (href) => {
+    expect(linkKind(href)).toBeUndefined();
+  });
+
+  it.each([
+    "http://%5B::1/items",
+    "http:%5B::1%5D/../items",
+    "https:",
+    "http://example.com:99999/a",
+    " javascript:alert(1)",
+    "C:/x",
+    "relative-a:x",
+    "relative-b:x",
+  ])("has no kind for an href with a scheme: %s", (href) => {
+    expect(linkKind(href)).toBeUndefined();
+  });
+});
+
+describe("fileLinkPath", () => {
+  it.each([
+    { path: "/Users/x/a.ts", folder: "/Users/x/proj", result: "/Users/x/a.ts" },
+    { path: "/Users/x/a.ts", folder: undefined, result: "/Users/x/a.ts" },
+    { path: ".specs/AB-1.md", folder: "/Users/x/proj", result: "/Users/x/proj/.specs/AB-1.md" },
+    { path: "./.specs/AB-1.md", folder: "/Users/x/proj", result: "/Users/x/proj/.specs/AB-1.md" },
+    { path: "../other/a.md", folder: "/Users/x/proj", result: "/Users/x/proj/../other/a.md" },
+    { path: "/tmp//a.md", folder: undefined, result: "/tmp/a.md" },
+    { path: "a/./b//c.md", folder: "/Users/x/proj/", result: "/Users/x/proj/a/b/c.md" },
+    { path: "a.md", folder: "/", result: "/a.md" },
+  ])("gives the absolute path of $path in $folder", ({ path, folder, result }) => {
+    expect(fileLinkPath(path, folder)).toBe(result);
+  });
+
+  it("gives no path for a relative path with no folder", () => {
+    expect(fileLinkPath("docs/a.md", undefined)).toBeUndefined();
+  });
+});
+
 describe("another link", () => {
-  it.each(["foo://x", "javascript:alert(1)", "file:///etc/passwd", "not a url"])("has no kind: %s", (href) => {
+  it.each(["foo://x", "javascript:alert(1)", "file:///etc/passwd", "file:///Users/x/a.md"])("has no kind: %s", (href) => {
     expect(linkKind(href)).toBeUndefined();
   });
 });

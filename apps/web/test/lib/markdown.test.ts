@@ -5,11 +5,13 @@ import {
   hiddenHost,
   markdownUrl,
   mermaidSource,
+  rehypeFileLinks,
   rehypeLinkText,
   remarkImagesAsLinks,
   remarkRawAsSource,
   remarkSoftBreaks,
   remarkTaskHeadings,
+  showsUrl,
   type HeadingBase,
 } from "../../src/lib/markdown";
 
@@ -443,14 +445,22 @@ describe("a URL", () => {
     expect(markdownUrl(url)).toBe(href);
   });
 
+  it.each(["relative/path", "/absolute/path", "src/a.ts#L42", "a%20b.md"])("of a file link is kept as written: %s", (url) => {
+    expect(markdownUrl(url)).toBe(url);
+  });
+
   it.each([
     "javascript:alert(1)",
     " javascript:alert(1)",
     "data:text/html,hi",
     "tracker:ABC-1",
-    "relative/path",
-    "/absolute/path",
     "#anchor",
+    "?x",
+    "//host/a",
+    "~/a.md",
+    "file:///Users/x/a.md",
+    "https:",
+    "http://example.com:99999/a",
     "",
     "http:/api/items",
     "https:path",
@@ -600,6 +610,38 @@ describe("the hidden host of a link", () => {
   });
 });
 
+describe("a link text that shows a URL", () => {
+  it.each([
+    "https://github.com/acme/app/pull/7",
+    "http://127.0.0.1:8278/task/AB-1",
+    "www.example.com",
+    "example.com/a",
+    "//example.com",
+    "(https://github.com)",
+    "‮oper/emca/moc.buhtig//:sptth",
+    "github.com‏",
+    "https://",
+  ])("is %j", (text) => {
+    expect(showsUrl(text)).toBe(true);
+  });
+
+  it.each([
+    "docs/a.md",
+    "README.md",
+    ".specs/AB-1.md",
+    "./src/a.ts",
+    "../other/a.md",
+    "/Users/x/a.md",
+    "src/a.ts:42",
+    "a.ts:42:7",
+    "src/a.ts#L42",
+    "the spec",
+    "",
+  ])("is not %j", (text) => {
+    expect(showsUrl(text)).toBe(false);
+  });
+});
+
 describe("the text of a link", () => {
   function text(value: string): HastElement["children"][number] {
     return { type: "text", value };
@@ -637,5 +679,42 @@ describe("the text of a link", () => {
     const { tree } = linkIn(text("a"));
 
     expect(tree.children[0]?.children[0]).toEqual(text("‮See "));
+  });
+});
+
+describe("the path of a file link", () => {
+  function pathOf(href: string, folder: string | undefined): unknown {
+    const link: HastElement = { type: "element", tagName: "a", properties: { href }, children: [] };
+    rehypeFileLinks({ folder })({ children: [element("p", undefined, element("em", undefined, link))] });
+    return link.properties.dataPath;
+  }
+
+  it("is the absolute path of a relative link in the folder", () => {
+    expect(pathOf(".specs/AB-1.md", "/work/saga")).toBe("/work/saga/.specs/AB-1.md");
+  });
+
+  it("is the path of an absolute link with no folder", () => {
+    expect(pathOf("/work/saga/a.ts#L3", undefined)).toBe("/work/saga/a.ts");
+  });
+
+  it("is the decoded path", () => {
+    expect(pathOf("a%20b.md", "/work/saga")).toBe("/work/saga/a b.md");
+  });
+
+  it.each([
+    { href: "docs/a.md", folder: undefined },
+    { href: "https://example.com/a", folder: "/work/saga" },
+    { href: "http://127.0.0.1:8278/task/AB-1", folder: "/work/saga" },
+    { href: "vscode://file/work/saga/a.ts", folder: "/work/saga" },
+    { href: "#top", folder: "/work/saga" },
+  ])("is not set for $href in $folder", ({ href, folder }) => {
+    expect(pathOf(href, folder)).toBeUndefined();
+  });
+
+  it("is not set for an element other than a link", () => {
+    const span: HastElement = { type: "element", tagName: "span", properties: { href: "a.md" }, children: [] };
+    rehypeFileLinks({ folder: "/work/saga" })({ children: [span, { type: "text", value: "a.md" }] });
+
+    expect(span.properties.dataPath).toBeUndefined();
   });
 });

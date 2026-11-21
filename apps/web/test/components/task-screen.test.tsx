@@ -2,6 +2,7 @@ import type { Diagnostic, FeedEvent, Frontmatter, TaskEntry, Transport, Transpor
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { appAvailable } from "../../src/api/app";
 import { ICON_BUTTON_CLASS } from "../../src/components/control-classes";
 import { FIND_OPEN_WIDTHS } from "../../src/components/find-open-classes";
 import { formatClock } from "../../src/lib/clock";
@@ -43,6 +44,8 @@ import {
   topBar,
 } from "../task-screen-fixtures";
 
+vi.mock(import("../../src/api/app"), () => ({ appAvailable: vi.fn(() => false) }));
+
 /** The events, then the zero-delay timer the query cache notifies its observers through. */
 async function sendAndSettle(feed: FeedStub, events: FeedEvent[]) {
   await feed.send(events);
@@ -63,6 +66,7 @@ beforeEach(() => {
   });
   useNoticeStore.setState({ notices: [], dismissed: new Map() });
   document.title = "tasma";
+  vi.mocked(appAvailable).mockReturnValue(false);
 });
 
 afterEach(() => {
@@ -257,6 +261,20 @@ describe("the page", () => {
     const section = screen.getByRole("region", { name: "Comments 0" });
     expect(within(section).queryAllByRole("listitem")).toEqual([]);
     expect(within(section).getByRole("button", { name: "Add comment" })).toBeTruthy();
+  });
+});
+
+describe("a file link", () => {
+  it("in the body and in a comment resolves against the folder of the project, in the app", async () => {
+    vi.mocked(appAvailable).mockReturnValue(true);
+    const { transport } = daemon({
+      [TASK_PATH]: task({ body: "See [a](docs/a.md).", comments: [comment(1, { body: "See [b](docs/b.md)." })] }),
+    });
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    expect(screen.getByRole("link", { name: "a" }).getAttribute("href")).toBe("file:///repos/saga/docs/a.md");
+    expect(within(commentCard("Note 1")).getByRole("link", { name: "b" }).getAttribute("href"))
+      .toBe("file:///repos/saga/docs/b.md");
   });
 });
 

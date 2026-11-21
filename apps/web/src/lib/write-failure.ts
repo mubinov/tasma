@@ -17,6 +17,7 @@ import {
   type WriteFailure,
 } from "../api/mutations";
 import type { ChatPlace } from "../api/queries";
+import type { Notice } from "../store/notices";
 
 /** Nothing was written. */
 const WHOLE_FAILURE_LINES: Record<FailureKind, string> = {
@@ -255,6 +256,19 @@ export const FOLDER_DIALOG_FAILURE: SetupFailure = {
   title: "Tasma cannot open the folder dialog.",
   line: "Select \"Choose folder\" to try again. If the dialog does not open, restart Tasma.",
 };
+
+export const FILE_OPEN_FAILURE_KEY = "file-open-failure";
+
+/** `status` is the status of the refusal, or null when no answer came. */
+export function fileOpenFailure(path: string, status: number | null): Notice {
+  return {
+    key: FILE_OPEN_FAILURE_KEY,
+    form: "failure",
+    title: "Tasma cannot open the file.",
+    line: status === 404 ? "The file does not exist." : "Try again. If the file does not open, restart Tasma.",
+    words: [path],
+  };
+}
 
 /** The warning of a restart that the dialog did not send. */
 export function chatRestartSkippedNotice(id: string, chat: number): SkippedNotice {
