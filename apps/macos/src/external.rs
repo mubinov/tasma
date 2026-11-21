@@ -94,9 +94,19 @@ fn editor_target(url: &Url) -> Result<Url, &'static str> {
         return Err(UNGUARDED);
     }
 
+    file_link(url.scheme(), real, position).ok_or(NO_FILE)
+}
+
+/// The editor link in the file form to `real`, the real path of a guarded
+/// regular file that passes `is_editor_path`, with `position` where the editor
+/// cannot read it as part of a name.
+pub(crate) fn file_link(scheme: &str, real: &str, position: &str) -> Option<Url> {
+    // Safety: `getuid` reads the calling process and changes nothing.
+    let me = unsafe { libc::getuid() };
     let encoded = utf8_percent_encode(real, EDITOR_PATH);
     let position = kept_position(real, position, me);
-    Url::parse(&format!("{}://file{encoded}{position}", url.scheme())).map_err(|_| NO_FILE)
+
+    Url::parse(&format!("{scheme}://file{encoded}{position}")).ok()
 }
 
 /// The position the rebuilt link keeps. Zed opens the entry `<real><position>`
@@ -129,7 +139,7 @@ fn before_number(text: &str) -> Option<&str> {
 /// `isEditorPath` in `link-kind.ts`, for a decoded path with no position. The
 /// editors read more position forms than `split_position`, so the rule refuses
 /// each path that one of them can read as another path.
-fn is_editor_path(file: &str) -> bool {
+pub(crate) fn is_editor_path(file: &str) -> bool {
     file.strip_prefix('/').is_some_and(|rest| {
         rest.split('/')
             .all(|segment| !matches!(segment, "" | "." | ".."))
@@ -145,7 +155,7 @@ fn is_regular_file(path: &str) -> bool {
 
 /// Whether only `me`, root and the administrators can replace the entry of
 /// `real` or of a folder above it.
-fn is_guarded(real: &Path, me: u32) -> bool {
+pub(crate) fn is_guarded(real: &Path, me: u32) -> bool {
     real.ancestors()
         .zip(real.ancestors().skip(1))
         .all(|(entry, folder)| {
@@ -232,7 +242,7 @@ fn not_opened_in(id: &str, url: &Url, cause: &str) -> String {
     )
 }
 
-fn note(line: &str) {
+pub(crate) fn note(line: &str) {
     let file = log::open(std::env::home_dir().as_deref()).ok();
     log::note(file.as_ref(), line);
 }
@@ -249,33 +259,50 @@ fn opened(error: Option<&NSError>) -> Result<(), String> {
 /// default browser. `done` gets the result once: on the calling thread, before
 /// `open_with` returns, when macOS finds no app or cannot read the link;
 /// otherwise on a queue that macOS chooses.
-fn open_with(url: &Url, id: &str, done: impl FnOnce(Result<(), String>) + Send + 'static) {
+pub(crate) fn open_with(
+    url: &Url,
+    id: &str,
+    done: impl FnOnce(Result<(), String>) + Send + 'static,
+) {
     // A worker thread of the async runtime has no autorelease pool.
     autoreleasepool(|_| {
-        let workspace = NSWorkspace::sharedWorkspace();
-        let target = NSURL::URLWithString(&NSString::from_str(url.as_str()));
-        let app = workspace.URLForApplicationWithBundleIdentifier(&NSString::from_str(id));
-        let (Some(target), Some(app)) = (target, app) else {
-            done(Err(NO_APP.to_string()));
-            return;
-        };
-
-        // Nothing here may panic: an unwind out of a block aborts the process.
-        let done = Cell::new(Some(done));
-        let handler = RcBlock::new(move |_: *mut NSRunningApplication, error: *mut NSError| {
-            if let Some(done) = done.take() {
-                // Safety: the error macOS hands over is null or a live `NSError`.
-                done(opened(unsafe { error.as_ref() }));
-            }
-        });
-
-        workspace.openURLs_withApplicationAtURL_configuration_completionHandler(
-            &NSArray::from_retained_slice(&[target]),
-            &app,
-            &NSWorkspaceOpenConfiguration::configuration(),
-            Some(&handler),
-        );
+        let app = NSWorkspace::sharedWorkspace()
+            .URLForApplicationWithBundleIdentifier(&NSString::from_str(id));
+        launch(url, app.as_deref(), done);
     });
+}
+
+/// Opens `url` in the app bundle at `app`, as `open_with` does.
+pub(crate) fn open_in(
+    url: &Url,
+    app: &NSURL,
+    done: impl FnOnce(Result<(), String>) + Send + 'static,
+) {
+    launch(url, Some(app), done);
+}
+
+fn launch(url: &Url, app: Option<&NSURL>, done: impl FnOnce(Result<(), String>) + Send + 'static) {
+    let target = NSURL::URLWithString(&NSString::from_str(url.as_str()));
+    let (Some(target), Some(app)) = (target, app) else {
+        done(Err(NO_APP.to_string()));
+        return;
+    };
+
+    // Nothing here may panic: an unwind out of a block aborts the process.
+    let done = Cell::new(Some(done));
+    let handler = RcBlock::new(move |_: *mut NSRunningApplication, error: *mut NSError| {
+        if let Some(done) = done.take() {
+            // Safety: the error macOS hands over is null or a live `NSError`.
+            done(opened(unsafe { error.as_ref() }));
+        }
+    });
+
+    NSWorkspace::sharedWorkspace().openURLs_withApplicationAtURL_configuration_completionHandler(
+        &NSArray::from_retained_slice(&[target]),
+        app,
+        &NSWorkspaceOpenConfiguration::configuration(),
+        Some(&handler),
+    );
 }
 
 /// Hands a link to Launch Services: a web link to the browser that the link

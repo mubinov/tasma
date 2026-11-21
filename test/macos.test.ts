@@ -15,9 +15,12 @@ import {
   BROWSERS_ROUTE,
   DAEMON_PATH_PREFIX,
   DOCK_ROUTE,
+  EDITORS_ROUTE,
   FOLDER_ROUTE,
   LINKS_ROUTE,
+  OPEN_FILE_ROUTE,
   OPEN_URL_ROUTE,
+  REVEAL_FILE_ROUTE,
   THEME_ROUTE,
   UPDATE_EVENT,
 } from "../apps/web/src/api/paths.js";
@@ -200,6 +203,15 @@ describe("the macOS shell", () => {
 
   it("answers the route the board asks to open a link in a named browser", () => {
     expect(rustConstant("external.rs", "PATH")).toBe(OPEN_URL_ROUTE);
+  });
+
+  it("answers the editor list route the board asks", () => {
+    expect(rustConstant("editors.rs", "PATH")).toBe(EDITORS_ROUTE);
+  });
+
+  it("answers the routes the board asks to open a file and to show it in Finder", () => {
+    expect(rustConstant("files.rs", "OPEN_PATH")).toBe(OPEN_FILE_ROUTE);
+    expect(rustConstant("files.rs", "REVEAL_PATH")).toBe(REVEAL_FILE_ROUTE);
   });
 
   it("installs an update only of its own bundle identifier", () => {

@@ -56,7 +56,7 @@ fn listed(apps: Vec<(Option<String>, String)>, default_id: Option<&str>) -> Vec<
     browsers
 }
 
-fn bundle_id(bundle: &NSBundle) -> Option<String> {
+pub(crate) fn bundle_id(bundle: &NSBundle) -> Option<String> {
     bundle.bundleIdentifier().map(|id| id.to_string())
 }
 
@@ -70,7 +70,7 @@ fn info_string(bundle: &NSBundle, key: &str) -> Option<String> {
 }
 
 /// The bundle id and the name of the app at `url`.
-fn app_of(url: &NSURL) -> (Option<String>, String) {
+pub(crate) fn app_of(url: &NSURL) -> (Option<String>, String) {
     let bundle = NSBundle::bundleWithURL(url);
     let name = bundle
         .as_deref()

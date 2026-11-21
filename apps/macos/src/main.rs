@@ -11,6 +11,7 @@
 
 mod accounts;
 mod alert;
+mod apps;
 mod backspace;
 mod browsers;
 mod command;
@@ -19,8 +20,10 @@ mod daemon;
 mod daemon_stop;
 mod deeplink;
 mod dock;
+mod editors;
 mod elevate;
 mod external;
+mod files;
 mod folder;
 mod geometry;
 mod install;

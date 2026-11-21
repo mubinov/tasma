@@ -15,7 +15,9 @@ use tauri::{AppHandle, Runtime};
 use crate::browsers;
 use crate::daemon::Daemon;
 use crate::dock;
+use crate::editors;
 use crate::external;
+use crate::files;
 use crate::folder;
 use crate::links;
 use crate::theme;
@@ -158,6 +160,10 @@ pub async fn serve<R: Runtime>(
         Target::App(path) if external::handles(&path) => {
             external::serve(request.method(), &path, request.body()).await
         }
+        Target::App(path) if files::handles(&path) => {
+            files::serve(app, request.method(), &path, request.body()).await
+        }
+        Target::App(path) if editors::handles(&path) => editors::serve(request.method(), &path),
         Target::App(path) => update::serve(updater, request.method(), &path),
         Target::Asset(path) => asset(app, &path),
     }
@@ -522,6 +528,26 @@ mod tests {
             "the-open-route",
             Method::GET,
             "tasma-app://localhost/app/open",
+        );
+    }
+
+    #[test]
+    fn the_files_routes_are_served_by_the_files_module() {
+        for route in ["open", "reveal"] {
+            assert_refused_by_its_module(
+                &format!("the-files-{route}-route"),
+                Method::GET,
+                &format!("tasma-app://localhost/app/files/{route}"),
+            );
+        }
+    }
+
+    #[test]
+    fn the_editors_route_is_served_by_the_editors_module() {
+        assert_refused_by_its_module(
+            "the-editors-route",
+            Method::POST,
+            "tasma-app://localhost/app/editors",
         );
     }
 }

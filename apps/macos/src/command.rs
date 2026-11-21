@@ -42,10 +42,16 @@ pub(crate) fn installed_location(executable: &Path, account_home: Option<&Path>)
         return false;
     };
 
+    in_applications(bundle, account_home)
+}
+
+/// Whether a path with no `.` or `..` part stands in `/Applications` or in the
+/// Applications folder of the account.
+pub(crate) fn in_applications(path: &Path, account_home: Option<&Path>) -> bool {
     let system = Path::new("/").join(APPLICATIONS);
     let personal = account_home.map(|home| home.join(APPLICATIONS));
 
-    bundle.starts_with(&system) || personal.is_some_and(|folder| bundle.starts_with(folder))
+    path.starts_with(&system) || personal.is_some_and(|folder| path.starts_with(folder))
 }
 
 /// The CLI in the same bundle as `executable`: the target of the link.

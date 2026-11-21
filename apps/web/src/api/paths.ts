@@ -36,5 +36,14 @@ export const BROWSERS_ROUTE = "/browsers";
 /** The route under `APP_PATH_PREFIX` that opens a web link in a named browser. */
 export const OPEN_URL_ROUTE = "/open";
 
+/** The installed code editors' route under `APP_PATH_PREFIX`. */
+export const EDITORS_ROUTE = "/editors";
+
+/** The route under `APP_PATH_PREFIX` that opens a file in the app the link settings choose. */
+export const OPEN_FILE_ROUTE = "/files/open";
+
+/** The route under `APP_PATH_PREFIX` that shows a file in Finder. */
+export const REVEAL_FILE_ROUTE = "/files/reveal";
+
 /** The event the macOS app dispatches on the window when the update changes. */
 export const UPDATE_EVENT = "tasma:update";
