@@ -5,6 +5,7 @@ import {
   hiddenHost,
   markdownUrl,
   mermaidSource,
+  namesFile,
   rehypeFileLinks,
   rehypeLinkText,
   remarkImagesAsLinks,
@@ -639,6 +640,49 @@ describe("a link text that shows a URL", () => {
     "",
   ])("is not %j", (text) => {
     expect(showsUrl(text)).toBe(false);
+  });
+});
+
+describe("a link text that names a file", () => {
+  it.each([
+    "en.lproj/Localizable.strings",
+    "MyApp.xcodeproj/project.pbxproj",
+    "Assets.xcassets/AppIcon.appiconset/Contents.json",
+    "conf.d/site.conf",
+    ".config.d/a.conf",
+    "github.com/acme/app",
+  ])("names the file of its own path in the folder: %j", (text) => {
+    expect(namesFile(text, `/work/saga/${text}`)).toBe(true);
+  });
+
+  it.each([
+    { text: "./conf.d/site.conf", path: "/work/saga/conf.d/site.conf" },
+    { text: "/work/saga/conf.d/site.conf", path: "/work/saga/conf.d/site.conf" },
+    { text: "en.lproj/Localizable.strings", path: "/work/saga/App/en.lproj/Localizable.strings" },
+    { text: "en.lproj/Localizable.strings:42", path: "/work/saga/en.lproj/Localizable.strings" },
+    { text: "en.lproj/Localizable.strings:42:7", path: "/work/saga/en.lproj/Localizable.strings" },
+  ])("names $path: $text", ({ text, path }) => {
+    expect(namesFile(text, path)).toBe(true);
+  });
+
+  it.each([
+    { text: "https://github.com/acme/app", path: "/work/saga/https:/github.com/acme/app" },
+    { text: "www。evil.example/a", path: "/work/saga/www。evil.example/a" },
+    { text: "www｡evil.example/a", path: "/work/saga/www｡evil.example/a" },
+    { text: "ｗｗｗ.evil.example/a", path: "/work/saga/ｗｗｗ.evil.example/a" },
+    { text: "w­ww.evil.example/a", path: "/work/saga/w­ww.evil.example/a" },
+    { text: "github.com/acme/../x", path: "/work/saga/github.com/acme/../x" },
+    { text: "en.lproj/Localizable.strings\u200E", path: "/work/saga/en.lproj/Localizable.strings" },
+    { text: "//github.com/acme/app", path: "/work/saga/github.com/acme/app" },
+    { text: "WWW.example.com/a", path: "/work/saga/WWW.example.com/a" },
+    { text: "(https://evil.example/a)", path: "/work/saga/(https:/evil.example/a)" },
+    { text: "github.com/acme/app", path: "/work/saga/docs/pr.html" },
+    { text: "en.lproj/Other.strings", path: "/work/saga/en.lproj/Localizable.strings" },
+    { text: "acme.lproj/a", path: "/work/saga/notacme.lproj/a" },
+    { text: "other/en.lproj/a", path: "/work/saga/en.lproj/a" },
+    { text: "", path: "/work/saga/a" },
+  ])("does not name $path: $text", ({ text, path }) => {
+    expect(namesFile(text, path)).toBe(false);
   });
 });
 

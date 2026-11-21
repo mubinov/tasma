@@ -325,12 +325,40 @@ export function showsUrl(text: string): boolean {
 }
 
 /**
+ * Whether the text of a file link names the file at the absolute `path`: its
+ * segments are the last segments of `path`, with a `:<line>` or
+ * `:<line>:<column>` suffix allowed. A text that starts as a web URL, read as
+ * `showsUrl` reads it, names no file. Nor does a text with a `..` segment: the
+ * file it opens can be outside the folders that it shows.
+ */
+export function namesFile(text: string, path: string): boolean {
+  if (/^(?:https?:|\/\/|www[.。])/i.test(visibleText(text).replace(EDGE_MARKS, ""))) {
+    return false;
+  }
+  // The segments read the raw text: EDGE_MARKS drops a leading `.` or `_` of a folder name, and an invisible
+  // character must break the match.
+  const named = pathSegments(text.trim().replace(/:\d+(?::\d+)?$/, ""));
+  return (
+    named.length > 0 && !named.includes("..") && named.join("/") === pathSegments(path).slice(-named.length).join("/")
+  );
+}
+
+function pathSegments(path: string): string[] {
+  return path.split("/").filter((segment) => segment !== "" && segment !== ".");
+}
+
+/** The text as it shows: NFKC, with no default-ignorable character, trimmed. */
+function visibleText(text: string): string {
+  return text.normalize("NFKC").replace(/\p{Default_Ignorable_Code_Point}/gu, "").trim();
+}
+
+/**
  * The host that the text of a link shows, `null` when the text can show a URL
  * whose host cannot be read, or `undefined` when the text shows no URL and no
  * domain.
  */
 function shownHost(text: string): string | null | undefined {
-  const visible = text.normalize("NFKC").replace(/\p{Default_Ignorable_Code_Point}/gu, "").trim();
+  const visible = visibleText(text);
   // A bidi control can show the characters in an order other than the order the parser reads. Every bidi control is
   // default-ignorable, so the checks read `text`, not `visible`. Reordering adds no character, so a text with no dot
   // and no colon cannot show a URL or a domain.

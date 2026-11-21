@@ -10,6 +10,7 @@ import {
   hiddenHost,
   markdownUrl,
   mermaidSource,
+  namesFile,
   rehypeFileLinks,
   rehypeLinkText,
   remarkImagesAsLinks,
@@ -111,6 +112,11 @@ export function MarkdownLink(
   if (href === undefined || link === undefined) {
     return children;
   }
+  const named = node?.children.some(hasText) === true;
+  const text = String(node?.properties.dataText);
+  const label = named ? text : href;
+  // The target that the text of the link hides.
+  let hidden: string | undefined;
   let target: MenuTarget;
   if (link.kind === "file") {
     // rehypeFileLinks sets no path when the text has no folder for a relative link.
@@ -119,24 +125,16 @@ export function MarkdownLink(
       return children;
     }
     target = { kind: "file", path, line: link.line };
+    // A text that shows a URL or a domain hides that a file link opens a file, unless the text names that file.
+    hidden = showsUrl(label) && !namesFile(named ? text : link.path, path) ? path : undefined;
   } else if (link.kind === "task") {
     target = { kind: "task", href, id: link.id };
   } else {
     target = { kind: link.kind, href };
+    hidden = named && link.kind === "web" ? hiddenHost(text, href) : undefined;
   }
   const file = target.kind === "file" ? target : undefined;
   const { shown, described } = linkTarget(href, file);
-  const named = node?.children.some(hasText) === true;
-  const text = String(node?.properties.dataText);
-  const label = named ? text : href;
-  // The target that the text of the link hides. A text that shows a URL or a domain hides that a file link opens a
-  // file.
-  let hidden: string | undefined;
-  if (file !== undefined) {
-    hidden = showsUrl(label) ? file.path : undefined;
-  } else if (named && target.kind === "web") {
-    hidden = hiddenHost(text, href);
-  }
   // A link named by its own URL gets no description, so a screen reader does not read the URL twice. The href is
   // the output of normalizeUri and then markdownUrl, so the text goes through both. A GFM `www.` literal gets
   // `http://`, and an email autolink gets `mailto:`. The href of a file link can be relative, so the text it shows

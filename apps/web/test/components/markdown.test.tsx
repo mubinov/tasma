@@ -531,6 +531,7 @@ describe("a file link", () => {
       { text: "[src/a.ts](src/a.ts)", described: "/work/saga/src/a.ts" },
       { text: "[](src/a.ts)", described: "/work/saga/src/a.ts" },
       { text: "[/work/saga/a.ts#L4](/work/saga/a.ts#L4)", described: "/work/saga/a.ts, line 4" },
+      { text: "[](github.com/acme/app)", described: "/work/saga/github.com/acme/app" },
     ])("named by its relative path or its href is described by its absolute target: $text", ({ text, described }) => {
       renderInFolder(text, FOLDER);
 
@@ -555,7 +556,9 @@ describe("a file link", () => {
         name: "https://github.com/acme/app/pull/7",
         path: "/work/saga/docs/pr.html",
       },
-      { text: "[](github.com/acme/app)", name: "github.com/acme/app", path: "/work/saga/github.com/acme/app" },
+      { text: "[github.com/acme/app](docs/pr.html)", name: "github.com/acme/app", path: "/work/saga/docs/pr.html" },
+      { text: "[](www.example.com/a)", name: "www.example.com/a", path: "/work/saga/www.example.com/a" },
+      { text: "[](evil.example/%2E%2E/x)", name: "evil.example/%2E%2E/x", path: "/work/saga/evil.example/../x" },
     ])("whose text shows a URL names its absolute path in the link name and in a mark after it: $text", ({ text, name, path }) => {
       const wrapper = renderInFolder(text, FOLDER);
 
@@ -568,7 +571,22 @@ describe("a file link", () => {
       expect(classOf(mark)).toBe("ml-1.5 text-signal wrap-anywhere");
     });
 
-    it.each(["[docs/a.md](docs/a.md)", "[README.md](README.md)", "[spec](.specs/AB-1.md)", "[a.ts:42](src/a.ts#L42)", "[](docs/a.md)"])(
+    it.each([
+      "[docs/a.md](docs/a.md)",
+      "[README.md](README.md)",
+      "[spec](.specs/AB-1.md)",
+      "[a.ts:42](src/a.ts#L42)",
+      "[](docs/a.md)",
+      "[en.lproj/Localizable.strings](en.lproj/Localizable.strings)",
+      "[MyApp.xcodeproj/project.pbxproj](MyApp.xcodeproj/project.pbxproj)",
+      "[](Assets.xcassets/AppIcon.appiconset/Contents.json)",
+      "[conf.d/site.conf](conf.d/site.conf)",
+      "[en.lproj/Localizable.strings:42](en.lproj/Localizable.strings#L42)",
+      "[](en.lproj/Localizable.strings#L42)",
+      "[en.lproj/Localizable.strings](App/en.lproj/Localizable.strings)",
+      "[conf.d/site.conf](/work/saga/conf.d/site.conf)",
+      "[](github.com/acme/app)",
+    ])(
       "whose text shows a path has no mark: %s",
       (text) => {
         const wrapper = renderInFolder(text, FOLDER);
