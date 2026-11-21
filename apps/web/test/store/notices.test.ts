@@ -1,6 +1,6 @@
 import type { Diagnostic } from "@tasma/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { noticeWords, useNoticeStore, type Notice } from "../../src/store/notices";
+import { noticeWords, reopenNotice, useNoticeStore, type Notice } from "../../src/store/notices";
 
 const FIRST: Notice = {
   key: "task-read:SAGA-56",
@@ -196,6 +196,28 @@ describe("closeNotice", () => {
     expect(useNoticeStore.getState().closeNotice(FIRST.key)).toBe(true);
     expect(useNoticeStore.getState().closeNotice(SECOND.key)).toBe(true);
     expect(useNoticeStore.getState().closeNotice(FIRST.key)).toBe(false);
+  });
+});
+
+describe("reopenNotice", () => {
+  it("shows a notice with the content the reader dismissed", () => {
+    useNoticeStore.getState().showNotice(FIRST);
+    useNoticeStore.getState().dismissNotice(FIRST.key);
+
+    reopenNotice(FIRST);
+
+    expect(useNoticeStore.getState().notices).toMatchObject([FIRST]);
+  });
+
+  it("opens an equal notice again, at the bottom of the stack and with a new serial", () => {
+    useNoticeStore.getState().showNotice(FIRST);
+    useNoticeStore.getState().showNotice(SECOND);
+    const serial = useNoticeStore.getState().notices[0]!.serial;
+
+    reopenNotice(FIRST);
+
+    expect(openKeys()).toEqual([SECOND.key, FIRST.key]);
+    expect(useNoticeStore.getState().notices[1]!.serial).toBeGreaterThan(serial);
   });
 });
 

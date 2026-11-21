@@ -12,6 +12,7 @@ import { FeedSubscriber } from "./components/feed-subscriber";
 import { FindShortcut } from "./components/find-shortcut";
 import { InputModeSync } from "./components/input-mode-sync";
 import { KeyWatch } from "./components/key-watch";
+import { LinkMenuKeys } from "./components/link-menu";
 import { LinkSettingsSync } from "./components/link-settings-sync";
 import { ThemeSync } from "./components/theme-sync";
 import { UpdateEvents } from "./components/update-events";
@@ -51,6 +52,7 @@ createRoot(container).render(
     <KeyWatch />
     <InputModeSync />
     <ContextSelectGuard />
+    <LinkMenuKeys />
     <ErrorBoundary>
       <QueryClientProvider client={router.options.context.queryClient}>
         <RouterProvider router={router} />

@@ -1,8 +1,8 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { ProtocolError, type Client, type Project, type SkillInstall, type StoreErrorCode } from "@tasma/protocol";
-import { useNoticeStore } from "../../store/notices";
+import { reopenNotice, useNoticeStore } from "../../store/notices";
 import { daemonKeys } from "../queries";
-import { openWriteNotice, refusalWords, WriteError, type WriteFailure } from "./notices";
+import { refusalWords, WriteError, type WriteFailure } from "./notices";
 
 /** The tag of a project whose folder name gives no tag. */
 const GENERIC_TAG = "PROJ";
@@ -55,7 +55,7 @@ export function installSkillOptions(queryClient: QueryClient, client: Client) {
         return;
       }
 
-      openWriteNotice({
+      reopenNotice({
         key: SKILL_INSTALL_FAILURE_KEY,
         form: "failure",
         title: failure.title,

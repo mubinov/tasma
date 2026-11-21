@@ -18,7 +18,7 @@ import { latestOnTask, STEP_ACTION_SELECTOR } from "../../lib/step-action";
 import { chatFilterOf } from "../../lib/use-chat-filter";
 import { focusDropped } from "../../lib/use-focus-lost";
 import { NEW_CHAT_DRAFT, chatDraft, useChatDraftStore } from "../../store/chat-drafts";
-import { useNoticeStore } from "../../store/notices";
+import { reopenNotice, useNoticeStore } from "../../store/notices";
 import { useUiStore, type StartedChat } from "../../store/ui";
 import {
   chatItemQuery,
@@ -30,7 +30,7 @@ import {
   type ChatFilter,
   type ChatPlace,
 } from "../queries";
-import { openWriteNotice, refusalWords, usePendingVariables, WriteError, type WriteFailure } from "./notices";
+import { refusalWords, usePendingVariables, WriteError, type WriteFailure } from "./notices";
 
 /** The texts of the warning notice after `already-answered`. */
 export type ClosedNotice = { title: string; line: string };
@@ -165,7 +165,7 @@ export function chatWriteOptions(queryClient: QueryClient, client: Client, place
 
       if (write.kind === "option" && diagnostics.length > 0) {
         const { title, line } = write.saved;
-        openWriteNotice({ key, form: "warning", title, line, words: savedWords(diagnostics) });
+        reopenNotice({ key, form: "warning", title, line, words: savedWords(diagnostics) });
         return;
       }
       useNoticeStore.getState().closeNotice(key);
@@ -183,13 +183,13 @@ export function chatWriteOptions(queryClient: QueryClient, client: Client, place
       const words = [refusalWords(error)];
 
       if ((write.kind === "permission" || write.kind === "question") && chatRefusalCode(error) === "already-answered") {
-        openWriteNotice({ key, form: "warning", title: write.closed.title, line: write.closed.line, words });
+        reopenNotice({ key, form: "warning", title: write.closed.title, line: write.closed.line, words });
         return;
       }
       const line = write.kind === "message" && chatRefusalCode(error) === "turn-running" && restartPending(queryClient, place)
         ? write.restartingLine
         : write.failure.line(error);
-      openWriteNotice({ key, form: "failure", title: write.failure.title, line, words });
+      reopenNotice({ key, form: "failure", title: write.failure.title, line, words });
     },
   });
 }
@@ -245,7 +245,7 @@ function chatRestartSkippedKey(id: string): string {
 
 /** The warning of a restart that was not sent, because its chat is no longer the chat of its step. */
 export function openRestartSkipped(id: string, { title, line }: SkippedNotice): void {
-  openWriteNotice({ key: chatRestartSkippedKey(id), form: "warning", title, line, words: [] });
+  reopenNotice({ key: chatRestartSkippedKey(id), form: "warning", title, line, words: [] });
 }
 
 /**
@@ -349,7 +349,7 @@ export function chatStartOptions(queryClient: QueryClient, client: Client, route
       }
     },
     onError: (error, { id, failure }) => {
-      openWriteNotice({
+      reopenNotice({
         key: chatStartFailureKey(id),
         form: "failure",
         title: failure.title,
@@ -494,7 +494,7 @@ export function projectChatStartOptions(queryClient: QueryClient, client: Client
     onError: (error, { start: { text }, failure }) => {
       useUiStore.getState().setChatStartWatch(null);
       useChatDraftStore.getState().returnToDraft(NEW_CHAT_DRAFT, text);
-      openWriteNotice({
+      reopenNotice({
         key: PROJECT_CHAT_START_FAILURE_KEY,
         form: "failure",
         title: failure.title,

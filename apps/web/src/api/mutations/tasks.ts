@@ -2,14 +2,13 @@ import { hashKey, mutationOptions, type QueryClient } from "@tanstack/react-quer
 import { ProtocolError, type Client, type Diagnostic } from "@tasma/protocol";
 import { boardWarnings, tagOf, type PendingWrite, type TaskWrite } from "../../lib/board";
 import type { CreateInput } from "../../lib/task-draft";
-import { useNoticeStore } from "../../store/notices";
+import { reopenNotice, useNoticeStore } from "../../store/notices";
 import { daemonKeys, projectQuery, taskQuery, tasksQuery } from "../queries";
 import {
   failureKind,
   FAILURE_KEY_PREFIX,
   freshDiagnostics,
   openWarnings,
-  openWriteNotice,
   refusalWords,
   TASK_WRITE_SCOPE,
   usePendingVariables,
@@ -165,7 +164,7 @@ export function taskWriteOptions(queryClient: QueryClient, client: Client) {
       }
 
       const { id, failure } = variables;
-      openWriteNotice({
+      reopenNotice({
         key: `${FAILURE_KEY_PREFIX}${id}`,
         form: "failure",
         title: failure.title,
@@ -319,7 +318,7 @@ export function taskDeleteOptions(queryClient: QueryClient, client: Client) {
     onError: (error, { id }) => {
       // The board placed them in a column that did not show the card.
       dropQueuedPlacements(queryClient);
-      openWriteNotice({
+      reopenNotice({
         key: `${FAILURE_KEY_PREFIX}${id}`,
         form: "failure",
         title: `${id} was not deleted`,

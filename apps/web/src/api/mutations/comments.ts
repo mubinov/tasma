@@ -1,12 +1,11 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import type { Client, CommentInput, Diagnostic } from "@tasma/protocol";
-import { useNoticeStore } from "../../store/notices";
+import { reopenNotice, useNoticeStore } from "../../store/notices";
 import { daemonKeys, projectQuery, taskQuery, tasksQuery } from "../queries";
 import {
   COMMENT_FAILURE_KEY_PREFIX,
   freshDiagnostics,
   openWarnings,
-  openWriteNotice,
   refusalWords,
   TASK_WRITE_SCOPE,
   usePendingVariables,
@@ -98,7 +97,7 @@ export function commentWriteOptions(queryClient: QueryClient, client: Client, ta
       return queryClient.invalidateQueries({ queryKey: daemonKeys.tasks(tag) });
     },
     onError: (error, variables) => {
-      openWriteNotice({
+      reopenNotice({
         key: commentFailureKey(variables),
         form: "failure",
         title: variables.failure.title,

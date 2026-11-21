@@ -1,10 +1,8 @@
 import { useId, type ComponentProps, type ReactElement, type ReactNode } from "react";
-import { Link, useParams } from "@tanstack/react-router";
 import { normalizeUri } from "micromark-util-sanitize-uri";
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { appAvailable } from "../api/app";
-import { tagOf } from "../lib/board";
 import { fileUrl, openFileLink } from "../lib/file-link";
 import { WarningIcon } from "../lib/icons";
 import { linkKind } from "../lib/link-kind";
@@ -21,6 +19,8 @@ import {
   showsUrl,
   type TaskHeadingsOptions,
 } from "../lib/markdown";
+import { reopenNotice } from "../store/notices";
+import { LinkContextMenu, TaskLink, type MenuTarget } from "./link-menu";
 import { MermaidDiagram } from "./mermaid-diagram";
 import { Tooltip } from "./tooltip";
 
@@ -63,22 +63,12 @@ function MarkdownHeading({ node, children }: ChildrenProps & ExtraProps): ReactN
   return <Tag data-level={depth} className={headingClass(depth)}>{children}</Tag>;
 }
 
-/** A link to the task on show keeps the search, so its open chat stays open. */
-function TaskLink({ task, ...props }: ComponentProps<"a"> & { task: string }): ReactNode {
-  const shown = useParams({ strict: false }).task === task;
-  return (
-    <Link
-      {...props}
-      to="/tasks/$project/$task"
-      params={{ project: tagOf(task), task }}
-      search={shown ? true : {}}
-    />
-  );
-}
-
 type FileTarget = { path: string; line: number | undefined };
 
-/** Opens the file through the app, with no navigation. `onClick` is the handler of the tooltip trigger. */
+/**
+ * Opens the file through the app, with no navigation. `onClick` is the handler of the tooltip and the menu trigger;
+ * a click it prevents opens nothing.
+ */
 function FileLink({ file, onClick, ...props }: ComponentProps<"a"> & { file: FileTarget }): ReactNode {
   return (
     <a
@@ -86,8 +76,11 @@ function FileLink({ file, onClick, ...props }: ComponentProps<"a"> & { file: Fil
       href={fileUrl(file.path)}
       onClick={(event) => {
         onClick?.(event);
+        if (event.defaultPrevented) {
+          return;
+        }
         event.preventDefault();
-        void openFileLink(file.path, file.line);
+        void openFileLink(file.path, file.line, reopenNotice);
       }}
     />
   );
@@ -113,20 +106,25 @@ export function MarkdownLink(
   if (node?.properties.dataFootnoteBackref !== undefined) {
     return null;
   }
-  // A link whose URL markdownUrl drops arrives with no href.
-  if (href === undefined) {
+  const link = href === undefined ? undefined : linkKind(href);
+  // A link whose URL markdownUrl drops arrives with no href. markdownUrl keeps only an href with a kind.
+  if (href === undefined || link === undefined) {
     return children;
   }
-  const link = linkKind(href);
-  let file: FileTarget | undefined;
-  if (link?.kind === "file") {
+  let target: MenuTarget;
+  if (link.kind === "file") {
     // rehypeFileLinks sets no path when the text has no folder for a relative link.
     const path = node?.properties.dataPath;
     if (typeof path !== "string" || !appAvailable()) {
       return children;
     }
-    file = { path, line: link.line };
+    target = { kind: "file", path, line: link.line };
+  } else if (link.kind === "task") {
+    target = { kind: "task", href, id: link.id };
+  } else {
+    target = { kind: link.kind, href };
   }
+  const file = target.kind === "file" ? target : undefined;
   const { shown, described } = linkTarget(href, file);
   const named = node?.children.some(hasText) === true;
   const text = String(node?.properties.dataText);
@@ -136,7 +134,7 @@ export function MarkdownLink(
   let hidden: string | undefined;
   if (file !== undefined) {
     hidden = showsUrl(label) ? file.path : undefined;
-  } else if (named && link?.kind === "web") {
+  } else if (named && target.kind === "web") {
     hidden = hiddenHost(text, href);
   }
   // A link named by its own URL gets no description, so a screen reader does not read the URL twice. The href is
@@ -158,19 +156,21 @@ export function MarkdownLink(
     </>
   );
   let anchor: ReactElement;
-  if (link?.kind === "task") {
-    anchor = <TaskLink {...linkProps} task={link.id}>{content}</TaskLink>;
-  } else if (file === undefined) {
-    anchor = <a {...linkProps} href={href} target="_blank" rel="noreferrer">{content}</a>;
+  if (target.kind === "task") {
+    anchor = <TaskLink {...linkProps} task={target.id}>{content}</TaskLink>;
+  } else if (target.kind === "file") {
+    anchor = <FileLink {...linkProps} file={target}>{content}</FileLink>;
   } else {
-    anchor = <FileLink {...linkProps} file={file}>{content}</FileLink>;
+    anchor = <a {...linkProps} href={href} target="_blank" rel="noreferrer">{content}</a>;
   }
   return (
     // The isolates keep a bidi control in the text around the link, or in the link text, from reordering the link
     // and its mark. `dir` on the `<a>` gives it `unicode-bidi: isolate`. They hold because rehypeLinkText removes
     // every PDI from the link text.
     <bdi dir="ltr">
-      <Tooltip content={<span className="font-mono">{shown}</span>}>{anchor}</Tooltip>
+      <Tooltip content={<span className="font-mono">{shown}</span>}>
+        <LinkContextMenu target={target}>{anchor}</LinkContextMenu>
+      </Tooltip>
       {/* A hidden element still gives the description, and the virtual cursor does not read it as text. */}
       {describe && <span id={descriptionId} hidden>{described}</span>}
       {hidden !== undefined && (

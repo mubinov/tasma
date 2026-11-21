@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { failureKind, TaskWriteError, WriteError, type FailureKind } from "../../src/api/mutations";
 import {
   boardFailureLine,
+  BROWSER_OPEN_FAILURE_KEY,
+  browserOpenFailure,
   chatClosedNotice,
   chatFailure,
   chatInactiveWords,
@@ -13,6 +15,10 @@ import {
   chatRestartingLine,
   chatRestartSkippedNotice,
   chatStartFailure,
+  COPY_FAILURE_KEY,
+  copyFailure,
+  FILE_REVEAL_FAILURE_KEY,
+  fileRevealFailure,
   FOLDER_DIALOG_FAILURE,
   pageFailureLine,
   projectAddFailure,
@@ -313,6 +319,57 @@ describe("FOLDER_DIALOG_FAILURE", () => {
     expect(FOLDER_DIALOG_FAILURE).toEqual({
       title: "Tasma cannot open the folder dialog.",
       line: "Select \"Choose folder\" to try again. If the dialog does not open, restart Tasma.",
+    });
+  });
+});
+
+describe("the notices of the link menu", () => {
+  it.each([
+    { what: "link", value: "https://example.com/a", title: "Tasma cannot copy the link." },
+    { what: "path", value: "/work/saga/a.md", title: "Tasma cannot copy the path." },
+  ] as const)("asks to try a copy of a $what again, and shows the $what", ({ what, value, title }) => {
+    expect(copyFailure(what, value)).toEqual({
+      key: COPY_FAILURE_KEY,
+      form: "failure",
+      title,
+      line: "Try again.",
+      words: [value],
+    });
+  });
+
+  it("tells how to copy selected text that did not copy, and shows no words", () => {
+    expect(copyFailure("text", "the selected words")).toEqual({
+      key: COPY_FAILURE_KEY,
+      form: "failure",
+      title: "Tasma cannot copy the text.",
+      line: "Press Command-C to copy the selected text.",
+      words: [],
+    });
+  });
+
+  it("says that a file to show in Finder does not exist on 404", () => {
+    expect(fileRevealFailure("/work/saga/a.md", 404)).toEqual({
+      key: FILE_REVEAL_FAILURE_KEY,
+      form: "failure",
+      title: "Tasma cannot show the file in Finder.",
+      line: "The file does not exist.",
+      words: ["/work/saga/a.md"],
+    });
+  });
+
+  it.each([500, null])("asks to try a show in Finder again on %s", (status) => {
+    expect(fileRevealFailure("/work/saga/a.md", status).line).toBe(
+      "Try again. If the file does not show, restart Tasma.",
+    );
+  });
+
+  it("names the browser that did not open the link, and shows the URL", () => {
+    expect(browserOpenFailure("Firefox", "https://example.com/a")).toEqual({
+      key: BROWSER_OPEN_FAILURE_KEY,
+      form: "failure",
+      title: "Tasma cannot open the link in Firefox.",
+      line: "Try again. If the link does not open, restart Tasma.",
+      words: ["https://example.com/a"],
     });
   });
 });

@@ -1,7 +1,7 @@
 import { hashKey, useMutationState } from "@tanstack/react-query";
 import { ProtocolError, TransportError, type Diagnostic, type SerializeErrorCode } from "@tasma/protocol";
 import { failureWords, joinFailureWords } from "../../lib/failure-words";
-import { noticeWords, useNoticeStore, type Notice } from "../../store/notices";
+import { noticeWords, reopenNotice } from "../../store/notices";
 import { warningCount } from "../../lib/warning-count";
 import { daemonKeys } from "../queries";
 
@@ -25,12 +25,6 @@ export class WriteError extends Error {
   }
 }
 
-/** Closed first, so the notice of an earlier write, dismissed or not, does not hold this one back. */
-export function openWriteNotice(notice: Notice): void {
-  useNoticeStore.getState().closeNotice(notice.key);
-  useNoticeStore.getState().showNotice(notice);
-}
-
 export const FAILURE_KEY_PREFIX = "task-write-failure:";
 
 export const COMMENT_FAILURE_KEY_PREFIX = "comment-write-failure:";
@@ -49,7 +43,7 @@ export const TASK_WRITE_SCOPE = { id: "task-write" };
 /** Opens the warning notice of a write, for the diagnostics the reader's screen does not already show. */
 export function openWarnings(id: string, fresh: readonly Diagnostic[]): void {
   if (fresh.length > 0) {
-    openWriteNotice({
+    reopenNotice({
       key: `${WARNING_KEY_PREFIX}${id}`,
       form: "warning",
       title: `${warningCount(fresh.length)} about ${id}`,

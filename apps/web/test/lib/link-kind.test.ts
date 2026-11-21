@@ -234,6 +234,18 @@ describe("a file link", () => {
   });
 
   it.each([
+    "/work/a%0Aecho%20hi%0A",
+    "a%0Db.md",
+    "a%09b.md",
+    "a%00b.md",
+    "a%7Fb.md",
+    "a%C2%85b.md",
+    "a\u0007b.md",
+  ])("has no kind for a path with a control character: %s", (href) => {
+    expect(linkKind(href)).toBeUndefined();
+  });
+
+  it.each([
     "http://%5B::1/items",
     "http:%5B::1%5D/../items",
     "https:",

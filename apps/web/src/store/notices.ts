@@ -147,6 +147,14 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
   },
 }));
 
+export type ShowNotice = (notice: Notice) => void;
+
+/** Closes the key first, so an earlier notice under it, dismissed or not, does not hold this one back. */
+export function reopenNotice(notice: Notice): void {
+  useNoticeStore.getState().closeNotice(notice.key);
+  useNoticeStore.getState().showNotice(notice);
+}
+
 export function noticeWords(diagnostics: readonly Diagnostic[]): string[] {
   return diagnostics.map(({ code, message }) => `${code} · ${message}`);
 }

@@ -1,5 +1,5 @@
 import type { Diagnostic, FeedEvent, Frontmatter, TaskEntry, Transport, TransportReply } from "@tasma/protocol";
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { appAvailable } from "../../src/api/app";
@@ -275,6 +275,36 @@ describe("a file link", () => {
     expect(screen.getByRole("link", { name: "a" }).getAttribute("href")).toBe("file:///repos/saga/docs/a.md");
     expect(within(commentCard("Note 1")).getByRole("link", { name: "b" }).getAttribute("href"))
       .toBe("file:///repos/saga/docs/b.md");
+  });
+});
+
+describe("a task link in the body", () => {
+  it("opened from its menu leaves focus on the page of the other task", async () => {
+    const user = userEvent.setup();
+    const { transport } = daemon({
+      [TASK_PATH]: task({ body: "Next: [the lexer](tasma://task/SAGA-7)." }),
+      "/projects/SAGA/tasks/SAGA-7": successReply({
+        frontmatter: frontmatter({ id: "SAGA-7", title: "Lex the input" }),
+        body: "",
+        comments: [],
+      }),
+      "/projects/SAGA/tasks/SAGA-7/chats": successReply([]),
+    });
+    const router = await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+    // The menu returns focus to the element that had it at open, and this link leaves the page.
+    const link = screen.getByRole("link", { name: "the lexer" });
+    link.focus();
+    fireEvent.contextMenu(link, { clientX: 10, clientY: 10 });
+
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Open task" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Lex the input" })).not.toBeNull();
+    expect(router.state.location.pathname).toBe("/tasks/SAGA/SAGA-7");
+    await waitFor(() => {
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+    await frame();
+    expect(document.activeElement).toBe(screen.getByRole("main"));
   });
 });
 

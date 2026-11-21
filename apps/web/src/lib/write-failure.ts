@@ -270,6 +270,53 @@ export function fileOpenFailure(path: string, status: number | null): Notice {
   };
 }
 
+export const FILE_REVEAL_FAILURE_KEY = "file-reveal-failure";
+
+/** `status` is the status of the refusal, or null when no answer came. */
+export function fileRevealFailure(path: string, status: number | null): Notice {
+  return {
+    key: FILE_REVEAL_FAILURE_KEY,
+    form: "failure",
+    title: "Tasma cannot show the file in Finder.",
+    line: status === 404 ? "The file does not exist." : "Try again. If the file does not show, restart Tasma.",
+    words: [path],
+  };
+}
+
+export const COPY_FAILURE_KEY = "copy-failure";
+
+/** What a copy item of the link menu copies. */
+export type CopyKind = "link" | "path" | "text";
+
+/**
+ * Selected text stays selected on the page, so its notice asks for Command-C.
+ * A keyboard user cannot select the words of a notice, so no notice asks for that.
+ */
+export function copyFailure(what: CopyKind, value: string): Notice {
+  if (what === "text") {
+    return {
+      key: COPY_FAILURE_KEY,
+      form: "failure",
+      title: "Tasma cannot copy the text.",
+      line: "Press Command-C to copy the selected text.",
+      words: [],
+    };
+  }
+  return { key: COPY_FAILURE_KEY, form: "failure", title: `Tasma cannot copy the ${what}.`, line: "Try again.", words: [value] };
+}
+
+export const BROWSER_OPEN_FAILURE_KEY = "browser-open-failure";
+
+export function browserOpenFailure(name: string, url: string): Notice {
+  return {
+    key: BROWSER_OPEN_FAILURE_KEY,
+    form: "failure",
+    title: `Tasma cannot open the link in ${name}.`,
+    line: "Try again. If the link does not open, restart Tasma.",
+    words: [url],
+  };
+}
+
 /** The warning of a restart that the dialog did not send. */
 export function chatRestartSkippedNotice(id: string, chat: number): SkippedNotice {
   return { title: "Nothing restarted", line: `Chat ${String(chat)} of ${id} is no longer the chat of its step.` };

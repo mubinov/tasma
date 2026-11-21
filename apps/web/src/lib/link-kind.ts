@@ -82,7 +82,9 @@ function hasNoScheme(href: string): boolean {
  * The parser gives the href percent-encoded, so one decode gives the path as
  * written. A `~` path stays no link: the web part does not know the home folder.
  * A path with a bidi control stays no link: the tooltip shows the path, and the
- * control can show it in another order.
+ * control can show it in another order. A path with a control character stays
+ * no link: Copy path gives the path as text to paste, and a newline pasted into
+ * a terminal runs the rest as a command.
  */
 function fileLink(href: string): LinkKind | undefined {
   const hash = href.indexOf("#");
@@ -91,7 +93,7 @@ function fileLink(href: string): LinkKind | undefined {
     return undefined;
   }
   const path = decoded(part);
-  if (path === undefined || path.startsWith("~") || /\p{Bidi_Control}/u.test(path)) {
+  if (path === undefined || path.startsWith("~") || /[\p{Bidi_Control}\p{Cc}]/u.test(path)) {
     return undefined;
   }
   const digits = hash < 0 ? undefined : LINE_FRAGMENT.exec(href.slice(hash + 1))?.[1];
