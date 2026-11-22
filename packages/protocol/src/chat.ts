@@ -181,7 +181,7 @@ type OptionValues = Readonly<Record<string, readonly string[]>>;
  */
 export const AGENT_OPTION_RULES: Readonly<Record<ChatAgent, { hidden: OptionValues; unsaved: OptionValues }>> = {
   claude: { hidden: { mode: ["plan"] }, unsaved: { mode: ["plan", "bypassPermissions"] } },
-  codex: { hidden: {}, unsaved: {} },
+  codex: { hidden: { collaboration_mode: ["plan"] }, unsaved: { mode: ["agent-full-access"], collaboration_mode: ["plan"] } },
 };
 
 /**

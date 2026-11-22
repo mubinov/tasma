@@ -8,7 +8,15 @@ import { TaskStoreError } from "@tasma/engine";
 import type { ChatEvent } from "@tasma/protocol";
 import type { LiveChat } from "../../src/chats/registry.js";
 import { logOf, logUntil, until } from "../helpers.js";
-import { actAsAdapter, forever, modelOption, modeOption, SESSION } from "../agents/fake-agent.js";
+import {
+  actAsAdapter,
+  codexModeOption,
+  collaborationModeOption,
+  forever,
+  modelOption,
+  modeOption,
+  SESSION,
+} from "../agents/fake-agent.js";
 import type { Script } from "../agents/fake-agent.js";
 import {
   defaultsFile,
@@ -1641,5 +1649,45 @@ describe("the stored options of an agent", () => {
     await runner.setOption(live, PICK);
 
     expect(optionEvents(feed)).toHaveLength(2);
+  });
+});
+
+describe("a pick on a chat of codex", () => {
+  async function codexChat() {
+    const setup = await world({
+      adapter: { ...fakeAdapter().adapter, agent: "codex" },
+      script: { configOptions: [codexModeOption(), collaborationModeOption(), modelOption()] },
+    });
+    await plantDefaults(setup.root, {});
+    const live = await setup.runner.start({ ...START, agent: "codex" });
+    await logUntil(live, "turn-end");
+    return { ...setup, live };
+  }
+
+  it("refuses the collaboration mode plan before it asks the agent, and writes nothing", async () => {
+    const { runner, live, root, processes } = await codexChat();
+
+    await expect(runner.setOption(live, { configId: "collaboration_mode", value: "plan", client: "web" })).rejects.toMatchObject({
+      code: "option-refused",
+      message: 'the agent of chat 1 of ALPHA-1 offers no value "plan" for "collaboration_mode"',
+    });
+
+    expect(processes[0]?.configSets).toEqual([]);
+    expect(live.chat.options).toBeUndefined();
+    expect(await storedDefaults(root)).toEqual({});
+  });
+
+  it("applies full access to the chat alone, and saves another mode as the default of codex", async () => {
+    const { runner, live, root, processes } = await codexChat();
+
+    await expect(runner.setOption(live, { configId: "mode", value: "agent-full-access", client: "web" })).resolves.toEqual([]);
+
+    expect(processes[0]?.configSets).toEqual([{ sessionId: SESSION, configId: "mode", value: "agent-full-access" }]);
+    expect(live.chat.options).toEqual({ mode: "agent-full-access" });
+    expect(await storedDefaults(root)).toEqual({});
+
+    await runner.setOption(live, { configId: "mode", value: "read-only", client: "web" });
+
+    expect(await storedDefaults(root)).toEqual({ codex: { mode: "read-only" } });
   });
 });

@@ -1,10 +1,22 @@
 // The log reads and the waits of a chat with a real agent.
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { ChatEvent } from "@tasma/protocol";
 import type { LiveChat } from "../../src/chats/registry.js";
 import { logOf } from "../helpers.js";
 
 export const TURN_MS = 120_000;
+
+/** Whether a process whose command line holds `text` runs. */
+export async function runs(text: string): Promise<boolean> {
+  try {
+    await promisify(execFile)("pgrep", ["-f", text]);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Waits until the log holds `turns` turn ends, or a failure, and gives the log. */
 export async function turnsEnded(live: LiveChat, turns: number): Promise<ChatEvent[]> {

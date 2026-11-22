@@ -266,6 +266,34 @@ describe("connectAgent", () => {
     expect(await steered).toBeInstanceOf(AgentClosed);
   });
 
+  it("closes the session with session/close and the session id, and resolves at the answer", async () => {
+    const { fake, session } = await started();
+
+    await session.close();
+
+    expect(fake.closes).toEqual([{ sessionId: SESSION }]);
+  });
+
+  it("rejects a close that the agent refuses with the error of the agent", async () => {
+    const { session } = await started({ close: () => Promise.reject(new Error("a background terminal did not stop")) });
+
+    const error = await rejection(session.close());
+
+    expect(error).toBeInstanceOf(RequestError);
+    expect(error).toMatchObject({ code: -32603, data: { details: "a background terminal did not stop" } });
+  });
+
+  it("rejects a close with AgentClosed when the connection closes, and when it is closed", async () => {
+    const { fake, session } = await started({ close: () => forever() });
+
+    const closed = rejection(session.close());
+    await until(() => fake.closes.length === 1, "the agent got the close");
+    fake.exit({ code: 0, signal: null });
+
+    expect(await closed).toBeInstanceOf(AgentClosed);
+    expect(await rejection(session.close())).toBeInstanceOf(AgentClosed);
+  });
+
   it("hands each permission request and question to its handler, and the answer to the agent", async () => {
     const granted = { outcome: { outcome: "selected", optionId: "allow" } };
     const replied = { action: "accept", content: { parser: "peg" } };

@@ -25,7 +25,7 @@ import type { ChatRunner } from "../../src/chats/runner.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import { WriteQueue } from "../../src/tasks/serialize.js";
 import { freePort, logOf, plant, projectConfig, projectsRoot, target, taskFile, taskText } from "../helpers.js";
-import { answerText, lastNonUpdate, TURN_MS, turnsEnded, within } from "./real-chat.js";
+import { answerText, lastNonUpdate, runs, TURN_MS, turnsEnded, within } from "./real-chat.js";
 
 const PING = "Reply with the single word: pong";
 
@@ -102,16 +102,6 @@ async function turnsEndedAllowing(runner: ChatRunner, live: LiveChat, turns: num
     log = await allowOpen(runner, live);
   }
   return log;
-}
-
-/** Whether a process whose command line holds `text` runs. */
-async function runs(text: string): Promise<boolean> {
-  try {
-    await promisify(execFile)("pgrep", ["-f", text]);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** Whether a server listens on the port of this machine. */

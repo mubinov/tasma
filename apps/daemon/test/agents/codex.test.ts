@@ -28,6 +28,9 @@ const CODEX_ACP_OPTIONS = {
   CODEX_ACP_PROVIDER_HEADER_0: "secret",
 };
 
+/** The Codex config of the threads of a Tasma chat. */
+const TASMA_CODEX_CONFIG = '{"features":{"default_mode_request_user_input":true},"suppress_unstable_features_warning":true}';
+
 /** A directory holding an executable `codex` that runs `script`. */
 async function codexRunning(script: string): Promise<{ dir: string; codex: string }> {
   const dir = await target();
@@ -68,11 +71,15 @@ describe("codexAdapter", () => {
     expect(codexAdapter.projectSessionGone).toBe("Codex no longer has the conversation of this chat. Start a new chat.");
   });
 
-  it("has no session meta, no options refresh and no check of background commands", () => {
+  it("has no session meta and no check of background commands", () => {
     expect(codexAdapter).not.toHaveProperty("sessionMeta");
     expect(codexAdapter).not.toHaveProperty("projectSessionMeta");
-    expect(codexAdapter).not.toHaveProperty("optionsSessionMeta");
     expect(codexAdapter).not.toHaveProperty("backgroundCommands");
+  });
+
+  it("refreshes its options with an empty meta, and closes its session before each end of its process", () => {
+    expect(codexAdapter.optionsSessionMeta).toEqual({});
+    expect(codexAdapter.closeBeforeEnd).toBe(true);
   });
 
   it("reads the error of Codex for a thread it does not have as a lost session", () => {
@@ -121,7 +128,7 @@ describe("codexAdapter.launch", () => {
     expect(launched({ PATH: links }).env.CODEX_PATH).toBe(join(links, "codex"));
   });
 
-  it("runs the adapter under this runtime with the environment of the daemon, no variable of a session and no option of the adapter", async () => {
+  it("runs the adapter under this runtime with the environment of the daemon, no variable of a session and no option of the adapter but the Codex config of Tasma", async () => {
     const bin = await codexRunning("");
     const packageBin = join(await target(), "node_modules", ".bin");
 
@@ -142,7 +149,16 @@ describe("codexAdapter.launch", () => {
       HOME: "/home/alice",
       CODEX_HOME: "/srv/codex",
       CODEX_PATH: bin.codex,
+      CODEX_CONFIG: TASMA_CODEX_CONFIG,
     });
+  });
+
+  it("gives the adapter the Codex config of Tasma alone, also when the environment holds another CODEX_CONFIG", async () => {
+    const bin = await codexRunning("");
+    const own = '{"features":{"default_mode_request_user_input":false},"model":"other"}';
+
+    expect(launched({ PATH: bin.dir, CODEX_CONFIG: own }).env.CODEX_CONFIG).toBe(TASMA_CODEX_CONFIG);
+    expect(launched({ PATH: bin.dir }).env.CODEX_CONFIG).toBe(TASMA_CODEX_CONFIG);
   });
 
   it("runs the adapter under bun with no bunfig.toml and no .env of the chat folder", async () => {
@@ -165,7 +181,7 @@ describe("codexAdapter.launch", () => {
     expect(launch).toEqual({
       command: process.execPath,
       args: ["--agent", "codex"],
-      env: { PATH: bin.dir, HOME: "/home/alice", CODEX_PATH: bin.codex },
+      env: { PATH: bin.dir, HOME: "/home/alice", CODEX_PATH: bin.codex, CODEX_CONFIG: TASMA_CODEX_CONFIG },
     });
     expect(resolve).not.toHaveBeenCalled();
   });

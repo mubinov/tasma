@@ -40,6 +40,26 @@ const CODEX_ACP_OPTIONS: readonly string[] = [
  */
 const CODEX_ACP_PREFIX = "CODEX_ACP_";
 
+/**
+ * The config overrides that `codex-acp` gives each Codex thread of a chat.
+ *
+ * `default_mode_request_user_input` is a Codex feature at the stage "under
+ * development", off by default. Without it, Codex asks a blocking question
+ * only in Plan mode, which Tasma hides. A Codex release can rename or remove
+ * the feature, and the questions then stop with no error: check that it
+ * exists at each update of `codex-acp` or of Codex. The question case of
+ * `real-codex.test.ts` fails when the feature stops working.
+ *
+ * `suppress_unstable_features_warning` stops the warning about the feature
+ * that Codex sends at each session start, which `codex-acp` shows as agent
+ * text. It also hides that warning for the under-development features of the
+ * user's own configuration.
+ */
+const CODEX_CONFIG = JSON.stringify({
+  features: { default_mode_request_user_input: true },
+  suppress_unstable_features_warning: true,
+});
+
 function withoutAdapterOptions(env: AgentEnv): AgentEnv {
   return Object.fromEntries(
     Object.entries(env).filter(([name]) => !CODEX_ACP_OPTIONS.includes(name) && !name.startsWith(CODEX_ACP_PREFIX)),
@@ -108,7 +128,11 @@ export function createCodexAdapter(options: { host?: AgentHost; commandTimeoutMs
       const codex = findBinary(path, "codex");
       if (codex === undefined) return { missing: "Codex is not installed" };
       // With no `CODEX_PATH`, the adapter runs its own `@openai/codex` with `process.execPath`.
-      return adapterLaunch(host, "codex", ADAPTER_ENTRY, { ...withoutAdapterOptions(childEnv(env, path)), CODEX_PATH: codex });
+      return adapterLaunch(host, "codex", ADAPTER_ENTRY, {
+        ...withoutAdapterOptions(childEnv(env, path)),
+        CODEX_PATH: codex,
+        CODEX_CONFIG,
+      });
     },
     loggedIn: (env, signal) => loggedIn(env, signal, commandTimeoutMs),
     skillFiles,
@@ -120,6 +144,10 @@ export function createCodexAdapter(options: { host?: AgentHost; commandTimeoutMs
       await import("@agentclientprotocol/codex-acp/dist/index.js");
     },
     filterUpdate: (update) => update,
+    // Codex keeps a thread with no turn in memory alone, so the session of a refresh leaves nothing on disk.
+    optionsSessionMeta: {},
+    // A background terminal of Codex runs in a process session of its own, out of reach of the kill of the group.
+    closeBeforeEnd: true,
   };
 }
 

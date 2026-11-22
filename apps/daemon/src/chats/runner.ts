@@ -55,6 +55,13 @@ const KIND_NAME = { permission: "permission request", question: "question" } as 
 
 const END_GRACE_MS = 10_000;
 
+/**
+ * The daemon stop runs within the 10 s that `tasma daemon stop` and the app
+ * give it: the drain, this limit and the end of the group of an agent take
+ * 9.5 s at most.
+ */
+const CLOSE_LIMIT_MS = 1000;
+
 /** The kinds of update that show an own turn. */
 const OWN_TURN_OUTPUT: ReadonlySet<unknown> = new Set(["agent_message_chunk", "agent_thought_chunk", "tool_call"]);
 
@@ -204,7 +211,8 @@ export type ChatRunner = {
   stopStarts(): void;
   /**
    * Interrupts each chat in a turn or with an open request, as `LiveChat.interrupt`
-   * does, and ends every agent process. Resolves when every process has ended,
+   * does, and ends every agent process, after `session/close` for an agent
+   * with `closeBeforeEnd`, as at each end. Resolves when every process has ended,
    * every refresh of the options has ended and its folder is removed, and every
    * write is done; a fault of a write is reported.
    */
@@ -435,12 +443,15 @@ export function createChatRunner(options: {
   endGraceMs?: number;
   /** How long after the last activity a running `job` command keeps the agent. */
   jobHoldMs?: number;
+  /** How long the end of an agent process waits for the close of its session. */
+  closeLimitMs?: number;
   /** The folder that holds the work folder of each refresh of the options. */
   optionsWorkParent?: string;
 }): ChatRunner {
   const { root, chats, adapters, env, defaults, agentOptions, publish } = options;
   const endGraceMs = options.endGraceMs ?? END_GRACE_MS;
   const jobHoldMs = options.jobHoldMs ?? JOB_HOLD_MS;
+  const closeLimitMs = options.closeLimitMs ?? CLOSE_LIMIT_MS;
   const spawn = options.spawn ?? spawnAgent;
   const shellEnv = options.shellEnv ?? ((signal) => readShellEnv(env, { signal }));
   const idleLimit = options.idleLimit ?? (() => Promise.resolve(AGENT_STEP_IDLE_MS));
@@ -450,10 +461,12 @@ export function createChatRunner(options: {
   /** The writes of the options of a new session that have not ended. */
   const keeping = new Set<Promise<unknown>>();
   const runs = new Map<AnyLiveChat, Run>();
-  /** Every agent process that has not exited, also of a chat that no longer runs. */
-  const alive = new Set<AgentProcess>();
+  /** Every agent process that has not exited, also of a chat that no longer runs, with its run. */
+  const alive = new Map<AgentProcess, Run>();
   /** For the last agent process of each chat: its `ended`, and the handling of its exit. */
   const ends = new WeakMap<AnyLiveChat, Promise<unknown>>();
+  /** The end of each agent process that closes its session before it ends. */
+  const closings = new WeakMap<AgentProcess, Promise<void>>();
   /** The last run of each chat in this daemon. */
   const lastRuns = new WeakMap<AnyLiveChat, Run>();
   /** The end of the last pick of each chat that has not ended, which the next pick of the chat waits for. */
@@ -530,10 +543,45 @@ export function createChatRunner(options: {
     forget(run, error);
   }
 
+  /**
+   * Sends `session/close`, and waits for its answer up to `closeLimitMs`. A
+   * refusal and the end of the limit write one line on stderr, a closed
+   * connection none. Never throws.
+   */
+  async function closeSession(run: Run, adapter: AgentAdapter, session: AgentSession): Promise<void> {
+    const closed = session.close().then(
+      () => undefined,
+      (error: unknown) => (error instanceof AgentClosed ? undefined : `the session did not close: ${errorReason(adapter, error)}`),
+    );
+    const clearLimit = new AbortController();
+    const limit = sleep(closeLimitMs, `the session did not close in ${closeLimitMs} ms`, {
+      signal: clearLimit.signal,
+    }).catch(() => undefined);
+    const failure = await Promise.race([closed, limit]);
+    clearLimit.abort();
+    if (failure !== undefined) stderr.write(chatFault(run.live, failure));
+  }
+
+  /**
+   * Ends the process of the run. An agent with `closeBeforeEnd` gets the close
+   * of an open session first. A later call for the same process gets the same
+   * end.
+   */
+  function endAgent(run: Run): Promise<void> {
+    const { process: agentProcess, adapter, session } = run;
+    if (agentProcess === undefined) return Promise.resolve();
+    const known = closings.get(agentProcess);
+    if (known !== undefined) return known;
+    if (adapter?.closeBeforeEnd !== true || session === undefined) return agentProcess.end();
+    const ended = closeSession(run, adapter, session).then(() => agentProcess.end());
+    closings.set(agentProcess, ended);
+    return ended;
+  }
+
   /** Ends the process with no event. The chat keeps its state. */
   async function quit(run: Run): Promise<void> {
     silence(run);
-    await run.process?.end();
+    await endAgent(run);
   }
 
   /** After a refusal or a fault of the log: the run writes nothing more, and its process ends. */
@@ -565,7 +613,7 @@ export function createChatRunner(options: {
     if (run.quiet) return;
     silence(run, couldNotRun(run.live, reason));
     await append(run, { kind: "failed", reason });
-    await run.process?.end();
+    await endAgent(run);
   }
 
   /**
@@ -979,7 +1027,7 @@ export function createChatRunner(options: {
       expire: () => void idleCheck(run, idle),
     });
     run.idle = idle;
-    alive.add(agentProcess);
+    alive.set(agentProcess, run);
     void agentProcess.ended.then(() => alive.delete(agentProcess));
     const connection = connectAgent(agentProcess.stream, handlersOf(run, adapter));
     // With its connection closed, the process can take no more requests.
@@ -1414,7 +1462,7 @@ export function createChatRunner(options: {
         silence(run, daemonStopping(run.live));
         return run.live.interrupt().catch((error: unknown) => report(run.live, error));
       });
-      await Promise.all([...writes, ...[...alive].map((agentProcess) => agentProcess.end()), refresh.settled()]);
+      await Promise.all([...writes, ...[...alive.values()].map(endAgent), refresh.settled()]);
       await Promise.all(keeping);
     },
   };

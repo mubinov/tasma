@@ -12,9 +12,11 @@ import {
   startOptions,
   wanted,
 } from "../../src/chats/options.js";
-import { modelOption, modeOption } from "../agents/fake-agent.js";
+import { codexModeOption, collaborationModeOption, modelOption, modeOption } from "../agents/fake-agent.js";
 
 const OPTIONS = [modeOption(), modelOption()];
+
+const CODEX_OPTIONS = [codexModeOption(), collaborationModeOption(), modelOption()];
 
 const DEFAULTS_PATH = "/home/alice/.tasma/agent-defaults.json";
 
@@ -117,6 +119,9 @@ describe("isHidden", () => {
   it("finds the hidden values of the agent alone", () => {
     expect(isHidden("claude", "mode", "plan")).toBe(true);
     expect(isHidden("codex", "mode", "plan")).toBe(false);
+    expect(isHidden("codex", "collaboration_mode", "plan")).toBe(true);
+    expect(isHidden("codex", "collaboration_mode", "default")).toBe(false);
+    expect(isHidden("claude", "collaboration_mode", "plan")).toBe(false);
   });
 });
 
@@ -189,6 +194,25 @@ describe("startDefaults", () => {
     };
 
     expect(startDefaults("claude", OPTIONS, read)).toEqual({ defaults: {}, ignored: [] });
+  });
+
+  it("gives codex a saved full access and a saved plan as ignored, and no start mode", () => {
+    const read = saved({ codex: { mode: "agent-full-access", collaboration_mode: "plan", model: "large" } });
+
+    expect(startDefaults("codex", CODEX_OPTIONS, read)).toEqual({
+      defaults: { model: "large" },
+      ignored: [{ configId: "mode", value: "agent-full-access" }, { configId: "collaboration_mode", value: "plan" }],
+    });
+  });
+
+  it("gives codex the other saved values, and no start mode with nothing saved", () => {
+    const read = saved({ codex: { mode: "workspace-write", collaboration_mode: "default" } });
+
+    expect(startDefaults("codex", CODEX_OPTIONS, read)).toEqual({
+      defaults: { mode: "workspace-write", collaboration_mode: "default" },
+      ignored: [],
+    });
+    expect(startDefaults("codex", CODEX_OPTIONS, saved({}))).toEqual({ defaults: {}, ignored: [] });
   });
 });
 

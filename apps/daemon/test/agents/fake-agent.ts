@@ -6,6 +6,8 @@ import { agent, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk"
 import type {
   AgentContext,
   CancelNotification,
+  CloseSessionRequest,
+  CloseSessionResponse,
   ContentBlock,
   CreateElicitationRequest,
   InitializeRequest,
@@ -79,6 +81,8 @@ export type FakeProcess = AgentProcess & {
   steers: SteerRequest[];
   /** The params of each `session/set_config_option`. */
   configSets: SetSessionConfigOptionRequest[];
+  /** The params of each `session/close`. */
+  closes: CloseSessionRequest[];
   /** The config options of the session, which `configOptions` of the script starts and each accepted set changes. */
   configOptions: SessionConfigOption[];
   /** The calls of `end()`, which ends the process one time and exits with code 0. */
@@ -111,6 +115,8 @@ export type Script = {
   configOptions?: SessionConfigOption[];
   /** Without it, the set acts as `actAsAdapter` does. */
   setConfigOption?(params: SetSessionConfigOptionRequest, fake: FakeProcess): Promise<SetSessionConfigOptionResponse>;
+  /** Without it, every `session/close` answers at once. */
+  close?(params: CloseSessionRequest, fake: FakeProcess): Promise<CloseSessionResponse>;
 };
 
 /** The modes of Claude in a select option of category `mode`. */
@@ -122,6 +128,30 @@ export function modeOption(current = "default"): SessionConfigOption {
     type: "select",
     currentValue: current,
     options: ["default", "acceptEdits", "plan", "auto", "bypassPermissions"].map((value) => ({ value, name: value })),
+  };
+}
+
+/** The modes of Codex in a select option of category `mode`. */
+export function codexModeOption(current = "agent"): SessionConfigOption {
+  return {
+    id: "mode",
+    name: "Approval Preset",
+    category: "mode",
+    type: "select",
+    currentValue: current,
+    options: ["read-only", "workspace-write", "agent", "agent-full-access"].map((value) => ({ value, name: value })),
+  };
+}
+
+/** The collaboration modes of Codex. */
+export function collaborationModeOption(current = "default"): SessionConfigOption {
+  return {
+    id: "collaboration_mode",
+    name: "Collaboration Mode",
+    category: "collaboration_mode",
+    type: "select",
+    currentValue: current,
+    options: ["default", "plan"].map((value) => ({ value, name: value })),
   };
 }
 
@@ -228,6 +258,7 @@ export function fakeAgent(script: Script = {}): {
       cancels: [],
       steers: [],
       configSets: [],
+      closes: [],
       configOptions: script.configOptions ?? [],
       endCalls: 0,
       group: Promise.resolve(),
@@ -290,6 +321,10 @@ export function fakeAgent(script: Script = {}): {
         fake.prompts.push(params);
         fake.promptIds.push(requestId);
         return script.prompt?.(params, fake) ?? { stopReason: "end_turn" };
+      })
+      .onRequest("session/close", ({ params }) => {
+        fake.closes.push(params);
+        return script.close?.(params, fake) ?? {};
       })
       .onNotification("session/cancel", ({ params }) => {
         fake.cancels.push(params);

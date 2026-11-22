@@ -74,4 +74,10 @@ export type AgentAdapter = {
   optionsSessionMeta?: AcpObject;
   /** The background commands of one agent process. `log` takes each line for the log of the daemon. */
   backgroundCommands?(log: (cause: string) => void): BackgroundCommands;
+  /**
+   * The runner sends `session/close` before it ends the process of a chat with
+   * an open session. Only an agent whose background commands can outlive its
+   * process has it.
+   */
+  closeBeforeEnd?: true;
 };

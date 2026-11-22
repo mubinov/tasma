@@ -56,6 +56,8 @@ export type AgentSession = {
   steer(text: string): Promise<"injected" | "prompt-required">;
   /** Sends `session/cancel`. Never throws: a send that fails means that the connection closes. */
   cancel(): void;
+  /** Sends `session/close`. Rejects as `prompt` does. */
+  close(): Promise<void>;
 };
 
 export type AgentConnection = {
@@ -261,6 +263,9 @@ export function connectAgent(stream: Stream, handlers: AgentHandlers): AgentConn
       },
       cancel() {
         void connection.agent.notify("session/cancel", { sessionId }).catch(() => undefined);
+      },
+      async close() {
+        await call(connection.agent.request("session/close", { sessionId }));
       },
     };
   }

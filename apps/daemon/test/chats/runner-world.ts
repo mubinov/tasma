@@ -73,6 +73,8 @@ export type World = {
 export type WorldOptions = {
   script?: Script;
   adapter?: AgentAdapter;
+  /** Replaces `adapter`. */
+  adapters?: AgentAdapter[];
   /** What the spawn does with each process it starts, before the runner gets it. */
   started?: (fake: FakeProcess) => void;
   config?: (folder: string) => string;
@@ -90,6 +92,8 @@ export type WorldOptions = {
   endGraceMs?: number;
   /** Without it, the runner uses its default hold of a running job. */
   jobHoldMs?: number;
+  /** Without it, the runner uses its default wait for the close of a session. */
+  closeLimitMs?: number;
   /** Without it, the runner keeps the options of the agents in the file of the tree. */
   agentOptions?: AgentOptionsStore;
 };
@@ -124,7 +128,7 @@ export async function world(options: WorldOptions = {}): Promise<World> {
   const runner = createChatRunner({
     root,
     chats,
-    adapters: [options.adapter ?? adapter],
+    adapters: options.adapters ?? [options.adapter ?? adapter],
     env: options.env ?? { PATH: "/usr/bin", HOME: "/home/alice" },
     spawn: options.spawn ?? ((launch, at) => {
       const fake = agents.spawn(launch, at);
@@ -136,6 +140,7 @@ export async function world(options: WorldOptions = {}): Promise<World> {
     projectIdleMs: options.projectIdleMs,
     endGraceMs: options.endGraceMs,
     jobHoldMs: options.jobHoldMs,
+    closeLimitMs: options.closeLimitMs,
     stderr: { write: (line: string) => errors.push(line) },
     defaults: openAgentDefaults(root),
     agentOptions: options.agentOptions ?? openAgentOptions(root),

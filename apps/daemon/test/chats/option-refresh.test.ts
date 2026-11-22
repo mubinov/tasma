@@ -222,6 +222,19 @@ describe("a refresh of the options", () => {
     expect(errors).toEqual([]);
   });
 
+  it("opens the session of an adapter whose options meta is empty with an empty _meta", async () => {
+    const codex: AgentAdapter = { ...fakeAdapter().adapter, agent: "codex", optionsSessionMeta: {} };
+    const { refresh, processes, kept, errors } = await refreshing({ adapters: [codex] });
+
+    refresh.ask("codex", undefined);
+    await refresh.settled();
+
+    expect(processes).toHaveLength(1);
+    expect(processes[0]?.newSession?._meta).toEqual({});
+    expect(kept).toEqual([{ agent: "codex", options: OPTIONS }]);
+    expect(errors).toEqual([]);
+  });
+
   it("starts nothing for an agent with no adapter, nor for an adapter with no options meta", async () => {
     const plain: AgentAdapter = { ...fakeAdapter().adapter, agent: "codex", optionsSessionMeta: undefined };
     const { refresh, processes, launches, errors } = await refreshing({ adapters: [plain] });
