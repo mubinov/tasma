@@ -746,6 +746,7 @@ export function createChatRunner(options: {
     if (stored !== undefined) {
       const resumed = await send(run, () => connection.resume(folder, stored, meta).catch((error: unknown) => {
         if (error instanceof SessionNotFound) return "lost" as const;
+        if (run.adapter!.sessionLost?.(errorReason(run.adapter!, error)) === true) return "lost" as const;
         throw error;
       }));
       if (resumed === undefined) return undefined;

@@ -8,6 +8,8 @@ catalog:
   # Exact, and they move together: the adapter pins the ACP SDK and zod to
   # these exact versions, so the daemon shares one copy of each with it.
   "@agentclientprotocol/claude-agent-acp": 0.89.1
+  # Exact: a new version needs a new check against the `codex` it runs.
+  "@agentclientprotocol/codex-acp": 2.6.0
   "@agentclientprotocol/sdk": 1.8.0
   "@assistant-ui/react": 0.15.26
   "@assistant-ui/react-markdown": 0.14.20
@@ -100,3 +102,11 @@ ignoredOptionalDependencies:
   - "@anthropic-ai/claude-agent-sdk-linux-x64-musl"
   - "@anthropic-ai/claude-agent-sdk-win32-arm64"
   - "@anthropic-ai/claude-agent-sdk-win32-x64"
+  # The daemon runs the user's own `codex` through CODEX_PATH, so the native
+  # packages of @openai/codex, a dependency of codex-acp, are never installed.
+  - "@openai/codex-darwin-arm64"
+  - "@openai/codex-darwin-x64"
+  - "@openai/codex-linux-arm64"
+  - "@openai/codex-linux-x64"
+  - "@openai/codex-win32-arm64"
+  - "@openai/codex-win32-x64"

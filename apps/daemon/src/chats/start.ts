@@ -12,8 +12,6 @@ import type { ChatRegistry, LiveChat } from "./registry.js";
 import { ChatStartRefusal } from "./runner.js";
 import type { ChatRunner } from "./runner.js";
 
-const AGENT: ChatAgent = "claude";
-
 const TITLE_LENGTH = 200;
 
 export type StepChats = {
@@ -74,8 +72,10 @@ export function createStepChats(options: {
   host: ProjectHost;
   chats: ChatRegistry;
   runner: Pick<ChatRunner, "start" | "end" | "startProjectChat">;
+  /** The agent of each new chat. */
+  agent: ChatAgent;
 }): StepChats {
-  const { root, host, chats, runner } = options;
+  const { root, host, chats, runner, agent } = options;
   /** The last start of each task that runs or waits. */
   const locks = new Map<string, Promise<void>>();
 
@@ -118,7 +118,7 @@ export function createStepChats(options: {
   }
 
   function launch(tag: string, task: string, step: string, client: string): Promise<LiveChat> {
-    return withDaemonRefusal(runner.start({ tag, task, step, agent: AGENT, text: firstMessage(task), client }));
+    return withDaemonRefusal(runner.start({ tag, task, step, agent, text: firstMessage(task), client }));
   }
 
   async function startOf(tag: string, task: string, client: string, restart = false): ReturnType<StepChats["start"]> {
@@ -150,7 +150,7 @@ export function createStepChats(options: {
       return withDaemonRefusal(runner.startProjectChat({
         tag,
         title: titleOf(text),
-        agent: AGENT,
+        agent,
         text,
         client,
         ...(options === undefined ? {} : { options }),

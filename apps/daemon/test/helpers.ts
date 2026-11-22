@@ -10,6 +10,7 @@ import { expect, onTestFinished } from "vitest";
 import type { IndexedProject } from "@tasma/engine";
 import { DAEMON_RECORD_FILE } from "@tasma/protocol";
 import type { ChatEvent, DaemonRecord, Diagnostic, Failure } from "@tasma/protocol";
+import { REMOVED_VARIABLES } from "../src/agents/process.js";
 import type { AnyLiveChat } from "../src/chats/registry.js";
 import { DaemonError } from "../src/http/failure.js";
 import type { RouteEntry } from "../src/http/router.js";
@@ -22,6 +23,9 @@ export type TestServer = { url: string; token: string; close(): Promise<void> };
 
 /** The stamp every planted file carries, so a test asserts against a known value. */
 export const TIMESTAMP = "2026-01-01T00:00:00+03:00";
+
+/** Each variable that `childEnv` removes, with a value. */
+export const SESSION_ENV: Record<string, string> = Object.fromEntries(REMOVED_VARIABLES.map((name) => [name, "1"]));
 
 /**
  * A daemon listening on a port the operating system issued, so parallel test
@@ -179,7 +183,7 @@ export async function plant(path: string, text: string): Promise<void> {
 export async function plantChat(
   root: string,
   place: { tag: string; digits: string; chat: number },
-  record: { step?: string; created?: string } = {},
+  record: { step?: string; created?: string; agent?: string; folder?: string; session?: string } = {},
   events: ChatEvent[] = [],
 ): Promise<void> {
   const { tag, digits, chat } = place;

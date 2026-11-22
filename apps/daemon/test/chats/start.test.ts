@@ -2,7 +2,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { TaskStoreError } from "@tasma/engine";
-import type { ProjectChat } from "@tasma/protocol";
+import type { ChatAgent, ProjectChat } from "@tasma/protocol";
 import { createChatRegistry } from "../../src/chats/registry.js";
 import type { ChatRegistry, LiveChat } from "../../src/chats/registry.js";
 import { ChatStartRefusal } from "../../src/chats/runner.js";
@@ -57,9 +57,9 @@ type World = {
 /**
  * Project ALPHA declares the workflow "flow", with the steps "plan" and
  * "build". ALPHA-1 is at "build", ALPHA-2 is at "plan", ALPHA-3 follows "flow"
- * with no step, and ALPHA-4 has no workflow.
+ * with no step, and ALPHA-4 has no workflow. Each new chat starts with `agent`.
  */
-async function world(): Promise<World> {
+async function world(agent: ChatAgent = "claude"): Promise<World> {
   const root = await projectsRoot("ALPHA");
   await plantSteps(root, "flow", "plan", "build");
   await plant(projectConfig(root, "ALPHA"), "workflows: [flow]\n");
@@ -99,7 +99,7 @@ async function world(): Promise<World> {
       return chats.createProjectChat(tag, { title, agent, folder: "/srv/alpha" }, { text, client });
     },
   };
-  const starts = createStepChats({ root, host, chats, runner });
+  const starts = createStepChats({ root, host, chats, runner, agent });
   return { root, chats, starts, calls, projectCalls, ends, order, next };
 }
 
@@ -129,6 +129,15 @@ describe("a start of the chat of a step", () => {
       text: "Run the current step of Tasma task ALPHA-1.",
       client: "cli",
     }]);
+  });
+
+  it("starts a chat for the step with the agent of its option", async () => {
+    const { starts, calls } = await world("codex");
+
+    const { live } = await starts.start("ALPHA", "ALPHA-1", "cli");
+
+    expect(live.chat).toMatchObject({ task: "ALPHA-1", step: "build", agent: "codex" });
+    expect(calls).toEqual([expect.objectContaining({ agent: "codex" })]);
   });
 
   it("gives back the latest chat of the same step, and calls no runner", async () => {
@@ -354,6 +363,16 @@ describe("a start that restarts the step", () => {
     expect(calls[1]).toEqual({ ...calls[0], client: "app" });
   });
 
+  it("starts the new chat with the agent of its option", async () => {
+    const { starts, calls } = await world("codex");
+    await starts.start("ALPHA", "ALPHA-1", "cli");
+
+    const { live } = await starts.start("ALPHA", "ALPHA-1", "app", true);
+
+    expect(live.chat).toMatchObject({ chat: 2, agent: "codex" });
+    expect(calls.map((call) => call.agent)).toEqual(["codex", "codex"]);
+  });
+
   it.each([
     ["failed", [{ kind: "user", text: "Build the parser", client: "app" }, { kind: "failed", reason: "No agent here" }]],
     ["has an empty log", []],
@@ -512,6 +531,15 @@ describe("a start of a project chat", () => {
       client: "app",
     }]);
     expect(calls).toEqual([]);
+  });
+
+  it("gives the runner the agent of its option", async () => {
+    const { starts, projectCalls } = await world("codex");
+
+    const live = await starts.startProject("ALPHA", INPUT);
+
+    expect(live.chat).toMatchObject({ chat: 1, agent: "codex" });
+    expect(projectCalls).toEqual([expect.objectContaining({ agent: "codex" })]);
   });
 
   it("gives the runner the options of the start", async () => {

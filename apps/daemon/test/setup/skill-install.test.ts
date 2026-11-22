@@ -8,11 +8,10 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { SkillInstall } from "@tasma/protocol";
 import type { AgentAdapter, AgentEnv } from "../../src/agents/adapter.js";
-import { CLAUDE_SESSION_VARIABLES } from "../../src/agents/process.js";
 import type { ShellEnv } from "../../src/agents/shell-env.js";
 import { createSkillInstaller } from "../../src/setup/skill-install.js";
 import type { SkillInstaller } from "../../src/setup/skill-install.js";
-import { target, until, untilGone, untilPid } from "../helpers.js";
+import { SESSION_ENV, target, until, untilGone, untilPid } from "../helpers.js";
 
 /** A child that the next spawn gives in place of a real one. */
 const spawning = vi.hoisted(() => ({ next: undefined as ChildProcess | undefined }));
@@ -188,19 +187,19 @@ describe("the skill install", () => {
     expect(existsSync(cwd)).toBe(false);
   });
 
-  it("gives the command the environment of the login shell with no relative and no node_modules folder on PATH, no Claude session variables, no telemetry or colour, and its working folder as TMPDIR", async () => {
+  it("gives the command the environment of the login shell with no relative and no node_modules folder on PATH, no session variables, no telemetry or colour, and its working folder as TMPDIR", async () => {
     const out = await target();
     const home = await target();
     const packageBin = join(await target(), "node_modules", ".bin");
     await mkdir(packageBin, { recursive: true });
     await writeFile(join(packageBin, "npx"), `#!/bin/sh\n: > '${out}/wrong'\n`, { mode: 0o755 });
     const dir = await npxRunning(`/usr/bin/env > '${out}/env'\npwd > '${out}/cwd'\n${WRITES_SKILLS}`);
-    const session = Object.fromEntries(CLAUDE_SESSION_VARIABLES.map((name) => [name, "1"]));
     const installer = installerOver({
-      ...session,
+      ...SESSION_ENV,
       PATH: ["node_modules/.bin", packageBin, dir, "", "/usr/bin"].join(delimiter),
       HOME: home,
       CLAUDE_CONFIG_DIR: "/srv/agent",
+      CODEX_HOME: "/srv/codex",
       ANTHROPIC_MODEL: "opus",
       TMPDIR: "/srv/shared-tmp",
     });
@@ -211,11 +210,12 @@ describe("the skill install", () => {
     expect(env).toContain(`PATH=${[dir, "/usr/bin"].join(delimiter)}`);
     expect(env).toContain(`HOME=${home}`);
     expect(env).toContain("CLAUDE_CONFIG_DIR=/srv/agent");
+    expect(env).toContain("CODEX_HOME=/srv/codex");
     expect(env).toContain("ANTHROPIC_MODEL=opus");
     expect(env).toContain("DISABLE_TELEMETRY=1");
     expect(env).toContain("NO_COLOR=1");
     expect(env).toContain(`TMPDIR=${(await readFile(join(out, "cwd"), "utf8")).trim()}`);
-    for (const name of CLAUDE_SESSION_VARIABLES) expect(env.some((line) => line.startsWith(`${name}=`))).toBe(false);
+    for (const name of Object.keys(SESSION_ENV)) expect(env.some((line) => line.startsWith(`${name}=`))).toBe(false);
     expect(existsSync(join(out, "wrong"))).toBe(false);
   });
 

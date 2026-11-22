@@ -298,6 +298,24 @@ describe("createChatRunner.message to a chat with no process", () => {
     expect(live.chat.session).toBe("session-2");
   });
 
+  it("opens a new session with all the messages when the adapter reads the failed resume of a session it never answered in as lost", async () => {
+    const { adapter } = fakeAdapter();
+    const { runner, processes } = await world({
+      adapter: { ...adapter, sessionLost: (reason) => reason === "no such thread" },
+      script: { ...heldTurns().script, resume: () => Promise.reject(new Error("no such thread")) },
+    });
+    const live = await runner.start(START);
+    await until(() => processes[0]?.prompts.length === 1, "the first turn started");
+    await runner.cancel(live, { client: "web" });
+    await logUntil(live, "turn-end");
+    await runner.stop(live);
+
+    await runner.message(live, NEXT);
+    await until(() => processes[1]?.prompts.length === 1, "the turn of the new session started");
+
+    expect(processes[1]?.prompts[0]?.prompt).toEqual([{ type: "text", text: `${START.text}\n\n${NEXT.text}` }]);
+  });
+
   it("opens a new session with all the messages when the agent lost a session whose first turn the user cancelled at the agent", async () => {
     const { script, finish } = heldTurns();
     const { runner, processes } = await world({
@@ -671,6 +689,31 @@ describe("createChatRunner.message to a chat with no process", () => {
       expect(processes[1]?.newSession).toBeUndefined();
       expect(processes[1]?.prompts).toEqual([]);
       await endedByRunner(processes[1]);
+    });
+
+    it.each([
+      ["reads as a lost session, with the text of the adapter", "no such thread", "The agent lost the chat"],
+      ["does not read as a lost session, with that reason", "the disk is full", "the disk is full"],
+    ])("when the adapter gets a failed resume whose reason it %s", async (_name, refusal, failure) => {
+      const { adapter } = fakeAdapter();
+      const { runner, processes } = await world({
+        adapter: { ...adapter, sessionLost: (reason) => reason === "no such thread" },
+        script: {
+          async prompt(_params, agent) {
+            await agent.update(text("Done"));
+            return { stopReason: "end_turn" };
+          },
+          resume: () => Promise.reject(new Error(refusal)),
+        },
+      });
+      const live = await runner.start(START);
+      await logUntil(live, "turn-end");
+      await runner.stop(live);
+
+      await runner.message(live, NEXT);
+
+      expect((await logUntil(live, "failed")).at(-1)).toEqual({ kind: "failed", reason: failure });
+      expect(processes[1]?.newSession).toBeUndefined();
     });
 
     it("when the resume needs a login, with the login text of the adapter", async () => {

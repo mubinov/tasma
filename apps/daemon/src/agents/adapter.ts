@@ -55,6 +55,12 @@ export type AgentAdapter = {
   sessionGone: string;
   /** The reason a project chat fails with when the agent no longer has the session of the chat. */
   projectSessionGone: string;
+  /**
+   * Whether the reason of a failed `session/resume` means that the agent no
+   * longer has the session. Only an agent that answers a resume of a missing
+   * session with an error other than `resource_not_found` (-32002) needs it.
+   */
+  sessionLost?(reason: string): boolean;
   /** Gives the update as the log keeps it: a new object when it changes anything. */
   filterUpdate(update: AcpObject): AcpObject;
   /** The `_meta` of `session/new` and `session/resume` of a step chat. */

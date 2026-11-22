@@ -8,7 +8,8 @@ const args = argv.slice(2);
 
 if (args[0] === AGENT_MODE) {
   const served = AGENT_ADAPTERS.filter((adapter) => adapter.serve !== undefined);
-  // One name and nothing after it: the Claude adapter reads `--version`, `-v` and `--cli` anywhere in argv.
+  // One name and nothing after it: each adapter reads `--version` anywhere in argv,
+  // and the Claude adapter also `-v` and `--cli`.
   const adapter = args.length === 2 ? served.find((one) => one.agent === args[1]) : undefined;
   if (adapter?.serve === undefined) {
     stderr.write(`${DAEMON_NAME}: ${AGENT_MODE} takes the name of one agent: ${served.map((one) => one.agent).join(", ")}\n`);

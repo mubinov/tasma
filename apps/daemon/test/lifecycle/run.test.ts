@@ -11,6 +11,7 @@ import type {
   AgentOptions,
   Chat,
   ChatEntry,
+  ChatStart,
   DaemonRecord,
   EventsReply,
   FeedEvent,
@@ -20,7 +21,7 @@ import type {
 import type { AgentEnv } from "../../src/agents/adapter.js";
 import { daemonAnswers } from "../../src/lifecycle/probe.js";
 import { readRecord, recordPath } from "../../src/lifecycle/record.js";
-import { runDaemon, startDaemon } from "../../src/lifecycle/run.js";
+import { offeredAdapters, runDaemon, startDaemon } from "../../src/lifecycle/run.js";
 import type { DaemonIo, Start } from "../../src/lifecycle/run.js";
 import {
   alive,
@@ -381,6 +382,37 @@ describe("the start of a chat", () => {
     expect(response.status).toBe(409);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "project-has-no-folder" });
   });
+
+  it.each([
+    ["Codex with TASMA_DEV_CODEX=1", "1", "codex"],
+    ["Claude without TASMA_DEV_CODEX", undefined, "claude"],
+  ])("starts with %s", async (_name, value, agent) => {
+    const root = await projectsRoot("ONE");
+    const home = await target();
+    await plantSteps(root, "flow", "build");
+    await plant(projectConfig(root, "ONE"), `path: ${await target()}\nworkflows: [flow]\n`);
+    await plant(taskFile(root, "ONE", "ONE-1"), onWorkflow("ONE-1", "flow"));
+    // No agent on PATH and a login shell that fails: the chat fails before any agent starts.
+    const shell = join(home, "shell");
+    await writeFile(shell, "#!/bin/sh\nexit 1\n");
+    await chmod(shell, 0o755);
+    const start = await daemonOn(root, { env: { TASMA_DEV_CODEX: value, SHELL: shell, HOME: home, PATH: "" } });
+    const server: TestServer = { url: start.url, token: await tokenOf(root), close: start.stop };
+
+    const response = await send(server, "POST", "/projects/ONE/tasks/ONE-1/chats", { client: "cli" });
+
+    expect((await success<ChatStart>(response)).data).toMatchObject({ started: true, chat: { task: "ONE-1", agent } });
+  });
+});
+
+describe("the agents a daemon offers", () => {
+  it.each([undefined, "0", "true", ""])("are Claude alone for TASMA_DEV_CODEX=%s", (value) => {
+    expect(offeredAdapters({ TASMA_DEV_CODEX: value }).map((adapter) => adapter.agent)).toEqual(["claude"]);
+  });
+
+  it("are Claude and Codex for TASMA_DEV_CODEX=1", () => {
+    expect(offeredAdapters({ TASMA_DEV_CODEX: "1" }).map((adapter) => adapter.agent)).toEqual(["claude", "codex"]);
+  });
 });
 
 describe("the options of an agent", () => {
@@ -656,6 +688,22 @@ describe("the setup route", () => {
       cli: "not-run",
       agents: [{ agent: "claude", installed: "not-run", loggedIn: "not-run", skill: "pass" }],
     });
+  });
+
+  it("answers with the checks of Claude and Codex with TASMA_DEV_CODEX=1", async () => {
+    const root = await projectsRoot();
+    const home = await target();
+    // A skill file for each agent, so that no check reads the login shell.
+    await plant(join(home, ".claude", "skills", "tasma", "SKILL.md"), "");
+    await plant(join(home, ".agents", "skills", "tasma", "SKILL.md"), "");
+    const start = await daemonOn(root, { env: { TASMA_DEV_CODEX: "1", HOME: home, PATH: "" } });
+
+    const response = await fetch(`${start.url}/setup`, { headers: bearer(await tokenOf(root)) });
+
+    expect((await success<SetupStatus>(response)).data.agents).toEqual([
+      { agent: "claude", installed: "not-run", loggedIn: "not-run", skill: "pass" },
+      { agent: "codex", installed: "not-run", loggedIn: "not-run", skill: "pass" },
+    ]);
   });
 
   it("does not hold a stop with a full request that waits for the login shell", async () => {

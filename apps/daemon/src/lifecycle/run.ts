@@ -17,6 +17,7 @@ import type { DaemonRecord } from "@tasma/protocol";
 import manifest from "../../../../package.json" with { type: "json" };
 import type { AgentAdapter, AgentEnv } from "../agents/adapter.js";
 import { claudeAdapter } from "../agents/claude.js";
+import { codexAdapter } from "../agents/codex.js";
 import { agentRoutes } from "../chats/agent-routes.js";
 import { idleLimit } from "../chats/idle.js";
 import { chatListRoutes } from "../chats/list-routes.js";
@@ -51,8 +52,13 @@ const TOKEN_BYTES = 32;
 /** The signals a shutdown answers. A closed terminal sends `SIGHUP`, whose default ends the process outright. */
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
-/** The agents a chat can run. The agent mode of `main.ts` serves the ones with `serve`. */
-export const AGENT_ADAPTERS: readonly AgentAdapter[] = [claudeAdapter];
+/** All the agents. The agent mode of `main.ts` serves the ones with `serve`. */
+export const AGENT_ADAPTERS: readonly AgentAdapter[] = [claudeAdapter, codexAdapter];
+
+/** The agents a chat can run. Codex is offered only in development, with `TASMA_DEV_CODEX=1`. */
+export function offeredAdapters(env: AgentEnv): readonly AgentAdapter[] {
+  return env.TASMA_DEV_CODEX === "1" ? AGENT_ADAPTERS : [claudeAdapter];
+}
 
 /**
  * What a start came to. The started arm carries the host as well as the stop
@@ -207,10 +213,11 @@ export async function startDaemon(options: {
   const chats = createChatRegistry({ root, host, writes, publish, stderr });
   const defaults = openAgentDefaults(root);
   const agentOptions = openAgentOptions(root);
+  const adapters = offeredAdapters(env);
   const runner = createChatRunner({
     root,
     chats,
-    adapters: AGENT_ADAPTERS,
+    adapters,
     env,
     idleLimit: idleLimit({ root, host }),
     stderr,
@@ -218,9 +225,10 @@ export async function startDaemon(options: {
     agentOptions,
     publish,
   });
-  const starts = createStepChats({ root, host, chats, runner });
-  const setup = createSetupChecks({ root, host, adapters: AGENT_ADAPTERS, env });
-  const installer = createSkillInstaller({ adapters: AGENT_ADAPTERS, env });
+  const agent = adapters.includes(codexAdapter) ? "codex" : "claude";
+  const starts = createStepChats({ root, host, chats, runner, agent });
+  const setup = createSetupChecks({ root, host, adapters, env });
+  const installer = createSkillInstaller({ adapters, env });
   const server = createDaemonServer(
     [
       ...projectRoutes(host, writes, chats),

@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "catalog:",
+    "@agentclientprotocol/codex-acp": "catalog:",
     "@agentclientprotocol/sdk": "catalog:",
     "@tasma/engine": "workspace:*",
     "@tasma/protocol": "workspace:*",

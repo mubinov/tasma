@@ -261,6 +261,37 @@ async function compileDaemon(binary: string): Promise<void> {
   ]);
 }
 
+/**
+ * Runs `<binary> --agent <agent>`, sends the ACP `initialize`, and closes
+ * stdin after the first line of stdout. Gives that line as JSON and the exit
+ * code, each `"late"` after 10 s.
+ */
+async function agentServed(
+  binary: string,
+  agent: string,
+  env: Record<string, string>,
+): Promise<{ first: unknown; code: number | null | "late" }> {
+  const child = spawn(binary, ["--agent", agent], { env, stdio: ["pipe", "pipe", "ignore"] });
+  const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
+  const firstLine = new Promise<string>((resolve) => {
+    let stdout = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk;
+      if (stdout.includes("\n")) resolve(stdout.slice(0, stdout.indexOf("\n")));
+    });
+  });
+
+  try {
+    const request = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, clientCapabilities: {} } };
+    child.stdin.write(`${JSON.stringify(request)}\n`);
+    const first = await within(firstLine, 10_000);
+    child.stdin.end();
+    return { first: first === "late" ? first : JSON.parse(first), code: await within(exited, 10_000) };
+  } finally {
+    child.kill("SIGKILL");
+  }
+}
+
 describe("the built executables", () => {
   // The explicit timeout is for a cold machine, where vitest's 5 s default is
   // not enough to run the builds.
@@ -363,33 +394,40 @@ describe("the built executables", () => {
     try {
       await compileDaemon(binary);
       mkdirSync(join(dir, "home"));
-      const child = spawn(binary, ["--agent", "claude"], {
-        env: { HOME: join(dir, "home"), CLAUDE_CONFIG_DIR: join(dir, "claude"), CLAUDE_CODE_EXECUTABLE: "/usr/bin/false" },
-        stdio: ["pipe", "pipe", "ignore"],
-      });
-      const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
-      const firstLine = new Promise<string>((resolve) => {
-        let stdout = "";
-        child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
-          stdout += chunk;
-          if (stdout.includes("\n")) resolve(stdout.slice(0, stdout.indexOf("\n")));
-        });
+
+      const served = await agentServed(binary, "claude", {
+        HOME: join(dir, "home"),
+        CLAUDE_CONFIG_DIR: join(dir, "claude"),
+        CLAUDE_CODE_EXECUTABLE: "/usr/bin/false",
       });
 
-      try {
-        const request = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, clientCapabilities: {} } };
-        child.stdin.write(`${JSON.stringify(request)}\n`);
-        const first = await within(firstLine, 10_000);
-        child.stdin.end();
+      expect(served).toMatchObject({ first: { id: 1, result: { agentInfo: { name: "@agentclientprotocol/claude-agent-acp" } } }, code: 0 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 
-        expect(first === "late" ? first : JSON.parse(first)).toMatchObject({
-          id: 1,
-          result: { agentInfo: { name: "@agentclientprotocol/claude-agent-acp" } },
-        });
-        expect(await within(exited, 10_000)).toBe(0);
-      } finally {
-        child.kill("SIGKILL");
-      }
+  it("serve the Codex ACP adapter from the compiled daemon with --agent codex", async (ctx) => {
+    if (!HAS_BUN) ctx.skip("bun is not on PATH");
+    const dir = mkdtempSync(join(tmpdir(), "tasma-compiled-"));
+    const binary = join(dir, "tasma-daemon");
+    // The ACP `initialize` of the adapter waits for the `initialize` of `codex app-server`.
+    const codex = join(dir, "codex");
+    writeFileSync(codex, [
+      "#!/bin/sh",
+      "read -r line",
+      "id=$(printf '%s' \"$line\" | /usr/bin/sed -n 's/.*\"id\":\\([0-9]*\\).*/\\1/p')",
+      "printf '{\"id\":%s,\"result\":{}}\\n' \"$id\"",
+      "exec /bin/cat > /dev/null",
+    ].join("\n"), { mode: 0o755 });
+
+    try {
+      await compileDaemon(binary);
+      mkdirSync(join(dir, "home"));
+
+      const served = await agentServed(binary, "codex", { HOME: join(dir, "home"), CODEX_PATH: codex });
+
+      expect(served).toMatchObject({ first: { id: 1, result: { agentInfo: { name: "@agentclientprotocol/codex-acp" } } }, code: 0 });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

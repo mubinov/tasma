@@ -10,8 +10,7 @@ import type { AcpObject } from "@tasma/protocol";
 import type { AgentLaunch } from "../../src/agents/adapter.js";
 import { claudeAdapter, createClaudeAdapter } from "../../src/agents/claude.js";
 import { BACKGROUND_RULE } from "../../src/agents/claude-background.js";
-import { CLAUDE_SESSION_VARIABLES } from "../../src/agents/process.js";
-import { target, untilGone, untilPid } from "../helpers.js";
+import { SESSION_ENV, target, untilGone, untilPid } from "../helpers.js";
 
 /** Counts the evaluations of the adapter entry. The real entry would serve ACP over the stdio of the test worker. */
 const entry = vi.hoisted(() => ({ evaluated: 0 }));
@@ -145,15 +144,16 @@ describe("claudeAdapter.launch", () => {
 
   it("runs the adapter under this runtime with the environment of the daemon", async () => {
     const bin = await binWith(0o755);
-    const session = Object.fromEntries(CLAUDE_SESSION_VARIABLES.map((name) => [name, "1"]));
+    const codexOptions = { MODEL_PROVIDER: "gateway", APP_SERVER_LOGS: "/srv/logs", CODEX_ACP_PROMPT_SUGGESTIONS: "false" };
 
-    const launch = launched({ ...session, PATH: bin.dir, HOME: "/home/alice", ANTHROPIC_MODEL: "opus" });
+    const launch = launched({ ...SESSION_ENV, ...codexOptions, PATH: bin.dir, HOME: "/home/alice", ANTHROPIC_MODEL: "opus" });
 
     expect(launch.command).toBe(process.execPath);
     expect(launch.args).toHaveLength(1);
     expect(launch.args[0]).toMatch(/claude-agent-acp[/\\]dist[/\\]index\.js$/);
     expect(existsSync(launch.args[0] ?? "")).toBe(true);
     expect(launch.env).toEqual({
+      ...codexOptions,
       PATH: bin.dir,
       HOME: "/home/alice",
       ANTHROPIC_MODEL: "opus",
@@ -173,11 +173,10 @@ describe("claudeAdapter.launch", () => {
 
   it("runs the agent mode of the compiled daemon with the environment of the daemon, and resolves nothing", async () => {
     const bin = await binWith(0o755);
-    const session = Object.fromEntries(CLAUDE_SESSION_VARIABLES.map((name) => [name, "1"]));
     const resolve = vi.fn((specifier: string) => specifier);
     const adapter = createClaudeAdapter({ host: { runtime: "compiled", resolve } });
 
-    const launch = launched({ ...session, PATH: `node_modules/.bin${delimiter}${bin.dir}`, HOME: "/home/alice" }, adapter);
+    const launch = launched({ ...SESSION_ENV, PATH: `node_modules/.bin${delimiter}${bin.dir}`, HOME: "/home/alice" }, adapter);
 
     expect(launch).toEqual({
       command: process.execPath,
@@ -340,17 +339,16 @@ describe("claudeAdapter.loggedIn", () => {
       `read -r line; printf '%s\\n' "$@" > '${out}/args'; pwd > '${out}/cwd'; /usr/bin/env > '${out}/env'; echo '{"loggedIn":true}'`,
     );
     const packageBin = join(await target(), "node_modules", ".bin");
-    const session = Object.fromEntries(CLAUDE_SESSION_VARIABLES.map((name) => [name, "1"]));
     const path = ["node_modules/.bin", packageBin, dir].join(delimiter);
 
-    await expect(claudeAdapter.loggedIn({ ...session, PATH: path, HOME: home, ANTHROPIC_MODEL: "opus" }, liveSignal())).resolves.toBe(true);
+    await expect(claudeAdapter.loggedIn({ ...SESSION_ENV, PATH: path, HOME: home, ANTHROPIC_MODEL: "opus" }, liveSignal())).resolves.toBe(true);
 
     expect(await readFile(join(out, "args"), "utf8")).toBe("auth\nstatus\n--json\n");
     expect((await readFile(join(out, "cwd"), "utf8")).trim()).toBe(await realpath(home));
     const env = (await readFile(join(out, "env"), "utf8")).split("\n");
     expect(env).toContain("ANTHROPIC_MODEL=opus");
     expect(env).toContain(`PATH=${dir}`);
-    for (const name of CLAUDE_SESSION_VARIABLES) expect(env.some((line) => line.startsWith(`${name}=`))).toBe(false);
+    for (const name of Object.keys(SESSION_ENV)) expect(env.some((line) => line.startsWith(`${name}=`))).toBe(false);
   });
 
   it("runs in the home directory of this user when the environment has no HOME", async () => {
@@ -518,22 +516,21 @@ describe("claudeAdapter.skillListed", () => {
     await untilGone(out, "claude");
   });
 
-  it("runs plugin list --json in HOME, with stdin closed, CLAUDE_CONFIG_DIR and no Claude session variables", async () => {
+  it("runs plugin list --json in HOME, with stdin closed, CLAUDE_CONFIG_DIR and no session variables", async () => {
     const out = await target();
     const home = await target();
     // `read` waits for the end of stdin.
     const dir = await claudeRunning(
       `read -r line; printf '%s\\n' "$@" > '${out}/args'; pwd > '${out}/cwd'; /usr/bin/env > '${out}/env'; echo '${LISTED}'`,
     );
-    const session = Object.fromEntries(CLAUDE_SESSION_VARIABLES.map((name) => [name, "1"]));
 
-    await expect(claudeAdapter.skillListed({ ...session, PATH: dir, HOME: home, CLAUDE_CONFIG_DIR: "/srv/agent" }, liveSignal())).resolves.toBe(true);
+    await expect(claudeAdapter.skillListed({ ...SESSION_ENV, PATH: dir, HOME: home, CLAUDE_CONFIG_DIR: "/srv/agent" }, liveSignal())).resolves.toBe(true);
 
     expect(await readFile(join(out, "args"), "utf8")).toBe("plugin\nlist\n--json\n");
     expect((await readFile(join(out, "cwd"), "utf8")).trim()).toBe(await realpath(home));
     const env = (await readFile(join(out, "env"), "utf8")).split("\n");
     expect(env).toContain("CLAUDE_CONFIG_DIR=/srv/agent");
-    for (const name of CLAUDE_SESSION_VARIABLES) expect(env.some((line) => line.startsWith(`${name}=`))).toBe(false);
+    for (const name of Object.keys(SESSION_ENV)) expect(env.some((line) => line.startsWith(`${name}=`))).toBe(false);
   });
 
   it("gives undefined when claude runs longer than the time limit, and ends claude and the processes it started", async () => {

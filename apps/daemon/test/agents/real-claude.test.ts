@@ -25,8 +25,7 @@ import type { ChatRunner } from "../../src/chats/runner.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import { WriteQueue } from "../../src/tasks/serialize.js";
 import { freePort, logOf, plant, projectConfig, projectsRoot, target, taskFile, taskText } from "../helpers.js";
-
-const TURN_MS = 120_000;
+import { answerText, lastNonUpdate, TURN_MS, turnsEnded, within } from "./real-chat.js";
 
 const PING = "Reply with the single word: pong";
 
@@ -80,18 +79,6 @@ function start(runner: ChatRunner): Promise<LiveChat> {
   return runner.start({ tag: "ALPHA", task: "ALPHA-1", step: "dev:build", agent: "claude", text: PING, client: "test" });
 }
 
-/** Waits until the log holds `turns` turn ends, or a failure, and gives the log. */
-async function turnsEnded(live: LiveChat, turns: number): Promise<ChatEvent[]> {
-  let log: ChatEvent[] = [];
-  const ended = () => log.filter((event) => event.kind === "turn-end").length >= turns;
-  const deadline = Date.now() + TURN_MS;
-  while (!ended() && log.at(-1)?.kind !== "failed" && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    log = await logOf(live);
-  }
-  return log;
-}
-
 /** Allows each open permission request of the chat with its first option of an allow kind, and gives the log. */
 async function allowOpen(runner: ChatRunner, live: LiveChat): Promise<ChatEvent[]> {
   const log = await logOf(live);
@@ -117,23 +104,6 @@ async function turnsEndedAllowing(runner: ChatRunner, live: LiveChat, turns: num
   return log;
 }
 
-/**
- * The last event of `log` that is not an update. After the first turn the
- * adapter sends the title of the session, so an update can follow `turn-end`.
- */
-function lastNonUpdate(log: ChatEvent[]): ChatEvent | undefined {
-  return log.findLast((event) => event.kind !== "update");
-}
-
-/** The text of the answers of the agent in `log`. */
-function answerText(log: ChatEvent[]): string {
-  return log.flatMap((event) => {
-    if (event.kind !== "update" || event.update.sessionUpdate !== "agent_message_chunk") return [];
-    const content = event.update.content as { type?: string; text?: string };
-    return content.type === "text" ? [content.text ?? ""] : [];
-  }).join("");
-}
-
 /** Whether a process whose command line holds `text` runs. */
 async function runs(text: string): Promise<boolean> {
   try {
@@ -154,17 +124,6 @@ function listens(port: number): Promise<boolean> {
     });
     socket.once("error", () => resolve(false));
   });
-}
-
-/** Waits until `holds` gives true, for up to `ms`, and gives its last result. */
-async function within(ms: number, holds: () => Promise<boolean>): Promise<boolean> {
-  const deadline = Date.now() + ms;
-  let result = await holds();
-  while (!result && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    result = await holds();
-  }
-  return result;
 }
 
 /** The description of each tool call of `log`, as the agent last gave it. */

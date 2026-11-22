@@ -36,22 +36,25 @@ it("hands argv to the daemon and reports the code it returns", async () => {
   expect(process.exitCode).toBe(1);
 });
 
-it("serves the agent that --agent names, and starts no daemon", async () => {
+it.each([
+  ["claude", [1, 0]],
+  ["codex", [0, 1]],
+])("serves the agent that --agent %s names with no switch, and starts no daemon", async (agent, calls) => {
   const written = vi.spyOn(stderr, "write").mockReturnValue(true);
 
-  const [claude] = await main("--agent", "claude");
+  const served = await main("--agent", agent);
 
-  expect(claude).toHaveBeenCalledTimes(1);
+  expect(served.map((serve) => serve.mock.calls.length)).toEqual(calls);
   expect(written).not.toHaveBeenCalled();
   expect(process.exitCode ?? 0).toBe(0);
 });
 
-it.each(["--agent nonsense", "--agent", "--agent claude --version"])("refuses %s, and serves nothing", async (line) => {
+it.each(["--agent nonsense", "--agent", "--agent claude --version", "--agent codex --version"])("refuses %s, and serves nothing", async (line) => {
   const written = vi.spyOn(stderr, "write").mockReturnValue(true);
 
   const served = await main(...line.split(" "));
 
-  expect(written).toHaveBeenCalledWith("tasma-daemon: --agent takes the name of one agent: claude\n");
+  expect(written).toHaveBeenCalledWith("tasma-daemon: --agent takes the name of one agent: claude, codex\n");
   expect(process.exitCode).toBe(1);
   for (const serve of served) expect(serve).not.toHaveBeenCalled();
 });
