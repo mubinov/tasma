@@ -18,7 +18,7 @@ use crate::daemon::Daemon;
 use crate::daemon_stop::{STOP_LIMIT, STOP_TICK, stop_daemon};
 use crate::install::{self, Failure, Scratch, Tools};
 use crate::version::version_of;
-use crate::{elevate, log, menu};
+use crate::{elevate, log, menu, relaunch};
 
 /// The latest release of the repository the releases are published on, held
 /// to `scripts/app-publish.sh` by a repo test.
@@ -352,7 +352,7 @@ impl Host for AppHost {
     }
 
     fn restart(&self) {
-        self.0.request_restart();
+        relaunch::start(&self.0);
     }
 
     fn refresh_menu(&self) {
@@ -629,6 +629,13 @@ impl Updater {
         if let Some(host) = self.host.get() {
             host.restart();
         }
+    }
+
+    /// The new copy did not launch. The update then waits for a restart from
+    /// the sidebar, so the restart limit does not try again.
+    pub(crate) fn restart_failed(&self, reason: &str) {
+        self.note(&format!("the restart failed: {}", log::quoted(reason)));
+        self.lock().wait();
     }
 
     async fn carry_out(&self, release: &Release) -> Result<(), Failure> {
@@ -1136,6 +1143,28 @@ mod tests {
         assert!(state.restarts_by_itself());
         assert!(state.wait());
         assert!(!state.restarts_by_itself());
+    }
+
+    #[test]
+    fn a_failed_restart_waits_for_the_sidebar_and_is_logged() {
+        let updater = updater("restart-failed");
+        updater.lock().phase = Phase::Ready;
+
+        updater.restart_failed("no app\nat that path");
+
+        let state = updater.lock();
+        assert!(!state.restarts_by_itself());
+        assert_eq!(state.phase, Phase::Ready);
+        drop(state);
+
+        let logged = std::fs::read_to_string(log::path(updater.home.as_deref().unwrap())).unwrap();
+        assert_eq!(
+            logged.trim(),
+            format!(
+                "{} the restart failed: no app\\u000aat that path",
+                log::MARK
+            )
+        );
     }
 
     #[test]

@@ -32,6 +32,7 @@ mod log;
 mod menu;
 mod protocol;
 mod record;
+mod relaunch;
 mod supervisor;
 #[cfg(test)]
 mod testing;
@@ -257,11 +258,15 @@ fn holds_exit(uninstalling: bool, code: Option<i32>) -> bool {
     uninstalling && code.is_none()
 }
 
+/// The last windowed geometry: the close button destroys the window before
+/// the application exits, and a zoomed window measures nothing.
+type Remembered = Mutex<geometry::Tracker>;
+
 /// The frame to save as the application exits. None during Uninstall, which
 /// has deleted the folder it would be written to.
 fn exit_frame(
     uninstalling: bool,
-    remembered: &Mutex<geometry::Tracker>,
+    remembered: &Remembered,
     live: Option<geometry::Frame>,
 ) -> Option<geometry::Frame> {
     if uninstalling {
@@ -272,6 +277,27 @@ fn exit_frame(
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .finish(live, Instant::now())
+}
+
+fn frame_to_save<R: Runtime>(app: &AppHandle<R>) -> Option<geometry::Frame> {
+    let uninstalling = app
+        .state::<menu::Shell>()
+        .uninstalling
+        .load(Ordering::SeqCst);
+    let live = app
+        .get_webview_window(WINDOW)
+        .and_then(|window| geometry::of(&window));
+
+    exit_frame(uninstalling, &app.state::<Remembered>(), live)
+}
+
+/// Saves the window frame, by the rule of `exit_frame`.
+fn save_frame<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(frame) = frame_to_save(app)
+        && let Err(error) = geometry::save(app, frame)
+    {
+        eprintln!("tasma: the window geometry could not be saved: {error}");
+    }
 }
 
 fn main() {
@@ -305,15 +331,13 @@ fn main() {
         uninstalling: Arc::clone(&uninstalling),
         updater: Arc::clone(&updater),
     };
-    // The last windowed geometry: the close button destroys the window before
-    // the application exits, and a zoomed window measures nothing.
-    let remembered: Arc<Mutex<geometry::Tracker>> = Arc::default();
-    let tracked = Arc::clone(&remembered);
     let delivery: Arc<Mutex<deeplink::Delivery>> = Arc::default();
     let loading = Arc::clone(&delivery);
 
     tauri::Builder::default()
         .manage(shell)
+        .manage(Remembered::default())
+        .manage(relaunch::Handover::default())
         .manage(zoom::Level::default())
         .manage(dock::Dock::default())
         .manage(links::Links::default())
@@ -436,13 +460,15 @@ fn main() {
                             titlebar::follow_full_screen(&window);
                         }
 
-                        tracked
+                        window
+                            .state::<Remembered>()
                             .lock()
                             .unwrap_or_else(PoisonError::into_inner)
                             .report(geometry::of(&window), Instant::now());
                     }
                     WindowEvent::CloseRequested { .. } => {
-                        tracked
+                        window
+                            .state::<Remembered>()
                             .lock()
                             .unwrap_or_else(PoisonError::into_inner)
                             .finish(geometry::of(&window), Instant::now());
@@ -469,18 +495,7 @@ fn main() {
             {
                 api.prevent_exit();
             }
-            RunEvent::Exit => {
-                let live = app
-                    .get_webview_window(WINDOW)
-                    .and_then(|window| geometry::of(&window));
-                let frame = exit_frame(uninstalling.load(Ordering::SeqCst), &remembered, live);
-
-                if let Some(frame) = frame
-                    && let Err(error) = geometry::save(app, frame)
-                {
-                    eprintln!("tasma: the window geometry could not be saved: {error}");
-                }
-            }
+            RunEvent::Exit => save_frame(app),
             _ => {}
         });
 }
@@ -557,6 +572,34 @@ mod tests {
 
         assert_eq!(exit_frame(true, &remembered, Some(frame)), None);
         assert_eq!(exit_frame(false, &remembered, Some(frame)), Some(frame));
+    }
+
+    #[test]
+    fn the_saved_frame_is_the_exit_frame() {
+        let frame = geometry::Frame {
+            x: 30.0,
+            y: 40.0,
+            width: 1000.0,
+            height: 750.0,
+            chrome: 28.0,
+        };
+        let uninstalling = Arc::new(AtomicBool::new(false));
+        let app = tauri::test::mock_app();
+        app.manage(menu::Shell {
+            daemon: Arc::new(daemon::fixtures::daemon_on_a_dead_port("saved-frame")),
+            uninstalling: Arc::clone(&uninstalling),
+            updater: Arc::new(update::fixtures::updater("saved-frame")),
+        });
+        app.manage(Remembered::default());
+        app.state::<Remembered>()
+            .lock()
+            .unwrap()
+            .finish(Some(frame), Instant::now());
+
+        assert_eq!(frame_to_save(app.handle()), Some(frame));
+
+        uninstalling.store(true, Ordering::SeqCst);
+        assert_eq!(frame_to_save(app.handle()), None);
     }
 
     fn url(text: &str) -> Url {
