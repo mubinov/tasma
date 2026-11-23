@@ -59,6 +59,18 @@ import {
   turnEnd,
   userMessage,
 } from "../chat-fixtures";
+import {
+  CODEX_COMMAND_LOG,
+  CODEX_EDIT_LOG,
+  CODEX_FOLDER,
+  CODEX_PERMISSION_LOG,
+  CODEX_QUESTION_LOG,
+  CODEX_READ_LOG,
+  LOOP_COMMAND,
+  PERMISSION_REQUEST,
+  QUESTION_REQUEST,
+  WRITE_COMMAND,
+} from "../codex-fixtures";
 import { heldBack, refusalReply, stubFocusVisible, stubHitTest, stubResizeObservers, stubThreadDom, successReply, testContext } from "../helpers";
 import { bareBorders, KIT_BORDER_SELECTOR } from "../kit/borders";
 import { colouredTokens, SHIKI_LOAD } from "../kit/shiki";
@@ -507,6 +519,45 @@ it("does not show a failed or a stopped tool as done", async () => {
   expect(screen.getByText("The turn was cancelled.")).toBeTruthy();
 });
 
+const NO_OUTPUT_LOG = chatEntries([
+  userMessage("Look around."),
+  toolCall({ toolCallId: "t1", title: "List files", kind: "search", status: "completed", rawOutput: { exit_code: 0 } }),
+  toolCall({ toolCallId: "t2", title: "Fetch the page", kind: "fetch", status: "in_progress" }),
+  toolCall({ toolCallId: "t3", title: "pnpm lint", kind: "execute", status: "pending", content: [{ type: "terminal", terminalId: "t3" }] }),
+  toolCallUpdate({ toolCallId: "t3", status: "failed" }),
+  toolCall({ toolCallId: "t4", title: "Format", kind: "edit", status: "completed", rawInput: { path: "a.ts" }, rawOutput: { exit_code: 0 } }),
+  turnEnd("cancelled"),
+]);
+
+it("shows No output. for an ended tool whose body shows nothing, and no empty result box", async () => {
+  const user = userEvent.setup();
+  await renderPanel(logOf(NO_OUTPUT_LOG));
+
+  await user.click(await screen.findByRole("button", { name: "4 tool calls" }));
+  for (const name of ["Used tool: List files", "Cancelled tool: Fetch the page", "Used tool: Format"]) {
+    await user.click(screen.getByRole("button", { name }));
+  }
+
+  expect(screen.getAllByText("No output.")).toHaveLength(3);
+  expect(screen.getByText(/"path": "a\.ts"/)).toBeTruthy();
+  expect(screen.queryByText("Result:")).toBeNull();
+});
+
+it("does not show No output. for a tool that runs", async () => {
+  const user = userEvent.setup();
+  await renderPanel(logOf(chatEntries([
+    userMessage("Read the docs."),
+    toolCall({ toolCallId: "t1", title: "Read the docs", kind: "read", status: "in_progress" }),
+  ])));
+
+  await user.click(await screen.findByRole("button", { name: "1 tool call" }));
+  const trigger = screen.getByRole("button", { name: "Running tool: Read the docs" });
+  await user.click(trigger);
+
+  expect(trigger.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.queryByText("No output.")).toBeNull();
+});
+
 it("opens the tool group of a new permission request, announces it, and shows one button for each option", async () => {
   const log = stubChatLog({ [chatPath()]: successReply(chatRecord({ seq: 5 })) });
   const start = chatEntries([
@@ -560,10 +611,13 @@ const REQUESTS_LOG = chatEntries([
   permissionRequest("p4", { toolCallId: "t4", title: "Cancelled", kind: "execute" }, []),
   permissionResolved("p4", { outcome: "cancelled" }),
   permissionRequest("p5", { toolCallId: "t5", title: "Ended", kind: "execute" }, []),
+  toolCall({ toolCallId: "t6", title: "Asked", kind: "other" }),
   questionRequest("q1", { toolCallId: "t6", message: "Declined question", requestedSchema: {} }),
   questionResolved("q1", { action: "decline" }),
+  toolCall({ toolCallId: "t7", title: "Asked", kind: "other" }),
   questionRequest("q2", { toolCallId: "t7", message: "Cancelled question", requestedSchema: {} }),
   questionResolved("q2", { action: "cancel" }),
+  toolCall({ toolCallId: "t8", title: "Asked", kind: "other" }),
   questionRequest("q3", { toolCallId: "t8", message: "Ended question", requestedSchema: {} }),
   turnEnd(),
 ]);
@@ -2284,6 +2338,138 @@ it("answers the open question of a tool whose permission closed, under the quest
     expect(posts(log)).toEqual([
       { method: "POST", path, body: { action: "accept", content: { host: "staging" }, client: CHAT_CLIENT } },
     ]);
+  });
+});
+
+describe("a Codex chat", () => {
+  const CODEX = { agent: "codex" } as const;
+
+  /** A daemon with the record of a Codex chat whose log holds the entries, which takes a write to each path. */
+  function codexLogOf(entries: readonly ChatEntry[], ...paths: string[]): ChatLogStub {
+    const log = logOf(entries, CODEX);
+    for (const path of paths) {
+      log.replies[`POST ${path}`] = WRITTEN;
+    }
+    return log;
+  }
+
+  const QUESTION_GROUP = formGroupName("Codex needs your input to continue.");
+
+  const HOST_QUESTION = "Which host should the deploy use?";
+
+  it("shows a command in a terminal with each part of its output, under the heading of Codex", async () => {
+    const user = userEvent.setup();
+    await renderPanel(codexLogOf(CODEX_COMMAND_LOG));
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Codex · build" })).toBeTruthy();
+    await user.click(await screen.findByRole("button", { name: "1 tool call" }));
+
+    const terminal = document.querySelector<HTMLElement>('[data-slot="terminal-block"]')!;
+    expect(within(terminal).getByText(LOOP_COMMAND)).toBeTruthy();
+    expect(["line 1", "line 2", "line 3"].map((line) => within(terminal).getByText(line))).toHaveLength(3);
+    expect(within(terminal).getByText("exit 0")).toBeTruthy();
+  });
+
+  it("shows a read and a search with their output and no exit code, and No output. for a search with none", async () => {
+    const user = userEvent.setup();
+    await renderPanel(codexLogOf(CODEX_READ_LOG));
+
+    await user.click(await screen.findByRole("button", { name: "3 tool calls" }));
+    for (const name of [
+      `Used tool: Read file '${CODEX_FOLDER}/notes.txt'`,
+      "Used tool: Search for 'beta' in notes.txt",
+      "Failed tool: Search for 'omega' in notes.txt",
+    ]) {
+      await user.click(screen.getByRole("button", { name }));
+    }
+
+    expect(screen.getByText("alpha build beta deploy gamma review")).toBeTruthy();
+    expect(screen.getByText("2:beta deploy")).toBeTruthy();
+    expect(screen.getAllByText("Result:")).toHaveLength(2);
+    expect(screen.getByText("No output.")).toBeTruthy();
+    expect(screen.queryByText(/exit_code/)).toBeNull();
+  });
+
+  it("shows the diffs of an edit, with the file names in the chat folder", async () => {
+    const user = userEvent.setup();
+    await renderPanel(codexLogOf(CODEX_EDIT_LOG));
+
+    await user.click(await screen.findByRole("button", { name: "1 tool call" }));
+
+    expect(screen.getByRole("button", { name: "Used tool: Editing files" })).toBeTruthy();
+    expect(screen.getByText("notes.txt")).toBeTruthy();
+    expect(screen.getByText("beta deploy").previousElementSibling?.textContent).toBe("−");
+    expect(screen.getByText("beta release").previousElementSibling?.textContent).toBe("+");
+    expect(screen.getByText("todo.txt")).toBeTruthy();
+    expect(screen.getByText("check the build").previousElementSibling?.textContent).toBe("+");
+  });
+
+  it("shows the options of a permission request, posts the chosen one, and shows the answer when the log closes the request", async () => {
+    const user = userEvent.setup();
+    const path = `${chatPath()}/permissions/${PERMISSION_REQUEST}`;
+    const log = codexLogOf(CODEX_PERMISSION_LOG.slice(0, 8), path);
+    await renderPanel(log);
+    const group = await screen.findByRole("group", { name: `Waiting on tool: ${WRITE_COMMAND} Waiting for your permission.` });
+
+    expect(optionNames(group)).toEqual([
+      "Yes, proceed",
+      `Yes, and don't ask again for commands that start with \`${WRITE_COMMAND}\``,
+      "No, and tell Codex what to do differently",
+    ]);
+    await user.click(within(group).getByRole("button", { name: "Yes, proceed" }));
+
+    await waitFor(() => {
+      expect(posts(log)).toEqual([{ method: "POST", path, body: { optionId: "allow_once", client: CHAT_CLIENT } }]);
+    });
+
+    log.answer(8, { cursor: 9, entries: chatEntries([CODEX_PERMISSION_LOG[8]!.event], 9) });
+
+    expect(await screen.findByText("Answered: Yes, proceed.")).toBeTruthy();
+  });
+
+  it("shows a question with no tool, with its header, its two choices and the free text, and enables Send after a choice alone", async () => {
+    const user = userEvent.setup();
+    await renderPanel(codexLogOf(CODEX_QUESTION_LOG.slice(0, 5)));
+    const group = await screen.findByRole("group", { name: QUESTION_GROUP });
+    const host = within(group).getByRole("group", { name: HOST_QUESTION });
+
+    expect(within(host).getByText("Host")).toBeTruthy();
+    expect(optionNames(host)).toEqual(["previewUse the preview host.", "stagingUse the staging host."]);
+    expect(within(host).getByRole("textbox", { name: HOST_QUESTION }).getAttribute("placeholder")).toBe("Or type an answer");
+    expect(screen.queryByRole("button", { name: /tool/ })).toBeNull();
+    expect(button("Send").disabled).toBe(true);
+
+    await user.click(within(host).getByRole("button", { name: /^preview/ }));
+
+    expect(button("Send").disabled).toBe(false);
+  });
+
+  it("sends typed text alone as the Other choice and a note, and moves focus to the answer line, which shows the text", async () => {
+    const user = userEvent.setup();
+    const path = `${chatPath()}/questions/${QUESTION_REQUEST}`;
+    const log = codexLogOf(CODEX_QUESTION_LOG.slice(0, 5), path);
+    await renderPanel(log);
+    const group = await screen.findByRole("group", { name: QUESTION_GROUP });
+
+    await user.type(within(group).getByRole("textbox", { name: HOST_QUESTION }), "the canary host");
+    await user.click(within(group).getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(posts(log)).toEqual([
+        {
+          method: "POST",
+          path,
+          body: { action: "accept", content: { host: "None of the above", host_note: "the canary host" }, client: CHAT_CLIENT },
+        },
+      ]);
+    });
+
+    log.answer(5, { cursor: 6, entries: chatEntries([CODEX_QUESTION_LOG[5]!.event], 6) });
+
+    const answered = await screen.findByText("Answered: the canary host.");
+    expect(screen.queryByRole("group", { name: QUESTION_GROUP })).toBeNull();
+    expect(document.activeElement).toBe(answered.parentElement);
+    expect(screen.queryByText(/tool: other/)).toBeNull();
   });
 });
 

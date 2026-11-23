@@ -114,8 +114,14 @@ export type ChatQuestionField = {
   name: string;
   /** The type of the value: `string`, `number`, `integer`, `boolean`, `array`, or a custom type of the agent. */
   type?: string;
+  /** The short header of the field: the schema `title`, or the schema `description` of a Codex property. */
   title?: string;
+  /** The question text of the field: the schema `description`, or the schema `title` of a Codex property. */
   description?: string;
+  /** The name of the field whose free text this field holds: a Codex note field. */
+  noteOf?: string;
+  /** The value of the choice that stands for a typed answer, which `choices` leaves out. */
+  otherChoice?: string;
   /** The `required` list of the schema names the field. */
   required: boolean;
   /** The value is a list (`type: "array"`): more than one choice. */
@@ -162,6 +168,9 @@ const PLAN_STATUSES: readonly ChatPlanEntry["status"][] = ["pending", "in_progre
 const FIELD_TEXTS = ["title", "description", "pattern", "format"] as const;
 
 const FIELD_NUMBERS = ["minLength", "maxLength", "minimum", "maximum", "minItems", "maxItems"] as const;
+
+/** The Other choice that `codex-acp` adds to a question with a note field. A new adapter version can change it. */
+const CODEX_OTHER_CHOICE = "None of the above";
 
 /**
  * The view after the entries. An entry at or below `view.seq` is skipped. A
@@ -412,7 +421,7 @@ function planEntry(entry: unknown): ChatPlanEntry[] {
 
 /** Finds the tool by its id in all messages, newest first, or adds it to the open message, and changes it. */
 function changeTool(step: Step, id: string, change: (tool: ChatTool) => ChatTool): void {
-  const found = findPart(step.messages, (part) => (part.type === "tool" && part.tool.id === id ? part.tool : undefined));
+  const found = findTool(step.messages, id);
 
   if (found === undefined) {
     const tool = change({ id, title: "", kind: "other", status: "pending", stopped: false, content: [], terminals: {} });
@@ -488,8 +497,9 @@ function mergeTerminals(terminals: ChatTool["terminals"], meta: unknown): ChatTo
   let next = terminals;
 
   const { terminal_id: outputId, data } = recordOf(output);
+  // `data` is one part of the output, which follows the parts before it.
   if (typeof outputId === "string" && typeof data === "string") {
-    next = { ...next, [outputId]: { ...next[outputId], output: data } };
+    next = { ...next, [outputId]: { ...next[outputId], output: (next[outputId]?.output ?? "") + data } };
   }
 
   const { terminal_id: exitId, exit_code: exitCode } = recordOf(exit);
@@ -541,37 +551,46 @@ function openQuestion(step: Step, request: string, acp: AcpObject): void {
   const schema = recordOf(acp.requestedSchema);
   const required = Array.isArray(schema.required) ? schema.required.filter((name) => typeof name === "string") : [];
   const { title, description } = schema;
+  const fields = Object.entries(recordOf(schema.properties)).map(([name, property]) =>
+    questionField(name, recordOf(property), required.includes(name)),
+  );
   const question: ChatQuestion = {
     request,
     message: stringOf(acp.message) ?? "",
     ...(typeof title === "string" ? { title } : {}),
     ...(typeof description === "string" ? { description } : {}),
-    fields: Object.entries(recordOf(schema.properties)).map(([name, property]) =>
-      questionField(name, recordOf(property), required.includes(name)),
-    ),
+    fields: withOtherChoices(fields),
     state: "open",
   };
 
+  // Codex names a tool for which it sends no tool call.
   const toolId = stringOf(acp.toolCallId);
-  if (toolId === undefined) {
+  const found = toolId === undefined ? undefined : findTool(step.messages, toolId);
+  if (found === undefined) {
     changeOpen(step, (parts) => [...parts, { type: "question", question }]);
   } else {
-    changeTool(step, toolId, (tool) => ({ ...tool, question }));
+    setPart(step.messages, found, { type: "tool", tool: { ...found.value, question } });
   }
 }
 
 function questionField(name: string, property: AcpObject, required: boolean): ChatQuestionField {
   const type = stringOf(property.type);
   const field: ChatQuestionField = { name, required, multiple: type === "array", choices: choicesOf(property) };
+  const { codex } = recordOf(property._meta);
+  // A Codex property has the question text as its `title` and the header as its `description`.
+  const texts = isRecord(codex) ? { ...property, title: property.description, description: property.title } : property;
 
   if (type !== undefined) {
     field.type = type;
   }
   for (const key of FIELD_TEXTS) {
-    const value = property[key];
+    const value = texts[key];
     if (typeof value === "string") {
       field[key] = value;
     }
+  }
+  if (isRecord(codex) && codex.role === "user_note" && typeof codex.questionId === "string") {
+    field.noteOf = codex.questionId;
   }
   for (const key of FIELD_NUMBERS) {
     const value = property[key];
@@ -585,6 +604,19 @@ function questionField(name: string, property: AcpObject, required: boolean): Ch
   }
 
   return field;
+}
+
+/** The fields, with the Other choice of each field that a note field names moved out of its choices. */
+function withOtherChoices(fields: readonly ChatQuestionField[]): ChatQuestionField[] {
+  const noted = new Set(fields.flatMap((field) => field.noteOf ?? []));
+
+  return fields.map((field) => {
+    const choices = field.choices.filter((choice) => choice.value !== CODEX_OTHER_CHOICE);
+    if (!noted.has(field.name) || choices.length === field.choices.length) {
+      return field;
+    }
+    return { ...field, choices, otherChoice: CODEX_OTHER_CHOICE };
+  });
 }
 
 function defaultOf(type: string | undefined, value: unknown): ChatQuestionField["default"] {
@@ -729,6 +761,10 @@ function findPart<T>(
     }
   }
   return undefined;
+}
+
+function findTool(messages: readonly ChatMessage[], id: string): Found<ChatTool> | undefined {
+  return findPart(messages, (part) => (part.type === "tool" && part.tool.id === id ? part.tool : undefined));
 }
 
 function setPart(messages: ChatMessage[], found: Found<unknown>, part: ChatPart): void {

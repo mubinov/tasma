@@ -43,6 +43,9 @@ import {
   turnEnd,
   userMessage,
 } from "../chat-fixtures";
+import { CODEX_FIXTURES } from "../codex-fixtures";
+
+const ALL_FIXTURES = { ...CHAT_FIXTURES, ...CODEX_FIXTURES };
 
 /** Folds the events after the view, with `seq` from the next number up. */
 function foldEvents(events: readonly ChatEvent[], view: ChatView = CHAT_VIEW_START): ChatView {
@@ -425,12 +428,13 @@ describe("foldChatEntries: tool calls", () => {
     });
   });
 
-  it("replaces the output with the data of the next output, and keeps each terminal apart", () => {
+  it("joins the parts of the output of a terminal in order, and keeps each terminal apart", () => {
     const output = (terminal: string, data: string) => ({ terminal_output: { terminal_id: terminal, data } });
     const view = foldEvents([
       toolCallUpdate({ toolCallId: "t1", _meta: output("term-1", "one\n") }),
-      toolCallUpdate({ toolCallId: "t1", _meta: output("term-1", "one\ntwo\n") }),
       toolCallUpdate({ toolCallId: "t1", _meta: output("term-2", "other\n") }),
+      toolCallUpdate({ toolCallId: "t1", _meta: output("term-1", "tw") }),
+      toolCallUpdate({ toolCallId: "t1", _meta: output("term-1", "o\n") }),
       toolCallUpdate({ toolCallId: "t1", _meta: { terminal_exit: { terminal_id: "term-2", exit_code: null, signal: "SIGTERM" } } }),
     ]);
 
@@ -708,6 +712,118 @@ describe("foldChatEntries: question", () => {
     ]);
   });
 
+  it("adds a question part when its tool call id names no tool, and its answer resolves it", () => {
+    const view = foldEvents([
+      userMessage("Pick a host."),
+      toolCall({ toolCallId: "t1", title: "Read" }),
+      questionRequest("r1", { toolCallId: "item_7", message: "Pick one." }),
+      questionResolved("r1", { action: "accept", content: {} }),
+    ]);
+
+    expect(partsAt(view, 1)).toEqual([
+      { type: "tool", tool: tool({ id: "t1", title: "Read" }) },
+      { type: "question", question: { request: "r1", message: "Pick one.", fields: [], state: "accepted", answer: {} } },
+    ]);
+  });
+
+  it("sets the question on its tool in an earlier message", () => {
+    const view = foldEvents([
+      toolCall({ toolCallId: "t1", title: "Ask", status: "in_progress" }),
+      userMessage("Go on."),
+      questionRequest("r1", { toolCallId: "t1", message: "Ready?" }),
+    ]);
+
+    expect(toolOf(view, "t1").question).toEqual({ request: "r1", message: "Ready?", fields: [], state: "open" });
+    expect(view.messages).toHaveLength(2);
+  });
+
+  it("gives a Codex question the header as the title and the question text as the description, a note field, and an Other choice", () => {
+    const view = foldEvents([
+      questionRequest("r1", {
+        message: "Codex needs your input to continue.",
+        requestedSchema: {
+          type: "object",
+          properties: {
+            host: {
+              title: "Which host should the deploy use?",
+              description: "Host",
+              type: "string",
+              oneOf: [
+                { const: "preview", title: "preview", description: "The preview host" },
+                { const: "staging", title: "staging" },
+                { const: "None of the above", title: "None of the above", description: "Provide a different answer in the note field." },
+              ],
+              _meta: { codex: { isOther: true, isSecret: false } },
+            },
+            host_note: {
+              type: "string",
+              title: "Additional answer or note",
+              _meta: { codex: { questionId: "host", role: "user_note", isSecret: false } },
+            },
+            reason: { title: "Why now?", type: "string", _meta: { codex: { isOther: false, isSecret: false } } },
+          },
+          required: ["host", "reason"],
+        },
+      }),
+    ]);
+
+    expect(questionsOf(view)[0]?.fields).toEqual([
+      {
+        name: "host",
+        type: "string",
+        title: "Host",
+        description: "Which host should the deploy use?",
+        required: true,
+        multiple: false,
+        choices: [
+          { value: "preview", label: "preview", description: "The preview host" },
+          { value: "staging", label: "staging" },
+        ],
+        otherChoice: "None of the above",
+      },
+      textField({ name: "host_note", description: "Additional answer or note", noteOf: "host" }),
+      textField({ name: "reason", description: "Why now?", required: true }),
+    ] satisfies ChatQuestionField[]);
+  });
+
+  it("links a Codex note by its question id alone, and keeps the Other choice of a field that no note names", () => {
+    const other = { const: "None of the above", title: "None of the above" };
+    const view = foldEvents([
+      questionRequest("r1", {
+        requestedSchema: {
+          properties: {
+            host_note: { title: "Which host?", type: "string", _meta: { codex: {} } },
+            host: { title: "Which host?", type: "string", oneOf: [{ const: "preview" }, other], _meta: { codex: {} } },
+            host_note1: { title: "Note", type: "string", _meta: { codex: { questionId: "host", role: "user_note" } } },
+            size: { title: "Which size?", type: "string", oneOf: [{ const: "s" }, other], _meta: { codex: {} } },
+            size_note: { title: "Note", type: "string", _meta: { codex: { questionId: 3, role: "user_note" } } },
+            mode: { title: "Which mode?", type: "string", oneOf: [{ const: "fast" }], _meta: { codex: {} } },
+            mode_note: { title: "Note", type: "string", _meta: { codex: { questionId: "mode", role: "hint" } } },
+            plain: { title: "Plain", description: "Text", type: "string", _meta: { codex: true } },
+          },
+        },
+      }),
+    ]);
+
+    expect(questionsOf(view)[0]?.fields).toEqual([
+      textField({ name: "host_note", description: "Which host?" }),
+      textField({ name: "host", description: "Which host?", choices: [{ value: "preview", label: "preview" }], otherChoice: "None of the above" }),
+      textField({ name: "host_note1", description: "Note", noteOf: "host" }),
+      textField({
+        name: "size",
+        description: "Which size?",
+        choices: [
+          { value: "s", label: "s" },
+          { value: "None of the above", label: "None of the above" },
+        ],
+      }),
+      textField({ name: "size_note", description: "Note" }),
+      textField({ name: "mode", description: "Which mode?", choices: [{ value: "fast", label: "fast" }] }),
+      textField({ name: "mode_note", description: "Note" }),
+      textField({ name: "plain", title: "Plain", description: "Text" }),
+    ] satisfies ChatQuestionField[]);
+  });
+
   it("reads the choices from oneOf, anyOf, the items and enum, in that order of preference", () => {
     const view = foldEvents([
       questionRequest("r1", {
@@ -928,6 +1044,7 @@ describe("foldChatEntries: question", () => {
 
   it("marks the question accepted with no answer when the answer has no content", () => {
     const view = foldEvents([
+      toolCall({ toolCallId: "t1", title: "Ask" }),
       questionRequest("r1", { toolCallId: "t1", message: "Ready?" }),
       questionResolved("r1", { action: "accept", content: "yes" }),
     ]);
@@ -945,6 +1062,7 @@ describe("foldChatEntries: question", () => {
   it("marks an open question ended when the turn ends, on a tool and as a part", () => {
     const view = foldEvents([
       userMessage("Name it."),
+      toolCall({ toolCallId: "t1", title: "Ask" }),
       questionRequest("r1", { toolCallId: "t1", message: "Which name?" }),
       questionRequest("r2", { message: "Which folder?" }),
       questionRequest("r3", { message: "Which test?" }),
@@ -1075,11 +1193,11 @@ describe("foldChatEntries: running", () => {
 });
 
 describe("foldChatEntries: the view", () => {
-  it.each(Object.entries(CHAT_FIXTURES))("keeps the fold of foldChat over the %s log", (_name, entries) => {
+  it.each(Object.entries(ALL_FIXTURES))("keeps the fold of foldChat over the %s log", (_name, entries) => {
     expect(foldChatEntries(CHAT_VIEW_START, entries).fold).toEqual(foldOf(entries));
   });
 
-  it.each(Object.entries(CHAT_FIXTURES))("gives the same view for the %s log in one call and one entry at a time", (_name, entries) => {
+  it.each(Object.entries(ALL_FIXTURES))("gives the same view for the %s log in one call and one entry at a time", (_name, entries) => {
     const whole = foldChatEntries(CHAT_VIEW_START, entries);
     const single = entries.reduce((view, entry) => foldChatEntries(view, [entry]), CHAT_VIEW_START);
 

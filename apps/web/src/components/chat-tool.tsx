@@ -108,7 +108,13 @@ export const ChatToolView: ToolCallMessagePartComponent = ({
         <ToolFallbackTrigger ref={triggerRef} id={triggerId} toolName={chatToolName(tool)} status={status} />
         <ToolFallbackContent>
           <ToolBodyView key={body.kind} triggerRef={triggerRef}>
-            <ToolBodyContent body={body} folder={folder} argsText={argsText} result={result as unknown} />
+            <ToolBodyContent
+              body={body}
+              folder={folder}
+              argsText={argsText}
+              result={result as unknown}
+              ended={status.type === "complete" || status.type === "incomplete"}
+            />
           </ToolBodyView>
         </ToolFallbackContent>
       </ToolFallbackRoot>
@@ -202,9 +208,23 @@ function ToolBodyView(
   return <div ref={ref} className="flex flex-col gap-2">{children}</div>;
 }
 
-type ToolBodyContentProps = { body: ToolBody; folder: string; argsText: string; result: unknown };
+type ToolBodyContentProps = {
+  body: ToolBody;
+  folder: string;
+  argsText: string;
+  result: unknown;
+  /** The tool completed, failed or stopped. */
+  ended: boolean;
+};
 
-function ToolBodyContent({ body, folder, argsText, result }: ToolBodyContentProps): ReactNode {
+/** The kit shows an empty string as an empty result box. */
+function shownResult(result: unknown): unknown {
+  return result === "" ? undefined : result;
+}
+
+function ToolBodyContent({ body, folder, argsText, result, ended }: ToolBodyContentProps): ReactNode {
+  const noOutput = ended ? <p className="text-sm text-subtle">No output.</p> : null;
+
   switch (body.kind) {
     case "diff":
       return body.diffs.map((diff, index) => (
@@ -223,15 +243,22 @@ function ToolBodyContent({ body, folder, argsText, result }: ToolBodyContentProp
           maxCollapsedLines={12}
         />
       );
-    case "result":
-      return <ToolFallbackResult result={body.output} />;
-    case "fallback":
+    case "result": {
+      const output = shownResult(body.output);
+      return output === undefined ? noOutput : <ToolFallbackResult result={output} />;
+    }
+    case "fallback": {
+      const shown = shownResult(result);
+      if (argsText === "" && shown === undefined) {
+        return noOutput;
+      }
       return (
         <>
           <ToolFallbackArgs argsText={argsText} />
-          <ToolFallbackResult result={result} />
+          <ToolFallbackResult result={shown} />
         </>
       );
+    }
   }
 }
 
@@ -267,7 +294,7 @@ function PermissionLine({ permission, ref, labelId }: LineProps & { permission: 
 function questionEnd(question: ChatQuestion): string | undefined {
   switch (question.state) {
     case "accepted": {
-      const answer = chatAnswerText(question.answer);
+      const answer = chatAnswerText(question);
       return answer === "" ? "Answered." : `Answered: ${answer}.`;
     }
     case "declined":

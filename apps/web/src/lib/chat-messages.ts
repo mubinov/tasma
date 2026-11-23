@@ -8,6 +8,7 @@ import type {
   ChatNotice,
   ChatOption,
   ChatPart,
+  ChatQuestion,
   ChatTool,
   ChatToolContent,
   ChatView,
@@ -182,15 +183,37 @@ function toolApproval(tool: ChatTool): ChatApproval | undefined {
   return tool.question?.state === "open" ? questionApproval(tool.question) : undefined;
 }
 
+/**
+ * The text of a tool that ended. Codex gives an MCP tool its result or its
+ * error in the output, and a command with no output only its exit code.
+ */
 function toolResult(tool: ChatTool): string {
   const texts = tool.content.flatMap((item) => (item.type === "text" ? [item.text] : []));
   if (texts.length > 0) {
     return texts.join("\n\n");
   }
-  if (tool.output === undefined) {
+  const { output } = tool;
+  if (output === undefined) {
     return "";
   }
-  return typeof tool.output === "string" ? tool.output : JSON.stringify(tool.output, null, 2);
+  if (typeof output === "string") {
+    return output;
+  }
+  if (isObject(output)) {
+    const { error, result } = output;
+    if (isObject(error) && typeof error.message === "string") {
+      return error.message;
+    }
+    const content = isObject(result) && Array.isArray(result.content) ? (result.content as unknown[]) : [];
+    const mcpTexts = content.flatMap((item) => (isObject(item) && item.type === "text" && typeof item.text === "string" ? [item.text] : []));
+    if (mcpTexts.length > 0) {
+      return mcpTexts.join("\n\n");
+    }
+    if (Object.keys(output).length === 1 && "exit_code" in output) {
+      return "";
+    }
+  }
+  return JSON.stringify(output, null, 2);
 }
 
 function partWaits(part: ChatPart): boolean {
@@ -531,10 +554,18 @@ function cutLine(line: string): string {
   return `${line.slice(0, code >= 0xd8_00 && code <= 0xdb_ff ? end - 1 : end)}…`;
 }
 
-/** The values of an answer, the items of a list each on its own, joined with commas. */
-export function chatAnswerText(answer: Readonly<Record<string, unknown>> | undefined): string {
-  return Object.values(answer ?? {})
-    .flatMap((value) => (Array.isArray(value) ? (value as unknown[]) : [value]))
+/**
+ * The values of the answer of a question, the items of a list each on its
+ * own, joined with commas. A value that is the Other choice of its field
+ * stands for the typed text, which another value holds, so it is left out.
+ */
+export function chatAnswerText(question: ChatQuestion): string {
+  return Object.entries(question.answer ?? {})
+    .flatMap(([name, value]) => {
+      const other = question.fields.find((field) => field.name === name)?.otherChoice;
+      const values = Array.isArray(value) ? (value as unknown[]) : [value];
+      return values.filter((item) => item !== other);
+    })
     .map((value) => (typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)))
     .join(", ");
 }

@@ -80,6 +80,23 @@ function accepted(answers: RespondToToolApprovalOptions["answers"]): RespondToTo
   return { approvalId: "q1", approved: true, ...(answers === undefined ? {} : { answers }) };
 }
 
+/** A Codex question with options and the Other choice, as the fold gives it. */
+const CODEX_QUESTION = question([
+  field({
+    name: "host",
+    type: "string",
+    title: "Host",
+    description: "Which host should the deploy use?",
+    required: true,
+    choices: [
+      { value: "preview", label: "preview", description: "The preview host" },
+      { value: "staging", label: "staging" },
+    ],
+    otherChoice: "None of the above",
+  }),
+  field({ name: "host_note", type: "string", description: "Additional answer or note", noteOf: "host" }),
+]);
+
 describe("permissionApproval", () => {
   it("gives the request id and one kit option for each option, with the kit kind and the name as the label", () => {
     expect(permissionApproval(openPermission())).toEqual({
@@ -234,6 +251,21 @@ describe("questionApproval", () => {
     });
   });
 
+  it("joins the note field of a Codex question to its question as free text, with the Codex header and no Other choice", () => {
+    expect(questionApproval(CODEX_QUESTION).questions).toEqual([
+      {
+        id: "host",
+        prompt: "Which host should the deploy use?",
+        header: "Host",
+        allowFreeform: true,
+        options: [
+          { id: "preview", label: "preview", description: "The preview host" },
+          { id: "staging", label: "staging" },
+        ],
+      },
+    ]);
+  });
+
   it("keeps a custom field with choices as a question of its own", () => {
     const { questions } = questionApproval(question([
       field({ name: "size", choices: [{ value: "s", label: "Small" }] }),
@@ -271,6 +303,18 @@ describe("questionAnswer", () => {
       action: "accept",
       content: { question_0_custom: "parser" },
     });
+  });
+
+  it.each<[string, ToolApprovalAnswer, Record<string, QuestionValue>]>([
+    ["typed text alone as the Other choice and a note", { text: "a host of my own" }, { host: "None of the above", host_note: "a host of my own" }],
+    ["a choice and text as the choice and a note", { optionIds: ["staging"], text: "after noon" }, { host: "staging", host_note: "after noon" }],
+    ["a choice alone as the choice", { optionIds: ["preview"] }, { host: "preview" }],
+  ])("gives %s of a Codex question", (_name, answer, content) => {
+    expect(questionAnswer(CODEX_QUESTION, accepted({ host: answer }))).toEqual({ action: "accept", content });
+  });
+
+  it("declines a dismissal of a Codex question", () => {
+    expect(questionAnswer(CODEX_QUESTION, { approvalId: "q1", approved: false })).toEqual({ action: "decline" });
   });
 
   it("gives Yes as true and No as false, and a whole number as a number", () => {

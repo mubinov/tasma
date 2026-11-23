@@ -85,7 +85,8 @@ function questionItems(question: ChatQuestion): QuestionItem[] {
     if (field.choices.length === 0) {
       return undefined;
     }
-    return fields.find((other) => other.name === `${field.name}${CUSTOM_SUFFIX}` && other.choices.length === 0);
+    const free = fields.filter((other) => other.choices.length === 0);
+    return free.find((other) => other.noteOf === field.name) ?? free.find((other) => other.name === `${field.name}${CUSTOM_SUFFIX}`);
   };
   const customs = new Set(fields.flatMap((field) => customOf(field) ?? []));
 
@@ -138,6 +139,8 @@ export function questionAnswer(question: ChatQuestion, options: RespondToToolApp
         content.push([field.name, [...chosen]]);
       } else if (chosen[0] !== undefined) {
         content.push([field.name, chosen[0]]);
+      } else if (field.otherChoice !== undefined && text !== undefined) {
+        content.push([field.name, field.otherChoice]);
       }
       if (custom !== undefined && text !== undefined) {
         content.push([custom.name, text]);

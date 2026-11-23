@@ -6,6 +6,7 @@ import {
   type ChatAgentMessage,
   type ChatNotice,
   type ChatPart,
+  type ChatQuestion,
   type ChatTool,
   type ChatView,
 } from "../../src/lib/chat-fold";
@@ -179,6 +180,27 @@ describe("chatThreadMessage", () => {
     expect(resultOf({ status: "failed", output: "exit 1" })).toBe("exit 1");
     expect(resultOf({ status: "completed", output: { code: 1 } })).toBe('{\n  "code": 1\n}');
     expect(resultOf({ status: "completed" })).toBe("");
+  });
+
+  it.each<[string, unknown, string]>([
+    [
+      "the texts of an MCP result",
+      { result: { content: [{ type: "text", text: "3 issues" }, { type: "image", data: "" }, { type: "text", text: "1 closed" }] }, error: null },
+      "3 issues\n\n1 closed",
+    ],
+    ["the message of an MCP error", { result: { content: [{ type: "text", text: "partial" }] }, error: { message: "The server stopped." } }, "The server stopped."],
+    ["no text for an exit code alone", { exit_code: 0 }, ""],
+    ["the JSON of an exit code with other keys", { exit_code: 1, stderr: "x" }, '{\n  "exit_code": 1,\n  "stderr": "x"\n}'],
+    ["the JSON of an error with no string message", { error: { message: 3 } }, '{\n  "error": {\n    "message": 3\n  }\n}'],
+    ["the JSON of a result with no text", { result: { content: [{ type: "image", data: "" }] } }, '{\n  "result": {\n    "content": [\n      {\n        "type": "image",\n        "data": ""\n      }\n    ]\n  }\n}'],
+    ["the JSON of a result with no content list", { result: { content: "text" } }, '{\n  "result": {\n    "content": "text"\n  }\n}'],
+    ["the JSON of an output that is not an object", [{ exit_code: 0 }], '[\n  {\n    "exit_code": 0\n  }\n]'],
+  ])("gives a tool with no content text %s", (_name, output, result) => {
+    expect(partOf({ status: "completed", output })?.result).toBe(result);
+  });
+
+  it("gives the content text before the rules of the output", () => {
+    expect(partOf({ status: "completed", content: [{ type: "text", text: "done" }], output: { exit_code: 0 } })?.result).toBe("done");
   });
 
   it("gives a tool part the approval of its open permission, and none after the permission closes", () => {
@@ -1044,12 +1066,28 @@ describe("chatTerminalView", () => {
 });
 
 describe("chatAnswerText", () => {
+  function answered(answer: ChatQuestion["answer"], fields: ChatQuestion["fields"] = []): ChatQuestion {
+    return { request: "q1", message: "Answer.", fields, state: "accepted", ...(answer === undefined ? {} : { answer }) };
+  }
+
   it("joins the values with commas, the items of a list too", () => {
-    expect(chatAnswerText({ question_0: "2.0.0", question_1: ["lint", "test"], count: 3, ok: true, extra: { a: 1 } }))
+    expect(chatAnswerText(answered({ question_0: "2.0.0", question_1: ["lint", "test"], count: 3, ok: true, extra: { a: 1 } })))
       .toBe('2.0.0, lint, test, 3, true, {"a":1}');
   });
 
   it("is empty for no answer", () => {
-    expect(chatAnswerText(undefined)).toBe("");
+    expect(chatAnswerText(answered(undefined))).toBe("");
+  });
+
+  it("leaves out the Other choice of the field that a value answers", () => {
+    const fields = [
+      { name: "host", required: true, multiple: false, choices: [], otherChoice: "None of the above" },
+      { name: "host_note", required: false, multiple: false, choices: [] },
+      { name: "size", required: true, multiple: false, choices: [] },
+    ];
+
+    expect(chatAnswerText(answered({ host: "None of the above", host_note: "my host", size: "None of the above" }, fields)))
+      .toBe("my host, None of the above");
+    expect(chatAnswerText(answered({ host: "staging", host_note: "after noon" }, fields))).toBe("staging, after noon");
   });
 });
