@@ -198,7 +198,8 @@ impl Daemon {
     /// Makes sure a daemon is serving this tree, and answers whether one is.
     /// It gives no port: a send takes the port and the token from one record
     /// read. Called once at startup, so the daemon is warm before the board's
-    /// first request, and again by a forward that could not connect.
+    /// first request, and again by a forward that could not connect or whose
+    /// token was refused.
     pub async fn ensure_serving(&self) -> bool {
         self.supervisor.ensure_serving().await.is_some()
     }
@@ -215,38 +216,65 @@ impl Daemon {
 
     /// The daemon's answer to one request: its status, the headers it set and
     /// its bytes, untouched. The daemon's body is authoritative and its status
-    /// advisory, so neither is read here.
+    /// advisory, so the status is read only for a refusal of the token.
     pub async fn forward(&self, target: &str, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
         let mut address = self.address();
-        // Only a failure to connect is retried: it is the one fault that proves
-        // the request never reached the daemon, so replaying a write cannot
-        // carry it out twice.
-        let mut error = match self.send(&address, target, request).await {
-            Ok(reply) => return reply,
-            Err(error) => error,
-        };
+        // Only a failure to connect and a refusal of the token are retried:
+        // each proves the daemon ran nothing, so replaying a write cannot carry
+        // it out twice.
+        let mut sent = self.send(&address, target, request).await;
 
         // The record first, which names a daemon restarted on another port.
-        if error.is_connect() {
+        if sent.as_ref().is_err_and(reqwest::Error::is_connect) {
             address = self.address();
-            error = match self.send(&address, target, request).await {
-                Ok(reply) => return reply,
-                Err(error) => error,
-            };
+            sent = self.send(&address, target, request).await;
         }
 
         // Then the supervisor, which starts one where none is serving at all,
         // so a cold start recovers the request in flight rather than showing
         // the failure screen and waiting for Retry.
-        if error.is_connect() && self.ensure_serving().await {
+        if sent.as_ref().is_err_and(reqwest::Error::is_connect) && self.ensure_serving().await {
             address = self.address();
-            error = match self.send(&address, target, request).await {
-                Ok(reply) => return reply,
-                Err(error) => error,
-            };
+            sent = self.send(&address, target, request).await;
         }
 
-        bad_gateway(address.port, &fault_of(&error))
+        match sent {
+            Ok(reply) if reply.status() == StatusCode::UNAUTHORIZED => {
+                self.refused(&address, target, request, reply).await
+            }
+            Ok(reply) => reply,
+            Err(error) => bad_gateway(address.port, &fault_of(&error)),
+        }
+    }
+
+    /// The answer to a request the daemon refused for its token.
+    ///
+    /// Where the record is missing or stale, the refusal can come from the
+    /// daemon of another OS user. The request is sent once more only when the
+    /// supervisor has a daemon serving and the record then names another port
+    /// or another token. A refusal proves the daemon ran nothing, so a write is
+    /// not carried out twice.
+    async fn refused(
+        &self,
+        address: &Address,
+        target: &str,
+        request: &Request<Vec<u8>>,
+        reply: Response<Vec<u8>>,
+    ) -> Response<Vec<u8>> {
+        if !self.ensure_serving().await {
+            return reply;
+        }
+
+        let now = self.address();
+
+        if now == *address {
+            return reply;
+        }
+
+        match self.send(&now, target, request).await {
+            Ok(reply) => reply,
+            Err(error) => bad_gateway(now.port, &fault_of(&error)),
+        }
     }
 
     async fn send(
@@ -320,14 +348,19 @@ pub(crate) mod fixtures {
 #[cfg(test)]
 mod tests {
     use std::io::Read as _;
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc::Receiver;
 
     use super::fixtures::*;
     use super::*;
     use crate::record::fixtures::{record_naming, write_record, write_record_with_token};
     use crate::supervisor::fixtures::{
-        a_daemon_serving_nothing_else, answering, health, supervising_a_stub,
+        a_daemon_serving_nothing_else, answering, giving_up, health, health_of_another_user,
+        listening, ok, records_with_token, stub, supervising, supervising_a_stub,
     };
-    use crate::testing::{dead_port, temp_file};
+    use crate::testing::{dead_port, directory, temp_file};
 
     #[test]
     fn a_forward_carries_the_method_the_path_the_media_type_and_the_body() {
@@ -435,8 +468,25 @@ mod tests {
     // what the whitelist is about.
 
     use std::io::Write as _;
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
     use std::sync::mpsc::{Sender, channel};
+
+    /// Reads until the peer stops sending. A request this small arrives in one
+    /// or two segments, so the timeout is what ends the read.
+    fn read_request(stream: &mut TcpStream, timeout: Duration) -> String {
+        stream.set_read_timeout(Some(timeout)).unwrap();
+
+        let mut seen = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while let Ok(read) = stream.read(&mut chunk) {
+            if read == 0 {
+                break;
+            }
+            seen.extend_from_slice(&chunk[..read]);
+        }
+
+        String::from_utf8_lossy(&seen).into_owned()
+    }
 
     /// A listener that answers one request and hands back what it read.
     fn listen(reply: &'static str) -> (u16, std::sync::mpsc::Receiver<String>) {
@@ -446,23 +496,9 @@ mod tests {
 
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_millis(250)))
-                .unwrap();
-
-            // Read until the peer stops sending. A request this small arrives in
-            // one or two segments, so the timeout is what ends the read.
-            let mut seen = Vec::new();
-            let mut chunk = [0u8; 4096];
-            while let Ok(read) = stream.read(&mut chunk) {
-                if read == 0 {
-                    break;
-                }
-                seen.extend_from_slice(&chunk[..read]);
-            }
 
             sender
-                .send(String::from_utf8_lossy(&seen).into_owned())
+                .send(read_request(&mut stream, Duration::from_millis(250)))
                 .unwrap();
             stream.write_all(reply.as_bytes()).unwrap();
         });
@@ -676,6 +712,136 @@ mod tests {
 
         assert_eq!(answer.status(), StatusCode::BAD_GATEWAY);
         assert!(answer.body().is_empty());
+    }
+
+    /// A listener that answers `/health` with `health` and refuses every other
+    /// request for its token, and counts the requests it refused.
+    fn refusing(health: String) -> (u16, Arc<AtomicUsize>) {
+        let refused = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&refused);
+        let port = listening(move |request| {
+            if request.starts_with("GET /health") {
+                ok(&health)
+            } else {
+                counted.fetch_add(1, Ordering::SeqCst);
+                let body = r#"{"ok":false}"#;
+
+                format!(
+                    "HTTP/1.1 401 Unauthorized\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            }
+        });
+
+        (port, refused)
+    }
+
+    /// A daemon of this user that answers `/health` as one and every other
+    /// request with `{"ok":true}`, and hands back each other request whole.
+    fn a_daemon_of_this_user() -> (u16, Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (sender, receiver) = channel();
+
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let request = read_request(&mut stream, Duration::from_millis(100));
+                let reply = if request.starts_with("GET /health") {
+                    ok(&health())
+                } else {
+                    let _ = sender.send(request);
+                    ok(r#"{"ok":true}"#)
+                };
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+
+        (port, receiver)
+    }
+
+    /// A daemon over a record that names `port` with a token, supervised by a
+    /// stub that runs `stub_body`.
+    fn refused_at(test: &str, port: u16, stub_body: impl Fn(&Path) -> String) -> Daemon {
+        let directory = directory(test);
+        let record = directory.join("daemon.json");
+        write_record_with_token(&record, port, "ab12");
+        let supervisor = giving_up(supervising(
+            &directory,
+            Some(stub(&directory, &stub_body(&record))),
+        ));
+
+        Daemon::with_supervisor(Some(record), supervisor, TIMEOUT, REPLY_LIMIT)
+    }
+
+    #[test]
+    fn a_write_the_daemon_of_another_user_refused_is_sent_whole_to_the_daemon_a_start_brings_up() {
+        let (other, refused) = refusing(health_of_another_user());
+        let (port, seen) = a_daemon_of_this_user();
+        let daemon = refused_at("refused-by-another-user", other, |record| {
+            records_with_token(record, port, "cd34")
+        });
+
+        let answer = tauri::async_runtime::block_on(
+            daemon.forward("/projects/AAA/tasks", &write("/projects/AAA/tasks")),
+        );
+        let request = seen.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        assert_eq!(answer.status(), StatusCode::OK);
+        assert_eq!(answer.body(), br#"{"ok":true}"#);
+        assert_eq!(refused.load(Ordering::SeqCst), 1);
+        assert!(
+            request.starts_with("POST /projects/AAA/tasks HTTP/1.1\r\n"),
+            "{request}"
+        );
+        assert!(
+            request
+                .to_lowercase()
+                .contains("authorization: bearer cd34"),
+            "{request}"
+        );
+        assert!(request.ends_with(r#"{"title":"one"}"#), "{request}");
+    }
+
+    #[test]
+    fn a_refusal_reaches_the_board_where_no_daemon_of_this_user_comes_up() {
+        let (other, refused) = refusing(health_of_another_user());
+        let daemon = refused_at("refused-and-nothing-started", other, |_| {
+            "exit 0".to_string()
+        });
+
+        let answer =
+            tauri::async_runtime::block_on(daemon.forward("/projects", &write("/projects")));
+
+        assert_eq!(answer.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(answer.body(), br#"{"ok":false}"#);
+        assert_eq!(refused.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_refusal_reaches_the_board_where_the_record_still_names_the_daemon_that_refused() {
+        let (port, refused) = refusing(health());
+        let daemon = refused_at("refused-by-this-user", port, |_| "exit 1".to_string());
+
+        let answer =
+            tauri::async_runtime::block_on(daemon.forward("/projects", &write("/projects")));
+
+        assert_eq!(answer.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(refused.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_refused_request_sent_again_to_a_daemon_that_cannot_answer_is_a_bad_gateway() {
+        let (other, _) = refusing(health_of_another_user());
+        let port = a_daemon_serving_nothing_else();
+        let daemon = refused_at("refused-and-sent-to-nothing", other, |record| {
+            records_with_token(record, port, "cd34")
+        });
+
+        let answer =
+            tauri::async_runtime::block_on(daemon.forward("/projects", &write("/projects")));
+
+        assert_eq!(answer.status(), StatusCode::BAD_GATEWAY);
     }
 
     #[test]

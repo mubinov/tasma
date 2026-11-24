@@ -127,6 +127,27 @@ describe("probe", () => {
     }
   });
 
+  it("names a Tasma daemon where one of this OS user replies with its user id", async () => {
+    const server = await startServer(serveHealth({ name: DAEMON_NAME, version: "1", uid: process.getuid!() }));
+
+    try {
+      expect(await probe(server.url)).toBe("daemon");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("names a daemon of another OS user where the user id of the reply is another", async () => {
+    const server = await startServer(serveHealth({ name: DAEMON_NAME, version: "1", uid: process.getuid!() + 1 }));
+
+    try {
+      expect(await probe(server.url)).toBe("foreign");
+      expect(await daemonAnswers(server.url)).toBe(false);
+    } finally {
+      await server.close();
+    }
+  });
+
   // Another program can hold the recorded port, and answer well-formed JSON on
   // it, so the one field that identifies a Tasma daemon decides.
   it("finds none in an answer that is not a Tasma daemon's", async () => {

@@ -25,12 +25,18 @@ function stated(channel: string, value: string | undefined): { channel: string; 
  *
  * Zero is a port like any other. It asks the operating system for a free one,
  * and the record then carries the number it chose.
+ *
+ * `isDefault` is true only when neither channel states a port. A port that a
+ * channel states, the default number included, is never replaced by a free one.
  */
-export function resolveDaemonPort(flag: string | undefined, env: Record<string, string | undefined>): number {
+export function resolveDaemonPort(
+  flag: string | undefined,
+  env: Record<string, string | undefined>,
+): { port: number; isDefault: boolean } {
   const source = stated("--port", flag) ?? stated("TASMA_DAEMON_PORT", env.TASMA_DAEMON_PORT);
 
   if (source === undefined) {
-    return DEFAULT_DAEMON_PORT;
+    return { port: DEFAULT_DAEMON_PORT, isDefault: true };
   }
 
   const port = DIGITS.test(source.value) ? Number(source.value) : Number.NaN;
@@ -41,5 +47,5 @@ export function resolveDaemonPort(flag: string | undefined, env: Record<string, 
     throw new Error(`${source.channel} must be a whole number from 0 to ${HIGHEST_PORT}: ${JSON.stringify(source.value)}`);
   }
 
-  return port;
+  return { port, isDefault: false };
 }

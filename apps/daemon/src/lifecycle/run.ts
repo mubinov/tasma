@@ -41,7 +41,7 @@ import { taskRoutes } from "../tasks/routes.js";
 import { WriteQueue } from "../tasks/serialize.js";
 import { workflowRoutes } from "../workflows/routes.js";
 import { resolveDaemonPort } from "./port.js";
-import { daemonAnswers, daemonUrl } from "./probe.js";
+import { daemonUrl, PROBE_BUDGET_TEXT, type Probed, probeDaemon } from "./probe.js";
 import { claimRecord, readRecord, recordPath, removeRecord } from "./record.js";
 
 /** How long a shutdown waits for requests already running before it closes their connections. */
@@ -69,7 +69,7 @@ export function offeredAdapters(env: AgentEnv): readonly AgentAdapter[] {
  * serving, whether this process started it or stood down to one already there;
  * one means none is. A daemon found through the record or the claim serves this
  * tree; one found holding the requested port answers for that port alone, since
- * `Health` states a name and a version and no tree.
+ * `Health` states a name, a version and a user id, and no tree.
  */
 export type Start
   = | { started: true; url: string; host: ProjectHost; stop: () => Promise<void> }
@@ -101,17 +101,46 @@ async function bind(server: Server, port: number): Promise<void> {
   });
 }
 
-/** What a listen fault comes to: a daemon already on the port, another process on it, or a port that is unusable. */
-async function bindFailure(error: unknown, port: number): Promise<Start> {
-  // Something took the port between the probe and the bind. Which process it is
-  // decides the answer, so the port is probed once.
-  if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
-    return (await daemonAnswers(port))
-      ? { started: false, code: 0, message: `a daemon is already serving at ${daemonUrl(port)}` }
-      : { started: false, code: 1, message: `another process holds port ${port}` };
+type Refusal = Extract<Start, { started: false }>;
+
+/**
+ * What a listen fault comes to: a daemon of this user already on the port,
+ * another process on it, or a port that is unusable. With `fallback`, a holder
+ * that replies and is not a daemon of this user gives the port up for a free
+ * one, and the answer names the holder.
+ */
+async function bindFailure(error: unknown, port: number, fallback: boolean): Promise<Refusal | { holder: string }> {
+  if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") {
+    return { started: false, code: 1, message: `port ${port} cannot be bound: ${causeOf(error)}` };
   }
 
-  return { started: false, code: 1, message: `port ${port} cannot be bound: ${causeOf(error)}` };
+  // Something took the port between the probe and the bind. Which process it is
+  // decides the answer, so the port is probed once.
+  switch (await probeDaemon(port)) {
+    case "mine":
+      return { started: false, code: 0, message: `a daemon is already serving at ${daemonUrl(port)}` };
+    case "late":
+      return {
+        started: false,
+        code: 1,
+        message: `port ${port} is held by a process that did not answer within ${PROBE_BUDGET_TEXT}`,
+      };
+    case "foreign":
+      return fallback
+        ? { holder: "the daemon of another OS user" }
+        : { started: false, code: 1, message: `the daemon of another OS user holds port ${port}` };
+    case "none":
+      return fallback ? { holder: "another process" } : { started: false, code: 1, message: `another process holds port ${port}` };
+  }
+}
+
+/**
+ * Whether the claim counts the port of a record as a daemon that holds the
+ * tree. A late reply counts, so a daemon of this user that replies slowly keeps
+ * its record.
+ */
+export function holdsTree(found: Probed): boolean {
+  return found === "mine" || found === "late";
 }
 
 /**
@@ -183,6 +212,8 @@ function connectionsOf(server: Server): { closeAfterEachReply(): void } {
  */
 export async function startDaemon(options: {
   port: number;
+  /** Whether a free port replaces `port` when a process other than a daemon of this user holds it. */
+  fallback?: boolean;
   root?: string;
   /** How long the shutdown waits for requests already running, in milliseconds. */
   drainMs?: number;
@@ -191,7 +222,7 @@ export async function startDaemon(options: {
   /** Where a fault of a chat log is reported. */
   stderr?: Sink;
 }): Promise<Start> {
-  const { port, root, env = {}, stderr } = options;
+  const { port, fallback = false, root, env = {}, stderr } = options;
   const drainMs = options.drainMs ?? DRAIN_MS;
   const pid = process.pid;
 
@@ -199,8 +230,19 @@ export async function startDaemon(options: {
 
   // The recorded process id is never consulted, which is what makes process-id
   // reuse unable to mislead the answer.
-  if (record !== undefined && (await daemonAnswers(record.port))) {
-    return { started: false, code: 0, message: `a daemon is already serving this tree at ${daemonUrl(record.port)}` };
+  // A daemon of another user, or nothing, at the port of the record makes it stale.
+  if (record !== undefined) {
+    const found = await probeDaemon(record.port);
+    const url = daemonUrl(record.port);
+
+    if (found === "mine") {
+      return { started: false, code: 0, message: `a daemon is already serving this tree at ${url}` };
+    }
+    if (found === "late") {
+      const message = `the daemon at ${url} that ${recordPath(root)} names did not answer within ${PROBE_BUDGET_TEXT}`;
+
+      return { started: false, code: 1, message };
+    }
   }
 
   // New at each start: a listener that took a free port and was sent the token
@@ -229,25 +271,23 @@ export async function startDaemon(options: {
   const starts = createStepChats({ root, host, chats, runner, agent });
   const setup = createSetupChecks({ root, host, adapters, env });
   const installer = createSkillInstaller({ adapters, env });
-  const server = createDaemonServer(
-    [
-      ...projectRoutes(host, writes, chats),
-      ...taskRoutes(host, { writes, chats }),
-      ...chatRoutes(chats, runner, starts),
-      ...chatListRoutes({ root, host, chats }),
-      ...agentRoutes({
-        options: agentOptions,
-        defaults,
-        refresh: (agent, entry) => runner.refreshOptions(agent, entry),
-      }),
-      ...workflowRoutes({ root, writes, publish }),
-      ...configRoutes({ root, writes, publish }),
-      ...setupRoutes(setup, installer),
-      ...eventRoutes(feed),
-    ],
-    { token },
-  );
-  const connections = connectionsOf(server);
+  const entries = [
+    ...projectRoutes(host, writes, chats),
+    ...taskRoutes(host, { writes, chats }),
+    ...chatRoutes(chats, runner, starts),
+    ...chatListRoutes({ root, host, chats }),
+    ...agentRoutes({
+      options: agentOptions,
+      defaults,
+      refresh: (agent, entry) => runner.refreshOptions(agent, entry),
+    }),
+    ...workflowRoutes({ root, writes, publish }),
+    ...configRoutes({ root, writes, publish }),
+    ...setupRoutes(setup, installer),
+    ...eventRoutes(feed),
+  ];
+  let server = createDaemonServer(entries, { token });
+  let connections = connectionsOf(server);
   // Taken only by a daemon whose claim worked; one that stands down to another watches nothing.
   const watching: { tree?: TreeWatch; rescans?: Rescans } = {};
 
@@ -272,22 +312,47 @@ export async function startDaemon(options: {
     await host.close();
   }
 
-  try {
-    await bind(server, port);
-  } catch (error) {
+  const boundPort = () => (server.address() as AddressInfo).port;
+
+  /** Binds `at`, or a free port where `bindFailure` allows it, and answers the refusal that ends the start. */
+  async function listen(at: number, mayFallBack: boolean): Promise<Refusal | undefined> {
+    try {
+      await bind(server, at);
+
+      return undefined;
+    } catch (error) {
+      const failure = await bindFailure(error, at, mayFallBack);
+      if ("message" in failure) return failure;
+
+      // A new server: the shipped daemon runs under Bun, where a second `listen`
+      // on a server whose bind failed is not reliable.
+      server = createDaemonServer(entries, { token });
+      connections = connectionsOf(server);
+      const refused = await listen(0, false);
+      if (refused === undefined) {
+        stderr?.write(line(`port ${at} is held by ${failure.holder}, so this daemon listens on port ${boundPort()}`));
+      }
+
+      return refused;
+    }
+  }
+
+  const refused = await listen(port, fallback);
+
+  if (refused !== undefined) {
     await host.close();
 
-    return await bindFailure(error, port);
+    return refused;
   }
 
   // The port the server reports rather than the one that was asked for, so a
   // start on port zero records the number the operating system chose.
-  const mine: DaemonRecord = { port: (server.address() as AddressInfo).port, pid, token };
+  const mine: DaemonRecord = { port: boundPort(), pid, token };
 
   // A record naming the port this process holds describes no other daemon: the
   // probe would be answered by this process itself, and a record an ungraceful
   // death left behind would then stop the daemon starting for good.
-  const elsewhere = async (candidate: number) => candidate !== mine.port && (await daemonAnswers(candidate));
+  const elsewhere = async (candidate: number) => candidate !== mine.port && holdsTree(await probeDaemon(candidate));
 
   let held: DaemonRecord | undefined;
 
@@ -395,18 +460,18 @@ export async function runDaemon(
   env: Record<string, string | undefined>,
   root?: string,
 ): Promise<number> {
-  let port: number;
+  let resolved: { port: number; isDefault: boolean };
 
   try {
     const { values } = parseArgs({ args: argv, strict: true, options: { port: { type: "string" } } });
-    port = resolveDaemonPort(values.port, env);
+    resolved = resolveDaemonPort(values.port, env);
   } catch (error) {
     io.stderr.write(line(causeOf(error)));
 
     return 1;
   }
 
-  const start = await startDaemon({ port, root, env, stderr: io.stderr });
+  const start = await startDaemon({ port: resolved.port, fallback: resolved.isDefault, root, env, stderr: io.stderr });
 
   if (!start.started) {
     io.stderr.write(line(start.message));

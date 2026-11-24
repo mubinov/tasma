@@ -4,20 +4,33 @@ import { resolveDaemonPort } from "../../src/lifecycle/port.js";
 
 describe("the port one daemon binds", () => {
   it("takes the flag over the variable, and the variable over the default", () => {
-    expect(resolveDaemonPort("1234", { TASMA_DAEMON_PORT: "4321" })).toBe(1234);
-    expect(resolveDaemonPort(undefined, { TASMA_DAEMON_PORT: "4321" })).toBe(4321);
-    expect(resolveDaemonPort(undefined, {})).toBe(DEFAULT_DAEMON_PORT);
+    expect(resolveDaemonPort("1234", { TASMA_DAEMON_PORT: "4321" }).port).toBe(1234);
+    expect(resolveDaemonPort(undefined, { TASMA_DAEMON_PORT: "4321" }).port).toBe(4321);
+    expect(resolveDaemonPort(undefined, {}).port).toBe(DEFAULT_DAEMON_PORT);
+  });
+
+  it("marks the default port as the default", () => {
+    expect(resolveDaemonPort(undefined, {})).toEqual({ port: DEFAULT_DAEMON_PORT, isDefault: true });
+  });
+
+  it("marks a port from either channel as given, the default port and zero included", () => {
+    for (const value of ["1234", String(DEFAULT_DAEMON_PORT), "0"]) {
+      const given = { port: Number(value), isDefault: false };
+
+      expect(resolveDaemonPort(value, {})).toEqual(given);
+      expect(resolveDaemonPort(undefined, { TASMA_DAEMON_PORT: value })).toEqual(given);
+    }
   });
 
   it("accepts every port number, the two ends of the range included", () => {
     for (const port of [0, 1, 8278, 65535]) {
-      expect(resolveDaemonPort(String(port), {})).toBe(port);
+      expect(resolveDaemonPort(String(port), {}).port).toBe(port);
     }
   });
 
   it("reads an empty value as no value, on either channel", () => {
-    expect(resolveDaemonPort("", { TASMA_DAEMON_PORT: "4321" })).toBe(4321);
-    expect(resolveDaemonPort(undefined, { TASMA_DAEMON_PORT: "" })).toBe(DEFAULT_DAEMON_PORT);
+    expect(resolveDaemonPort("", { TASMA_DAEMON_PORT: "4321" }).port).toBe(4321);
+    expect(resolveDaemonPort(undefined, { TASMA_DAEMON_PORT: "" })).toEqual({ port: DEFAULT_DAEMON_PORT, isDefault: true });
   });
 
   it("refuses a value that is not a run of decimal digits inside the range", () => {

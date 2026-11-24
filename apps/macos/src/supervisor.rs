@@ -48,7 +48,7 @@ const HEALTH_NAME: &str = "tasma-daemon";
 /// accepts the connection and never replies.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// How much of a health answer is read. It is two short fields, and the budget
+/// How much of a health answer is read. It is three short fields, and the budget
 /// alone would let whatever holds the port send for the whole of a second.
 const PROBE_LIMIT: usize = 64 * 1024;
 
@@ -122,6 +122,31 @@ struct Serving {
     stated: String,
 }
 
+/// What answers at a port.
+enum Probed {
+    /// A daemon of this OS user.
+    Serving(Serving),
+    /// A daemon of another OS user, which refuses every request of this one.
+    OtherUser,
+    /// Nothing, or a process that is not a daemon.
+    Nothing,
+}
+
+impl Probed {
+    fn serving(self) -> Option<Serving> {
+        match self {
+            Self::Serving(serving) => Some(serving),
+            Self::OtherUser | Self::Nothing => None,
+        }
+    }
+}
+
+/// The OS user id of this process.
+fn own_uid() -> u32 {
+    // Safety: `getuid` reads the calling process and changes nothing.
+    unsafe { libc::getuid() }
+}
+
 /// What the spawns so far came to.
 #[derive(Default)]
 struct Attempts {
@@ -162,10 +187,11 @@ impl Attempts {
     /// No daemon answered, which ends whatever period was running.
     ///
     /// A period that ran long enough spends the attempts behind it here, and
-    /// not only on a later sighting: the application calls in at startup and on
-    /// a forward that could not connect, and both are moments when no daemon
-    /// answers, so a daemon that served for hours and then died would otherwise
-    /// leave the backoff of the crash loop before it standing.
+    /// not only on a later sighting: the application calls in at startup, on a
+    /// forward that could not connect and on a forward whose token was refused,
+    /// which are the moments a dead daemon is noticed, so a daemon that served
+    /// for hours and then died would otherwise leave the backoff of the crash
+    /// loop before it standing.
     fn missed(&mut self, now: Instant, proven_after: Duration) {
         if let Some(since) = self.serving_since.take() {
             self.spend(now, since, proven_after);
@@ -269,7 +295,10 @@ impl Supervisor {
         }
 
         let now = Instant::now();
-        let found = self.serving().await;
+        let port = self.port();
+        let probed = self.probe(port).await;
+        let other_user = matches!(probed, Probed::OtherUser);
+        let found = probed.serving();
 
         // An update is replacing the bundle: a spawn now would start the old
         // daemon again, and a stop would leave none.
@@ -308,7 +337,11 @@ impl Supervisor {
             return None;
         }
 
-        self.start(&mut attempts).await
+        let skipped = other_user.then(|| {
+            format!("the daemon on port {port} belongs to another OS user, so it is not used")
+        });
+
+        self.start(&mut attempts, skipped).await
     }
 
     /// Stops a daemon older than the application with the application's own
@@ -335,6 +368,7 @@ impl Supervisor {
             && !self
                 .probe(serving.port)
                 .await
+                .serving()
                 .is_some_and(|after| self.is_older(&after));
         let file = self.open_log_for(attempts);
         let Serving { port, stated, .. } = serving;
@@ -417,11 +451,6 @@ impl Supervisor {
         self.record.as_deref().map_or(DEFAULT_PORT, read_port)
     }
 
-    /// The daemon answering for this tree, if one is.
-    async fn serving(&self) -> Option<Serving> {
-        self.probe(self.port()).await
-    }
-
     /// Probes the port the record names, and answers none while there is no
     /// record: the strict check of the start wait. A started daemon answers
     /// before it writes its record, and a forward sent in that gap would go to
@@ -432,13 +461,18 @@ impl Supervisor {
             None => DEFAULT_PORT,
         };
 
-        self.probe(port).await
+        self.probe(port).await.serving()
     }
 
-    /// What answers at a port. The one field that identifies a daemon decides,
-    /// because a stale record names a port another program may hold and answer
-    /// well-formed JSON on.
-    async fn probe(&self, port: u16) -> Option<Serving> {
+    /// What answers at a port.
+    async fn probe(&self, port: u16) -> Probed {
+        self.read_health(port).await.unwrap_or(Probed::Nothing)
+    }
+
+    /// What a health answer at a port states, or nothing where none arrives.
+    /// The one field that identifies a daemon decides, because a stale record
+    /// names a port another program may hold and answer well-formed JSON on.
+    async fn read_health(&self, port: u16) -> Option<Probed> {
         let mut reply = self
             .client
             .get(format!("{}/health", daemon_url(port)))
@@ -463,18 +497,27 @@ impl Supervisor {
             return None;
         }
 
+        // A daemon of an earlier version states no user id, and counts as one
+        // of this user.
+        if data
+            .get("uid")
+            .is_some_and(|uid| uid.as_u64() != Some(u64::from(own_uid())))
+        {
+            return Some(Probed::OtherUser);
+        }
+
         let stated = data
             .get("version")
             .and_then(serde_json::Value::as_str)
             .unwrap_or(UNSTATED);
 
-        Some(Serving {
+        Some(Probed::Serving(Serving {
             port,
             // Quoted where it enters, because everything past here writes it to
             // the log and the string is whatever holds the port, not a daemon's.
             stated: log::quoted(stated),
             version: version_of(stated),
-        })
+        }))
     }
 
     /// One attempt, with the moment it ended recorded.
@@ -483,18 +526,23 @@ impl Supervisor {
     /// of one and not from its start: a readiness budget spent out of the wait
     /// that follows would make every wait shorter than the budget no wait at
     /// all.
-    async fn start(&self, attempts: &mut Attempts) -> Option<u16> {
-        let serving = self.attempt(attempts).await;
+    async fn start(&self, attempts: &mut Attempts, skipped: Option<String>) -> Option<u16> {
+        let serving = self.attempt(attempts, skipped).await;
         attempts.last = Some(Instant::now());
 
         serving
     }
 
     /// Rotate, spawn, and poll until a daemon answers or the budget runs out.
-    async fn attempt(&self, attempts: &mut Attempts) -> Option<u16> {
+    /// `skipped` is the line on a daemon that was not used, written first.
+    async fn attempt(&self, attempts: &mut Attempts, skipped: Option<String>) -> Option<u16> {
         log::rotate(self.home.as_deref());
 
         let file = self.open_log_for(attempts);
+
+        if let Some(line) = skipped {
+            log::note(file.as_ref(), &line);
+        }
 
         // The child of the attempt before this one, collected rather than
         // waited on, so an end that came after its budget leaves nothing behind.
@@ -732,6 +780,24 @@ pub(crate) mod fixtures {
         )
     }
 
+    /// The same, with the token of the run.
+    pub(crate) fn records_with_token(record: &Path, port: u16, token: &str) -> String {
+        format!(
+            "printf '{{\"port\":{port},\"pid\":1,\"token\":\"{token}\"}}' > {}",
+            record.display()
+        )
+    }
+
+    /// A health answer naming a daemon whose user id is the JSON value `uid`.
+    pub(crate) fn health_with_uid(uid: &str) -> String {
+        format!(r#"{{"ok":true,"data":{{"name":"tasma-daemon","version":"9.9.9","uid":{uid}}}}}"#)
+    }
+
+    /// A health answer naming a daemon of another OS user.
+    pub(crate) fn health_of_another_user() -> String {
+        health_with_uid(&(own_uid() + 1).to_string())
+    }
+
     /// A port held for the life of the test process by something that is not a
     /// daemon.
     ///
@@ -769,6 +835,15 @@ pub(crate) mod fixtures {
             tick: Duration::from_millis(25),
             proven_after: Duration::from_millis(200),
             ..Supervisor::new(None, own_version())
+        }
+    }
+
+    /// The same supervisor, with the budget a test gives a stub that does not
+    /// serve.
+    pub(crate) fn giving_up(supervisor: Supervisor) -> Supervisor {
+        Supervisor {
+            budget: TEST_GIVE_UP,
+            ..supervisor
         }
     }
 
@@ -912,10 +987,57 @@ mod tests {
         let supervisor = supervising(&directory("names-itself"), None);
         let port = answering(health());
 
-        let serving = block_on(supervisor.probe(port)).expect("the listener names a daemon");
+        let serving = block_on(supervisor.probe(port))
+            .serving()
+            .expect("the listener names a daemon");
 
         assert_eq!(serving.port, port);
         assert_eq!(serving.stated, "9.9.9");
+    }
+
+    #[test]
+    fn a_daemon_that_states_the_user_id_of_this_process_or_none_is_one_of_this_user() {
+        let supervisor = supervising(&directory("own-uid"), None);
+
+        for body in [health_with_uid(&own_uid().to_string()), health()] {
+            let probed = block_on(supervisor.probe(answering(body.clone())));
+
+            assert!(matches!(probed, Probed::Serving(_)), "{body}");
+        }
+    }
+
+    #[test]
+    fn a_daemon_that_states_any_other_user_id_is_one_of_another_user() {
+        let supervisor = supervising(&directory("other-uid"), None);
+
+        for body in [
+            health_of_another_user(),
+            health_with_uid(&format!(r#""{}""#, own_uid())),
+            health_with_uid("null"),
+        ] {
+            let probed = block_on(supervisor.probe(answering(body.clone())));
+
+            assert!(matches!(probed, Probed::OtherUser), "{body}");
+        }
+    }
+
+    #[test]
+    fn a_daemon_of_another_user_on_the_recorded_port_is_not_used_and_one_is_started() {
+        let directory = directory("other-user-on-the-port");
+        let record = directory.join("daemon.json");
+        let other = answering(health_of_another_user());
+        let port = answering(health());
+        write_record(&record, other);
+        let supervisor = supervising(&directory, Some(stub(&directory, &records(&record, port))));
+
+        assert_eq!(block_on(supervisor.ensure_serving()), Some(port));
+        assert!(
+            logged(&supervisor).contains(&format!(
+                "the daemon on port {other} belongs to another OS user, so it is not used"
+            )),
+            "{}",
+            logged(&supervisor)
+        );
     }
 
     #[test]
@@ -923,7 +1045,9 @@ mod tests {
         let supervisor = supervising(&directory("no-version"), None);
         let port = answering(r#"{"data":{"name":"tasma-daemon"},"diagnostics":[]}"#.to_string());
 
-        let serving = block_on(supervisor.probe(port)).expect("the listener names a daemon");
+        let serving = block_on(supervisor.probe(port))
+            .serving()
+            .expect("the listener names a daemon");
 
         assert_eq!(serving.stated, UNSTATED);
     }
@@ -935,7 +1059,9 @@ mod tests {
             r#"{"data":{"name":"tasma-daemon","version":"1.0\ntasma-app: forged"}}"#.to_string(),
         );
 
-        let serving = block_on(supervisor.probe(port)).expect("the listener names a daemon");
+        let serving = block_on(supervisor.probe(port))
+            .serving()
+            .expect("the listener names a daemon");
 
         assert_eq!(serving.stated, r"1.0\u000atasma-app: forged");
     }
@@ -943,7 +1069,11 @@ mod tests {
     #[test]
     fn nothing_else_holding_the_port_is_a_daemon() {
         let supervisor = supervising(&directory("not-a-daemon"), None);
-        let named = |body: &str| block_on(supervisor.probe(answering(body.to_string()))).is_some();
+        let named = |body: &str| {
+            block_on(supervisor.probe(answering(body.to_string())))
+                .serving()
+                .is_some()
+        };
 
         assert!(!named(
             r#"{"data":{"name":"something-else","version":"1"}}"#
@@ -958,7 +1088,7 @@ mod tests {
     fn a_port_nothing_listens_on_holds_no_daemon() {
         let supervisor = supervising(&directory("dead-port"), None);
 
-        assert!(block_on(supervisor.probe(dead_port())).is_none());
+        assert!(block_on(supervisor.probe(dead_port())).serving().is_none());
     }
 
     #[test]
@@ -968,7 +1098,7 @@ mod tests {
         // body does not, and the read of it fails.
         let port = listening(|_| "HTTP/1.1 200 OK\r\ncontent-length: 64\r\n\r\n{}".to_string());
 
-        assert!(block_on(supervisor.probe(port)).is_none());
+        assert!(block_on(supervisor.probe(port)).serving().is_none());
     }
 
     #[test]
@@ -981,7 +1111,11 @@ mod tests {
             "x".repeat(PROBE_LIMIT),
         );
 
-        assert!(block_on(supervisor.probe(answering(padded))).is_none());
+        assert!(
+            block_on(supervisor.probe(answering(padded)))
+                .serving()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1274,9 +1408,9 @@ mod tests {
         // spawns is a second the test has nothing to do with.
         let mut attempts = Attempts::default();
 
-        block_on(supervisor.start(&mut attempts));
+        block_on(supervisor.start(&mut attempts, None));
         let first = attempts.child.as_ref().map(Child::id);
-        block_on(supervisor.start(&mut attempts));
+        block_on(supervisor.start(&mut attempts, None));
 
         assert_eq!(attempts.made, 2);
         assert_ne!(attempts.child.as_ref().map(Child::id), first);

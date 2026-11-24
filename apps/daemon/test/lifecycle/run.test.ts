@@ -3,10 +3,10 @@ import { existsSync } from "node:fs";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { Agent, request as httpRequest } from "node:http";
 import type { IncomingHttpHeaders } from "node:http";
-import { connect } from "node:net";
+import { connect, Server as NetServer } from "node:net";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type {
   AgentOptions,
   Chat,
@@ -19,20 +19,22 @@ import type {
   SkillInstall,
 } from "@tasma/protocol";
 import type { AgentEnv } from "../../src/agents/adapter.js";
-import { daemonAnswers } from "../../src/lifecycle/probe.js";
+import { probeDaemon } from "../../src/lifecycle/probe.js";
 import { readRecord, recordPath } from "../../src/lifecycle/record.js";
-import { offeredAdapters, runDaemon, startDaemon } from "../../src/lifecycle/run.js";
+import { holdsTree, offeredAdapters, runDaemon, startDaemon } from "../../src/lifecycle/run.js";
 import type { DaemonIo, Start } from "../../src/lifecycle/run.js";
 import {
   alive,
   bearer,
   chatFolder,
   failure,
+  fakeDaemonPort,
   foreignPort,
   freePort,
   get,
   logFile,
   onWorkflow,
+  OTHER_UID,
   plant,
   plantChat,
   plantSteps,
@@ -40,6 +42,7 @@ import {
   projectsRoot,
   seedRecord,
   send,
+  stalledPort,
   startTestServer,
   success,
   target,
@@ -198,7 +201,7 @@ describe("starting a daemon", () => {
     const start = await daemonOn(root);
     const port = portOf(start.url);
 
-    expect(await daemonAnswers(port)).toBe(true);
+    expect(await probeDaemon(port)).toBe("mine");
     expect(await readRecord(root)).toEqual(ownRecord(port));
     // The tree-level routes stand in the array too, and they are the one group
     // built over the root rather than over the host.
@@ -344,6 +347,131 @@ describe("starting a daemon", () => {
     expect(start.code).toBe(1);
     expect(start.message).toContain(recordPath(root));
   });
+
+  it("replaces a record whose port gives a daemon of another OS user", async () => {
+    const root = await projectsRoot();
+    await seedRecord(root, { port: await fakeDaemonPort({ uid: OTHER_UID }), pid: 4242 });
+
+    const start = await daemonOn(root);
+
+    expect(await readRecord(root)).toEqual(ownRecord(portOf(start.url)));
+  });
+
+  it("stops where the port of the record does not reply within 1 second, and leaves the record as it is", async () => {
+    const root = await projectsRoot();
+    const record = { port: await stalledPort(), pid: 4242 };
+    await seedRecord(root, record);
+
+    const start = refusal(await startDaemon({ port: 0, root }));
+
+    expect(start).toEqual({
+      started: false,
+      code: 1,
+      message: `the daemon at http://127.0.0.1:${record.port} that ${recordPath(root)} names did not answer within 1 second`,
+    });
+    expect(await readRecord(root)).toEqual(record);
+  });
+
+  it("refuses a port that the user gave, where a daemon of another OS user holds it", async () => {
+    const port = await fakeDaemonPort({ uid: OTHER_UID });
+
+    const start = refusal(await startDaemon({ port, root: await projectsRoot() }));
+
+    expect(start).toEqual({ started: false, code: 1, message: `the daemon of another OS user holds port ${port}` });
+  });
+});
+
+describe("a default port that another process holds", () => {
+  /** A start that may replace its port with a free one, with what it wrote to stderr. */
+  async function fallbackStart(root: string, port: number): Promise<{ start: Start; err: string[] }> {
+    const err: string[] = [];
+    const stderr = { write: (text: string) => err.push(text) };
+    const start = await startDaemon({ port, fallback: true, root, stderr });
+    if (start.started) onTestFinished(() => start.stop());
+
+    return { start, err };
+  }
+
+  it("is replaced by a free port where a daemon of another OS user holds it", async () => {
+    const root = await projectsRoot();
+    const port = await fakeDaemonPort({ uid: OTHER_UID });
+
+    const { start, err } = await fallbackStart(root, port);
+
+    if (!start.started) throw new Error(start.message);
+    const bound = portOf(start.url);
+    expect(bound).not.toBe(port);
+    expect(await probeDaemon(bound)).toBe("mine");
+    expect(await readRecord(root)).toEqual(ownRecord(bound));
+    expect(err).toEqual([
+      `tasma-daemon: port ${port} is held by the daemon of another OS user, so this daemon listens on port ${bound}\n`,
+    ]);
+  });
+
+  it("is replaced by a free port where a process that is not Tasma holds it", async () => {
+    const root = await projectsRoot();
+    const port = await foreignPort('"hello"');
+
+    const { start, err } = await fallbackStart(root, port);
+
+    if (!start.started) throw new Error(start.message);
+    const bound = portOf(start.url);
+    expect(await readRecord(root)).toEqual(ownRecord(bound));
+    expect(err).toEqual([`tasma-daemon: port ${port} is held by another process, so this daemon listens on port ${bound}\n`]);
+  });
+
+  it("is kept where a daemon of this OS user holds it, and the start stands down", async () => {
+    const root = await projectsRoot();
+    const port = await fakeDaemonPort({});
+
+    const { start, err } = await fallbackStart(root, port);
+
+    expect(start).toEqual({ started: false, code: 0, message: `a daemon is already serving at http://127.0.0.1:${port}` });
+    expect(await readRecord(root)).toBeUndefined();
+    expect(err).toEqual([]);
+  });
+
+  it("is kept where the process that holds it does not reply within 1 second, and the start fails", async () => {
+    const root = await projectsRoot();
+    const port = await stalledPort();
+
+    const { start } = await fallbackStart(root, port);
+
+    expect(start).toEqual({
+      started: false,
+      code: 1,
+      message: `port ${port} is held by a process that did not answer within 1 second`,
+    });
+    expect(await readRecord(root)).toBeUndefined();
+  });
+
+  it("fails, and names no free port, where the free port cannot be bound either", async () => {
+    const root = await projectsRoot();
+    const port = await fakeDaemonPort({ uid: OTHER_UID });
+    // The bind of the held port fails as the real one does; the bind of port 0 fails as no real one can be made to.
+    const binds = vi.spyOn(NetServer.prototype, "listen").mockImplementation(function (this: NetServer, ...args) {
+      const code = args[0] === 0 ? "EACCES" : "EADDRINUSE";
+
+      process.nextTick(() => this.emit("error", Object.assign(new Error(`listen ${code}`), { code })));
+      return this;
+    });
+    onTestFinished(() => binds.mockRestore());
+
+    const { start, err } = await fallbackStart(root, port);
+
+    expect(start).toEqual({ started: false, code: 1, message: "port 0 cannot be bound: listen EACCES" });
+    expect(err).toEqual([]);
+    expect(await readRecord(root)).toBeUndefined();
+  });
+});
+
+describe("the claim of a record", () => {
+  it("counts a daemon of this OS user and a late reply as a daemon that holds the tree", () => {
+    expect(holdsTree("mine")).toBe(true);
+    expect(holdsTree("late")).toBe(true);
+    expect(holdsTree("foreign")).toBe(false);
+    expect(holdsTree("none")).toBe(false);
+  });
 });
 
 describe("a chat that an earlier daemon left in a turn", () => {
@@ -468,7 +596,7 @@ describe("stopping a daemon", () => {
     ].join("\r\n");
     await new Promise<void>((resolve) => socket.write(request, () => resolve()));
     // A round trip on another connection, so the daemon has read the one above.
-    expect(await daemonAnswers(port)).toBe(true);
+    expect(await probeDaemon(port)).toBe("mine");
 
     const began = performance.now();
     await start.stop();
@@ -488,7 +616,7 @@ describe("stopping a daemon", () => {
     const held = [0, 1].map(() => call(agent, start.url, token, `/events?after=${cursor}`));
     await Promise.all(held.map((reply) => reply.sent));
     // A round trip on another connection, so the daemon has read the two above.
-    expect(await daemonAnswers(portOf(start.url))).toBe(true);
+    expect(await probeDaemon(portOf(start.url))).toBe("mine");
 
     const began = performance.now();
     await start.stop();
@@ -515,7 +643,7 @@ describe("stopping a daemon", () => {
     const held = call(agent, start.url, token, "/projects/ONE/tasks/ONE-1/chats/1/events?after=0");
     await held.sent;
     // A round trip on another connection, so the daemon has read the one above.
-    expect(await daemonAnswers(portOf(start.url))).toBe(true);
+    expect(await probeDaemon(portOf(start.url))).toBe("mine");
 
     const began = performance.now();
     await start.stop();
@@ -559,7 +687,7 @@ describe("stopping a daemon", () => {
 
     // A request begun and not ended: the drain does not close its connection as idle.
     await new Promise<void>((resolve) => socket.write(`GET /health HTTP/1.1\r\nhost: 127.0.0.1:${port}\r\n`, () => resolve()));
-    expect(await daemonAnswers(port)).toBe(true);
+    expect(await probeDaemon(port)).toBe("mine");
     const stopping = start.stop();
     socket.write("\r\n");
     await ended;
@@ -590,7 +718,7 @@ describe("the daemon as a process", () => {
 
     expect(await daemon.code).toBe(0);
     expect(await readRecord(root)).toBeUndefined();
-    expect(await daemonAnswers(daemon.port)).toBe(false);
+    expect(await probeDaemon(daemon.port)).toBe("none");
     expect(installed().length, "every handler is removed once it has stopped").toBe(before.length);
   });
 

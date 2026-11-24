@@ -1,9 +1,10 @@
 import { parseArgs } from "node:util";
-import { DAEMON_NAME, daemonUrl, printable } from "@tasma/protocol";
+import { DAEMON_NAME, daemonUrl, ofAnotherUser, printable } from "@tasma/protocol";
 import { daemonAnswers, readRecord, recordPath } from "../daemon/record.js";
 import { delay, TICK_MS } from "../daemon/start.js";
 import { REQUEST_TIMEOUT_MS } from "../daemon/transport.js";
-import { attempt, reportForeign, UNREACHABLE } from "../failure.js";
+import { anotherUserAt, attempt, reportForeign, UNREACHABLE } from "../failure.js";
+import type { Reach } from "../failure.js";
 import { fieldsOf } from "../output.js";
 import { noun, reportUsage, wireText } from "../shell.js";
 import type { Io, Options, Target } from "../types.js";
@@ -45,42 +46,73 @@ function refuseAddress(io: Io, verb: string, stated: Extract<Target, { kind: "ex
 }
 
 /**
- * Names the daemon that answered, or refuses the answer.
+ * Names the daemon of this OS user that answered, or refuses the answer.
  *
  * `start` allows a start on demand and `status` does not, which is the whole
  * difference between the two verbs: a daemon already serving prints the same
  * line either way.
+ *
+ * `start` proves the address of a record that parses, so the daemon of another
+ * OS user there starts the daemon of this tree, as nothing there does. Health
+ * needs no token, so no refusal of a token is ever what starts it.
  */
-function report(io: Io, target: Target, options: { start: boolean }): Promise<number> {
-  return attempt(io, target, (client) => client.readHealth(), (health, url) => {
+function report(io: Io, target: Target, options: { start: boolean } & VerbOptions): Promise<number> {
+  return attempt(io, target, (client) => client.readHealth(), (health, url, recorded) => {
     const answer: unknown = health;
 
     if (typeof answer !== "object" || answer === null) {
       return reportForeign(io, url, answer);
     }
 
-    const { name, version } = fieldsOf(answer);
+    const fields = fieldsOf(answer);
+    const { name, version } = fields;
 
     if (name !== DAEMON_NAME) {
       return reportForeign(io, url, name);
     }
 
+    if (ofAnotherUser(fields, process.getuid!())) {
+      const staleNote = recorded ? `; the record at ${printable(recordPath(target.home))} is stale` : "";
+
+      io.stderr.write(`tasma: ${anotherUserAt(url)}${staleNote}\n`);
+      return UNREACHABLE;
+    }
+
     io.stdout.write(`${DAEMON_NAME} ${wireText(version)} at ${url}\n`);
     return 0;
-  }, options);
+  }, { start: options.start, prove: options.start ? "recorded" : false, reach: options.reach });
 }
 
-async function status(args: string[], io: Io, target: Target): Promise<number> {
-  return readDaemonVerb(io, "status", args, STATUS_HELP) ?? report(io, target, { start: false });
+/**
+ * A seam nothing in production states: a test gives the record, the probe and
+ * the start, so it reaches no daemon of this machine. It rides an options object
+ * because the positional parameters are the command contract.
+ */
+type VerbOptions = { reach?: Reach };
+
+export async function status(
+  args: string[],
+  io: Io,
+  target: Target,
+  _cwd: string,
+  options: VerbOptions = {},
+): Promise<number> {
+  return readDaemonVerb(io, "status", args, STATUS_HELP) ?? report(io, target, { start: false, ...options });
 }
 
-async function start(args: string[], io: Io, target: Target): Promise<number> {
+export async function start(
+  args: string[],
+  io: Io,
+  target: Target,
+  _cwd: string,
+  options: VerbOptions = {},
+): Promise<number> {
   const refusal = readDaemonVerb(io, "start", args, START_HELP);
 
   if (refusal !== undefined) return refusal;
   if (target.kind === "explicit") return refuseAddress(io, "start", target.stated);
 
-  return report(io, target, { start: true });
+  return report(io, target, { start: true, ...options });
 }
 
 /**
@@ -182,17 +214,18 @@ export async function stop(
   // The budget every other verb reaches a daemon under, rather than the shorter
   // one a bare probe defaults to: a daemon whose event loop is held for a moment
   // is one `status` reports as running, and calling it absent here would report
-  // the goal state reached and signal nothing.
+  // the goal state reached and signal nothing. The daemon of another OS user is
+  // no daemon of this tree.
   if (!(await daemonAnswers(url, REQUEST_TIMEOUT_MS))) {
     io.stdout.write("no daemon is running\n");
     io.stderr.write(staleNote);
     return 0;
   }
 
-  // The probe proves that a daemon answers at the recorded port, and nothing
-  // proves it is the process the record names: `Health` states a name and a
-  // version and no process id, so the two fields of the record are believed
-  // together or not at all.
+  // The probe proves that a daemon of this OS user answers at the recorded
+  // port, and nothing proves it is the process the record names: `Health`
+  // states a name, a version and a user id and no process id, so the two fields
+  // of the record are believed together or not at all.
   const signalled = signalStop(record.pid);
 
   // A daemon of another tree on the same port, which this CLI does not own.

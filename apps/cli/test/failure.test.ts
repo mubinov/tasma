@@ -3,13 +3,11 @@ import type { Client, Diagnostic, Success } from "@tasma/protocol";
 import { describe, expect, it, onTestFinished } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
 import { recordPath } from "../src/daemon/record.js";
-import type { Probed, RecordRead } from "../src/daemon/record.js";
 import type { StartOutcome } from "../src/daemon/start.js";
 import { REQUEST_TIMEOUT_MS, RequestTimeoutError } from "../src/daemon/transport.js";
 import { attempt, readOrNothing, reportForeign } from "../src/failure.js";
-import type { Reach } from "../src/failure.js";
 import type { Target } from "../src/types.js";
-import { capture, startServer } from "./helpers.js";
+import { capture, reaching, startServer } from "./helpers.js";
 
 const DAEMON_URL = "http://127.0.0.1:8278";
 
@@ -56,39 +54,6 @@ function counted<T>(answer: () => Promise<Success<T>>): { call: () => Promise<Su
       return answer();
     },
     sent: () => sent,
-  };
-}
-
-/**
- * The tree as the test states it: what the record holds, what a start of one
- * comes to, and what a probe of the address it gave finds.
- */
-function reaching(
-  record: RecordRead | undefined,
-  options: { outcome?: StartOutcome; found?: Probed } = {},
-): { reach: Reach; starts: string[]; probes: string[] } {
-  const { outcome, found = "none" } = options;
-  const starts: string[] = [];
-  const probes: string[] = [];
-
-  return {
-    starts,
-    probes,
-    reach: {
-      readRecord: () => Promise.resolve(record ?? "absent"),
-      probe: (url) => {
-        probes.push(url);
-
-        return Promise.resolve(found);
-      },
-      start: ({ home }) => {
-        starts.push(home);
-
-        if (outcome === undefined) throw new Error("this target must never be started");
-
-        return Promise.resolve(outcome);
-      },
-    },
   };
 }
 
@@ -273,12 +238,12 @@ describe("attempt", () => {
   });
 
   it("calls the address the tree's record names, and the built-in one where it holds no record", async () => {
-    for (const [record, expected] of [
-      [{ port: 9000, pid: 4242 }, "http://127.0.0.1:9000"],
-      [undefined, DEFAULT_DAEMON_URL],
+    for (const [record, expected, probed] of [
+      [{ port: 9000, pid: 4242 }, "http://127.0.0.1:9000", []],
+      [undefined, DEFAULT_DAEMON_URL, [DEFAULT_DAEMON_URL]],
     ] as const) {
       const { io } = capture();
-      const { reach } = reaching(record);
+      const { reach, probes } = reaching(record, { found: "daemon" });
       let seen = "";
 
       expect(await attempt(io, TREE, ok("payload"), (_data, url) => {
@@ -286,6 +251,66 @@ describe("attempt", () => {
         return 0;
       }, { reach })).toBe(0);
       expect(seen).toBe(expected);
+      expect(probes).toEqual(probed);
+    }
+  });
+
+  it("sends a call for a tree with no record to the built-in address where it answered late, and starts nothing", async () => {
+    const { io, err } = capture();
+    const { reach, starts } = reaching(undefined, { found: "late" });
+    let seen = "";
+
+    expect(await attempt(io, TREE, ok("payload"), (_data, url) => {
+      seen = url;
+      return 0;
+    }, { reach })).toBe(0);
+    expect(seen).toBe(DEFAULT_DAEMON_URL);
+    expect(starts).toEqual([]);
+    expect(err).toEqual([]);
+  });
+
+  // The daemon of another OS user on the built-in address refuses every token
+  // of this user, so the call goes to the daemon of this tree instead.
+  it("starts a daemon before a call for a tree with no record where no daemon of this user answers", async () => {
+    for (const found of ["foreign", "none"] as const) {
+      const { io, err } = capture();
+      const { reach, starts } = reaching(undefined, { outcome: STARTED, found });
+      const { call, sent } = counted(ok("payload"));
+      let seen = "";
+
+      expect(await attempt(io, TREE, call, (_data, url) => {
+        seen = url;
+        return 0;
+      }, { reach })).toBe(0);
+      expect(sent(), found).toBe(1);
+      expect(starts, found).toEqual([HOME]);
+      expect(seen, found).toBe("http://127.0.0.1:9100");
+      expect(err, found).toEqual([]);
+    }
+  });
+
+  it("reports a call sent behind a start for a tree with no record that reached nothing, and starts no second one", async () => {
+    const { io, err } = capture();
+    const { reach, starts } = reaching(undefined, { outcome: STARTED, found: "foreign" });
+
+    expect(await attempt(io, TREE, throwing(UNREACHED), () => 0, { reach })).toBe(3);
+    expect(starts).toEqual([HOME]);
+    expect(err.join("")).toBe("tasma: no daemon answered at http://127.0.0.1:9100\n");
+  });
+
+  it("sends no call for a tree with no record where no daemon of this user answers and no start is allowed", async () => {
+    for (const [found, text] of [
+      ["foreign", `the daemon at ${DAEMON_URL} belongs to another OS user`],
+      ["none", `no daemon answered at ${DAEMON_URL}`],
+    ] as const) {
+      const { io, err } = capture();
+      const { reach, starts } = reaching(undefined, { found });
+      const { call, sent } = counted(ok("payload"));
+
+      expect(await attempt(io, TREE, call, () => 0, { reach, start: false })).toBe(3);
+      expect(sent()).toBe(0);
+      expect(starts).toEqual([]);
+      expect(err.join("")).toBe(`tasma: ${text}\n`);
     }
   });
 
@@ -313,7 +338,7 @@ describe("attempt", () => {
 
   it("starts a daemon for the tree and retries once against the address it answered", async () => {
     const { io, err } = capture();
-    const { reach, starts } = reaching(undefined, { outcome: STARTED });
+    const { reach, starts } = reaching({ port: 9000, pid: 4242 }, { outcome: STARTED });
     let seen = "";
 
     expect(await attempt(io, TREE, reachedOnRetry("payload"), (_data, url) => {
@@ -327,7 +352,8 @@ describe("attempt", () => {
 
   it("reports a start that failed, at the code of a daemon that cannot be reached", async () => {
     const { io, out, err } = capture();
-    const { reach } = reaching(undefined, { outcome: { failure: "tasma-daemon exited with code 1: port 8278 cannot be bound" } });
+    const outcome = { failure: "tasma-daemon exited with code 1: port 8278 cannot be bound" };
+    const { reach } = reaching({ port: 9000, pid: 4242 }, { outcome });
 
     expect(await attempt(io, TREE, throwing(UNREACHED), () => 0, { reach })).toBe(3);
     expect(out).toEqual([]);
@@ -491,10 +517,37 @@ describe("attempt", () => {
     expect(err.join("")).toBe("tasma: no daemon answered at http://127.0.0.1:9000\n");
   });
 
+  it("starts a daemon before a call that may not be repeated where the record names a daemon of another OS user", async () => {
+    const { io, err } = capture();
+    const { reach, starts } = reaching({ port: 9000, pid: 4242 }, { outcome: STARTED, found: "foreign" });
+    const { call, sent } = counted(ok("payload"));
+    let seen = "";
+
+    expect(await attempt(io, TREE, call, (_data, url) => {
+      seen = url;
+      return 0;
+    }, { reach, prove: true })).toBe(0);
+    expect(sent()).toBe(1);
+    expect(starts).toEqual([HOME]);
+    expect(seen).toBe("http://127.0.0.1:9100");
+    expect(err).toEqual([]);
+  });
+
+  it("sends no call that may not be repeated to an address stated by hand where a daemon of another OS user answers", async () => {
+    const { io, err } = capture();
+    const { reach, starts } = reaching(undefined, { found: "foreign" });
+    const { call, sent } = counted(ok("payload"));
+
+    expect(await attempt(io, EXPLICIT, call, () => 0, { reach, prove: true })).toBe(3);
+    expect(sent()).toBe(0);
+    expect(starts).toEqual([]);
+    expect(err.join("")).toBe(`tasma: the daemon at ${DAEMON_URL} belongs to another OS user\n`);
+  });
+
   // A daemon answered and refused, which no start would change.
   it("starts nothing behind a refusal", async () => {
     const { io, err } = capture();
-    const { reach, starts } = reaching(undefined);
+    const { reach, starts } = reaching(undefined, { found: "daemon" });
     const failure = { kind: "store", code: "task-not-found", message: "no such task" } as const;
 
     expect(await attempt(io, TREE, throwing(new ProtocolError(failure, 404)), () => 0, { reach })).toBe(1);
@@ -656,10 +709,94 @@ describe("the daemon token", () => {
     ],
   ] as const)("refuses with exit code 1 when the daemon refuses %s", async (_description, target, record, text) => {
     const { io, err } = capture();
-    const { reach, starts } = reaching(record);
+    const { reach, starts } = reaching(record, { found: "daemon" });
 
     expect(await attempt(io, target, throwing(UNAUTHORIZED), () => 0, { reach })).toBe(1);
     expect(err).toEqual([`tasma: ${text}\n`]);
     expect(starts).toEqual([]);
+  });
+
+  /** A call the daemon refuses for its token the first time, and answers the second time. */
+  function refusedOnce(): { call: () => Promise<Success<string>>; sent: () => number } {
+    let first = true;
+
+    return counted(() => {
+      if (!first) return Promise.resolve({ data: "payload", diagnostics: [] });
+
+      first = false;
+      return Promise.reject(UNAUTHORIZED);
+    });
+  }
+
+  // The 401 proves that the daemon ran nothing, so the second send is safe.
+  it("starts a daemon and sends the call once more where the record names a daemon of another OS user", async () => {
+    const { io, err, out } = capture();
+    const { reach, starts, probes } = reaching({ port: 9000, pid: 4242, token: "ab12" }, { outcome: STARTED, found: "foreign" });
+    const { call, sent } = refusedOnce();
+    let seen = "";
+
+    expect(await attempt(io, TREE, call, (data, url) => {
+      seen = url;
+      io.stdout.write(`${data}\n`);
+      return 0;
+    }, { reach })).toBe(0);
+    expect(sent()).toBe(2);
+    expect(starts).toEqual([HOME]);
+    expect(probes).toEqual(["http://127.0.0.1:9000"]);
+    expect(seen).toBe("http://127.0.0.1:9100");
+    expect(out).toEqual(["payload\n"]);
+    expect(err).toEqual([]);
+  });
+
+  it("refuses with the text of the token where the daemon a start brought up refuses the call too", async () => {
+    const { io, err } = capture();
+    const { reach, starts } = reaching({ port: 9000, pid: 4242, token: "ab12" }, { outcome: STARTED, found: "foreign" });
+    const { call, sent } = counted(throwing(UNAUTHORIZED));
+
+    expect(await attempt(io, TREE, call, () => 0, { reach })).toBe(1);
+    expect(sent()).toBe(2);
+    expect(starts).toEqual([HOME]);
+    expect(err).toEqual([
+      `tasma: the daemon needs a token, and ${RECORD_PATH} holds none for this port. Set TASMA_DAEMON_TOKEN, or restart`
+      + " the daemon with \"tasma daemon stop\".\n",
+    ]);
+  });
+
+  it("reports a start that failed behind a refusal of the token, and sends nothing more", async () => {
+    const { io, err } = capture();
+    const failure = "tasma-daemon exited with code 1: port 0 cannot be bound";
+    const { reach } = reaching({ port: 9000, pid: 4242, token: "ab12" }, { outcome: { failure }, found: "foreign" });
+    const { call, sent } = counted(throwing(UNAUTHORIZED));
+
+    expect(await attempt(io, TREE, call, () => 0, { reach })).toBe(3);
+    expect(sent()).toBe(1);
+    expect(err).toEqual([`tasma: ${failure}\n`]);
+  });
+
+  it("starts nothing behind a refusal of the token where the record names a daemon of this user", async () => {
+    const { io, err } = capture();
+    const { reach, starts, probes } = reaching({ port: 9000, pid: 4242, token: "ab12" }, { found: "daemon" });
+    const { call, sent } = counted(throwing(UNAUTHORIZED));
+
+    expect(await attempt(io, TREE, call, () => 0, { reach })).toBe(1);
+    expect(sent()).toBe(1);
+    expect(starts).toEqual([]);
+    expect(probes).toEqual(["http://127.0.0.1:9000"]);
+    expect(err).toEqual([
+      `tasma: the daemon refused the token from ${RECORD_PATH}. The token belongs to another run of the daemon. Run the`
+      + " command again; if it fails again, restart the daemon with \"tasma daemon stop\".\n",
+    ]);
+  });
+
+  it("sends a call that may not be repeated once, and probes nothing more, behind a refusal of the token", async () => {
+    const { io, err } = capture();
+    const { reach, starts, probes } = reaching({ port: 9000, pid: 4242, token: "ab12" }, { found: "daemon" });
+    const { call, sent } = counted(throwing(UNAUTHORIZED));
+
+    expect(await attempt(io, TREE, call, () => 0, { reach, prove: true })).toBe(1);
+    expect(sent()).toBe(1);
+    expect(starts).toEqual([]);
+    expect(probes).toEqual(["http://127.0.0.1:9000"]);
+    expect(err.join("")).toMatch(/^tasma: the daemon refused the token from /);
   });
 });

@@ -90,7 +90,7 @@ afterEach(() => {
 });
 
 describe("the daemon server", () => {
-  it("answers the liveness route with the name and the version of this daemon", async () => {
+  it("answers the liveness route with the name, the version and the OS user id of this daemon", async () => {
     const server = await startTestServer([]);
 
     const response = await get(server, "/health");
@@ -101,7 +101,7 @@ describe("the daemon server", () => {
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     await expect(response.json()).resolves.toEqual({
       ok: true,
-      data: { name: "tasma-daemon", version: manifest.version },
+      data: { name: "tasma-daemon", version: manifest.version, uid: process.getuid!() },
       diagnostics: [],
     });
   });

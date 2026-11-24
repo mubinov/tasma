@@ -42,6 +42,11 @@ function noDaemonAt(url: string): string {
   return `no daemon answered at ${url}`;
 }
 
+/** An address where the daemon of another OS user answered. */
+export function anotherUserAt(url: string): string {
+  return `the daemon at ${url} belongs to another OS user`;
+}
+
 /**
  * Why a call produced no answer, in the terms the remedy differs on: a status
  * means something answered that was not a Tasma daemon, a budget means the call
@@ -107,6 +112,9 @@ export function refuseAnswer(io: Io, url: string, what: string): number {
 
 const TOKEN_VARIABLE = "TASMA_DAEMON_TOKEN";
 
+/** A call the daemon refused for its token. */
+const UNAUTHORIZED = Symbol("unauthorized");
+
 /**
  * The token a call carries and where it was read, or why the record gave none:
  * no record, a record that cannot be read, a record of another address, or a
@@ -168,10 +176,6 @@ type Located = { url: string; credential: Credential; path: string; fromRecord: 
  *
  * The token of the record goes only to the address that record names, so a
  * listener on any other address never receives the token of a live daemon.
- *
- * No probe runs first for a call that may be sent again: the command's own call
- * is the probe, and a port that gives no usable answer is what makes a record
- * stale.
  */
 async function locate(target: Target, reach: Reach): Promise<Located> {
   const path = recordPath(target.home);
@@ -194,7 +198,8 @@ async function locate(target: Target, reach: Reach): Promise<Located> {
  * `print` returns the exit code because `attempt` classifies the call and not
  * the content: a command that has to refuse a well-formed answer says so by
  * returning a code of its own, and one with nothing to reject returns 0. It is
- * handed the address that answered, which a start on demand decides.
+ * handed the address that answered, which a start on demand decides, and
+ * whether that address is the one the record of the tree names.
  *
  * It is handed the answer as the wire carried it, whatever the type reads: the
  * envelope check reads no further than its discriminant, so no field may be read
@@ -204,6 +209,10 @@ async function locate(target: Target, reach: Reach): Promise<Located> {
  * retried once, except where the call ran out of time; an address stated by hand
  * is never started, because a caller who named one is pointing at a daemon that
  * is meant to be there already.
+ *
+ * A daemon of another OS user is no daemon this call can use: it refuses every
+ * token of this user. When it answers, the CLI starts the daemon of a tree, as
+ * when nothing answers, and refuses an address stated by hand.
  *
  * `prove: true` says the address is proven before the call goes out and the call
  * is never sent again behind a fault. Every call that changes state needs it:
@@ -215,13 +224,22 @@ async function locate(target: Target, reach: Reach): Promise<Located> {
  * daemon, or a listener still answering when the probe's budget ran out, takes
  * the call: something is there, and a start behind it is the second daemon over
  * one tree that nothing may spawn. Where nothing usable answered, a tree is
- * started for and an address stated by hand is refused.
+ * started for and an address stated by hand is refused. `prove: "recorded"`
+ * proves the address only where the record of the tree names it.
  *
- * A tree that holds no record is started for without a probe at all: its address
- * is then the machine-wide default, where a health answer proves the product and
- * not the tree, and a write to a daemon serving another tree writes into that
- * tree. The start is what tells the two apart, since a daemon already holding
- * that port stands the new one down and names the tree it serves.
+ * A proven call for a tree that holds no record is started for without a probe
+ * at all: its address is then the machine-wide default, where a health answer
+ * proves the product and not the tree, and a write to a daemon serving another
+ * tree writes into that tree. The start is what tells the two apart, since a
+ * daemon already holding that port stands the new one down and names the tree
+ * it serves. Any other call for such a tree probes the default first: the
+ * daemon of another OS user can hold it, and a call sent there gets only its
+ * refusal of the token.
+ *
+ * A call for a tree whose record names a port where the daemon of another OS
+ * user now answers gets that refusal too. The refusal proves the daemon ran
+ * nothing, so a call that is not proven is sent once more, to the daemon that a
+ * start brings up for this tree.
  *
  * `timeoutMs` replaces the budget of each request the client sends.
  *
@@ -232,20 +250,27 @@ export async function attempt<T>(
   io: Io,
   target: Target,
   call: (client: Client) => Promise<Success<T>>,
-  print: (data: T, url: string) => number,
-  options: { start?: boolean; reach?: Reach; prove?: boolean; timeoutMs?: number } = {},
+  print: (data: T, url: string, recorded: boolean) => number,
+  options: { start?: boolean; reach?: Reach; prove?: boolean | "recorded"; timeoutMs?: number } = {},
 ): Promise<number> {
   const reach = options.reach ?? REACH;
 
-  // A call whose address has to be proven is never retried behind a fault
-  // either; every other call is its own probe.
-  const probed = options.prove === true;
-
   const located = await locate(target, reach);
-  const { path, fromRecord } = located;
-  let { url, credential } = located;
+  const { url, credential, path, fromRecord } = located;
 
-  async function once(url: string, credential: Credential): Promise<number | TransportError> {
+  // A call whose address has to be proven is never retried behind a fault either.
+  const proven = options.prove === true || (options.prove === "recorded" && fromRecord);
+
+  /**
+   * The code of the call, or what keeps it from one: the fault of the
+   * transport, or the refusal of the token, which is written only once no
+   * second send follows it.
+   */
+  async function once(
+    url: string,
+    credential: Credential,
+    recorded: boolean,
+  ): Promise<number | TransportError | typeof UNAUTHORIZED> {
     let success: Success<T>;
 
     try {
@@ -258,10 +283,7 @@ export async function attempt<T>(
         // so a refusal that reached here carries no value to coerce.
         const { kind, code, message } = error.failure;
 
-        if (kind === "daemon" && code === "unauthorized") {
-          io.stderr.write(`tasma: ${unauthorizedText(credential, path)}\n`);
-          return REFUSED;
-        }
+        if (kind === "daemon" && code === "unauthorized") return UNAUTHORIZED;
 
         return reportRefusal(io, kind, code, message);
       }
@@ -271,7 +293,7 @@ export async function attempt<T>(
 
     // The answer before the diagnostics: where output is truncated it is the head
     // that survives, and the data is what was asked for.
-    const code = print(success.data, url);
+    const code = print(success.data, url, recorded);
 
     // Nothing behind a refusal: a non-zero code is `print` declining the answer,
     // and the notes came from whatever sent it.
@@ -289,10 +311,11 @@ export async function attempt<T>(
   }
 
   /**
-   * Where the daemon of this tree is once one has been started, with the token
-   * of the record it wrote, or the code the failed start reported with.
+   * Starts the daemon of this tree and sends the call to the address of the
+   * record it wrote, with that token. The outcome is final: a second start would
+   * spawn a daemon for a tree that just produced one.
    */
-  async function startHere(home: string): Promise<{ url: string; credential: Credential } | number> {
+  async function startAndSend(home: string): Promise<number> {
     const started = await reach.start({ home });
 
     if ("failure" in started) {
@@ -300,32 +323,57 @@ export async function attempt<T>(
       return UNREACHABLE;
     }
 
-    return { url: started.url, credential: credentialOf(target, path, started.record, started.url) };
+    const startedCredential = credentialOf(target, path, started.record, started.url);
+
+    return settle(await once(started.url, startedCredential, false), started.url, startedCredential);
+  }
+
+  /** The code of a send that nothing follows: no start and no second send. */
+  function settle(result: number | TransportError | typeof UNAUTHORIZED, url: string, credential: Credential): number {
+    if (result === UNAUTHORIZED) {
+      io.stderr.write(`tasma: ${unauthorizedText(credential, path)}\n`);
+      return REFUSED;
+    }
+
+    if (result instanceof TransportError) {
+      io.stderr.write(`tasma: ${transportText(result, url)}\n`);
+      return UNREACHABLE;
+    }
+
+    return result;
   }
 
   /** The tree a daemon may be started for, or nothing for an address stated by hand and a caller that forbade it. */
   const startHome = target.kind === "tree" && options.start !== false ? target.home : undefined;
 
-  if (probed) {
-    // The record is what names this tree's daemon, so a tree holding none is
-    // started for rather than probed at the machine-wide default.
-    const found = target.kind === "tree" && !fromRecord ? "none" : await reach.probe(url);
+  /** A tree reached at the machine-wide default, because it holds no record. */
+  const unrecordedTree = target.kind === "tree" && !fromRecord;
 
-    if (found === "none") {
+  if (proven || unrecordedTree) {
+    // The record is what names this tree's daemon, so a proven call for a tree
+    // holding none is started for rather than probed at the machine-wide default.
+    const found = proven && unrecordedTree ? "none" : await reach.probe(url);
+
+    if (found === "none" || found === "foreign") {
       if (startHome === undefined) {
-        io.stderr.write(`tasma: ${noDaemonAt(url)}\n`);
+        io.stderr.write(`tasma: ${found === "foreign" ? anotherUserAt(url) : noDaemonAt(url)}\n`);
         return UNREACHABLE;
       }
 
-      const started = await startHere(startHome);
-
-      if (typeof started === "number") return started;
-
-      ({ url, credential } = started);
+      return startAndSend(startHome);
     }
   }
 
-  const first = await once(url, credential);
+  const first = await once(url, credential, fromRecord);
+
+  if (first === UNAUTHORIZED) {
+    // A record of this tree that names the port of the daemon of another OS user is stale.
+    if (fromRecord && !proven && startHome !== undefined && (await reach.probe(url)) === "foreign") {
+      return startAndSend(startHome);
+    }
+
+    return settle(first, url, credential);
+  }
 
   if (!(first instanceof TransportError)) return first;
 
@@ -335,12 +383,12 @@ export async function attempt<T>(
   // per-process write queue cannot order.
   const timedOut = ranOut(first) !== undefined;
 
-  if (startHome === undefined || timedOut || probed) {
+  if (startHome === undefined || timedOut || proven) {
     // Named only where the address came from a record and nothing was there to
     // answer: the port answering nothing is what makes that record stale, while
     // a call that ran out of time reached something the record may well name and
-    // a probed one settled its record before it was sent.
-    const staleNote = !fromRecord || timedOut || probed
+    // a proven one settled its record before it was sent.
+    const staleNote = !fromRecord || timedOut || proven
       ? ""
       : `; the record at ${printable(path)} is stale`;
 
@@ -348,20 +396,8 @@ export async function attempt<T>(
     return UNREACHABLE;
   }
 
-  const started = await startHere(startHome);
-
-  if (typeof started === "number") return started;
-
-  // The one retry, against the address the new record names. Its outcome is
-  // final: a second start would spawn a daemon for a tree that just produced one.
-  const second = await once(started.url, started.credential);
-
-  if (second instanceof TransportError) {
-    io.stderr.write(`tasma: ${transportText(second, started.url)}\n`);
-    return UNREACHABLE;
-  }
-
-  return second;
+  // The one retry, against the address the new record names.
+  return startAndSend(startHome);
 }
 
 /**

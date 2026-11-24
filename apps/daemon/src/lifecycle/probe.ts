@@ -4,7 +4,7 @@
 // replied, so every part of the call is bounded: the wait, the reply, and what
 // is read off it.
 
-import { createClient, DAEMON_NAME, DEFAULT_DAEMON_HOST } from "@tasma/protocol";
+import { createClient, DAEMON_NAME, DEFAULT_DAEMON_HOST, ofAnotherUser, TransportError } from "@tasma/protocol";
 import type { Transport } from "@tasma/protocol";
 
 /**
@@ -14,8 +14,12 @@ import type { Transport } from "@tasma/protocol";
  */
 const PROBE_TIMEOUT_MS = 1000;
 
+/** The budget of a probe in words, for a message that names it. */
+export const PROBE_BUDGET_TEXT = new Intl.NumberFormat("en", { style: "unit", unit: "second", unitDisplay: "long" })
+  .format(PROBE_TIMEOUT_MS / 1000);
+
 /**
- * How much of a reply is read. A health answer is two short fields, and the
+ * How much of a reply is read. A health answer is three short fields, and the
  * budget alone would let a process that holds the port send for a whole second.
  */
 const PROBE_BODY_LIMIT = 64 * 1024;
@@ -49,13 +53,22 @@ async function replyBody(response: Response): Promise<unknown> {
 }
 
 /**
- * Whether a Tasma daemon answers on this port.
+ * What answers on a port: a daemon of this OS user, a daemon of another OS
+ * user, a process that did not reply within the budget, or none of these.
+ *
+ * The budget running out is its own answer because something accepted the
+ * connection, and it can be a daemon of this user that replies slowly.
+ */
+export type Probed = "mine" | "foreign" | "late" | "none";
+
+/**
+ * What answers on this port.
  *
  * The reply is read through the contract's own client rather than by hand, so a
- * body that is no envelope answers `false` here instead of throwing somewhere
- * else. Any fault at all answers `false`.
+ * body that is no envelope answers `none` here instead of throwing somewhere
+ * else. Any fault other than the budget answers `none`.
  */
-export async function daemonAnswers(port: number): Promise<boolean> {
+export async function probeDaemon(port: number): Promise<Probed> {
   // Health is the one route this transport carries: a read, so it sends no body
   // and needs no media type.
   const transport: Transport = async ({ method, path }) => {
@@ -72,10 +85,17 @@ export async function daemonAnswers(port: number): Promise<boolean> {
     const { data } = await createClient(transport).readHealth();
     // Read as the wire carries it: the envelope check reads no further than its
     // discriminant, so the answer is whatever the port sent.
-    const answer = data as { name?: unknown } | null | undefined;
+    const answer = data as { name?: unknown; uid?: unknown } | null | undefined;
 
-    return answer?.name === DAEMON_NAME;
-  } catch {
-    return false;
+    if (answer?.name !== DAEMON_NAME) return "none";
+
+    return ofAnotherUser(answer, process.getuid!()) ? "foreign" : "mine";
+  } catch (error) {
+    // The client wraps whatever the transport threw, so the budget is read off
+    // the cause. An aborted request rejects under either name, whichever of the
+    // headers and the body it stalled in.
+    const cause = error instanceof TransportError ? error.cause : undefined;
+
+    return cause instanceof Error && (cause.name === "TimeoutError" || cause.name === "AbortError") ? "late" : "none";
   }
 }

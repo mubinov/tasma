@@ -22,7 +22,7 @@ Global options go before `<group>`. `tasma <group> --help` lists the commands of
 | `TASMA_DAEMON_TOKEN` | The daemon token. The default is the `token` in `$HOME/.tasma/daemon.json`, sent only to the address that file names. The daemon makes a new token each time it starts, so set the variable again after a restart. A value with a space, a control character or a character outside ASCII is a usage error. |
 | `HOME` | The data directory is `$HOME/.tasma`. |
 
-When no address is given, tasma reads `$HOME/.tasma/daemon.json`. If that file is missing or not valid, it uses `http://127.0.0.1:8278`. If no daemon answers there, the command starts one. `daemon status` and `daemon stop` never start a daemon. tasma never starts a daemon at an address given by `--daemon` or `TASMA_DAEMON_URL`.
+When no address is given, tasma reads `$HOME/.tasma/daemon.json` and calls the address that it names. If that file is missing or not valid, tasma calls `http://127.0.0.1:8278` when a daemon of your OS user answers there, and starts a daemon otherwise. If no daemon answers at the address of the file, or a daemon of another OS user answers there, the command starts one. The daemon listens on port 8278. When another process holds that port, for example the daemon of another OS user on the same Mac, the daemon listens on a free port, and `daemon.json` names it. `daemon status` and `daemon stop` never start a daemon. tasma never starts a daemon at an address given by `--daemon` or `TASMA_DAEMON_URL`.
 
 The daemon refuses each request without its token, except its health check and the task link page. tasma then fails with exit code 1 and a text that tells why it has no valid token and how to get one: run the command again, call the address that `daemon.json` names, set `TASMA_DAEMON_TOKEN`, or restart the daemon.
 
@@ -250,12 +250,12 @@ The daemon serves `GET /task/<TAG>-<number>` without a token, for task links in 
 
 ### `tasma daemon start`
 
-Start the daemon if none answers. Prints `tasma-daemon <version> at <url>`.
+Start the daemon if no daemon of your OS user answers. Prints `tasma-daemon <version> at <url>`.
 
 ### `tasma daemon status`
 
-Print `tasma-daemon <version> at <url>`. If no daemon answers, the command fails with exit code 3.
+Print `tasma-daemon <version> at <url>`. If no daemon answers, or only the daemon of another OS user answers, the command fails with exit code 3.
 
 ### `tasma daemon stop`
 
-Stop the daemon and wait up to 10 seconds. Prints `tasma-daemon at <url> stopped`. If no daemon runs, prints `no daemon is running` and exits with code 0.
+Stop the daemon and wait up to 10 seconds. Prints `tasma-daemon at <url> stopped`. If no daemon of your OS user runs, prints `no daemon is running` and exits with code 0.

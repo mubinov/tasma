@@ -7,7 +7,7 @@
 import { constants, open } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  createClient, DAEMON_NAME, DAEMON_RECORD_FILE, parseDaemonRecord, TransportError, TREE_DIRNAME,
+  createClient, DAEMON_NAME, DAEMON_RECORD_FILE, ofAnotherUser, parseDaemonRecord, TransportError, TREE_DIRNAME,
 } from "@tasma/protocol";
 import type { DaemonRecord, Transport } from "@tasma/protocol";
 import { ranOutOfTime, replyText } from "./transport.js";
@@ -27,7 +27,7 @@ export const RECORD_LIMIT = 4096;
 export const PROBE_TIMEOUT_MS = 1000;
 
 /**
- * How much of a reply is read. A health answer is two short fields, and the
+ * How much of a reply is read. A health answer is three short fields, and the
  * budget alone would let whatever holds the recorded port send for the whole of
  * it.
  */
@@ -102,15 +102,16 @@ export async function readRecord(path: string): Promise<DaemonRecord | undefined
 }
 
 /**
- * What a probe found at an address: a Tasma daemon, a listener that had not
- * answered within the budget, or neither — nothing listening, an answer from
- * something that is not a daemon, and every other fault.
+ * What a probe found at an address: a Tasma daemon of this OS user, a Tasma
+ * daemon of another OS user, a listener that had not answered within the
+ * budget, or none of these — nothing listening, an answer from something that
+ * is not a daemon, and every other fault.
  *
  * The budget running out is its own answer because something accepted the
  * connection. A caller that starts a daemon where nothing answered would
  * otherwise start a second one over the tree a slow daemon already serves.
  */
-export type Probed = "daemon" | "late" | "none";
+export type Probed = "daemon" | "foreign" | "late" | "none";
 
 /**
  * What answers at this address.
@@ -143,9 +144,11 @@ export async function probe(url: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<
     const { data } = await createClient(transport).readHealth();
     // Read as the wire carries it: the envelope check reads no further than its
     // discriminant, so the answer is whatever the port sent.
-    const answer = data as { name?: unknown } | null | undefined;
+    const answer = data as { name?: unknown; uid?: unknown } | null | undefined;
 
-    return answer?.name === DAEMON_NAME ? "daemon" : "none";
+    if (answer?.name !== DAEMON_NAME) return "none";
+
+    return ofAnotherUser(answer, process.getuid!()) ? "foreign" : "daemon";
   } catch (error) {
     // The client wraps whatever the transport threw, so the budget is read off
     // the cause rather than off the error the call rejected with.
@@ -153,7 +156,10 @@ export async function probe(url: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<
   }
 }
 
-/** Whether a Tasma daemon answers at this address. One that had not answered within the budget is not one yet. */
+/**
+ * Whether a Tasma daemon of this OS user answers at this address. One that had
+ * not answered within the budget is not one yet.
+ */
 export async function daemonAnswers(url: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<boolean> {
   return (await probe(url, timeoutMs)) === "daemon";
 }

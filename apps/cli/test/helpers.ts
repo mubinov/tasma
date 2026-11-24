@@ -10,6 +10,9 @@ import { DAEMON_NAME } from "@tasma/protocol";
 import type { DaemonRecord } from "@tasma/protocol";
 import { onTestFinished } from "vitest";
 import { readRecord, recordPath } from "../src/daemon/record.js";
+import type { Probed, RecordRead } from "../src/daemon/record.js";
+import type { StartOutcome } from "../src/daemon/start.js";
+import type { Reach } from "../src/failure.js";
 import type { Command, Io, Source, Target } from "../src/types.js";
 
 export type Handler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>;
@@ -98,6 +101,39 @@ export async function startServer(handle: Handler): Promise<TestServer> {
           else reject(error);
         });
       }),
+  };
+}
+
+/**
+ * The tree as the test states it: what the record holds, what a start of one
+ * comes to, and what a probe of the address it gave finds.
+ */
+export function reaching(
+  record: RecordRead | undefined,
+  options: { outcome?: StartOutcome; found?: Probed } = {},
+): { reach: Reach; starts: string[]; probes: string[] } {
+  const { outcome, found = "none" } = options;
+  const starts: string[] = [];
+  const probes: string[] = [];
+
+  return {
+    starts,
+    probes,
+    reach: {
+      readRecord: () => Promise.resolve(record ?? "absent"),
+      probe: (url) => {
+        probes.push(url);
+
+        return Promise.resolve(found);
+      },
+      start: ({ home }) => {
+        starts.push(home);
+
+        if (outcome === undefined) throw new Error("this target must never be started");
+
+        return Promise.resolve(outcome);
+      },
+    },
   };
 }
 

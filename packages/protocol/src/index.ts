@@ -74,7 +74,7 @@ export type {
   StoreErrorCode,
   Success,
 } from "./errors.js";
-export { DAEMON_NAME } from "./health.js";
+export { DAEMON_NAME, ofAnotherUser } from "./health.js";
 export type { Health } from "./health.js";
 export { printable } from "./printable.js";
 export type { Config, Project, ProjectChange, ProjectInput, ProjectRename, ProjectSummary } from "./project.js";

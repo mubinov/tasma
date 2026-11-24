@@ -3,15 +3,16 @@ import { once } from "node:events";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { execPath } from "node:process";
-import { DAEMON_NAME } from "@tasma/protocol";
+import { DAEMON_NAME, DEFAULT_DAEMON_URL } from "@tasma/protocol";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 // Relative: this package declares no exports, so its own name does not resolve.
-import { daemon, stop } from "../../src/commands/daemon.js";
+import { daemon, start, status, stop } from "../../src/commands/daemon.js";
 import { PROBE_TIMEOUT_MS, recordPath } from "../../src/daemon/record.js";
 import { OUTPUT_FILE, startDaemon } from "../../src/daemon/start.js";
+import type { StartOutcome } from "../../src/daemon/start.js";
 import { run } from "../../src/run.js";
 import {
-  at, capture, CWD, fakeDaemon, seedRecord, serveHealth, startServer, tasmaHealth, TEST_VERSION, treeHome,
+  at, capture, CWD, fakeDaemon, reaching, seedRecord, serveHealth, startServer, tasmaHealth, TEST_VERSION, treeHome,
   unusedUrl, UNUSED_PID,
 } from "../helpers.js";
 
@@ -24,6 +25,22 @@ const SLOW_REPLY_MS = PROBE_TIMEOUT_MS + 500;
 
 /** Long enough for a tick of the wait and short enough to spend, for the case that runs the budget out. */
 const SHORT_BUDGET_MS = 300;
+
+/** A user id that is not the one of this process. */
+const OTHER_UID = process.getuid!() + 1;
+
+/** The home of a tree that a `Reach` states, so nothing on this machine is read or started. */
+const HOME = "/tmp/sample-tree";
+const RECORD = recordPath(HOME);
+
+function portOf(url: string): number {
+  return Number(new URL(url).port);
+}
+
+/** A start that brings the daemon of the tree up at `url`. */
+function startedAt(url: string): StartOutcome {
+  return { url, record: { port: portOf(url), pid: 4343 } };
+}
 
 /** A daemon of this tree, as the fake standing in for one, at the address its record names. */
 async function runningIn(home: string, scenario = "serves"): Promise<string> {
@@ -194,6 +211,39 @@ describe("daemon status", () => {
     expect(out).toEqual([]);
     expect(err.join("")).toContain(`; the record at ${path} is stale\n`);
   });
+
+  it("refuses the daemon of another OS user at the port of the record, and names the record as stale", async () => {
+    const server = await startServer(serveHealth({ name: DAEMON_NAME, version: TEST_VERSION, uid: OTHER_UID }));
+    onTestFinished(() => server.close());
+    const { reach, starts } = reaching({ port: portOf(server.url), pid: 4242 }, { found: "daemon" });
+    const { io, out, err } = capture();
+
+    expect(await status([], io, { kind: "tree", home: HOME }, CWD, { reach })).toBe(3);
+    expect(out).toEqual([]);
+    expect(err.join("")).toBe(`tasma: the daemon at ${server.url} belongs to another OS user; the record at ${RECORD} is stale\n`);
+    expect(starts).toEqual([]);
+  });
+
+  it("refuses the daemon of another OS user at an address stated by hand, and names no record", async () => {
+    const server = await startServer(serveHealth({ name: DAEMON_NAME, version: TEST_VERSION, uid: OTHER_UID }));
+    onTestFinished(() => server.close());
+    const { io, out, err } = capture();
+
+    expect(await daemon.run(["status"], io, at(server.url), CWD)).toBe(3);
+    expect(out).toEqual([]);
+    expect(err.join("")).toBe(`tasma: the daemon at ${server.url} belongs to another OS user\n`);
+  });
+
+  it("refuses the daemon of another OS user at the built-in address where the tree has no record", async () => {
+    const { reach, starts, probes } = reaching("absent", { found: "foreign" });
+    const { io, out, err } = capture();
+
+    expect(await status([], io, { kind: "tree", home: HOME }, CWD, { reach })).toBe(3);
+    expect(out).toEqual([]);
+    expect(err.join("")).toBe(`tasma: the daemon at ${DEFAULT_DAEMON_URL} belongs to another OS user\n`);
+    expect(probes).toEqual([DEFAULT_DAEMON_URL]);
+    expect(starts).toEqual([]);
+  });
 });
 
 describe("daemon start", () => {
@@ -236,6 +286,32 @@ describe("daemon start", () => {
     expect(out.join("")).toBe(`${DAEMON_NAME} 0.0.0 at ${url}\n`);
     expect(err).toEqual([]);
   });
+
+  it("starts the daemon of the tree where the record names the daemon of another OS user", async () => {
+    const started = await startServer(tasmaHealth);
+    onTestFinished(() => started.close());
+    const { reach, starts, probes } = reaching({ port: 9000, pid: 4242 }, { found: "foreign", outcome: startedAt(started.url) });
+    const { io, out, err } = capture();
+
+    expect(await start([], io, { kind: "tree", home: HOME }, CWD, { reach })).toBe(0);
+    expect(probes).toEqual(["http://127.0.0.1:9000"]);
+    expect(starts).toEqual([HOME]);
+    expect(out.join("")).toBe(`${DAEMON_NAME} ${TEST_VERSION} at ${started.url}\n`);
+    expect(err).toEqual([]);
+  });
+
+  it("starts the daemon of the tree where it has no record and the daemon of another OS user holds the built-in address", async () => {
+    const started = await startServer(tasmaHealth);
+    onTestFinished(() => started.close());
+    const { reach, starts, probes } = reaching("absent", { found: "foreign", outcome: startedAt(started.url) });
+    const { io, out, err } = capture();
+
+    expect(await start([], io, { kind: "tree", home: HOME }, CWD, { reach })).toBe(0);
+    expect(probes).toEqual([DEFAULT_DAEMON_URL]);
+    expect(starts).toEqual([HOME]);
+    expect(out.join("")).toBe(`${DAEMON_NAME} ${TEST_VERSION} at ${started.url}\n`);
+    expect(err).toEqual([]);
+  });
 });
 
 describe("daemon stop", () => {
@@ -271,6 +347,23 @@ describe("daemon stop", () => {
     expect(out.join("")).toBe("no daemon is running\n");
     expect(err.join("")).toBe(`tasma: the record at ${path} is stale\n`);
     expect(existsSync(path)).toBe(true);
+  });
+
+  it("names a record whose port gives the daemon of another OS user as stale, and signals nothing", async () => {
+    const home = treeHome();
+    const server = await startServer(serveHealth({ name: DAEMON_NAME, version: TEST_VERSION, uid: OTHER_UID }));
+    onTestFinished(() => server.close());
+    const path = seedRecord(home, { port: portOf(server.url), pid: UNUSED_PID });
+    const kill = vi.spyOn(process, "kill");
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    const { io, out, err } = capture();
+
+    expect(await run(["daemon", "stop"], io, { HOME: home }, CWD)).toBe(0);
+    expect(out.join("")).toBe("no daemon is running\n");
+    expect(err.join("")).toBe(`tasma: the record at ${path} is stale\n`);
+    expect(kill).not.toHaveBeenCalled();
   });
 
   // A daemon of another tree took the recorded port, and this CLI does not own it.

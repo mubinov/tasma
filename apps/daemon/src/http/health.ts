@@ -3,5 +3,8 @@ import manifest from "../../../../package.json" with { type: "json" };
 
 /** The liveness answer, whose version is the release version of the root manifest. */
 export function readHealth(): Promise<Success<Health>> {
-  return Promise.resolve({ data: { name: "tasma-daemon", version: manifest.version }, diagnostics: [] });
+  return Promise.resolve({
+    data: { name: "tasma-daemon", version: manifest.version, uid: process.getuid!() },
+    diagnostics: [],
+  });
 }

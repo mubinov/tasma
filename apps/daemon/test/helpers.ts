@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -13,6 +13,7 @@ import type { ChatEvent, DaemonRecord, Diagnostic, Failure } from "@tasma/protoc
 import { REMOVED_VARIABLES } from "../src/agents/process.js";
 import type { AnyLiveChat } from "../src/chats/registry.js";
 import { DaemonError } from "../src/http/failure.js";
+import { readHealth } from "../src/http/health.js";
 import type { RouteEntry } from "../src/http/router.js";
 import { createDaemonServer } from "../src/http/server.js";
 import type { DaemonServerOptions } from "../src/http/server.js";
@@ -417,10 +418,29 @@ export async function stillPending(promise: Promise<unknown>): Promise<boolean> 
  * Node drops the body for a status that carries none, such as 204.
  */
 export async function foreignPort(body: string, status = 200): Promise<number> {
-  const server = createServer((_request, response) => {
+  return listening(createServer((_request, response) => {
     response.writeHead(status, { "content-type": "application/json" });
     response.end(body);
-  });
+  }));
+}
+
+/** A user id that is not the one of this process. */
+export const OTHER_UID = process.getuid!() + 1;
+
+/** A port where a fake daemon answers health with the answer of this daemon, `fields` replacing its own. */
+export async function fakeDaemonPort(fields: Record<string, unknown>): Promise<number> {
+  const { data } = await readHealth();
+
+  return foreignPort(JSON.stringify({ ok: true, data: { ...data, ...fields }, diagnostics: [] }));
+}
+
+/** A port held by a process that accepts each call and never replies. */
+export async function stalledPort(): Promise<number> {
+  return listening(createServer(() => undefined));
+}
+
+/** The port of a server on a free port, closed when the test ends. */
+export async function listening(server: Server): Promise<number> {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   onTestFinished(async () => {
