@@ -223,6 +223,11 @@ export function updateLine(update: SessionUpdate): string {
   return line({ method: "session/update", params: { sessionId: SESSION, update } });
 }
 
+/** Keeps the params as the client sent them: the schema of the SDK drops each field it does not know. */
+function asSent<Params>(params: unknown): Params {
+  return params as Params;
+}
+
 /** A promise that never settles: a request of the agent that stays open. */
 export function forever<T>(): Promise<T> {
   return new Promise<T>(() => {});
@@ -305,11 +310,11 @@ export function fakeAgent(script: Script = {}): {
         fake.initialize = params;
         return { protocolVersion: PROTOCOL_VERSION };
       })
-      .onRequest("session/new", ({ params }) => {
+      .onRequest("session/new", asSent<NewSessionRequest>, ({ params }) => {
         fake.newSession = params;
         return script.newSession?.(params, fake) ?? { sessionId: SESSION, configOptions: fake.configOptions };
       })
-      .onRequest("session/resume", ({ params }) => {
+      .onRequest("session/resume", asSent<ResumeSessionRequest>, ({ params }) => {
         fake.resumes.push(params);
         return script.resume?.(params, fake) ?? { configOptions: fake.configOptions };
       })

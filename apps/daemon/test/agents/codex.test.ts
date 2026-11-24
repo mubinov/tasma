@@ -77,13 +77,25 @@ describe("codexAdapter", () => {
     expect(codexAdapter).not.toHaveProperty("backgroundCommands");
   });
 
+  it("appends the context of the project to the system prompt of a project chat", () => {
+    expect(codexAdapter.projectSystemPrompt?.("ALPHA")).toBe(
+      "This chat runs in the Tasma app, a local task manager. The chat belongs to the Tasma project with the tag "
+      + "ALPHA, and your working directory is the folder of this project. The chat has no task and no workflow step.\n\n"
+      + "Before you act on a request about tasks, comments, projects or workflows, load the tasma skill. If the skill "
+      + "is not available, use `tasma --help`.\n\n"
+      + "Treat each message as a direct request, and do what the user asks. Do not start a task, set a step or run a "
+      + "workflow step unless the user asks for it.",
+    );
+  });
+
   it("refreshes its options with an empty meta, and closes its session before each end of its process", () => {
     expect(codexAdapter.optionsSessionMeta).toEqual({});
     expect(codexAdapter.closeBeforeEnd).toBe(true);
   });
 
-  it("reads the error of Codex for a thread it does not have as a lost session", () => {
+  it("reads each error of Codex for a thread it does not have as a lost session", () => {
     expect(codexAdapter.sessionLost?.("no rollout found for thread id 0199a4f2-7c1e-7d40-9b6a-3f2e8c5d1a70")).toBe(true);
+    expect(codexAdapter.sessionLost?.("thread not loaded: 0199a4f2-7c1e-7d40-9b6a-3f2e8c5d1a70")).toBe(true);
     expect(codexAdapter.sessionLost?.("Codex process has exited with code 1: unknown flag")).toBe(false);
   });
 

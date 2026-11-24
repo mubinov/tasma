@@ -21,12 +21,22 @@ import type { AgentAdapter, AgentEnv, AgentLaunch, LaunchResult } from "../../sr
 import { codexAdapter } from "../../src/agents/codex.js";
 import type { IdleLimit } from "../../src/chats/idle.js";
 import { createChatRegistry } from "../../src/chats/registry.js";
-import type { ChatRegistry, LiveChat } from "../../src/chats/registry.js";
+import type { AnyLiveChat, ChatRegistry, LiveChat } from "../../src/chats/registry.js";
 import { createChatRunner } from "../../src/chats/runner.js";
 import type { ChatRunner } from "../../src/chats/runner.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import { WriteQueue } from "../../src/tasks/serialize.js";
-import { logOf, plant, plantChat, projectConfig, projectsRoot, target, taskFile, taskText } from "../helpers.js";
+import {
+  logOf,
+  plant,
+  plantChat,
+  plantProjectChat,
+  projectConfig,
+  projectsRoot,
+  target,
+  taskFile,
+  taskText,
+} from "../helpers.js";
 import { answerText, lastNonUpdate, runs, TURN_MS, turnsEnded, within } from "./real-chat.js";
 
 const WORD = `lantern-${String(Math.floor(Math.random() * 1_000_000))}`;
@@ -56,6 +66,7 @@ async function tree(): Promise<Tree> {
 
 type WorldOptions = {
   idleLimit?: IdleLimit;
+  projectIdleMs?: number;
   spawn?: (launch: AgentLaunch, folder: string) => AgentProcess;
   /** Without it, the runner works on a new tree. */
   tree?: Tree;
@@ -78,6 +89,7 @@ async function world(
     env: env(),
     spawn: options.spawn,
     idleLimit: options.idleLimit,
+    projectIdleMs: options.projectIdleMs,
     defaults: openAgentDefaults(root),
     agentOptions: openAgentOptions(root),
     optionsWorkParent: options.optionsWorkParent,
@@ -90,8 +102,18 @@ function start(runner: ChatRunner, text: string): Promise<LiveChat> {
   return runner.start({ tag: "ALPHA", task: "ALPHA-1", step: "dev:build", agent: "codex", text, client: "test" });
 }
 
+function startProjectChat(runner: ChatRunner, text: string): Promise<AnyLiveChat> {
+  return runner.startProjectChat({ tag: "ALPHA", title: "Project chat", agent: "codex", text, client: "test" });
+}
+
+// A `tasma` call from the HOME of the test reaches the daemon on the default port, so the agent runs no command.
+const TAG_QUESTION = [
+  "Which Tasma project tag does this chat belong to?",
+  "Answer from your instructions alone, and run no command. Reply with the tag alone.",
+].join(" ");
+
 /** Checks that the first turn ended with an answer of the agent. */
-async function answered(live: LiveChat): Promise<ChatEvent[]> {
+async function answered(live: AnyLiveChat): Promise<ChatEvent[]> {
   const log = await turnsEnded(live, 1);
   expect(lastNonUpdate(log)).toMatchObject({ kind: "turn-end" });
   expect(answerText(log)).not.toBe("");
@@ -203,6 +225,44 @@ describe.skipIf(process.env.TASMA_REAL_CODEX !== "1")("a chat with the real Code
 
     expect(await within(TURN_MS, async () => (await logOf(live)).at(-1)?.kind === "failed")).toBe(true);
     expect((await logOf(live)).at(-1)).toEqual({ kind: "failed", reason: codexAdapter.sessionGone });
+  }, 2 * TURN_MS);
+
+  it("names the tag of its project in the first turn of a project chat", async () => {
+    const { runner } = await world(codexAdapter);
+
+    const live = await startProjectChat(runner, TAG_QUESTION);
+
+    expect(answerText(await answered(live))).toContain("ALPHA");
+  }, 2 * TURN_MS);
+
+  it("names the tag of its project after the idle stop of a project chat", async () => {
+    const limitMs = 5000;
+    const { runner } = await world(codexAdapter, { projectIdleMs: limitMs });
+    const live = await startProjectChat(runner, "Reply with the single word: ok");
+    const first = await answered(live);
+
+    expect(await within(limitMs + 30_000, () => runner.running(live) === undefined)).toBe(true);
+
+    await runner.message(live, { text: TAG_QUESTION, client: "test" });
+    const second = (await turnsEnded(live, 2)).slice(first.length);
+    expect(lastNonUpdate(second)).toMatchObject({ kind: "turn-end" });
+    expect(answerText(second)).toContain("ALPHA");
+  }, 3 * TURN_MS);
+
+  it("fails with the text of a lost session when Codex does not have the session of a project chat", async () => {
+    const { runner, chats, root, folder } = await world(codexAdapter);
+    await plantProjectChat(
+      root,
+      { tag: "ALPHA", chat: 1 },
+      [{ kind: "user", text: "Reply with the single word: pong", client: "test" }, { kind: "turn-end", stopReason: "end_turn" }],
+      { agent: "codex", folder, session: randomUUID() },
+    );
+    const live = await chats.getProjectChat("ALPHA", 1);
+
+    await runner.message(live, { text: "Reply with the single word: pong", client: "test" });
+
+    expect(await within(TURN_MS, async () => (await logOf(live)).at(-1)?.kind === "failed")).toBe(true);
+    expect((await logOf(live)).at(-1)).toEqual({ kind: "failed", reason: codexAdapter.projectSessionGone });
   }, 2 * TURN_MS);
 
   it("asks a blocking question in Default mode, and goes on with the answer", async () => {

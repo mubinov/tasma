@@ -17,6 +17,7 @@ import {
   thisHost,
 } from "./process.js";
 import type { AgentHost } from "./process.js";
+import { projectChatContext } from "./project-chat.js";
 
 const ADAPTER_ENTRY = "@agentclientprotocol/codex-acp/dist/index.js";
 
@@ -121,8 +122,9 @@ export function createCodexAdapter(options: { host?: AgentHost; commandTimeoutMs
     notLoggedIn: 'Codex is not logged in. Run "codex login" in a terminal.',
     sessionGone: "Codex no longer has the conversation of this chat. Start a new chat for this step.",
     projectSessionGone: "Codex no longer has the conversation of this chat. Start a new chat.",
-    // A resume of a thread that Codex does not have fails with this text of Codex, not with -32002.
-    sessionLost: (reason) => reason.includes("no rollout found for thread id"),
+    // A resume of a thread that Codex does not have fails with one of these texts of Codex, not with -32002:
+    // the first with no `systemPrompt`, the second with one.
+    sessionLost: (reason) => reason.includes("no rollout found for thread id") || reason.includes("thread not loaded:"),
     launch(env) {
       const path = childPath(env.PATH);
       const codex = findBinary(path, "codex");
@@ -144,6 +146,7 @@ export function createCodexAdapter(options: { host?: AgentHost; commandTimeoutMs
       await import("@agentclientprotocol/codex-acp/dist/index.js");
     },
     filterUpdate: (update) => update,
+    projectSystemPrompt: projectChatContext,
     // Codex keeps a thread with no turn in memory alone, so the session of a refresh leaves nothing on disk.
     optionsSessionMeta: {},
     // A background terminal of Codex runs in a process session of its own, out of reach of the kill of the group.

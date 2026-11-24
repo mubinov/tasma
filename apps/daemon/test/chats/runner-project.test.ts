@@ -21,6 +21,7 @@ import {
   promptText,
   requestOf,
   SAVED_MANUAL,
+  START,
   world,
 } from "./runner-world.js";
 
@@ -426,6 +427,54 @@ describe("the session meta of a project chat", () => {
     await logUntil(live, "turn-end");
 
     expect(processes[0]?.newSession).toEqual({ cwd: folder, mcpServers: [] });
+  });
+});
+
+describe("the system prompt of a project chat", () => {
+  const promptOf = (tag: string) => `The project is ${tag}.`;
+  const fieldOf = (tag: string) => ({ mode: "append", content: [{ type: "text", text: promptOf(tag) }] });
+
+  function withSystemPrompt(): AgentAdapter {
+    return { ...fakeAdapter().adapter, projectSystemPrompt: promptOf };
+  }
+
+  it("opens the session with the text of the tag, and resumes it with the same text in the next process", async () => {
+    const { runner, processes, folder } = await world({ adapter: withSystemPrompt() });
+    const live = await runner.startProjectChat(PROJECT_START);
+    await logUntil(live, "turn-end");
+
+    await runner.stop(live);
+    await runner.message(live, NEXT);
+    await until(() => processes[1]?.prompts.length === 1, "the agent got the message");
+
+    expect(processes[0]?.newSession).toEqual({ cwd: folder, mcpServers: [], systemPrompt: fieldOf("ALPHA") });
+    expect(processes[1]?.resumes).toEqual([{ sessionId: SESSION, cwd: folder, mcpServers: [], systemPrompt: fieldOf("ALPHA") }]);
+  });
+
+  it("resumes with the new tag after a rename of the project", async () => {
+    const { runner, processes, folder, server } = await world({ adapter: withSystemPrompt() });
+    const live = await runner.startProjectChat(PROJECT_START);
+    await logUntil(live, "turn-end");
+
+    await runner.stop(live);
+    expect((await send(server, "POST", "/projects/ALPHA/rename", { tag: "BETA" })).status).toBe(200);
+    await runner.message(live, NEXT);
+    await until(() => processes[1]?.prompts.length === 1, "the agent got the message");
+
+    expect(processes[1]?.resumes).toEqual([{ sessionId: SESSION, cwd: folder, mcpServers: [], systemPrompt: fieldOf("BETA") }]);
+  });
+
+  it("is not sent on the new and the resumed session of a step chat", async () => {
+    const { runner, processes, folder } = await world({ adapter: withSystemPrompt() });
+    const live = await runner.start(START);
+    await logUntil(live, "turn-end");
+
+    await runner.stop(live);
+    await runner.message(live, NEXT);
+    await until(() => processes[1]?.prompts.length === 1, "the agent got the message");
+
+    expect(processes[0]?.newSession).toEqual({ cwd: folder, mcpServers: [] });
+    expect(processes[1]?.resumes).toEqual([{ sessionId: SESSION, cwd: folder, mcpServers: [] }]);
   });
 });
 

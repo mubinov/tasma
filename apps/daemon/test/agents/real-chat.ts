@@ -3,7 +3,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ChatEvent } from "@tasma/protocol";
-import type { LiveChat } from "../../src/chats/registry.js";
+import type { AnyLiveChat } from "../../src/chats/registry.js";
 import { logOf } from "../helpers.js";
 
 export const TURN_MS = 120_000;
@@ -19,7 +19,7 @@ export async function runs(text: string): Promise<boolean> {
 }
 
 /** Waits until the log holds `turns` turn ends, or a failure, and gives the log. */
-export async function turnsEnded(live: LiveChat, turns: number): Promise<ChatEvent[]> {
+export async function turnsEnded(live: AnyLiveChat, turns: number): Promise<ChatEvent[]> {
   let log: ChatEvent[] = [];
   const ended = () => log.filter((event) => event.kind === "turn-end").length >= turns;
   const deadline = Date.now() + TURN_MS;

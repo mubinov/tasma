@@ -26,6 +26,9 @@ const RESOURCE_NOT_FOUND = RequestError.resourceNotFound().code;
 /** The steering extension of the adapter of Claude. */
 const STEER_METHOD = "_session/steering";
 
+/** The standard field of `session/new` and `session/resume`, which the types of the SDK do not have. */
+type SystemPromptField = { systemPrompt?: { mode: "append"; content: { type: "text"; text: string }[] } };
+
 export type AgentEnd = { code: number | null; signal: NodeJS.Signals | null } | { error: Error };
 
 export type AgentProcess = {
@@ -65,13 +68,17 @@ export type AgentConnection = {
   closed: Promise<void>;
   /** The first request on a connection. */
   initialize(): Promise<void>;
-  /** Opens a new session in `folder`. `meta` goes as the `_meta` of the request. */
-  create(folder: string, meta?: AcpObject): Promise<AgentSession>;
   /**
-   * Opens a session of an earlier process again, with `meta` as `create` has
-   * it. Rejects with `SessionNotFound` when the agent no longer has it.
+   * Opens a new session in `folder`. `meta` goes as the `_meta` of the
+   * request, and the agent appends `systemPrompt` to its system prompt.
    */
-  resume(folder: string, sessionId: string, meta?: AcpObject): Promise<AgentSession>;
+  create(folder: string, meta?: AcpObject, systemPrompt?: string): Promise<AgentSession>;
+  /**
+   * Opens a session of an earlier process again, with `meta` and
+   * `systemPrompt` as `create` has them. Rejects with `SessionNotFound` when
+   * the agent no longer has it.
+   */
+  resume(folder: string, sessionId: string, meta?: AcpObject, systemPrompt?: string): Promise<AgentSession>;
 };
 
 /**
@@ -100,6 +107,10 @@ export class SessionNotFound extends Error {
     super(`the agent has no session ${sessionId}`);
     this.name = "SessionNotFound";
   }
+}
+
+function systemPromptOf(text: string | undefined): SystemPromptField {
+  return text === undefined ? {} : { systemPrompt: { mode: "append", content: [{ type: "text", text }] } };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -283,21 +294,23 @@ export function connectAgent(stream: Stream, handlers: AgentHandlers): AgentConn
         },
       }));
     },
-    async create(folder, meta) {
+    async create(folder, meta, systemPrompt) {
       const { sessionId, configOptions } = await call(connection.agent.request("session/new", {
         cwd: folder,
         mcpServers: [],
         ...(meta === undefined ? {} : { _meta: meta }),
+        ...systemPromptOf(systemPrompt),
       }));
       return sessionOf(sessionId, configOptions);
     },
-    async resume(folder, sessionId, meta) {
+    async resume(folder, sessionId, meta, systemPrompt) {
       try {
         const { configOptions } = await call(connection.agent.request("session/resume", {
           sessionId,
           cwd: folder,
           mcpServers: [],
           ...(meta === undefined ? {} : { _meta: meta }),
+          ...systemPromptOf(systemPrompt),
         }));
         return sessionOf(sessionId, configOptions);
       } catch (error) {

@@ -586,6 +586,10 @@ describe("claudeAdapter.projectSessionMeta", () => {
       },
     });
   });
+
+  it("has no projectSystemPrompt, so the context goes in the meta alone", () => {
+    expect(claudeAdapter).not.toHaveProperty("projectSystemPrompt");
+  });
 });
 
 describe("claudeAdapter.optionsSessionMeta", () => {

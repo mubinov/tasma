@@ -790,22 +790,26 @@ export function createChatRunner(options: {
   ): Promise<{ session: AgentSession; created: boolean } | undefined> {
     const { live } = run;
     const { folder, session: stored } = live.chat;
-    const meta = isProjectChat(live) ? run.adapter!.projectSessionMeta?.(live.tag) : run.adapter!.sessionMeta;
+    const projectChat = isProjectChat(live);
+    const meta = projectChat ? run.adapter!.projectSessionMeta?.(live.tag) : run.adapter!.sessionMeta;
+    const systemPrompt = projectChat ? run.adapter!.projectSystemPrompt?.(live.tag) : undefined;
     if (stored !== undefined) {
-      const resumed = await send(run, () => connection.resume(folder, stored, meta).catch((error: unknown) => {
-        if (error instanceof SessionNotFound) return "lost" as const;
-        if (run.adapter!.sessionLost?.(errorReason(run.adapter!, error)) === true) return "lost" as const;
-        throw error;
-      }));
+      const resumed = await send(run, () => connection.resume(folder, stored, meta, systemPrompt).catch(
+        (error: unknown) => {
+          if (error instanceof SessionNotFound) return "lost" as const;
+          if (run.adapter!.sessionLost?.(errorReason(run.adapter!, error)) === true) return "lost" as const;
+          throw error;
+        },
+      ));
       if (resumed === undefined) return undefined;
       if (resumed !== "lost") return { session: resumed, created: false };
       if (live.answered) {
-        await fail(run, isProjectChat(live) ? run.adapter!.projectSessionGone : run.adapter!.sessionGone);
+        await fail(run, projectChat ? run.adapter!.projectSessionGone : run.adapter!.sessionGone);
         return undefined;
       }
     }
     run.unsent = unsentOf(live.unanswered);
-    const session = await send(run, () => connection.create(folder, meta));
+    const session = await send(run, () => connection.create(folder, meta, systemPrompt));
     if (session === undefined) return undefined;
     try {
       await live.setSession(session.sessionId);

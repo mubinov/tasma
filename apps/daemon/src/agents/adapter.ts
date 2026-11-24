@@ -68,6 +68,11 @@ export type AgentAdapter = {
   /** The `_meta` of `session/new` and `session/resume` of a project chat. */
   projectSessionMeta?(tag: string): AcpObject;
   /**
+   * The text that `session/new` and `session/resume` of a project chat append
+   * to the system prompt, in the standard ACP field `systemPrompt`.
+   */
+  projectSystemPrompt?(tag: string): string;
+  /**
    * The `_meta` of `session/new` of a refresh of the options: a session with no
    * message that the agent must not keep. An adapter with no value gets no refresh.
    */
