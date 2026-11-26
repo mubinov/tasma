@@ -1,7 +1,7 @@
 import type { AppendMessage, ThreadMessageLike, ToolCallMessagePartStatus } from "@assistant-ui/react";
 import { agentActive, ProtocolError, turnRuns, type ChatAgent, type ChatOutside, type ChatStatus } from "@tasma/protocol";
 import { diffLines } from "diff";
-import { permissionApproval, questionApproval, type ChatApproval } from "./chat-approval";
+import type { ChatRequest } from "./chat-approval";
 import type {
   ChatAgentMessage,
   ChatMessage,
@@ -158,36 +158,35 @@ function threadPart(part: ChatPart, folder: string): ThreadPart {
 
 function toolPart(tool: ChatTool, folder: string): ThreadPart {
   const { input } = tool;
-  const ended = tool.status === "completed" || tool.status === "failed";
+  const result = chatToolResult(tool);
   const artifact: ChatToolArtifact = { tool, folder };
-  const approval = toolApproval(tool);
 
   return {
     type: "tool-call",
     toolCallId: tool.id,
     toolName: chatToolName(tool),
     args: isObject(input) ? (input as Extract<ThreadPart, { type: "tool-call" }>["args"]) : {},
-    argsText: input === undefined ? "" : JSON.stringify(input, null, 2),
-    ...(ended ? { result: toolResult(tool) } : {}),
+    argsText: chatToolArgsText(tool),
+    ...(result === undefined ? {} : { result }),
     isError: tool.status === "failed",
     artifact,
-    ...(approval === undefined ? {} : { approval }),
   };
 }
 
-/** The approval of the open request of the tool. A tool can have a closed permission and then an open question. */
-function toolApproval(tool: ChatTool): ChatApproval | undefined {
-  if (tool.permission?.state === "open") {
-    return permissionApproval(tool.permission);
-  }
-  return tool.question?.state === "open" ? questionApproval(tool.question) : undefined;
+export function chatToolArgsText(tool: ChatTool): string {
+  return tool.input === undefined ? "" : JSON.stringify(tool.input, null, 2);
+}
+
+/** The text of a tool that ended, or nothing while it runs. */
+export function chatToolResult(tool: ChatTool): string | undefined {
+  return tool.status === "completed" || tool.status === "failed" ? endedToolText(tool) : undefined;
 }
 
 /**
- * The text of a tool that ended. Codex gives an MCP tool its result or its
- * error in the output, and a command with no output only its exit code.
+ * Codex gives an MCP tool its result or its error in the output, and a
+ * command with no output only its exit code.
  */
-function toolResult(tool: ChatTool): string {
+function endedToolText(tool: ChatTool): string {
   const texts = tool.content.flatMap((item) => (item.type === "text" ? [item.text] : []));
   if (texts.length > 0) {
     return texts.join("\n\n");
@@ -552,6 +551,40 @@ function cutLine(line: string): string {
   const code = line.charCodeAt(end - 1);
   // A cut after the first half of a surrogate pair leaves half a character.
   return `${line.slice(0, code >= 0xd8_00 && code <= 0xdb_ff ? end - 1 : end)}…`;
+}
+
+/** What became of a request, or nothing while it is open. */
+export function chatRequestEnd(request: ChatRequest): string | undefined {
+  if (request.kind === "permission") {
+    const { permission } = request;
+    switch (permission.state) {
+      case "open":
+        return undefined;
+      case "selected": {
+        const chosen = permission.options.find((option) => option.id === permission.option)?.name ?? permission.option;
+        return chosen === undefined ? "Answered." : `Answered: ${chosen}.`;
+      }
+      case "cancelled":
+        return "The request was cancelled.";
+      case "ended":
+        return "The request ended with no answer.";
+    }
+  }
+  const { question } = request;
+  switch (question.state) {
+    case "open":
+      return undefined;
+    case "accepted": {
+      const answer = chatAnswerText(question);
+      return answer === "" ? "Answered." : `Answered: ${answer}.`;
+    }
+    case "declined":
+      return "Declined.";
+    case "cancelled":
+      return "The question was cancelled.";
+    case "ended":
+      return "The question ended with no answer.";
+  }
 }
 
 /**

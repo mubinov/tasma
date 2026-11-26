@@ -8,13 +8,22 @@ import type {
 } from "@assistant-ui/react";
 import type { QuestionValue } from "@tasma/protocol";
 import type { ChatQuestionReply } from "../api/mutations";
-import type { ChatPermission, ChatQuestion, ChatQuestionField, ChatView } from "./chat-fold";
+import type { ChatPermission, ChatQuestion, ChatQuestionField, ChatTool, ChatView } from "./chat-fold";
 
 /** The `approval` of a kit tool part. */
 export type ChatApproval = NonNullable<ToolCallMessagePart["approval"]>;
 
 /** A request of a chat, found by its id. */
 export type ChatRequest = { kind: "permission"; permission: ChatPermission } | { kind: "question"; question: ChatQuestion };
+
+/** A request, with the tool of a permission request. */
+export type ChatRequestItem
+  = | { kind: "permission"; permission: ChatPermission; tool: ChatTool }
+    | { kind: "question"; question: ChatQuestion };
+
+export function chatRequestId(request: ChatRequest): string {
+  return request.kind === "permission" ? request.permission.request : request.question.request;
+}
 
 /** One kit question: a field, and the field that holds its free text. */
 type QuestionItem = { field: ChatQuestionField; custom?: ChatQuestionField };
@@ -199,30 +208,44 @@ function rangeText({ minimum, maximum }: ChatQuestionField): string {
 }
 
 /**
- * The kit view of a question with no tool answers no tool part, so no runtime
- * changes its response into the options that `questionAnswer` reads.
+ * The kit form of the request panel answers no tool part, so no runtime
+ * changes its response into the options that `permissionAnswer` and
+ * `questionAnswer` read.
  */
-export function questionResponse(approvalId: string, response: ToolApprovalResponse): RespondToToolApprovalOptions {
+export function requestResponse(request: ChatRequest, response: ToolApprovalResponse): RespondToToolApprovalOptions {
+  const approvalId = chatRequestId(request);
+  if (request.kind === "permission") {
+    if ("optionId" in response) {
+      return { approvalId, approved: true, optionId: response.optionId };
+    }
+    return { approvalId, approved: "approved" in response && response.approved };
+  }
   if ("answers" in response) {
     return { approvalId, approved: true, answers: response.answers };
   }
   return { approvalId, approved: "optionId" in response && response.optionId === ACCEPT_OPTION_ID };
 }
 
-export function chatRequestOf(view: ChatView, request: string): ChatRequest | undefined {
+/** A request of the chat, open or closed. */
+export function chatRequestOf(view: ChatView, id: string): ChatRequestItem | undefined {
   for (const message of view.messages) {
     if (message.role !== "assistant") {
       continue;
     }
     for (const part of message.parts) {
-      if (part.type === "tool" && part.tool.permission?.request === request) {
-        return { kind: "permission", permission: part.tool.permission };
+      if (part.type === "tool" && part.tool.permission?.request === id) {
+        return { kind: "permission", permission: part.tool.permission, tool: part.tool };
       }
       const question = part.type === "question" ? part.question : part.type === "tool" ? part.tool.question : undefined;
-      if (question?.request === request) {
+      if (question?.request === id) {
         return { kind: "question", question };
       }
     }
   }
   return undefined;
+}
+
+/** The open requests, in the order they opened. */
+export function chatOpenRequests(view: ChatView): ChatRequestItem[] {
+  return view.fold.open.flatMap((id) => chatRequestOf(view, id) ?? []);
 }

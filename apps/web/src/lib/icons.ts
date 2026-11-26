@@ -22,6 +22,8 @@ import { PencilSimpleIcon } from "@phosphor-icons/react/PencilSimple";
 import { PlayIcon } from "@phosphor-icons/react/Play";
 import { PlusIcon } from "@phosphor-icons/react/Plus";
 import { ProhibitIcon } from "@phosphor-icons/react/Prohibit";
+import { QuestionIcon } from "@phosphor-icons/react/Question";
+import { ShieldIcon } from "@phosphor-icons/react/Shield";
 import { SidebarSimpleIcon } from "@phosphor-icons/react/SidebarSimple";
 import { SunIcon } from "@phosphor-icons/react/Sun";
 import { TrashIcon } from "@phosphor-icons/react/Trash";
@@ -53,6 +55,8 @@ export {
   PlayIcon,
   PlusIcon,
   ProhibitIcon,
+  QuestionIcon,
+  ShieldIcon,
   SidebarSimpleIcon,
   SunIcon,
   TrashIcon,

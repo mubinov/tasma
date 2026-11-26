@@ -2,12 +2,15 @@ import type { RespondToToolApprovalOptions, ToolApprovalAnswer } from "@assistan
 import type { ChatEntry, QuestionValue } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
 import {
+  chatOpenRequests,
+  chatRequestId,
   chatRequestOf,
   permissionAnswer,
   permissionApproval,
   questionAnswer,
   questionApproval,
-  questionResponse,
+  requestResponse,
+  type ChatRequest,
 } from "../../src/lib/chat-approval";
 import {
   CHAT_VIEW_START,
@@ -17,7 +20,18 @@ import {
   type ChatQuestionField,
   type ChatView,
 } from "../../src/lib/chat-fold";
-import { CONFIRM_LOG, FORM_LOG, PERMISSION_LOG, QUESTION_LOG, QUESTIONS_LOG, REFUSAL_LOG, TEXT_LOG } from "../chat-fixtures";
+import {
+  chatEntries,
+  CONFIRM_LOG,
+  FORM_LOG,
+  PERMISSION_LOG,
+  permissionResolved,
+  QUESTION_LOG,
+  questionRequest,
+  QUESTIONS_LOG,
+  REFUSAL_LOG,
+  TEXT_LOG,
+} from "../chat-fixtures";
 
 function view(entries: readonly ChatEntry[]): ChatView {
   return foldChatEntries(CHAT_VIEW_START, entries);
@@ -417,26 +431,98 @@ describe("questionAnswer", () => {
   });
 });
 
-describe("questionResponse", () => {
+describe("requestResponse", () => {
+  const refusal: ChatRequest = { kind: "question", question: refusalQuestion() };
+  const permission: ChatRequest = { kind: "permission", permission: openPermission() };
+
+  it("gives the option of a permission request", () => {
+    expect(requestResponse(permission, { optionId: "allow-with-updates" }))
+      .toEqual({ approvalId: "r1", approved: true, optionId: "allow-with-updates" });
+  });
+
+  it("gives a permission response with no option as one that permissionAnswer refuses", () => {
+    const options = requestResponse(permission, { approved: true });
+
+    expect(options).toEqual({ approvalId: "r1", approved: true });
+    expect(() => permissionAnswer(options)).toThrow("This request has no option for this answer.");
+  });
+
   it("gives the answers of the kit form as an accept", () => {
     const answers = { choice: { optionIds: ["retry_fallback"] } };
 
-    expect(questionResponse("r4", { answers })).toEqual({ approvalId: "r4", approved: true, answers });
+    expect(requestResponse(refusal, { answers })).toEqual({ approvalId: "r4", approved: true, answers });
   });
 
   it("gives Dismiss as a decline", () => {
-    expect(questionResponse("r4", { approved: false })).toEqual({ approvalId: "r4", approved: false });
+    expect(requestResponse(refusal, { approved: false })).toEqual({ approvalId: "r4", approved: false });
   });
 
   it("gives Accept of a question with no fields as an accept, and Decline as a decline", () => {
-    expect(questionResponse("r6", { optionId: "accept" })).toEqual({ approvalId: "r6", approved: true });
-    expect(questionResponse("r6", { optionId: "decline" })).toEqual({ approvalId: "r6", approved: false });
+    const confirm: ChatRequest = { kind: "question", question: confirmQuestion() };
+
+    expect(requestResponse(confirm, { optionId: "accept" })).toEqual({ approvalId: "r6", approved: true });
+    expect(requestResponse(confirm, { optionId: "decline" })).toEqual({ approvalId: "r6", approved: false });
+  });
+});
+
+describe("chatRequestId", () => {
+  it("gives the id of a permission request and of a question", () => {
+    expect(chatRequestId({ kind: "permission", permission: openPermission() })).toBe("r1");
+    expect(chatRequestId({ kind: "question", question: nameQuestion() })).toBe("r2");
+  });
+});
+
+describe("chatOpenRequests", () => {
+  const BUILD_EVENTS = PERMISSION_LOG.slice(0, 4).map(({ event }) => event);
+  const PERMISSION_EVENT = PERMISSION_LOG[4]!.event;
+
+  it("gives the open requests in the order they opened, and the tool of a permission request", () => {
+    const open = view(chatEntries([...BUILD_EVENTS, questionRequest("q1", { message: "Which target?" }), PERMISSION_EVENT]));
+
+    expect(open.fold.open).toEqual(["q1", "r1"]);
+    expect(chatOpenRequests(open)).toEqual([
+      { kind: "question", question: expect.objectContaining({ request: "q1", state: "open" }) as unknown },
+      {
+        kind: "permission",
+        permission: openPermission(),
+        tool: expect.objectContaining({ id: "toolu_04BuildApp", title: "pnpm build", permission: openPermission() }) as unknown,
+      },
+    ]);
+  });
+
+  it("finds a question on a tool, and a question with no tool", () => {
+    expect(chatOpenRequests(view(QUESTION_LOG.slice(0, 4)))).toEqual([{ kind: "question", question: nameQuestion() }]);
+    expect(chatOpenRequests(view(REFUSAL_LOG.slice(0, 2)))).toEqual([{ kind: "question", question: refusalQuestion() }]);
+  });
+
+  it("gives the open question of a tool whose permission request closed", () => {
+    const events = [
+      ...BUILD_EVENTS,
+      PERMISSION_EVENT,
+      permissionResolved("r1", { outcome: "selected", optionId: "allow-once" }),
+      questionRequest("q2", { toolCallId: "toolu_04BuildApp", message: "Which target?" }),
+    ];
+
+    expect(chatOpenRequests(view(chatEntries(events)))).toEqual([
+      { kind: "question", question: expect.objectContaining({ request: "q2", state: "open" }) as unknown },
+    ]);
+  });
+
+  it("gives nothing for a closed request, and no item for an open id that names no request", () => {
+    const closed = view(PERMISSION_LOG);
+
+    expect(chatOpenRequests(closed)).toEqual([]);
+    expect(chatOpenRequests({ ...closed, fold: { ...closed.fold, open: ["r9"] } })).toEqual([]);
   });
 });
 
 describe("chatRequestOf", () => {
-  it("finds a permission", () => {
-    expect(chatRequestOf(view(PERMISSION_LOG.slice(0, 5)), "r1")).toEqual({ kind: "permission", permission: openPermission() });
+  it("finds a permission, with its tool", () => {
+    expect(chatRequestOf(view(PERMISSION_LOG.slice(0, 5)), "r1")).toEqual({
+      kind: "permission",
+      permission: openPermission(),
+      tool: expect.objectContaining({ id: "toolu_04BuildApp", permission: openPermission() }) as unknown,
+    });
   });
 
   it("finds a question on a tool, and a question with no tool", () => {

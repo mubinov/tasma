@@ -1,11 +1,13 @@
 import { ProtocolError, type ChatEntry, type ChatEvent } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
+import type { ChatRequest } from "../../src/lib/chat-approval";
 import {
   CHAT_VIEW_START,
   foldChatEntries,
   type ChatAgentMessage,
   type ChatNotice,
   type ChatPart,
+  type ChatPermission,
   type ChatQuestion,
   type ChatTool,
   type ChatView,
@@ -20,6 +22,7 @@ import {
   chatOptionWords,
   chatOutsideName,
   chatPickerOptions,
+  chatRequestEnd,
   chatStateText,
   chatTerminalView,
   chatThreadMessage,
@@ -203,30 +206,13 @@ describe("chatThreadMessage", () => {
     expect(partOf({ status: "completed", content: [{ type: "text", text: "done" }], output: { exit_code: 0 } })?.result).toBe("done");
   });
 
-  it("gives a tool part the approval of its open permission, and none after the permission closes", () => {
+  it("gives a tool part with an open permission or an open question no approval", () => {
     const options = [{ id: "allow", name: "Yes", kind: "allow_once" }];
-
-    expect(partOf({ permission: { request: "r1", options, state: "open" } })?.approval).toEqual({
-      id: "r1",
-      options: [{ id: "allow", kind: "allow-once", label: "Yes" }],
-    });
-    for (const state of ["selected", "cancelled", "ended"] as const) {
-      expect(partOf({ permission: { request: "r1", options, state } })).not.toHaveProperty("approval");
-    }
-  });
-
-  it("gives a tool part the approval of its open question after its permission closed, and none after the question closes", () => {
-    const permission = { request: "r1", options: [], state: "selected" } as const;
     const fields = [{ name: "name", type: "string", required: false, multiple: false, choices: [] }];
     const question = { request: "r2", message: "Which name?", fields, state: "open" } as const;
 
-    expect(partOf({ permission, question })?.approval).toEqual({
-      id: "r2",
-      display: "questions",
-      dismissible: true,
-      questions: [{ id: "name", prompt: "name" }],
-    });
-    expect(partOf({ permission, question: { ...question, state: "accepted" } })).not.toHaveProperty("approval");
+    expect(partOf({ permission: { request: "r1", options, state: "open" } })).not.toHaveProperty("approval");
+    expect(partOf({ permission: { request: "r1", options, state: "selected" }, question })).not.toHaveProperty("approval");
   });
 
   it("marks a failed tool as an error", () => {
@@ -820,6 +806,38 @@ describe("chatToolStatus", () => {
     ["is in progress", { status: "in_progress" }, { type: "running" }],
   ])("gives a tool that %s its own status", (_name, fields, status) => {
     expect(chatToolStatus(tool(fields))).toEqual(status);
+  });
+});
+
+describe("chatRequestEnd", () => {
+  const options = [{ id: "allow", name: "Yes", kind: "allow_once" }];
+
+  function permission(state: ChatPermission["state"], option?: string): ChatRequest {
+    return { kind: "permission", permission: { request: "r1", options, state, ...(option === undefined ? {} : { option }) } };
+  }
+
+  function question(state: ChatQuestion["state"], answer?: ChatQuestion["answer"]): ChatRequest {
+    return { kind: "question", question: { request: "r2", message: "Which name?", fields: [], state, ...(answer === undefined ? {} : { answer }) } };
+  }
+
+  it.each<[string, ChatRequest, string]>([
+    ["a permission request answered with an option", permission("selected", "allow"), "Answered: Yes."],
+    ["a permission request answered with an option it does not offer", permission("selected", "other"), "Answered: other."],
+    ["a permission request answered with no option", permission("selected"), "Answered."],
+    ["a cancelled permission request", permission("cancelled"), "The request was cancelled."],
+    ["a permission request that ended", permission("ended"), "The request ended with no answer."],
+    ["an answered question", question("accepted", { name: "lexer" }), "Answered: lexer."],
+    ["a question answered with no values", question("accepted", {}), "Answered."],
+    ["a declined question", question("declined"), "Declined."],
+    ["a cancelled question", question("cancelled"), "The question was cancelled."],
+    ["a question that ended", question("ended"), "The question ended with no answer."],
+  ])("gives the result of %s", (_name, request, text) => {
+    expect(chatRequestEnd(request)).toBe(text);
+  });
+
+  it("gives nothing for an open request", () => {
+    expect(chatRequestEnd(permission("open"))).toBeUndefined();
+    expect(chatRequestEnd(question("open"))).toBeUndefined();
   });
 });
 

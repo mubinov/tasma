@@ -1,8 +1,9 @@
 import { Link } from "@tanstack/react-router";
-import { useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useId, useRef, type ReactNode } from "react";
 import type { StepView } from "../lib/board";
 import { ProhibitIcon } from "../lib/icons";
 import { customLines, formatStamp, type RelationRow, type Relations } from "../lib/task-page";
+import { useOverflows } from "../lib/use-overflows";
 import type { TaskProperties } from "../lib/use-task-properties";
 import { PENCIL_BUTTON_CLASS } from "./control-classes";
 import { LabelPicker } from "./label-picker";
@@ -163,33 +164,6 @@ function RelationList({ tag, rows }: { tag: string; rows: readonly RelationRow[]
       ))}
     </ul>
   );
-}
-
-/** The element's content is taller than its box. */
-function useOverflows(ref: RefObject<HTMLElement | null>): boolean {
-  const [overflows, setOverflows] = useState(false);
-
-  // The box resizes with the window and the children with their content, so both are observed.
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (element === null || typeof ResizeObserver === "undefined") {
-      return;
-    }
-
-    const observer = new ResizeObserver(() => {
-      setOverflows(element.scrollHeight > element.clientHeight);
-    });
-    observer.observe(element);
-    for (const child of element.children) {
-      observer.observe(child);
-    }
-
-    return () => {
-      observer.disconnect();
-    };
-  }, [ref]);
-
-  return overflows;
 }
 
 export function TaskSidebar(props: TaskSidebarProps): ReactNode {

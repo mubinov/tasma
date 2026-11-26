@@ -60,6 +60,9 @@ import {
   userMessage,
 } from "../chat-fixtures";
 import {
+  ASYNC_QUESTION_REQUEST,
+  CODEX_ASYNC_MESSAGE,
+  CODEX_ASYNC_QUESTION_LOG,
   CODEX_COMMAND_LOG,
   CODEX_EDIT_LOG,
   CODEX_FOLDER,
@@ -100,11 +103,13 @@ type PanelOptions = {
   cached?: Chat;
   /** A host to render in place of the panel of chat 2. */
   host?: ReactNode;
+  /** Renders in `StrictMode`, as main.tsx does. */
+  strict?: boolean;
 };
 
 async function renderPanel(
   log: ChatLogStub,
-  { focusOnMount, marked = true, onClose = () => {}, cached, host }: PanelOptions = {},
+  { focusOnMount, marked = true, onClose = () => {}, cached, host, strict = false }: PanelOptions = {},
 ) {
   const context: RouterContext = { ...testContext(log.transport), client: log.client };
   if (cached !== undefined) {
@@ -134,6 +139,7 @@ async function renderPanel(
     <QueryClientProvider client={context.queryClient}>
       <RouterProvider router={router} />
     </QueryClientProvider>,
+    { reactStrictMode: strict },
   );
 
   return context;
@@ -187,7 +193,22 @@ function button(name: string): HTMLButtonElement {
   return screen.getByRole<HTMLButtonElement>("button", { name });
 }
 
-const PERMISSION_GROUP = "Waiting on tool: pnpm build Waiting for your permission.";
+const REQUEST_PANEL = { name: /asks (a question|for permission)/ };
+
+/** The request panel above the composer. */
+function requestPanel(): HTMLElement {
+  return screen.getByRole("region", REQUEST_PANEL);
+}
+
+async function findRequestPanel(): Promise<HTMLElement> {
+  return screen.findByRole("region", REQUEST_PANEL);
+}
+
+const PERMISSION_WAITING = "Waiting for your permission below.";
+
+const QUESTION_WAITING = "Waiting for your answer below.";
+
+const PERMISSION_GROUP = "Claude asks for permission pnpm build";
 
 function permissionGroup(): HTMLElement {
   return screen.getByRole("group", { name: PERMISSION_GROUP });
@@ -209,7 +230,7 @@ function formGroupName(label: string): string {
   return `${label} ${FORM_RULE}`;
 }
 
-const RELEASE_LABEL = "Waiting on tool: Asking for your input Please answer the following questions.";
+const RELEASE_LABEL = "Please answer the following questions.";
 
 const RELEASE_GROUP = formGroupName(RELEASE_LABEL);
 
@@ -568,13 +589,15 @@ it("opens the tool group of a new permission request, announces it, and shows on
   await readStarted(log, eventsPath(0));
   log.answer(0, { cursor: 5, entries: start });
   expect(await screen.findByText("Agent works")).toBeTruthy();
-  expect(screen.queryByText("Waiting for your permission.")).toBeNull();
+  expect(screen.queryByText(PERMISSION_WAITING)).toBeNull();
+  expect(screen.queryByRole("region", REQUEST_PANEL)).toBeNull();
 
   log.answer(5, { cursor: 6, entries: chatEntries([PERMISSION_LOG[4]!.event], 6) });
 
-  expect(await screen.findByText("Waiting for your permission.")).toBeTruthy();
+  expect(await screen.findByText(PERMISSION_WAITING)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Waiting on tool: pnpm build" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Running tool: Read the docs" })).toBeTruthy();
+  expect(within(requestPanel()).getByText("pnpm build", { selector: "p" }).className).toContain("font-mono");
   expect(optionNames(permissionGroup())).toEqual(BASH_OPTIONS.map(({ name }) => name as string));
   expect(screen.queryByText(/^Options: /)).toBeNull();
   expect(screen.getByText("Needs you")).toBeTruthy();
@@ -582,10 +605,11 @@ it("opens the tool group of a new permission request, announces it, and shows on
   expect(spoken()).toEqual(["Claude asks for permission: pnpm build"]);
 });
 
-it("does not announce a request that is open when the panel opens", async () => {
+it("does not announce a request that is open when the panel opens, and shows it in the request panel", async () => {
   await renderPanel(logOf(PERMISSION_LOG.slice(0, 5)));
 
-  expect(await screen.findByText("Waiting for your permission.")).toBeTruthy();
+  expect(await screen.findByText(PERMISSION_WAITING)).toBeTruthy();
+  expect(within(requestPanel()).getByRole("group", { name: PERMISSION_GROUP })).toBeTruthy();
   await frame();
   expect(spoken()).toEqual([]);
 });
@@ -638,18 +662,19 @@ it("shows each request that ended as text", async () => {
   expect(screen.getByText("The question ended with no answer.")).toBeTruthy();
 });
 
-it("shows an open question in the kit form, with its fields, their choices and the free text", async () => {
+it("shows an open question in the kit form of the request panel, with its fields, their choices and the free text", async () => {
   await renderPanel(logOf(QUESTIONS_LOG.slice(0, 4)));
 
-  expect(await screen.findByText("Please answer the following questions.")).toBeTruthy();
-  const version = screen.getByRole("group", { name: "Which version should the release take?" });
+  expect(await screen.findByText(QUESTION_WAITING)).toBeTruthy();
+  const panel = requestPanel();
+  expect(within(panel).getByText("Please answer the following questions.")).toBeTruthy();
+  const version = within(panel).getByRole("group", { name: "Which version should the release take?" });
   expect(within(version).getByText("Version")).toBeTruthy();
   expect(within(version).getByRole("button", { name: /^2\.0\.0/ }).getAttribute("aria-pressed")).toBe("false");
   expect(within(version).getByRole("textbox", { name: "Which version should the release take?" })).toBeTruthy();
-  const checks = screen.getByRole("group", { name: "Which checks should run first?" });
+  const checks = within(panel).getByRole("group", { name: "Which checks should run first?" });
   expect(within(checks).getByText("Checks")).toBeTruthy();
   expect(within(checks).getByRole("button", { name: /^lint/ })).toBeTruthy();
-  expect(screen.getByText("Waiting for your answer.")).toBeTruthy();
   expect(button("Send").disabled).toBe(true);
   expect(button("Dismiss").disabled).toBe(false);
 });
@@ -670,7 +695,9 @@ it("shows a question with no tool in the transcript, by the description of a fie
   const group = await screen.findByRole("group", { name: formGroupName("Which colour?") });
   const field = within(group).getByRole("group", { name: "The colour of the badge." });
   expect(optionNames(field)).toEqual(["red", "blue"]);
-  expect(screen.getByText("Waiting for your answer.")).toBeTruthy();
+  expect(requestPanel().contains(group)).toBe(true);
+  expect(within(screen.getByRole("log")).getByText(QUESTION_WAITING)).toBeTruthy();
+  expect(within(screen.getByRole("log")).getByText("Which colour?")).toBeTruthy();
 });
 
 it("shows the answer of a question with no tool", async () => {
@@ -885,7 +912,7 @@ it("unmounts the transcript on a reset, moves focus from it to the heading, and 
 
   log.answer(0, { cursor: 2, entries: chatEntries([PERMISSION_LOG[0]!.event, PERMISSION_LOG[4]!.event]) });
 
-  expect(await screen.findByText("Waiting for your permission.")).toBeTruthy();
+  expect(await screen.findByText(PERMISSION_WAITING)).toBeTruthy();
   await frame();
   expect(spoken()).toEqual([]);
 });
@@ -2066,7 +2093,7 @@ it("puts a message that the daemon refuses in front of the text of a composer of
   });
 });
 
-it("posts the option of a clicked button, locks the buttons, and shows the answer with focus on its line when the log closes the request", async () => {
+it("posts the option of a clicked button, locks the buttons, and announces the answer with focus on the message field when the log closes the request", async () => {
   const user = userEvent.setup();
   const log = writableLogOf(PERMISSION_LOG.slice(0, 5), PERMISSION_PATH);
   await renderPanel(log);
@@ -2082,12 +2109,14 @@ it("posts the option of a clicked button, locks the buttons, and shows the answe
 
   log.answer(5, { cursor: 6, entries: chatEntries([permissionResolved("r1", { outcome: "selected", optionId: "allow-once" })], 6) });
 
-  const answered = await screen.findByText("Answered: Yes.");
-  expect(screen.queryByRole("group", { name: PERMISSION_GROUP })).toBeNull();
-  expect(document.activeElement).toBe(answered.parentElement);
+  expect(await screen.findByText("Answered: Yes.")).toBeTruthy();
+  expect(screen.queryByRole("region", REQUEST_PANEL)).toBeNull();
+  expect(document.activeElement).toBe(composer());
+  await frame();
+  expect(spoken()).toEqual(["Answered: Yes."]);
 });
 
-it("closes a request that is already answered, with no write, and moves focus from its buttons to its line", async () => {
+it("closes a request that is already answered, with no write, and moves focus from its buttons to the message field", async () => {
   const log = logOf(PERMISSION_LOG.slice(0, 5));
   await renderPanel(log);
   const yes = await findPermissionOption("Yes");
@@ -2102,10 +2131,29 @@ it("closes a request that is already answered, with no write, and moves focus fr
     ], 6),
   });
 
-  const answered = await screen.findByText("Answered: No.");
+  expect(await screen.findByText("Answered: No.")).toBeTruthy();
   expect(screen.queryByRole("group", { name: PERMISSION_GROUP })).toBeNull();
   expect(posts(log)).toEqual([]);
-  expect(document.activeElement).toBe(answered.parentElement);
+  expect(document.activeElement).toBe(composer());
+  await frame();
+  expect(spoken()).toEqual(["Answered: No."]);
+});
+
+it("announces nothing and keeps focus when a request closes while focus is outside the request panel", async () => {
+  const log = logOf(PERMISSION_LOG.slice(0, 5));
+  await renderPanel(log);
+  await findPermissionOption("Yes");
+  act(() => {
+    heading().focus();
+  });
+
+  log.answer(5, { cursor: 6, entries: chatEntries([permissionResolved("r1", { outcome: "selected", optionId: "reject" })], 6) });
+
+  expect(await screen.findByText("Answered: No.")).toBeTruthy();
+  expect(screen.queryByRole("region", REQUEST_PANEL)).toBeNull();
+  expect(document.activeElement).toBe(heading());
+  await frame();
+  expect(spoken()).toEqual([]);
 });
 
 it("opens the warning notice for an answer that came too late, and keeps the buttons locked until the log closes the request", async () => {
@@ -2163,7 +2211,7 @@ it("shows the kit Deny of a request with no reject option, and writes nothing fo
     ]),
   ]));
   await renderPanel(log);
-  const group = await screen.findByRole("group", { name: "Waiting on tool: Fetch the page Waiting for your permission." });
+  const group = await screen.findByRole("group", { name: "Claude asks for permission Fetch the page" });
 
   await user.click(within(group).getByRole("button", { name: "Deny" }));
 
@@ -2176,9 +2224,9 @@ it("shows the kit Deny of a request with no reject option, and writes nothing fo
 const QUESTIONS_PATH = `${chatPath()}/questions/r3`;
 
 it.each<[string, readonly ChatEntry[], string]>([
-  ["on a tool by the tool and the message", QUESTIONS_LOG.slice(0, 4), RELEASE_LABEL],
-  ["with no tool by the message", FORM_LOG.slice(0, 2), FORM_LABEL],
-])("names an open question %s, then by the rule of its kit form", async (_name, entries, label) => {
+  ["on a tool", QUESTIONS_LOG.slice(0, 4), RELEASE_LABEL],
+  ["with no tool", FORM_LOG.slice(0, 2), FORM_LABEL],
+])("names an open question %s by the message, then by the rule of its kit form", async (_name, entries, label) => {
   await renderPanel(logOf(entries));
 
   expect(await screen.findByRole("group", { name: formGroupName(label) })).toBeTruthy();
@@ -2214,7 +2262,7 @@ it("declines a question with no fields on a tool with Decline, with no rule", as
     questionRequest("q2", { toolCallId: "t2", message: "Publish to the team?", requestedSchema: { type: "object", properties: {} } }),
   ]), path);
   await renderPanel(log);
-  const group = await screen.findByRole("group", { name: "Waiting on tool: Publish Publish to the team?" });
+  const group = await screen.findByRole("group", { name: "Publish to the team?" });
 
   expect(optionNames(group)).toEqual(["Accept", "Decline"]);
   expect(screen.queryByText(FORM_RULE)).toBeNull();
@@ -2259,7 +2307,7 @@ it("posts a decline for Dismiss", async () => {
   });
 });
 
-it("posts the answer of a question with no tool, and moves focus from its form to its line when the log closes it", async () => {
+it("posts the answer of a question with no tool, and moves focus from its form to the message field when the log closes it", async () => {
   const user = userEvent.setup();
   const path = `${chatPath()}/questions/r4`;
   const log = writableLogOf(REFUSAL_LOG.slice(0, 2), path);
@@ -2278,9 +2326,9 @@ it("posts the answer of a question with no tool, and moves focus from its form t
 
   log.answer(2, { cursor: 3, entries: chatEntries([REFUSAL_LOG[2]!.event], 3) });
 
-  const answered = await screen.findByText("Answered: retry_fallback.");
+  expect(await screen.findByText("Answered: retry_fallback.")).toBeTruthy();
   expect(screen.queryByRole("group", { name: REFUSAL_GROUP })).toBeNull();
-  expect(document.activeElement).toBe(answered.parentElement);
+  expect(document.activeElement).toBe(composer());
 });
 
 it("shows the kit text for a bad number and posts nothing, then posts the fixed answer", async () => {
@@ -2339,9 +2387,10 @@ it("answers the open question of a tool whose permission closed, under the quest
   ]), path);
   await renderPanel(log);
 
-  const group = await screen.findByRole("group", { name: formGroupName("Waiting on tool: Deploy Which host?") });
+  const group = await screen.findByRole("group", { name: formGroupName("Which host?") });
   expect(screen.getByText("Answered: Allow.")).toBeTruthy();
-  expect(screen.queryByRole("group", { name: /Waiting for your permission/ })).toBeNull();
+  expect(screen.queryByText(PERMISSION_WAITING)).toBeNull();
+  expect(within(requestPanel()).getByText("Claude asks a question")).toBeTruthy();
   await user.click(within(group).getByRole("button", { name: "staging" }));
   await user.click(within(group).getByRole("button", { name: "Send" }));
 
@@ -2420,7 +2469,7 @@ describe("a Codex chat", () => {
     const path = `${chatPath()}/permissions/${PERMISSION_REQUEST}`;
     const log = codexLogOf(CODEX_PERMISSION_LOG.slice(0, 8), path);
     await renderPanel(log);
-    const group = await screen.findByRole("group", { name: `Waiting on tool: ${WRITE_COMMAND} Waiting for your permission.` });
+    const group = await screen.findByRole("group", { name: `Codex asks for permission ${WRITE_COMMAND}` });
 
     expect(optionNames(group)).toEqual([
       "Yes, proceed",
@@ -2455,7 +2504,7 @@ describe("a Codex chat", () => {
     expect(button("Send").disabled).toBe(false);
   });
 
-  it("sends typed text alone as the Other choice and a note, and moves focus to the answer line, which shows the text", async () => {
+  it("sends typed text alone as the Other choice and a note, and moves focus to the message field, and the answer line shows the text", async () => {
     const user = userEvent.setup();
     const path = `${chatPath()}/questions/${QUESTION_REQUEST}`;
     const log = codexLogOf(CODEX_QUESTION_LOG.slice(0, 5), path);
@@ -2477,10 +2526,313 @@ describe("a Codex chat", () => {
 
     log.answer(5, { cursor: 6, entries: chatEntries([CODEX_QUESTION_LOG[5]!.event], 6) });
 
-    const answered = await screen.findByText("Answered: the canary host.");
+    expect(await screen.findByText("Answered: the canary host.")).toBeTruthy();
     expect(screen.queryByRole("group", { name: QUESTION_GROUP })).toBeNull();
-    expect(document.activeElement).toBe(answered.parentElement);
+    expect(document.activeElement).toBe(composer());
     expect(screen.queryByText(/tool: other/)).toBeNull();
+  });
+
+  const ASYNC_GROUP = `${CODEX_ASYNC_MESSAGE} ${FORM_RULE}`;
+
+  const ASYNC_PATH = `${chatPath()}/questions/${ASYNC_QUESTION_REQUEST}`;
+
+  /** The async question is open, and Codex has sent nothing after it. */
+  const ASYNC_ASKED = CODEX_ASYNC_QUESTION_LOG.slice(0, 4);
+
+  it("keeps an async question in the request panel while Codex works, with a typed answer, and posts the answer", async () => {
+    const user = userEvent.setup();
+    const log = codexLogOf(ASYNC_ASKED, ASYNC_PATH);
+    await renderPanel(log);
+    const group = await screen.findByRole("group", { name: ASYNC_GROUP });
+    const chat = screen.getByRole("log");
+
+    expect(within(requestPanel()).getByText(CODEX_ASYNC_MESSAGE)).toBeTruthy();
+    expect(within(chat).getByText(QUESTION_WAITING)).toBeTruthy();
+    expect(within(chat).queryByRole("button", { name: "Send" })).toBeNull();
+    await user.type(within(group).getByRole("textbox", { name: HOST_QUESTION }), "the canary host");
+
+    log.answer(4, { cursor: 9, entries: CODEX_ASYNC_QUESTION_LOG.slice(4, 9) });
+
+    expect(await within(chat).findByText("While you choose, I’ll read the notes.")).toBeTruthy();
+    expect(within(chat).getByRole("button", { name: "2 tool calls" })).toBeTruthy();
+    expect(requestPanel().contains(group)).toBe(true);
+    expect(within(group).getByRole<HTMLTextAreaElement>("textbox", { name: HOST_QUESTION }).value).toBe("the canary host");
+    await user.click(within(group).getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(posts(log)).toEqual([
+        {
+          method: "POST",
+          path: ASYNC_PATH,
+          body: { action: "accept", content: { host: "None of the above", host_note: "the canary host" }, client: CHAT_CLIENT },
+        },
+      ]);
+    });
+  });
+
+  it("announces the answer of an async question with focus on the message field when the log closes it, and shows it in the chat", async () => {
+    const user = userEvent.setup();
+    const log = codexLogOf(CODEX_ASYNC_QUESTION_LOG.slice(0, 9), ASYNC_PATH);
+    await renderPanel(log);
+    const group = await screen.findByRole("group", { name: ASYNC_GROUP });
+    await user.type(within(group).getByRole("textbox", { name: HOST_QUESTION }), "the canary host");
+    await user.click(within(group).getByRole("button", { name: "Send" }));
+    await waitFor(() => {
+      expect(posts(log)).toHaveLength(1);
+    });
+
+    log.answer(9, { cursor: 10, entries: CODEX_ASYNC_QUESTION_LOG.slice(9, 10) });
+
+    expect(await within(screen.getByRole("log")).findByText("Answered: the canary host.")).toBeTruthy();
+    expect(screen.queryByRole("region", REQUEST_PANEL)).toBeNull();
+    expect(document.activeElement).toBe(composer());
+    await frame();
+    expect(spoken()).toEqual(["Answered: the canary host."]);
+  });
+
+  it("removes an async question at the end of the turn with focus in the panel, and announces its result one time", async () => {
+    const log = codexLogOf(CODEX_ASYNC_QUESTION_LOG.slice(0, 9));
+    await renderPanel(log);
+    const group = await screen.findByRole("group", { name: ASYNC_GROUP });
+    act(() => {
+      within(group).getByRole("textbox", { name: HOST_QUESTION }).focus();
+    });
+
+    log.answer(9, { cursor: 10, entries: chatEntries([turnEnd()], 10) });
+
+    expect(await within(screen.getByRole("log")).findByText("The question ended with no answer.")).toBeTruthy();
+    expect(screen.queryByRole("region", REQUEST_PANEL)).toBeNull();
+    expect(document.activeElement).toBe(composer());
+    await frame();
+    expect(spoken().filter((words) => words === "The question ended with no answer.")).toHaveLength(1);
+  });
+});
+
+describe("the request panel", () => {
+  /** A permission request, then a question with no fields and no tool, both open. */
+  const TWO_REQUESTS = chatEntries([
+    ...PERMISSION_LOG.slice(0, 5).map(({ event }) => event),
+    questionRequest("q1", { message: "Publish the preview to the team?", requestedSchema: { type: "object", properties: {} } }),
+  ]);
+  const ALLOWED = permissionResolved("r1", { outcome: "selected", optionId: "allow-once" });
+
+  async function tick(ms: number): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  it("shows the oldest of two open requests with its count, and after its answer focuses the group of the next one", async () => {
+    const user = userEvent.setup();
+    const log = writableLogOf(TWO_REQUESTS, PERMISSION_PATH);
+    await renderPanel(log);
+    const panel = await screen.findByRole("region", { name: "Claude asks for permission 1 of 2" });
+
+    expect(within(panel).getByText("1 of 2")).toBeTruthy();
+    expect(within(panel).getByText("pnpm build", { selector: "p" })).toBeTruthy();
+    expect(within(panel).queryByText("Publish the preview to the team?")).toBeNull();
+    await user.click(within(panel).getByRole("button", { name: "Yes" }));
+    await waitFor(() => {
+      expect(posts(log)).toHaveLength(1);
+    });
+
+    log.answer(6, { cursor: 7, entries: chatEntries([ALLOWED], 7) });
+
+    const next = await screen.findByRole("group", { name: "Publish the preview to the team?" });
+    expect(screen.getByRole("region", { name: "Claude asks a question" }).contains(next)).toBe(true);
+    expect(screen.queryByText("1 of 2")).toBeNull();
+    expect(document.activeElement).toBe(next);
+    expect(optionNames(next)).toEqual(["Accept", "Decline"]);
+    await frame();
+    expect(spoken()).toEqual(["Answered: Yes."]);
+  });
+
+  it("leaves focus outside the panel when the next request closes, also when StrictMode runs the effects of its form again", async () => {
+    const user = userEvent.setup();
+    const log = writableLogOf(TWO_REQUESTS, PERMISSION_PATH);
+    await renderPanel(log, { strict: true });
+    await user.click(await findPermissionOption("Yes"));
+    log.answer(6, { cursor: 7, entries: chatEntries([ALLOWED], 7) });
+    const next = await screen.findByRole("group", { name: "Publish the preview to the team?" });
+    expect(document.activeElement).toBe(next);
+    act(() => {
+      heading().focus();
+    });
+
+    log.answer(7, { cursor: 8, entries: chatEntries([questionResolved("q1", { action: "accept", content: {} })], 8) });
+
+    expect(await within(screen.getByRole("log")).findByText("Answered.")).toBeTruthy();
+    expect(screen.queryByRole("region", REQUEST_PANEL)).toBeNull();
+    expect(document.activeElement).toBe(heading());
+    await frame();
+    expect(spoken()).toEqual(["Answered: Yes."]);
+  });
+
+  it("focuses the group of the next request with no announcement when the shown request is asked again", async () => {
+    const log = logOf(TWO_REQUESTS);
+    await renderPanel(log);
+    const yes = await findPermissionOption("Yes");
+    act(() => {
+      yes.focus();
+    });
+
+    log.answer(6, { cursor: 7, entries: chatEntries([PERMISSION_LOG[4]!.event], 7) });
+
+    const next = await screen.findByRole("group", { name: "Publish the preview to the team?" });
+    expect(screen.getByRole("region", { name: "Claude asks a question 1 of 2" }).contains(next)).toBe(true);
+    expect(document.activeElement).toBe(next);
+    await frame();
+    expect(spoken()).toEqual([]);
+  });
+
+  it("names its section by the title and the count, and its body by the title, and Shift+Tab from the message field reaches its form", async () => {
+    const user = userEvent.setup();
+    await renderPanel(logOf(TWO_REQUESTS));
+    const panel = await screen.findByRole("region", { name: "Claude asks for permission 1 of 2" });
+    const body = within(panel).getByRole("group", { name: "Claude asks for permission" });
+
+    expect(body.contains(permissionGroup())).toBe(true);
+    expect(body.tabIndex).toBe(-1);
+    act(() => {
+      composer().focus();
+    });
+    await user.tab({ shift: true });
+
+    expect(document.activeElement).toBe(within(permissionGroup()).getByRole("button", { name: "No" }));
+  });
+
+  it("makes its body a tab stop while the body overflows", async () => {
+    const resize = stubResizeObservers();
+    await renderPanel(logOf(PERMISSION_LOG.slice(0, 5)));
+    const body = within(await findRequestPanel()).getByRole("group", { name: "Claude asks for permission" });
+    expect(body.tabIndex).toBe(-1);
+
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(900);
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(400);
+    resize.report(body);
+
+    expect(body.tabIndex).toBe(0);
+  });
+
+  it("announces the result and focuses the message field when the request closes with focus on its overflowing body", async () => {
+    const resize = stubResizeObservers();
+    const log = logOf(PERMISSION_LOG.slice(0, 5));
+    await renderPanel(log);
+    const body = within(await findRequestPanel()).getByRole("group", { name: "Claude asks for permission" });
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(900);
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(400);
+    resize.report(body);
+    act(() => {
+      body.focus();
+    });
+    expect(body.tabIndex).toBe(0);
+
+    log.answer(5, { cursor: 6, entries: chatEntries([ALLOWED], 6) });
+
+    expect(await within(screen.getByRole("log")).findByText("Answered: Yes.")).toBeTruthy();
+    expect(screen.queryByRole("region", REQUEST_PANEL)).toBeNull();
+    expect(document.activeElement).toBe(composer());
+    await frame();
+    expect(spoken()).toEqual(["Answered: Yes."]);
+  });
+
+  it("announces the result and focuses the group of the next request when the shown one closes with focus on its body", async () => {
+    const user = userEvent.setup();
+    const log = logOf(TWO_REQUESTS);
+    await renderPanel(log);
+    const panel = await findRequestPanel();
+    await user.click(within(panel).getByText("pnpm build", { selector: "p" }));
+    expect(document.activeElement).toBe(within(panel).getByRole("group", { name: "Claude asks for permission" }));
+
+    log.answer(6, { cursor: 7, entries: chatEntries([ALLOWED], 7) });
+
+    const next = await screen.findByRole("group", { name: "Publish the preview to the team?" });
+    expect(document.activeElement).toBe(next);
+    await frame();
+    expect(spoken()).toEqual(["Answered: Yes."]);
+  });
+
+  it("shows the input of the tool of a permission request", async () => {
+    const tool = { toolCallId: "t5", title: "mcp__notes__delete", kind: "other", status: "pending", rawInput: { path: "/notes/old.md" } };
+    await renderPanel(logOf(chatEntries([userMessage("Clean the notes."), toolCall(tool), permissionRequest("r5", tool, BASH_OPTIONS)])));
+
+    const panel = await findRequestPanel();
+    expect(within(panel).getByText("mcp__notes__delete", { selector: "p" })).toBeTruthy();
+    expect(within(panel).getByText(/"path": "\/notes\/old\.md"/).tagName).toBe("PRE");
+    cleanup();
+
+    await renderPanel(logOf(PERMISSION_LOG.slice(0, 5)));
+
+    expect(within(await findRequestPanel()).getByText("pnpm build", { selector: "[data-slot='terminal-block'] span" })).toBeTruthy();
+  });
+
+  it("disables the controls of the request that takes the place of an answered one for a moment", async () => {
+    const user = userEvent.setup();
+    const log = writableLogOf(TWO_REQUESTS, PERMISSION_PATH, `${chatPath()}/questions/q1`);
+    await renderPanel(log);
+    const yes = await findPermissionOption("Yes");
+    expect(yes.matches(":disabled")).toBe(false);
+    await user.click(yes);
+    log.answer(6, { cursor: 7, entries: chatEntries([ALLOWED], 7) });
+    const next = await screen.findByRole("group", { name: "Publish the preview to the team?" });
+    const accept = within(next).getByRole("button", { name: "Accept" });
+
+    expect(accept.matches(":disabled")).toBe(true);
+    await user.click(accept);
+    await waitFor(() => {
+      expect(accept.matches(":disabled")).toBe(false);
+    });
+    expect(posts(log)).toHaveLength(1);
+
+    await user.click(accept);
+    await waitFor(() => {
+      expect(posts(log)).toHaveLength(2);
+    });
+  });
+
+  it("enables the controls of a request that is open when the chat opens, and disables those of a later one for half a second", async () => {
+    const log = logOf(PERMISSION_LOG.slice(0, 5));
+    await renderPanel(log);
+    expect((await findPermissionOption("Yes")).matches(":disabled")).toBe(false);
+    vi.useFakeTimers();
+    log.answer(5, { cursor: 6, entries: chatEntries([ALLOWED], 6) });
+    await tick(0);
+    expect(screen.queryByRole("region", REQUEST_PANEL)).toBeNull();
+    await tick(5_000);
+
+    log.answer(6, { cursor: 7, entries: chatEntries([TWO_REQUESTS[5]!.event], 7) });
+    await tick(0);
+
+    const accept = within(requestPanel()).getByRole("button", { name: "Accept" });
+    expect(accept.matches(":disabled")).toBe(true);
+    await tick(499);
+    expect(accept.matches(":disabled")).toBe(true);
+    await tick(1);
+    expect(accept.matches(":disabled")).toBe(false);
+  });
+
+  it("keeps the controls of a request disabled for half a second also when it shows while the lock of a closed one runs", async () => {
+    const log = logOf(PERMISSION_LOG.slice(0, 4));
+    await renderPanel(log);
+    expect(await screen.findByText("Build the app.")).toBeTruthy();
+    vi.useFakeTimers();
+
+    log.answer(4, { cursor: 5, entries: chatEntries([PERMISSION_LOG[4]!.event], 5) });
+    await tick(0);
+    expect(within(permissionGroup()).getByRole("button", { name: "Yes" }).matches(":disabled")).toBe(true);
+    await tick(100);
+    log.answer(5, { cursor: 6, entries: chatEntries([ALLOWED], 6) });
+    await tick(0);
+    expect(screen.queryByRole("region", REQUEST_PANEL)).toBeNull();
+    await tick(300);
+    log.answer(6, { cursor: 7, entries: chatEntries([TWO_REQUESTS[5]!.event], 7) });
+    await tick(0);
+
+    const accept = within(requestPanel()).getByRole("button", { name: "Accept" });
+    await tick(300);
+    expect(accept.matches(":disabled")).toBe(true);
+    await tick(200);
+    expect(accept.matches(":disabled")).toBe(false);
   });
 });
 

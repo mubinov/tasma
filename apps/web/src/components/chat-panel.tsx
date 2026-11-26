@@ -15,9 +15,9 @@ import { chatBusy, turnRuns, type Chat, type ChatStatus, type Client, type Proje
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useChatLog } from "../api/chat-log";
 import { chatQuery, type ChatPlace } from "../api/queries";
-import { chatRequestOf } from "../lib/chat-approval";
+import { chatOpenRequests, chatRequestOf } from "../lib/chat-approval";
 import type { ChatMessage } from "../lib/chat-fold";
-import { chatAgentName, chatStateText, chatThreadMessage, isChatMissing, messageText } from "../lib/chat-messages";
+import { chatAgentName, chatRequestEnd, chatStateText, chatThreadMessage, isChatMissing, messageText } from "../lib/chat-messages";
 import { WarningIcon, XIcon } from "../lib/icons";
 import { CHAT_HEADING_MARK, CHAT_HEADING_SELECTOR, focusInView, KIT_INPUT } from "../lib/focus-in-view";
 import { sayStartedWords } from "../lib/started-chat";
@@ -30,6 +30,7 @@ import { focusDropped, useFocusLost } from "../lib/use-focus-lost";
 import { chatDraft, subscribeChatDraft, useChatDraftStore, type ChatDraftPlace } from "../store/chat-drafts";
 import { useUiStore } from "../store/ui";
 import { ChatOptionMenu, ChatPickerRow } from "./chat-option-menu";
+import { ChatRequestPanel, type RequestPanelInput } from "./chat-request-panel";
 import { ChatDataViews, ChatEmpty, ChatToolGroup, ChatToolView } from "./chat-tool";
 import { BUTTON_CLASS, ICON_BUTTON_CLASS } from "./control-classes";
 import { Tooltip } from "./tooltip";
@@ -65,11 +66,12 @@ type ChatOpening = Pick<ChatScrollInput, "openId" | "lastId">;
 /** What the transcript knows of `ChatScrollInput`. The scroll component reads the rest from the kit. */
 type ScrollInput = ChatOpening & Pick<ChatScrollInput, "userSeq" | "ownTurn" | "onFollow">;
 
-/** What `ChatTranscript` gives the composer slot through `extras` of the runtime, from the ready view on. */
+/** What `ChatTranscript` gives the composer slots through `extras` of the runtime, from the ready view on. */
 type ComposerExtras = ChatOptionPicks & {
   seenWatch: SeenInput;
   scroll: ScrollInput;
   onFocusLost: () => void;
+  requests: RequestPanelInput;
 };
 
 function isComposerExtras(extras: unknown): extras is ComposerExtras {
@@ -137,6 +139,7 @@ const THREAD_COMPONENTS: ThreadComponents = {
   ToolGroup: ChatToolGroup,
   Welcome: ChatEmpty,
   ComposerStart: ChatComposerStart,
+  ComposerAbove: ChatRequestPanel,
 };
 
 const NO_MESSAGES: readonly ChatMessage[] = [];
@@ -387,6 +390,16 @@ function ChatTranscript(
         onFocusLost: () => {
           focusInView(headingRef.current);
         },
+        requests: {
+          agent,
+          place,
+          folder,
+          items: chatOpenRequests(view),
+          resultOf: (id) => {
+            const request = chatRequestOf(view, id);
+            return request && chatRequestEnd(request);
+          },
+        },
       };
   const runtime = useExternalStoreRuntime({
     // One view for the whole log: a message that the kit first sees as running shows its text only
@@ -408,6 +421,7 @@ function ChatTranscript(
     },
     onNew: (message) => writes.send(messageText(message)),
     onCancel: () => writes.cancel(),
+    // The kit form of the request panel shows its controls only while the runtime has this handler.
     onRespondToToolApproval: (options) => writes.answer(chatRequestOf(view, options.approvalId), options),
     extras,
   });
@@ -440,7 +454,7 @@ function ChatTranscript(
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <ChatDataViews tag={tag} task={task} chat={chat} />
+      <ChatDataViews />
       <ChatDraft place={place} />
       {ready && opening !== null && runtimeReady && (
         <ChatThreadGate
@@ -546,8 +560,9 @@ function ChatThread(
   useFocusLost(ref, focusHeading);
   useStartedChat(place, ref);
 
+  // The size container that the composer and the request panel take their height limits from.
   return (
-    <div ref={ref} {...focusEvents} className="min-h-0 flex-1">
+    <div ref={ref} {...focusEvents} className="min-h-0 flex-1 [container-type:size]">
       <Thread autoFocus={false} components={THREAD_COMPONENTS} autoScroll={autoScroll} />
     </div>
   );

@@ -14,8 +14,8 @@ import {
 } from "./chat-fixtures";
 
 // Chat logs that codex-acp 2.6.0 with Codex 0.171.0 sent to the daemon in a
-// live chat. The recording keeps the events of each log in their order, with
-// these edits:
+// live chat, except `CODEX_ASYNC_QUESTION_LOG`, which is written by hand. The
+// recording keeps the events of each log in their order, with these edits:
 // - ids, paths, times and client ids are invented ones in the same form;
 // - the commands of `available_commands_update`, and the models, the effort
 //   levels and the fast mode texts of `config_option_update`, are invented,
@@ -286,6 +286,29 @@ export const CODEX_PERMISSION_LOG: readonly ChatEntry[] = chatEntries([
 
 export const QUESTION_REQUEST = "3f8b1d62-0c4e-4a95-b7d3-e1a6c9f4b208";
 
+const HOST_SCHEMA: AcpObject = {
+  type: "object",
+  properties: {
+    host: {
+      title: "Which host should the deploy use?",
+      description: "Host",
+      oneOf: [
+        { const: "preview", title: "preview", description: "Use the preview host." },
+        { const: "staging", title: "staging", description: "Use the staging host." },
+        { const: "None of the above", title: "None of the above", description: "Provide a different answer in the note field." },
+      ],
+      _meta: { codex: { isOther: true, isSecret: false } },
+      type: "string",
+    },
+    host_note: {
+      title: "Additional answer or note",
+      _meta: { codex: { questionId: "host", role: "user_note", isSecret: false } },
+      type: "string",
+    },
+  },
+  required: ["host"],
+};
+
 /** A question with two options and the Other choice, with no tool call, answered with typed text alone. */
 export const CODEX_QUESTION_LOG: readonly ChatEntry[] = chatEntries([
   userMessage(
@@ -296,28 +319,7 @@ export const CODEX_QUESTION_LOG: readonly ChatEntry[] = chatEntries([
   threadStatus("active", ["waitingOnUserInput"]),
   questionRequest(QUESTION_REQUEST, {
     toolCallId: "call_7a2e5c9f1b4d48e6a03f6b8c2d9e1a57",
-    requestedSchema: {
-      type: "object",
-      properties: {
-        host: {
-          title: "Which host should the deploy use?",
-          description: "Host",
-          oneOf: [
-            { const: "preview", title: "preview", description: "Use the preview host." },
-            { const: "staging", title: "staging", description: "Use the staging host." },
-            { const: "None of the above", title: "None of the above", description: "Provide a different answer in the note field." },
-          ],
-          _meta: { codex: { isOther: true, isSecret: false } },
-          type: "string",
-        },
-        host_note: {
-          title: "Additional answer or note",
-          _meta: { codex: { questionId: "host", role: "user_note", isSecret: false } },
-          type: "string",
-        },
-      },
-      required: ["host"],
-    },
+    requestedSchema: HOST_SCHEMA,
     message: "Codex needs your input to continue.",
     _meta: { codex: { autoResolutionMs: null } },
   }),
@@ -329,10 +331,65 @@ export const CODEX_QUESTION_LOG: readonly ChatEntry[] = chatEntries([
   turnEnd(),
 ]);
 
+export const ASYNC_QUESTION_REQUEST = "9d4f2b80-6a1c-4e37-b5d8-0c3e7a2f1b64";
+
+/** The message that codex-acp 2.6.0 gives every async question. */
+export const CODEX_ASYNC_MESSAGE = "Codex keeps working while you answer. An answer sent after it finishes is not delivered.";
+
+const ASYNC_READ_ID = "exec-4c9a2e17-8b3d-4f60-a1c5-6e2d9b7f0a38";
+
+const ASYNC_BETA_ID = "exec-b17e5d30-2a8c-4e94-9f6b-3d0c8a1e5f72";
+
+/**
+ * Written by hand in the format of codex-acp 2.6.0: an async question with no
+ * tool call, then the agent text and the two tool calls that Codex sends while
+ * the question is open, then the answer.
+ */
+export const CODEX_ASYNC_QUESTION_LOG: readonly ChatEntry[] = chatEntries([
+  userMessage(
+    "Use the request_user_input_async tool to ask me which host the deploy should use. Do not wait for my answer: read notes.txt and search it for beta. After my answer, reply with my answer only.",
+  ),
+  threadStatus("active"),
+  textChunk("I’ll ask for the deploy host and read the notes.", "msg_0c4b7e29a1f6d3850e2b9486c3f9a7e2b81d5e64f0c7a2b9d3"),
+  questionRequest(ASYNC_QUESTION_REQUEST, {
+    requestedSchema: HOST_SCHEMA,
+    message: CODEX_ASYNC_MESSAGE,
+    _meta: { codex: { delivery: "async" } },
+  }),
+  textChunk("While you choose, I’ll read the notes.", "msg_0c4b7e29a1f6d3850e2b9487d4a0b8f3c92e6f75a1d8b3c0e4"),
+  toolCall({
+    toolCallId: ASYNC_READ_ID,
+    title: `Read file '${CODEX_FOLDER}/notes.txt'`,
+    name: "exec_command",
+    kind: "read",
+    status: "in_progress",
+    locations: [{ path: `${CODEX_FOLDER}/notes.txt` }],
+  }),
+  toolCallUpdate({
+    toolCallId: ASYNC_READ_ID,
+    status: "completed",
+    content: [{ content: { text: "alpha build\nbeta deploy\ngamma review\n", type: "text" }, type: "content" }],
+    rawOutput: { exit_code: 0 },
+  }),
+  toolCall({ toolCallId: ASYNC_BETA_ID, title: "Search for 'beta' in notes.txt", name: "exec_command", kind: "search", status: "in_progress" }),
+  toolCallUpdate({
+    toolCallId: ASYNC_BETA_ID,
+    status: "completed",
+    content: [{ content: { text: "2:beta deploy\n", type: "text" }, type: "content" }],
+    rawOutput: { exit_code: 0 },
+  }),
+  questionResolved(ASYNC_QUESTION_REQUEST, { action: "accept", content: { host: "None of the above", host_note: "the canary host" } }),
+  textChunk("the canary host", "msg_0c4b7e29a1f6d3850e2b9488e5b1c9a4d03f7a86b2e9c4d1f5"),
+  usage(23_104),
+  threadStatus("idle"),
+  turnEnd(),
+]);
+
 export const CODEX_FIXTURES: Readonly<Record<string, readonly ChatEntry[]>> = {
   "Codex command": CODEX_COMMAND_LOG,
   "Codex read": CODEX_READ_LOG,
   "Codex edit": CODEX_EDIT_LOG,
   "Codex permission": CODEX_PERMISSION_LOG,
   "Codex question": CODEX_QUESTION_LOG,
+  "Codex async question": CODEX_ASYNC_QUESTION_LOG,
 };

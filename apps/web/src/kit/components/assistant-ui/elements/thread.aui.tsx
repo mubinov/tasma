@@ -105,8 +105,9 @@ export type ThreadComponents = {
     | ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>>
     | undefined;
   TaskGroup?: ComponentType<{ group: ThreadGroupPart }> | undefined;
-  // tasma-edit: a slot at the start of the composer action row
+  // tasma-edit: a slot at the start of the composer action row, and a slot above the composer
   ComposerStart?: ComponentType | undefined;
+  ComposerAbove?: ComponentType | undefined;
   // tasma-edit end
 };
 
@@ -273,9 +274,21 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean; autoScroll: boolean
           >
             <ThreadScrollToBottom />
             <ThreadFollowupSuggestions />
-            {/* tasma-edit: a disabled thread shows no composer */}
+            {/* tasma-edit: a disabled thread shows no composer, and the slot above the composer shows with it. A host
+                with the slot is a size container. The slot and the composer leave the bottom padding and some of the
+                log inside its height: the slot gives up its height down to its own minimum, the message field grows
+                to a quarter of that height at most, and when the two still do not fit, they scroll. */}
             <AuiIf condition={(s) => !s.thread.isDisabled}>
-              <Composer autoFocus={autoFocus} />
+              <ThreadComponentsContext.Consumer>
+                {({ ComposerAbove }) => ComposerAbove
+                  ? (
+                      <div className="flex max-h-[calc(100cqh-3rem)] flex-col gap-4 overflow-y-auto [&_.aui-composer-input]:max-h-[min(12rem,25cqh)]">
+                        <ComposerAbove />
+                        <Composer autoFocus={autoFocus} />
+                      </div>
+                    )
+                  : <Composer autoFocus={autoFocus} />}
+              </ThreadComponentsContext.Consumer>
             </AuiIf>
             {/* tasma-edit end */}
             <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
