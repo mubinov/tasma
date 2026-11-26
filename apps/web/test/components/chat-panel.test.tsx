@@ -1133,6 +1133,17 @@ it("shows each line of agent text on its own line, also when the lines come in t
   expect(paragraph?.textContent).toBe("Problem: one\nOutcome: two");
 });
 
+it("shows agent text nested too deep as a code block of its source, under the heading of the panel", async () => {
+  const text = `${">".repeat(10_000)} a`;
+  await renderPanel(logOf(chatEntries([userMessage("Quote the notes."), textChunk(text), turnEnd()])));
+
+  await waitFor(() => {
+    expect(panel().querySelector("pre code")?.textContent.trimEnd()).toBe(text);
+  });
+  expect(panel().querySelector("blockquote")).toBeNull();
+  expect(screen.getByRole("heading", { level: 2, name: "Claude · build" })).toBeTruthy();
+});
+
 const CODE_REPLY = ["Here is the sum:", "", "```ts", "// sum", "const total = 1 + 2;", "```"].join("\n");
 
 it("shows a fenced block of a complete agent message in Shiki colours", async () => {

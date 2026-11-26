@@ -246,6 +246,17 @@ describe("the page", () => {
     expect(screen.getByText("Read the file.")).toBeTruthy();
   });
 
+  it("shows a body nested too deep as a code block of its source that is a tab stop, under the title", async () => {
+    const body = `${">".repeat(10_000)} a`;
+    const { transport } = daemon({ [TASK_PATH]: task({ body }) });
+    await renderWithRouter("/tasks/SAGA/SAGA-3", transport);
+
+    const pre = screen.getByRole("main").querySelector("pre");
+    expect(pre?.textContent.trimEnd()).toBe(body);
+    expect(pre?.getAttribute("tabindex")).toBe("0");
+    expect(screen.getByRole("heading", { level: 1, name: "Build the parser" })).toBeTruthy();
+  });
+
   it("renders no body for a body of spaces, and the empty comment section after the meta line", async () => {
     const { transport } = daemon({ [TASK_PATH]: task({ body: "  \n\n " }) });
     await renderWithRouter("/tasks/SAGA/SAGA-3", transport);

@@ -8,11 +8,13 @@ import {
 } from "@tanstack/react-router";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appAvailable } from "../../src/api/app";
 import { Markdown } from "../../src/components/markdown";
 import { MermaidDiagram } from "../../src/components/mermaid-diagram";
-import { remarkTaskHeadings, type HeadingBase } from "../../src/lib/markdown";
+import { remarkDepthLimit, remarkTaskHeadings, type HeadingBase } from "../../src/lib/markdown";
 
 vi.mock(import("../../src/api/app"), () => ({ appAvailable: vi.fn(() => false) }));
 
@@ -702,6 +704,43 @@ describe("raw HTML", () => {
     expect(wrapper.querySelector("img, b")).toBeNull();
     expect(wrapper.querySelector("pre > code")?.textContent).toBe("<img src=x onerror=alert(1)>\n");
     expect([...wrapper.querySelectorAll("p > code")].map((code) => code.textContent)).toEqual(["<b>", "</b>"]);
+  });
+});
+
+describe("deeply nested markdown", () => {
+  it("of 100 levels renders as markdown", () => {
+    const wrapper = renderMarkdown(`${">".repeat(97)} a`);
+
+    expect(wrapper.querySelectorAll("blockquote")).toHaveLength(97);
+    expect(wrapper.querySelector("pre")).toBeNull();
+  });
+
+  it.each([
+    { name: "98 nested quotes", text: `${">".repeat(98)} a` },
+    { name: "10,000 nested quotes", text: `${">".repeat(10_000)} a` },
+    { name: "1,000 nested lists", text: `${"- ".repeat(1_000)}a` },
+    { name: "200 levels of emphasis", text: `${"*a ".repeat(200)}b${" c*".repeat(200)}` },
+  ])("of $name shows as one code block of its source", ({ text }) => {
+    const wrapper = renderMarkdown(text);
+
+    expect(wrapper.children).toHaveLength(1);
+    expect(wrapper.querySelector(":scope > pre > code")?.textContent.trimEnd()).toBe(text);
+    expect(wrapper.querySelector("blockquote, ul, em")).toBeNull();
+  });
+
+  it("is cut before the parse transforms of the plugins listed before the limit", () => {
+    const text = `${">".repeat(10_000)} a`;
+    const { container } = render(<ReactMarkdown remarkPlugins={[remarkGfm, remarkDepthLimit]}>{text}</ReactMarkdown>);
+
+    expect(container.querySelector(":scope > pre > code")?.textContent.trimEnd()).toBe(text);
+  });
+
+  it("over the limit shows its leading H1 equal to the title as source", () => {
+    const text = `# Report\n\n${">".repeat(98)} a`;
+    const wrapper = renderMarkdown(text, 2, "Report");
+
+    expect(wrapper.querySelector("h1, h2")).toBeNull();
+    expect(wrapper.querySelector("pre > code")?.textContent.trimEnd()).toBe(text);
   });
 });
 

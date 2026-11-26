@@ -571,8 +571,19 @@ describe("the hidden host of a link", () => {
     { text: "(https://github.com)", href: "https://github.com/", host: undefined },
     { text: "(www.github.com).", href: "https://github.com/", host: undefined },
     { text: "(markdown.ts)", href: "https://evil.example/", host: undefined },
+    { text: "!?(github.com/acme)!?", href: "https://evil.example/", host: "evil.example" },
+    { text: "!?(www.github.com)!?", href: "https://github.com/", host: undefined },
+    { text: "github.com/!", href: "https://evil.example/", host: "evil.example" },
+    { text: "www.github.com\u{1F517}", href: "https://github.com/", host: undefined },
+    { text: "\u{1F517}www.github.com\u{1F517}\u{1F517}", href: "https://github.com/", host: undefined },
   ])("of $text to $href, with punctuation or a symbol around it, is $host", ({ text, href, host }) => {
     expect(hiddenHost(text, href)).toBe(host);
+  });
+
+  it("of a text with a long run of marks inside it is read in linear time", () => {
+    const start = performance.now();
+    expect(hiddenHost(`a${"!".repeat(200_000)}a`, "https://example.com/")).toBeUndefined();
+    expect(performance.now() - start).toBeLessThan(1000);
   });
 
   it.each([
@@ -661,6 +672,8 @@ describe("a link text that names a file", () => {
     { text: "en.lproj/Localizable.strings", path: "/work/saga/App/en.lproj/Localizable.strings" },
     { text: "en.lproj/Localizable.strings:42", path: "/work/saga/en.lproj/Localizable.strings" },
     { text: "en.lproj/Localizable.strings:42:7", path: "/work/saga/en.lproj/Localizable.strings" },
+    { text: "www.", path: "/work/saga/www." },
+    { text: "http:!", path: "/work/saga/http:!" },
   ])("names $path: $text", ({ text, path }) => {
     expect(namesFile(text, path)).toBe(true);
   });

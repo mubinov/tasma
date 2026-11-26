@@ -135,6 +135,9 @@ catalogs:
     remark-gfm:
       specifier: ^4.0.1
       version: 4.0.1
+    remark-parse:
+      specifier: ^11.0.0
+      version: 11.0.0
     shadcn:
       specifier: 4.21.4
       version: 4.21.4
@@ -156,6 +159,9 @@ catalogs:
     typescript-eslint:
       specifier: ^8.68.0
       version: 8.68.0
+    unified:
+      specifier: ^11.0.5
+      version: 11.0.5
     vite:
       specifier: ^8.2.0
       version: 8.2.2
@@ -410,6 +416,9 @@ importers:
       oxc-transform-react:
         specifier: 'catalog:'
         version: 0.145.0
+      remark-parse:
+        specifier: 'catalog:'
+        version: 11.0.0
       shadcn:
         specifier: 'catalog:'
         version: 4.21.4
@@ -419,6 +428,9 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
+      unified:
+        specifier: 'catalog:'
+        version: 11.0.5
       vite:
         specifier: 'catalog:'
         version: 8.2.2(@types/node@24.13.3)(jiti@2.7.0)(yaml@2.9.0)

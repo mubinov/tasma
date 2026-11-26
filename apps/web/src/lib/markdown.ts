@@ -1,6 +1,10 @@
 import type { Heading, Nodes, Parents, PhrasingContent, Root, RootContent, Text } from "mdast";
 import type { ExtraProps } from "react-markdown";
+import type {} from "remark-parse";
+import type { Processor, Transformer } from "unified";
 import { EDITOR_SCHEMES, fileLinkPath, LINK_SCHEMES, linkKind } from "./link-kind";
+
+const MAX_TREE_DEPTH = 100;
 
 const FLOW_PARENTS = new Set<Parents["type"]>(["root", "blockquote", "listItem", "footnoteDefinition"]);
 
@@ -13,12 +17,48 @@ const WEB_SCHEMES = new Set(["http:", "https:"]);
 // The bidi embeddings, overrides and isolates: every bidi control except the LRM, RLM and ALM marks.
 const BIDI_OVERRIDES = /[‪-‮⁦-⁩]/;
 
-// Leading and trailing punctuation and symbols, except a slash, which can start a protocol-relative URL or end a path.
-const EDGE_MARKS = /^(?:(?!\/)[\p{P}\p{S}])+|(?:(?!\/)[\p{P}\p{S}])+$/gu;
+// Leading punctuation and symbols, except a slash, which can start a protocol-relative URL.
+const LEADING_MARKS = /^(?:(?!\/)[\p{P}\p{S}])+/u;
+
+// One punctuation mark or symbol, except a slash, which can end a path.
+const TRAILING_MARK = /^(?!\/)[\p{P}\p{S}]$/u;
 
 type HastContent = NonNullable<ExtraProps["node"]>["children"][number];
 
 const TITLE_NODES = new Set<Nodes["type"]>(["heading", "text", "inlineCode", "emphasis", "strong", "delete", "break"]);
+
+const cutTrees = new WeakSet<Root>();
+
+/**
+ * Shows a text whose tree is deeper than `MAX_TREE_DEPTH` levels, the root
+ * being level 1, as one code block of its source. Its cut is the first parse
+ * transform, before those of the other plugins, which recurse and overflow the
+ * stack on a deep tree.
+ */
+export function remarkDepthLimit(this: Processor): Transformer<Root> {
+  (this.data().fromMarkdownExtensions ??= []).unshift({ transforms: [cutDeepTree] });
+  return (tree, file) => {
+    if (cutTrees.has(tree)) {
+      tree.children = [{ type: "code", lang: null, meta: null, value: String(file.value) }];
+    }
+  };
+}
+
+function cutDeepTree(tree: Root): void {
+  const stack: { node: Nodes; depth: number }[] = [{ node: tree, depth: 1 }];
+  for (let entry = stack.pop(); entry !== undefined; entry = stack.pop()) {
+    if (entry.depth > MAX_TREE_DEPTH) {
+      tree.children = [];
+      cutTrees.add(tree);
+      return;
+    }
+    if ("children" in entry.node) {
+      for (const node of entry.node.children) {
+        stack.push({ node, depth: entry.depth + 1 });
+      }
+    }
+  }
+}
 
 /**
  * Turns raw HTML into code with the same text, so the reader sees the source
@@ -332,10 +372,10 @@ export function showsUrl(text: string): boolean {
  * file it opens can be outside the folders that it shows.
  */
 export function namesFile(text: string, path: string): boolean {
-  if (/^(?:https?:|\/\/|www[.。])/i.test(visibleText(text).replace(EDGE_MARKS, ""))) {
+  if (/^(?:https?:|\/\/|www[.。])/i.test(withoutEdgeMarks(visibleText(text)))) {
     return false;
   }
-  // The segments read the raw text: EDGE_MARKS drops a leading `.` or `_` of a folder name, and an invisible
+  // The segments read the raw text: `withoutEdgeMarks` drops a leading `.` or `_` of a folder name, and an invisible
   // character must break the match.
   const named = pathSegments(text.trim().replace(/:\d+(?::\d+)?$/, ""));
   return (
@@ -372,7 +412,7 @@ function shownHost(text: string): string | null | undefined {
   if (reorderable && /\p{Bidi_Control}/u.test(text)) {
     return null;
   }
-  const token = visible.replace(EDGE_MARKS, "");
+  const token = withoutEdgeMarks(visible);
   // The parser takes any number of slashes and backslashes after a web scheme.
   if (/^https?:/i.test(token)) {
     return URL.parse(token)?.hostname ?? null;
@@ -392,6 +432,19 @@ function shownHost(text: string): string | null | undefined {
   }
   const hasPort = host !== hostPart;
   return URL.parse(`https://${domain}`)?.hostname ?? (relative || hasPort ? null : undefined);
+}
+
+/**
+ * The text with no leading and no trailing punctuation or symbol, except a
+ * slash. A `$`-anchored regex is quadratic on a run of marks that does not end
+ * the text, so the trailing marks are removed one code point at a time.
+ */
+function withoutEdgeMarks(text: string): string {
+  const points = [...text.replace(LEADING_MARKS, "")];
+  while (TRAILING_MARK.test(points.at(-1) ?? "")) {
+    points.pop();
+  }
+  return points.join("");
 }
 
 function withoutWww(host: string): string {

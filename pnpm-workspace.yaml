@@ -51,6 +51,7 @@ catalog:
   react-markdown: ^10.1.0
   react-shiki: ^0.11.2
   remark-gfm: ^4.0.1
+  remark-parse: ^11.0.0
   # Exact: apps/web/src/kit is the output of this CLI version, and
   # pnpm kit:check compares the folder with the output of the installed one.
   shadcn: 4.21.4
@@ -65,6 +66,7 @@ catalog:
   # typescript-eslint supports 7.x.
   typescript: 6.0.3
   typescript-eslint: ^8.68.0
+  unified: ^11.0.5
   vite: ^8.2.0
   vitest: ^4.1.11
   # The floor is the version the format module is tested against; an older

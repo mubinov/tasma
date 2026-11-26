@@ -163,6 +163,14 @@ describe("the comment menu", () => {
   });
 });
 
+it("shows a comment nested too deep as a code block of its source", async () => {
+  const body = `${">".repeat(10_000)} a`;
+  await renderWithRouter(PAGE, daemon([comment(3, { body })]).transport);
+
+  expect(card("Note 3").querySelector("pre code")?.textContent.trimEnd()).toBe(body);
+  expect(card("Note 3").querySelector("blockquote")).toBeNull();
+});
+
 describe("Collapsed by default", () => {
   it("is checked from the file", async () => {
     const user = userEvent.setup();

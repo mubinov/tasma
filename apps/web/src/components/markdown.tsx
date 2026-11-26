@@ -13,6 +13,7 @@ import {
   namesFile,
   rehypeFileLinks,
   rehypeLinkText,
+  remarkDepthLimit,
   remarkImagesAsLinks,
   remarkRawAsSource,
   remarkSoftBreaks,
@@ -260,6 +261,7 @@ export function Markdown({ text, base, title, diagrams = true, folder }: Markdow
     <div className="wrap-anywhere [&>:first-child]:mt-0">
       <ReactMarkdown
         remarkPlugins={[
+          remarkDepthLimit,
           remarkGfm,
           remarkRawAsSource,
           [remarkTaskHeadings, { base, title }],
