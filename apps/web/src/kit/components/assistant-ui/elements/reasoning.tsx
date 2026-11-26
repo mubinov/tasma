@@ -38,7 +38,9 @@ const reasoningVariants = cva("aui-reasoning-root mb-4 w-full", {
 
 export type ReasoningRootProps = Omit<
   React.ComponentProps<typeof Collapsible>,
-  "open" | "onOpenChange"
+  // tasma-edit: onAnimationStart gets the open state that the disclosure animates to
+  "open" | "onOpenChange" | "onAnimationStart"
+  // tasma-edit end
 > &
   VariantProps<typeof reasoningVariants> & {
     open?: boolean;
@@ -54,8 +56,13 @@ export type ReasoningRootProps = Omit<
      * scrolled up.
      */
     streaming?: boolean;
-    /** Called right before the disclosure animates, on toggle and on streaming transitions. */
-    onAnimationStart?: () => void;
+    // tasma-edit: onAnimationStart gets the open state that the disclosure animates to
+    /**
+     * Called right before the disclosure animates, on toggle and on streaming
+     * transitions, with the open state after the animation.
+     */
+    onAnimationStart?: (open: boolean) => void;
+    // tasma-edit end
   };
 
 const ReasoningRoot = forwardRef<
@@ -91,13 +98,17 @@ const ReasoningRoot = forwardRef<
     // A streaming transition only animates the panel when the resting state
     // is collapsed; with `defaultOpen` the disclosure stays open across it.
     if (!isControlled && userOpen === null && !initialOpen) {
-      onAnimationStart?.();
+      // tasma-edit: onAnimationStart gets the open state that the disclosure animates to
+      onAnimationStart?.(streaming === true);
+      // tasma-edit end
     }
   }, [streaming, isControlled, userOpen, initialOpen, onAnimationStart]);
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
-      onAnimationStart?.();
+      // tasma-edit: onAnimationStart gets the open state that the disclosure animates to
+      onAnimationStart?.(open);
+      // tasma-edit end
       if (!isControlled) {
         setUserOpen(open);
       }

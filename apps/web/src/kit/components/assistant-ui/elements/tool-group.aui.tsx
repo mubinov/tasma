@@ -59,7 +59,9 @@ function ToolGroupRoot({
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
-      lockScroll();
+      // tasma-edit: a close does not lock the scroll: the old position can be past the end of the shorter content
+      if (open) lockScroll();
+      // tasma-edit end
       if (!isControlled) {
         setUncontrolledOpen(open);
       }

@@ -21,7 +21,9 @@ import {
 
 export type { ReasoningRootProps } from "./reasoning";
 
-/** `ReasoningRoot` with the thread viewport scroll locked during disclosure animations. */
+// tasma-edit: a close does not lock the scroll: the old position can be past the end of the shorter content
+/** `ReasoningRoot` with the thread viewport scroll locked while the disclosure opens. */
+// tasma-edit end
 const ReasoningRoot = forwardRef<
   HTMLDivElement,
   Omit<ReasoningRootProps, "ref">
@@ -29,10 +31,15 @@ const ReasoningRoot = forwardRef<
   const collapsibleRef = useRef<HTMLDivElement | null>(null);
   const lockScroll = useScrollLock(collapsibleRef, ANIMATION_DURATION);
 
-  const handleAnimationStart = useCallback(() => {
-    lockScroll();
-    onAnimationStart?.();
-  }, [lockScroll, onAnimationStart]);
+  // tasma-edit: a close does not lock the scroll: the old position can be past the end of the shorter content
+  const handleAnimationStart = useCallback(
+    (open: boolean) => {
+      if (open) lockScroll();
+      onAnimationStart?.(open);
+    },
+    [lockScroll, onAnimationStart],
+  );
+  // tasma-edit end
 
   const composedRef = useCallback(
     (node: HTMLDivElement | null) => {
