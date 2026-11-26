@@ -46,7 +46,7 @@ async function serving(root: string, holdMs = LONG_HOLD_MS): Promise<TestServer>
     ...projectRoutes(host, writes),
     ...taskRoutes(host),
     ...workflowRoutes({ root, writes, publish }),
-    ...configRoutes({ root, writes, publish }),
+    ...configRoutes({ root, writes, publish, agents: ["claude"] }),
     ...eventRoutes(feed),
   ]);
 }

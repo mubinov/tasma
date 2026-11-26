@@ -9,7 +9,9 @@ export type UserSetting<T> = { value: T; set: boolean };
 /**
  * The user's configuration file, each key with the value a project that states
  * none takes. `workflows_path` is a resolved absolute path, the built-in
- * `<root>/workflows` where the file names none.
+ * `<root>/workflows` where the file names none. `default_agent` is the agent of
+ * a new chat, and `null` where the file names none: a new chat then takes
+ * `SetupStatus.defaultAgent`.
  */
 export type UserConfig = {
   /** The absolute path of the file. */
@@ -19,6 +21,7 @@ export type UserConfig = {
   final_statuses: UserSetting<string[]>;
   priorities: UserSetting<string[]>;
   workflows_path: UserSetting<string>;
+  default_agent: UserSetting<string | null>;
 };
 
 /**
@@ -30,7 +33,8 @@ export type UserConfig = {
  * The daemon checks the result before it writes, and a change it refuses writes
  * nothing: `default_status` and each final status must be among the statuses of
  * the file on its own, the change must not break a project that resolves today,
- * and each workflow a project lists must load from a new `workflows_path`.
+ * each workflow a project lists must load from a new `workflows_path`, and
+ * `default_agent` must name an agent that the daemon offers.
  */
 export type UserConfigChange = {
   statuses?: string[] | null;
@@ -38,4 +42,5 @@ export type UserConfigChange = {
   final_statuses?: string[] | null;
   priorities?: string[] | null;
   workflows_path?: string | null;
+  default_agent?: string | null;
 };

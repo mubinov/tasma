@@ -4,9 +4,10 @@
 
 import { stat } from "node:fs/promises";
 import { delimiter, isAbsolute, join } from "node:path";
-import { openProject } from "@tasma/engine";
-import type { AgentSetup, SetupCheck, SetupStatus } from "@tasma/protocol";
+import { openProject, readDefaultAgent } from "@tasma/engine";
+import type { AgentSetup, ChatAgent, SetupCheck, SetupStatus } from "@tasma/protocol";
 import type { AgentAdapter, AgentEnv } from "../agents/adapter.js";
+import { effectiveAgent, offersOnlyClaude } from "../agents/default-agent.js";
 import { isExecutableFile } from "../agents/process.js";
 import { readShellEnv } from "../agents/shell-env.js";
 import type { ShellEnv } from "../agents/shell-env.js";
@@ -129,6 +130,16 @@ async function skillCheck(
   }
 }
 
+/** The agent of a new chat, from the checks of one request. */
+function defaultAgentOf(agents: AgentSetup[], stored: string | undefined): Promise<ChatAgent> {
+  return effectiveAgent({
+    offered: agents.map((entry) => entry.agent),
+    stored: () => Promise.resolve(stored),
+    ready: (agent) => Promise.resolve(agents.some((entry) =>
+      entry.agent === agent && entry.installed === "pass" && entry.loggedIn === "pass")),
+  });
+}
+
 export function createSetupChecks(options: {
   root?: string;
   host: ProjectHost;
@@ -184,6 +195,11 @@ export function createSetupChecks(options: {
 
   return {
     async status(asked) {
+      // `undefined` when the read fails. Settled where it starts: a rejection
+      // with no handler while the checks run ends the daemon.
+      const storedRead = asked.full && !offersOnlyClaude(adapters.map((adapter) => adapter.agent))
+        ? readDefaultAgent(root).then((value) => ({ value }), () => undefined)
+        : Promise.resolve({ value: undefined });
       // A slow `stat` can ask for the shell after the read of `cli` ended: one request reads it once.
       let requestRead: Promise<ShellEnv> | undefined;
       const requestShell = () => (requestRead ??= shell());
@@ -192,7 +208,10 @@ export function createSetupChecks(options: {
         asked.full ? requestShell().then(cliCheck) : ("not-run" as const),
         Promise.all(adapters.map((adapter) => agentCheck(adapter, asked, requestShell))),
       ]);
-      return { ...start, cli, agents };
+      const status = { ...start, cli, agents };
+      const stored = await storedRead;
+      if (!asked.full || stored === undefined) return status;
+      return { ...status, defaultAgent: await defaultAgentOf(agents, stored.value) };
     },
 
     stop() {

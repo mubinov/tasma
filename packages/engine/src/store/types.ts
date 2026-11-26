@@ -206,7 +206,8 @@ export type UserSetting<T> = { value: T; set: boolean };
 /**
  * The user's configuration file read on its own, each key with the value a
  * project that states none takes. `workflows_path` is a resolved absolute path,
- * the built-in `<root>/workflows` where the file names none.
+ * the built-in `<root>/workflows` where the file names none. `default_agent` is
+ * `null` where the file names none.
  */
 export type UserConfigInfo = {
   /** The absolute path of `<root>/config.yml`. */
@@ -216,6 +217,7 @@ export type UserConfigInfo = {
   final_statuses: UserSetting<string[]>;
   priorities: UserSetting<string[]>;
   workflows_path: UserSetting<string>;
+  default_agent: UserSetting<string | null>;
   diagnostics: StoreDiagnostic[];
 };
 
@@ -230,6 +232,7 @@ export type UserConfigChange = {
   final_statuses?: string[] | null;
   priorities?: string[] | null;
   workflows_path?: string | null;
+  default_agent?: string | null;
 };
 
 /**

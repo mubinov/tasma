@@ -62,5 +62,5 @@ export type {
   UserSetting,
   WriteResult,
 } from "./types.js";
-export { readUserConfig, updateUserConfig, USER_CONFIG_LINKED_KEYS } from "./user-config.js";
+export { readDefaultAgent, readUserConfig, updateUserConfig, USER_CONFIG_LINKED_KEYS } from "./user-config.js";
 export { openTreeWorkflows } from "./workflow.js";

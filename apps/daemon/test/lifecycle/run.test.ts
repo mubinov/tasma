@@ -511,25 +511,56 @@ describe("the start of a chat", () => {
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "project-has-no-folder" });
   });
 
-  it.each([
-    ["Codex with TASMA_DEV_CODEX=1", "1", "codex"],
-    ["Claude without TASMA_DEV_CODEX", undefined, "claude"],
-  ])("starts with %s", async (_name, value, agent) => {
+  /**
+   * A daemon over project ONE, whose task ONE-1 follows a workflow, with the
+   * user file `config` and the switch `TASMA_DEV_CODEX=<codex>`. No agent is on
+   * PATH and the login shell fails: a chat fails before any agent starts, and
+   * no agent is ready.
+   */
+  async function noAgentReady(
+    config: string | undefined,
+    codex: string | undefined,
+  ): Promise<TestServer & { root: string }> {
     const root = await projectsRoot("ONE");
     const home = await target();
     await plantSteps(root, "flow", "build");
     await plant(projectConfig(root, "ONE"), `path: ${await target()}\nworkflows: [flow]\n`);
     await plant(taskFile(root, "ONE", "ONE-1"), onWorkflow("ONE-1", "flow"));
-    // No agent on PATH and a login shell that fails: the chat fails before any agent starts.
+    if (config !== undefined) await plant(userConfig(root), config);
     const shell = join(home, "shell");
     await writeFile(shell, "#!/bin/sh\nexit 1\n");
     await chmod(shell, 0o755);
-    const start = await daemonOn(root, { env: { TASMA_DEV_CODEX: value, SHELL: shell, HOME: home, PATH: "" } });
-    const server: TestServer = { url: start.url, token: await tokenOf(root), close: start.stop };
+    const start = await daemonOn(root, { env: { TASMA_DEV_CODEX: codex, SHELL: shell, HOME: home, PATH: "" } });
+    return { url: start.url, token: await tokenOf(root), close: start.stop, root };
+  }
+
+  it.each([
+    ["Codex with TASMA_DEV_CODEX=1 and default_agent: codex", "default_agent: codex\n", "1", "codex"],
+    ["Claude with TASMA_DEV_CODEX=1, no default_agent and no agent ready", undefined, "1", "claude"],
+    ["Claude without TASMA_DEV_CODEX and with default_agent: codex", "default_agent: codex\n", undefined, "claude"],
+  ])("starts with %s", async (_name, config, codex, agent) => {
+    const server = await noAgentReady(config, codex);
 
     const response = await send(server, "POST", "/projects/ONE/tasks/ONE-1/chats", { client: "cli" });
 
     expect((await success<ChatStart>(response)).data).toMatchObject({ started: true, chat: { task: "ONE-1", agent } });
+  });
+
+  it("refuses a start with TASMA_DEV_CODEX=1 and a default_agent the reader refuses, naming the file", async () => {
+    const server = await noAgentReady("default_agent: 5\n", "1");
+
+    const response = await send(server, "POST", "/projects/ONE/tasks/ONE-1/chats", { client: "cli" });
+
+    expect(response.status).toBe(422);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "store", code: "config-invalid", path: userConfig(server.root) });
+  });
+
+  it("starts with Claude without TASMA_DEV_CODEX, whatever the user file holds", async () => {
+    const server = await noAgentReady("default_agent: 5\n", undefined);
+
+    const response = await send(server, "POST", "/projects/ONE/tasks/ONE-1/chats", { client: "cli" });
+
+    expect((await success<ChatStart>(response)).data).toMatchObject({ started: true, chat: { agent: "claude" } });
   });
 });
 

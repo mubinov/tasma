@@ -12,8 +12,19 @@ export type SetupCheck = "pass" | "fail" | "not-run" | "unknown";
 
 export type AgentSetup = { agent: ChatAgent; installed: SetupCheck; loggedIn: SetupCheck; skill: SetupCheck };
 
-/** `agents` holds one entry for each agent that a chat can run, in the same order each time. */
-export type SetupStatus = { project: SetupCheck; workflow: SetupCheck; cli: SetupCheck; agents: AgentSetup[] };
+/**
+ * `agents` holds one entry for each agent that a chat can run, in the same
+ * order each time. `defaultAgent` is the agent of a new chat with no agent of
+ * its own. Only the full read gives it, and not when the user's configuration
+ * file cannot be read.
+ */
+export type SetupStatus = {
+  project: SetupCheck;
+  workflow: SetupCheck;
+  cli: SetupCheck;
+  agents: AgentSetup[];
+  defaultAgent?: ChatAgent;
+};
 
 /**
  * The answer to an install of the tasma skill for each agent. `running`: the

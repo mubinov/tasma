@@ -132,6 +132,13 @@ export type ChatRunner = {
   }): Promise<LiveChat<ProjectChat>>;
   running(live: AnyLiveChat): RunningChat | undefined;
   /**
+   * Whether `agent`, one of the agents of the runner, is installed and logged
+   * in. The binary search is the one of a start, and shares its read of the
+   * login shell. Never rejects: a search or a login check that fails or
+   * cannot tell gives `false`, and so does a check that `stopStarts()` ends.
+   */
+  ready(agent: ChatAgent): Promise<boolean>;
+  /**
    * Writes the `user` event and starts a turn with the text, and with the
    * earlier texts of the chat that the agent has still to get. A chat with no
    * agent process gets its agent started again in the background, on the
@@ -499,15 +506,19 @@ export function createChatRunner(options: {
   }
 
   /**
-   * A kept environment with no binary, or a failed read, gives a new read at
-   * the next start, so an install after a failed chat needs no daemon restart.
+   * The launch of the adapter and the environment in which the search found
+   * its binary. A kept environment with no binary, or a failed read, gives a
+   * new read at the next search, so an install after a failed chat needs no
+   * daemon restart.
    */
-  async function launchOf(adapter: AgentAdapter): Promise<AgentLaunch | { failed: string }> {
+  async function search(
+    adapter: AgentAdapter,
+  ): Promise<{ launch: AgentLaunch | { failed: string }; found: AgentEnv } | { failed: string }> {
     const own = adapter.launch(env);
-    if (!("missing" in own)) return own;
+    if (!("missing" in own)) return { launch: own, found: env };
     if (kept !== undefined) {
       const again = adapter.launch(kept);
-      if (!("missing" in again)) return again;
+      if (!("missing" in again)) return { launch: again, found: kept };
     }
     reading ??= readShell().finally(() => (reading = undefined));
     const read = await reading;
@@ -515,7 +526,12 @@ export function createChatRunner(options: {
     const launch = adapter.launch(read.env);
     if ("missing" in launch) return { failed: launch.missing };
     kept = read.env;
-    return launch;
+    return { launch, found: read.env };
+  }
+
+  async function launchOf(adapter: AgentAdapter): Promise<AgentLaunch | { failed: string }> {
+    const searched = await search(adapter);
+    return "launch" in searched ? searched.launch : searched;
   }
 
   function report(live: AnyLiveChat, error: unknown): void {
@@ -1369,6 +1385,12 @@ export function createChatRunner(options: {
 
     running(live) {
       return runs.get(live);
+    },
+
+    async ready(agent) {
+      const adapter = adapters.find((one) => one.agent === agent)!;
+      const searched = await search(adapter);
+      return "found" in searched && (await adapter.loggedIn(searched.found, stopping.signal)) === true;
     },
 
     message,

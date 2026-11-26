@@ -1,8 +1,8 @@
 // The `config` noun: the view and the edit of the user's configuration file,
 // `~/.tasma/config.yml`.
 //
-// Whether a status, a path or a workflow is acceptable is the daemon's to say:
-// it checks the result against every project before it writes.
+// Whether a status, a path, a workflow or an agent is acceptable is the
+// daemon's to say: it checks the result before it writes.
 
 import { parseArgs } from "node:util";
 import type { UserConfig, UserConfigChange } from "@tasma/protocol";
@@ -22,6 +22,7 @@ const EDIT_OPTIONS = {
   "final-status": { type: "string", multiple: true },
   "priority": { type: "string", multiple: true },
   "workflows-path": { type: "string" },
+  "default-agent": { type: "string" },
   "clear": { type: "string", multiple: true },
   ...HELP_OPTION,
 } as const satisfies Options;
@@ -36,7 +37,8 @@ const EDIT_HELP = [
   "      --final-status <s>       A status that closes a task; repeat it for every one; the list replaces the stored one",
   "      --priority <p>           A priority; repeat it for every priority; the list replaces the stored one",
   "      --workflows-path <path>  The workflows directory; relative to the working directory",
-  "      --clear <field>          Remove a field: statuses, default_status, final_statuses, priorities, workflows_path",
+  "      --default-agent <agent>  The agent of a new chat: claude",
+  "      --clear <field>          Remove a field: statuses, default_status, final_statuses, priorities, workflows_path, default_agent",
   "  -h, --help                   Print this help",
 ];
 
@@ -47,7 +49,11 @@ const KEYS = [
   "final_statuses",
   "priorities",
   "workflows_path",
+  "default_agent",
 ] as const satisfies readonly (keyof UserConfig)[];
+
+/** The keys a daemon of an earlier version does not send. `view` prints them as `-`. */
+const LATER_KEYS: ReadonlySet<string> = new Set(["default_agent"]);
 
 /** What `view` marks a key with whose value the file does not set. */
 const BUILT_IN_MARK = "(built-in default)";
@@ -59,6 +65,7 @@ const FIELD_KEYS: Record<string, string> = {
   "final-status": "final_statuses",
   "priority": "priorities",
   "workflows-path": "workflows_path",
+  "default-agent": "default_agent",
 };
 
 /** The fields an edit sets, every one of which can be removed. */
@@ -69,13 +76,14 @@ const EDIT_FIELDS: Fields = {
 };
 
 /** The flags of an edit whose value the daemon takes as typed; `--workflows-path` is made absolute first. */
-const SENT_AS_GIVEN = ["status", "default-status", "final-status", "priority"] as const;
+const SENT_AS_GIVEN = ["status", "default-status", "final-status", "priority", "default-agent"] as const;
 
 /** Whether an answer is the user's configuration, tested over every field `view` reads. */
 function isUserConfig(answer: unknown): answer is Record<string, unknown> & { path: string } {
   const fields = fieldsOf(answer);
 
-  return typeof fields.path === "string" && KEYS.every((key) => typeof fieldsOf(fields[key]).set === "boolean");
+  return typeof fields.path === "string" && KEYS.every((key) =>
+    typeof fieldsOf(fields[key]).set === "boolean" || (LATER_KEYS.has(key) && fields[key] === undefined));
 }
 
 async function view(args: string[], io: Io, target: Target): Promise<number> {
@@ -94,7 +102,8 @@ async function view(args: string[], io: Io, target: Target): Promise<number> {
       ...KEYS.flatMap((key) => {
         const { value, set } = fieldsOf(answer[key]);
 
-        return keyRows(key, value, set === true ? undefined : BUILT_IN_MARK);
+        // A `null` value has no built-in default: the key is absent.
+        return keyRows(key, value, set === false && value !== null ? BUILT_IN_MARK : undefined);
       }),
     ];
 

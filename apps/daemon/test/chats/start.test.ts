@@ -43,21 +43,25 @@ type World = {
   ends: { chat: number; client: string }[];
   /** The name of each call of the runner, in call order. */
   order: ("start" | "end" | "startProjectChat")[];
+  /** How many times the starts asked for the agent of a new chat. */
+  asked: { agent: number };
   /**
-   * Replaces what the next calls of the runner do. Without it, a start
-   * creates the chat with its first message, and an end does nothing.
+   * Replaces what the next calls of the runner and of the agent resolver do.
+   * Without it, a start creates the chat with its first message, an end does
+   * nothing, and the resolver gives the agent of `world`.
    */
   next: {
     start?: (input: StartInput) => Promise<LiveChat>;
     end?: (live: LiveChat) => Promise<void>;
     startProjectChat?: (input: ProjectStartInput) => Promise<LiveChat<ProjectChat>>;
+    agent?: () => Promise<ChatAgent>;
   };
 };
 
 /**
  * Project ALPHA declares the workflow "flow", with the steps "plan" and
  * "build". ALPHA-1 is at "build", ALPHA-2 is at "plan", ALPHA-3 follows "flow"
- * with no step, and ALPHA-4 has no workflow. Each new chat starts with `agent`.
+ * with no step, and ALPHA-4 has no workflow. The agent resolver gives `agent`.
  */
 async function world(agent: ChatAgent = "claude"): Promise<World> {
   const root = await projectsRoot("ALPHA");
@@ -77,6 +81,7 @@ async function world(agent: ChatAgent = "claude"): Promise<World> {
   const projectCalls: ProjectStartInput[] = [];
   const ends: World["ends"] = [];
   const order: World["order"] = [];
+  const asked = { agent: 0 };
   const next: World["next"] = {};
   const runner: Pick<ChatRunner, "start" | "end" | "startProjectChat"> = {
     start(input) {
@@ -99,8 +104,12 @@ async function world(agent: ChatAgent = "claude"): Promise<World> {
       return chats.createProjectChat(tag, { title, agent, folder: "/srv/alpha" }, { text, client });
     },
   };
-  const starts = createStepChats({ root, host, chats, runner, agent });
-  return { root, chats, starts, calls, projectCalls, ends, order, next };
+  const resolve = () => {
+    asked.agent += 1;
+    return next.agent === undefined ? Promise.resolve(agent) : next.agent();
+  };
+  const starts = createStepChats({ root, host, chats, runner, agent: resolve });
+  return { root, chats, starts, calls, projectCalls, ends, order, asked, next };
 }
 
 /** The refusal a start rejects with. */
@@ -131,17 +140,38 @@ describe("a start of the chat of a step", () => {
     }]);
   });
 
-  it("starts a chat for the step with the agent of its option", async () => {
-    const { starts, calls } = await world("codex");
+  it("starts a chat for the step with the agent of the resolver", async () => {
+    const { starts, calls, asked } = await world("codex");
 
     const { live } = await starts.start("ALPHA", "ALPHA-1", "cli");
 
     expect(live.chat).toMatchObject({ task: "ALPHA-1", step: "build", agent: "codex" });
     expect(calls).toEqual([expect.objectContaining({ agent: "codex" })]);
+    expect(asked.agent).toBe(1);
   });
 
-  it("gives back the latest chat of the same step, and calls no runner", async () => {
-    const { starts, calls } = await world();
+  it("asks for the agent again at each new chat", async () => {
+    const { starts, calls, next } = await world();
+    await starts.start("ALPHA", "ALPHA-1", "cli");
+    next.agent = () => Promise.resolve("codex");
+
+    const { live } = await starts.start("ALPHA", "ALPHA-2", "cli");
+
+    expect(live.chat).toMatchObject({ task: "ALPHA-2", agent: "codex" });
+    expect(calls.map((call) => call.agent)).toEqual(["claude", "codex"]);
+  });
+
+  it("refuses a start whose agent resolver rejects, and calls no runner", async () => {
+    const { starts, calls, next } = await world();
+    const fault = new TaskStoreError("config-invalid", '"default_agent" must be a string', "/home/alice/.tasma/config.yml");
+    next.agent = () => Promise.reject(fault);
+
+    await expect(starts.start("ALPHA", "ALPHA-1", "cli")).rejects.toBe(fault);
+    expect(calls).toEqual([]);
+  });
+
+  it("gives back the latest chat of the same step, and calls no runner and no agent resolver", async () => {
+    const { starts, calls, asked } = await world();
     const first = await starts.start("ALPHA", "ALPHA-1", "cli");
 
     const second = await starts.start("ALPHA", "ALPHA-1", "app");
@@ -149,6 +179,7 @@ describe("a start of the chat of a step", () => {
     expect(second.started).toBe(false);
     expect(second.live).toBe(first.live);
     expect(calls).toHaveLength(1);
+    expect(asked.agent).toBe(1);
   });
 
   it("gives back a latest chat that needs the user", async () => {
@@ -363,14 +394,42 @@ describe("a start that restarts the step", () => {
     expect(calls[1]).toEqual({ ...calls[0], client: "app" });
   });
 
-  it("starts the new chat with the agent of its option", async () => {
-    const { starts, calls } = await world("codex");
+  it("starts the new chat with the agent that the resolver gives at the restart", async () => {
+    const { starts, calls, asked, next } = await world();
     await starts.start("ALPHA", "ALPHA-1", "cli");
+    next.agent = () => Promise.resolve("codex");
 
     const { live } = await starts.start("ALPHA", "ALPHA-1", "app", true);
 
     expect(live.chat).toMatchObject({ chat: 2, agent: "codex" });
-    expect(calls.map((call) => call.agent)).toEqual(["codex", "codex"]);
+    expect(calls.map((call) => call.agent)).toEqual(["claude", "codex"]);
+    expect(asked.agent).toBe(2);
+  });
+
+  it("asks for the agent before it ends the latest chat", async () => {
+    const { starts, ends, next } = await world();
+    await starts.start("ALPHA", "ALPHA-1", "cli");
+    let endsWhenAsked: number | undefined;
+    next.agent = () => {
+      endsWhenAsked = ends.length;
+      return Promise.resolve("codex");
+    };
+
+    await starts.start("ALPHA", "ALPHA-1", "app", true);
+
+    expect(endsWhenAsked).toBe(0);
+    expect(ends).toHaveLength(1);
+  });
+
+  it("refuses a restart whose agent resolver rejects, and ends no chat and starts none", async () => {
+    const { starts, calls, ends, next } = await world();
+    await starts.start("ALPHA", "ALPHA-1", "cli");
+    const fault = new TaskStoreError("config-invalid", '"default_agent" must be a string', "/home/alice/.tasma/config.yml");
+    next.agent = () => Promise.reject(fault);
+
+    await expect(starts.start("ALPHA", "ALPHA-1", "app", true)).rejects.toBe(fault);
+    expect(ends).toEqual([]);
+    expect(calls).toHaveLength(1);
   });
 
   it.each([
@@ -533,13 +592,16 @@ describe("a start of a project chat", () => {
     expect(calls).toEqual([]);
   });
 
-  it("gives the runner the agent of its option", async () => {
-    const { starts, projectCalls } = await world("codex");
+  it("gives the runner the agent of the resolver, which it asks at each start", async () => {
+    const { starts, projectCalls, asked, next } = await world("codex");
 
     const live = await starts.startProject("ALPHA", INPUT);
+    next.agent = () => Promise.resolve("claude");
+    await starts.startProject("ALPHA", INPUT);
 
     expect(live.chat).toMatchObject({ chat: 1, agent: "codex" });
-    expect(projectCalls).toEqual([expect.objectContaining({ agent: "codex" })]);
+    expect(projectCalls.map((call) => call.agent)).toEqual(["codex", "claude"]);
+    expect(asked.agent).toBe(2);
   });
 
   it("gives the runner the options of the start", async () => {

@@ -2,13 +2,20 @@ import { chmod, mkdir, readdir, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { readUserConfig, type UserConfigChange, type UserConfigInfo, updateUserConfig } from "@tasma/engine";
+import {
+  readDefaultAgent,
+  readUserConfig,
+  type UserConfigChange,
+  type UserConfigInfo,
+  updateUserConfig,
+} from "@tasma/engine";
 import { plantWorkflow, stepsOnly } from "../workflow/helpers.js";
 import {
   bareRoot,
   codes,
   folderIn,
   plant,
+  project,
   projectConfig,
   projectDir,
   read,
@@ -30,6 +37,7 @@ function values(info: UserConfigInfo): Record<string, unknown> {
     final_statuses: info.final_statuses.value,
     priorities: info.priorities.value,
     workflows_path: info.workflows_path.value,
+    default_agent: info.default_agent.value,
   };
 }
 
@@ -41,6 +49,7 @@ function setFlags(info: UserConfigInfo): Record<string, boolean> {
     final_statuses: info.final_statuses.set,
     priorities: info.priorities.set,
     workflows_path: info.workflows_path.set,
+    default_agent: info.default_agent.set,
   };
 }
 
@@ -57,6 +66,7 @@ const NONE_SET = {
   final_statuses: false,
   priorities: false,
   workflows_path: false,
+  default_agent: false,
 };
 
 describe("reading the user's configuration", () => {
@@ -66,7 +76,7 @@ describe("reading the user's configuration", () => {
     const info = await readUserConfig(root);
 
     expect(info.path).toBe(userConfig(root));
-    expect(values(info)).toEqual({ ...BUILT_IN, workflows_path: join(root, "workflows") });
+    expect(values(info)).toEqual({ ...BUILT_IN, workflows_path: join(root, "workflows"), default_agent: null });
     expect(setFlags(info)).toEqual(NONE_SET);
     expect(info.diagnostics).toEqual([]);
   });
@@ -80,6 +90,7 @@ describe("reading the user's configuration", () => {
       "final_statuses: [Shipped]",
       "priorities: [urgent, later]",
       `workflows_path: ${flows}`,
+      "default_agent: codex",
       "",
     ].join("\n");
     await plant(userConfig(root), text);
@@ -92,13 +103,14 @@ describe("reading the user's configuration", () => {
       final_statuses: ["Shipped"],
       priorities: ["urgent", "later"],
       workflows_path: flows,
+      default_agent: "codex",
     });
-    expect(Object.values(setFlags(info))).toEqual([true, true, true, true, true]);
+    expect(Object.values(setFlags(info))).toEqual([true, true, true, true, true, true]);
   });
 
   it("reads a key written with no value as not set", async () => {
     const root = await bareRoot();
-    await plant(userConfig(root), "statuses:\ndefault_status: ~\n");
+    await plant(userConfig(root), "statuses:\ndefault_status: ~\ndefault_agent:\n");
 
     expect(setFlags(await readUserConfig(root))).toEqual(NONE_SET);
   });
@@ -123,11 +135,59 @@ describe("reading the user's configuration", () => {
     ["is no valid YAML", "statuses: [\n"],
     ["holds statuses that are no list", "statuses: New\n"],
     ["states a default_status the built-in statuses lack", "default_status: Review\n"],
+    ["holds a default_agent that is no string", "default_agent: 5\n"],
+    ["holds an empty default_agent", 'default_agent: ""\n'],
   ])("refuses a file that %s", async (_reason, text) => {
     const root = await bareRoot();
     await plant(userConfig(root), text);
 
     expect((await storeError(readUserConfig(root))).code).toBe("config-invalid");
+  });
+
+  it("reports default_agent in a project file as a key it does not know", async () => {
+    const root = await tempRoot();
+    await plant(projectConfig(root), "default_agent: codex\n");
+
+    expect(codes((await project(root).config()).diagnostics)).toEqual(["config-key-unknown"]);
+  });
+});
+
+describe("reading the default agent alone", () => {
+  it("gives the stored value", async () => {
+    const root = await bareRoot();
+    await plant(userConfig(root), "default_agent: codex\n");
+
+    await expect(readDefaultAgent(root)).resolves.toBe("codex");
+  });
+
+  it.each([
+    ["the file is absent", undefined],
+    ["the file sets no value", "default_agent:\n"],
+  ])("gives no value when %s", async (_reason, text) => {
+    const root = await bareRoot();
+    if (text !== undefined) await plant(userConfig(root), text);
+
+    await expect(readDefaultAgent(root)).resolves.toBeUndefined();
+  });
+
+  it("reads past a fault in another key of the file", async () => {
+    const root = await bareRoot();
+    await plant(userConfig(root), "statuses: New\ndefault_agent: codex\n");
+
+    await expect(readDefaultAgent(root)).resolves.toBe("codex");
+  });
+
+  it.each([
+    ["is no valid YAML", "default_agent: [\n"],
+    ["holds a default_agent that is no string", "default_agent: 5\n"],
+  ])("refuses a file that %s", async (_reason, text) => {
+    const root = await bareRoot();
+    await plant(userConfig(root), text);
+
+    const error = await storeError(readDefaultAgent(root));
+
+    expect(error.code).toBe("config-invalid");
+    expect(error.path).toBe(userConfig(root));
   });
 });
 
@@ -137,6 +197,7 @@ describe("writing the user's configuration", () => {
     ["default_status", { default_status: "Done" }, { default_status: "Done" }],
     ["final_statuses", { final_statuses: ["Done", "To Do"] }, { final_statuses: ["Done", "To Do"] }],
     ["priorities", { priorities: ["urgent", "later"] }, { priorities: ["urgent", "later"] }],
+    ["default_agent", { default_agent: "codex" }, { default_agent: "codex" }],
   ])("sets %s, which the read answers as set", async (key, change, expected) => {
     const root = await tempRoot();
 
@@ -167,14 +228,21 @@ describe("writing the user's configuration", () => {
     expect(await read(userConfig(root))).toBe(`workflows_path: ${fromHome}\n`);
   });
 
-  it.each<keyof UserConfigChange>(["statuses", "default_status", "final_statuses", "priorities", "workflows_path"])(
+  it.each<keyof UserConfigChange>([
+    "statuses",
+    "default_status",
+    "final_statuses",
+    "priorities",
+    "workflows_path",
+    "default_agent",
+  ])(
     "clears %s, which then takes its built-in default",
     async (key) => {
       const root = await tempRoot();
       const flows = await folderIn(root, "flows");
       await plant(
         userConfig(root),
-        `statuses: [Backlog, To Do, In Progress, Done]\ndefault_status: To Do\nfinal_statuses: [Done]\npriorities: [urgent]\nworkflows_path: ${flows}\n`,
+        `statuses: [Backlog, To Do, In Progress, Done]\ndefault_status: To Do\nfinal_statuses: [Done]\npriorities: [urgent]\nworkflows_path: ${flows}\ndefault_agent: codex\n`,
       );
 
       const info = await edit(root, { [key]: null });
@@ -225,7 +293,7 @@ describe("writing the user's configuration", () => {
     expect(await read(target)).toBe("priorities: [urgent]\n");
   });
 
-  it("refuses a key that is not one of the five", async () => {
+  it("refuses a key that is not one of the six", async () => {
     const root = await tempRoot();
 
     const change = { workflows: ["review"] } as UserConfigChange;
@@ -240,6 +308,8 @@ describe("writing the user's configuration", () => {
     ["a default_status of another type", { default_status: 3 as unknown as string }],
     ["an empty workflows_path", { workflows_path: "" }],
     ["a workflows_path of another type", { workflows_path: 3 as unknown as string }],
+    ["an empty default_agent", { default_agent: "" }],
+    ["a default_agent of another type", { default_agent: 5 as unknown as string }],
     ["a default_status the statuses lack", { statuses: ["New", "Done"], default_status: "Doing" }],
     ["statuses that drop the stored default_status", { statuses: ["New", "Done"] }],
   ])("refuses %s as config-change-invalid and writes nothing", async (_reason, change) => {
@@ -249,6 +319,14 @@ describe("writing the user's configuration", () => {
 
     expect((await storeError(edit(root, change))).code).toBe("config-change-invalid");
     expect(await read(userConfig(root))).toBe(text);
+  });
+
+  it("names the rule a refused default_agent breaks", async () => {
+    const root = await tempRoot();
+
+    const error = await storeError(edit(root, { default_agent: "" }));
+
+    expect(error.message).toContain('"default_agent" must be a string that is not empty');
   });
 
   it.each([
@@ -280,6 +358,9 @@ describe("writing the user's configuration", () => {
       workflows_path: await folderIn(root, "flows"),
     })],
     ["a workflows_path the reader refuses, for a change of priorities", "workflows_path: 5\n", async () => ({
+      priorities: ["urgent"],
+    })],
+    ["a default_agent the reader refuses, for a change of priorities", "default_agent: 5\n", async () => ({
       priorities: ["urgent"],
     })],
   ])("refuses stored %s as config-invalid and writes nothing", async (_reason, text, change) => {

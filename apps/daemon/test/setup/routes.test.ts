@@ -2,6 +2,7 @@ import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { readDefaultAgent } from "@tasma/engine";
 import type { AgentSetup, ChatAgent, SetupStatus, SkillInstall } from "@tasma/protocol";
 import type { AgentAdapter, AgentEnv, AgentLaunch, LaunchResult } from "../../src/agents/adapter.js";
 import type { ShellEnv } from "../../src/agents/shell-env.js";
@@ -453,6 +454,7 @@ describe("GET /setup in full mode", () => {
         workflow: "pass",
         cli: "unknown",
         agents: [{ agent: "claude", installed: "unknown", loggedIn: "not-run", skill: "pass" }],
+        defaultAgent: "claude",
       });
       expect(loggedIn).not.toHaveBeenCalled();
     });
@@ -471,6 +473,79 @@ describe("GET /setup in full mode", () => {
 
       expect((await reply).agents[0]?.loggedIn).toBe("unknown");
     });
+  });
+});
+
+describe("the default agent of GET /setup", () => {
+  /** Claude and Codex, each logged in as given, both with the binary on the PATH of the login shell. */
+  function bothAgents(claude: boolean, codex: boolean): AgentAdapter[] {
+    return [
+      fakeAdapter({ loggedIn: async () => claude }).adapter,
+      fakeAdapter({ agent: "codex", loggedIn: async () => codex }).adapter,
+    ];
+  }
+
+  it("gives Claude when only Claude is offered, and reads no user file", async () => {
+    const root = await readyRoot();
+    await plant(userConfig(root), "default_agent: [\n");
+    const { server } = await serving(root);
+
+    expect((await statusOf(server, "/setup?mode=full")).defaultAgent).toBe("claude");
+  });
+
+  it("gives none in start mode", async () => {
+    const root = await readyRoot();
+    await plant(userConfig(root), "default_agent: codex\n");
+    const { server } = await serving(root, { adapters: bothAgents(true, true) });
+
+    expect(await statusOf(server, "/setup")).not.toHaveProperty("defaultAgent");
+  });
+
+  it("gives the stored agent, ready or not", async () => {
+    const root = await readyRoot();
+    await plant(userConfig(root), "default_agent: codex\n");
+    const { server } = await serving(root, { adapters: bothAgents(true, false) });
+
+    expect((await statusOf(server, "/setup?mode=full")).defaultAgent).toBe("codex");
+  });
+
+  it.each<[string, boolean, boolean, ChatAgent]>([
+    ["Claude when both agents are ready", true, true, "claude"],
+    ["Codex when only Codex is ready", false, true, "codex"],
+    ["Claude when no agent is ready", false, false, "claude"],
+  ])("gives %s and no stored value", async (_case, claude, codex, expected) => {
+    const { server } = await serving(await readyRoot(), { adapters: bothAgents(claude, codex) });
+
+    expect((await statusOf(server, "/setup?mode=full")).defaultAgent).toBe(expected);
+  });
+
+  it("gives none when the user file cannot be read, and the rest of the status", async () => {
+    const root = await readyRoot();
+    await plant(userConfig(root), "default_agent: [\n");
+    const { server } = await serving(root, { adapters: bothAgents(true, true) });
+
+    const status = await statusOf(server, "/setup?mode=full");
+
+    expect(status).not.toHaveProperty("defaultAgent");
+    expect(status.agents.map((entry) => entry.loggedIn)).toEqual(["pass", "pass"]);
+  });
+
+  it("gives none when the read of the user file fails before the checks end, and the daemon keeps serving", async () => {
+    const root = await readyRoot();
+    await plant(userConfig(root), "default_agent: 5\n");
+    let release!: (answer: boolean) => void;
+    const held = new Promise<boolean>((resolve) => (release = resolve));
+    const claude = fakeAdapter({ loggedIn: () => held });
+    const codex = fakeAdapter({ agent: "codex" });
+    const { server } = await serving(root, { adapters: [claude.adapter, codex.adapter] });
+
+    const reply = statusOf(server, "/setup?mode=full");
+    await vi.waitFor(() => expect(claude.loggedIn).toHaveBeenCalledTimes(1));
+    await expect(readDefaultAgent(root)).rejects.toThrow();
+    release(true);
+
+    expect(await reply).not.toHaveProperty("defaultAgent");
+    expect((await statusOf(server, "/setup")).project).toBe("pass");
   });
 });
 

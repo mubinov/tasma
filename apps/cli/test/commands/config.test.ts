@@ -32,6 +32,7 @@ const ANSWER = {
   final_statuses: { value: ["Done"], set: false },
   priorities: { value: ["high", "medium", "low"], set: false },
   workflows_path: { value: "/Users/x/flows", set: true },
+  default_agent: { value: null, set: false },
 };
 
 /** The object the edit sent, which is the last call behind the probe that proved the address. */
@@ -60,11 +61,30 @@ describe("config view", () => {
         "                medium",
         "                low",
         "workflows_path  /Users/x/flows",
+        "default_agent   -",
         "",
       ].join("\n"),
     );
     expect(err).toBe("");
     expect(seen).toEqual([READ]);
+  });
+
+  it("prints a default_agent the file sets", async () => {
+    const { out } = await runConfig(["view"], {
+      [READ]: ok({ ...ANSWER, default_agent: { value: "claude", set: true } }),
+    });
+
+    expect(out).toContain("\ndefault_agent   claude\n");
+  });
+
+  it("prints default_agent as - with no mark for a daemon of an earlier version, which does not send it", async () => {
+    const earlier: Partial<typeof ANSWER> = { ...ANSWER };
+    delete earlier.default_agent;
+
+    const { code, out } = await runConfig(["view"], { [READ]: ok(earlier) });
+
+    expect(code).toBe(0);
+    expect(out).toContain("\ndefault_agent   -\n");
   });
 
   it("writes the notes of the read to stderr", async () => {
@@ -77,7 +97,14 @@ describe("config view", () => {
   });
 
   it("refuses an answer that is not a configuration", async () => {
-    for (const data of ["x", null, { path: FILE }, { ...ANSWER, path: 3 }, { ...ANSWER, priorities: { value: [] } }]) {
+    for (const data of [
+      "x",
+      null,
+      { path: FILE },
+      { ...ANSWER, path: 3 },
+      { ...ANSWER, priorities: { value: [] } },
+      { ...ANSWER, default_agent: { value: null } },
+    ]) {
       const { code, out, err } = await runConfig(["view"], { [READ]: ok(data) });
 
       expect(code, JSON.stringify(data)).toBe(3);
@@ -106,6 +133,7 @@ describe("config edit", () => {
     [["--final-status", "Done"], { final_statuses: ["Done"] }],
     [["--priority", "urgent"], { priorities: ["urgent"] }],
     [["--workflows-path", "/srv/flows"], { workflows_path: "/srv/flows" }],
+    [["--default-agent", "claude"], { default_agent: "claude" }],
   ])("sends %j as the key it sets", async (flags, body) => {
     expect(await sent(["edit", ...flags])).toEqual(body);
   });
@@ -133,6 +161,10 @@ describe("config edit", () => {
       .toEqual({ workflows_path: null, final_statuses: null });
   });
 
+  it("sends a clear of default_agent as null", async () => {
+    expect(await sent(["edit", "--clear", "default_agent"])).toEqual({ default_agent: null });
+  });
+
   it("makes a relative --workflows-path absolute against the working directory", async () => {
     expect(await sent(["edit", "--workflows-path", "flows"], { cwd: "/srv/repo" }))
       .toEqual({ workflows_path: "/srv/repo/flows" });
@@ -158,9 +190,12 @@ describe("config edit", () => {
     await refuses(["edit", "--clear", "statuses", "--status", "New"], "--clear statuses and --status exclude each other");
   });
 
-  it("refuses an empty value", async () => {
-    await refuses(["edit", "--default-status", ""], "--default-status needs a value; --clear default_status removes the field");
-  });
+  it.each([["--default-status", "default_status"], ["--default-agent", "default_agent"]])(
+    "refuses an empty %s",
+    async (flag, key) => {
+      await refuses(["edit", flag, ""], `${flag} needs a value; --clear ${key} removes the field`);
+    },
+  );
 
   it("refuses an invocation that changes nothing", async () => {
     await refuses(["edit"], "config edit needs a change");
@@ -192,9 +227,10 @@ describe("config edit", () => {
     const { code, out } = await runConfig(["edit", "--help"]);
 
     expect(code).toBe(0);
-    for (const flag of ["--status", "--default-status", "--final-status", "--priority", "--workflows-path", "--clear"]) {
+    for (const flag of ["--status", "--default-status", "--final-status", "--priority", "--workflows-path", "--default-agent", "--clear"]) {
       expect(out, flag).toContain(`${flag} <`);
     }
-    expect(out).toContain("Remove a field: statuses, default_status, final_statuses, priorities, workflows_path");
+    expect(out).toContain("Remove a field: statuses, default_status, final_statuses, priorities, workflows_path, default_agent");
+    expect(out).toContain("--default-agent <agent>  The agent of a new chat: claude\n");
   });
 });

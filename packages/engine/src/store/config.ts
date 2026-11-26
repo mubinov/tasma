@@ -37,9 +37,10 @@ export const STATUS_AND_PRIORITY_KEYS: ReadonlySet<string> = new Set(ENGINE_KEYS
  *
  * `workflows_path` is user-level alone, for the converse reason: the workflows
  * tree is one shared thing per machine, and a project already chooses which of
- * its workflows its tasks may name through `workflows`.
+ * its workflows its tasks may name through `workflows`. `default_agent` is
+ * user-level alone too: one user picks one agent for every project.
  */
-const USER_KEYS = new Set([...ENGINE_KEYS, "workflows_path"]);
+const USER_KEYS = new Set([...ENGINE_KEYS, "workflows_path", "default_agent"]);
 const PROJECT_KEYS = new Set([...ENGINE_KEYS, "name", "path", "workflows", "instructions"]);
 
 /** The name a message gives the level a value came from. */
@@ -367,6 +368,18 @@ export async function resolveWorkflowsPath(
   return declaredPath("workflows_path", [await readLevel(userConfig, USER_KEYS, diagnostics)]);
 }
 
+/**
+ * The agent the user's file names for a new chat, read on its own, so a fault
+ * in another key of the file does not stop a chat start. The name is not
+ * checked here: which agents a chat can run is the daemon's to say.
+ */
+export async function resolveDefaultAgent(
+  userConfig: string,
+  diagnostics: StoreDiagnostic[],
+): Promise<string | undefined> {
+  return declaredString("default_agent", [await readLevel(userConfig, USER_KEYS, diagnostics)]);
+}
+
 /** The workflows a project level declares, empty when it declares none. */
 export function declaredWorkflows(project: Level): string[] {
   return declaredList("workflows", [project]);
@@ -393,8 +406,12 @@ function setting<T>(key: string, level: Level, value: T): UserSetting<T> {
 function resolveUserLevel(
   level: Level,
   changed: ReadonlySet<string>,
-): StatusAndPriorityConfig & { workflows_path: string | undefined } {
-  return { ...resolveStatusesAndPriorities([level], changed), workflows_path: declaredWorkflowsPath(level) };
+): StatusAndPriorityConfig & { workflows_path: string | undefined; default_agent: string | undefined } {
+  return {
+    ...resolveStatusesAndPriorities([level], changed),
+    workflows_path: declaredWorkflowsPath(level),
+    default_agent: declaredString("default_agent", [level]),
+  };
 }
 
 /**
@@ -419,5 +436,6 @@ export async function resolveUserConfig(
     final_statuses: setting("final_statuses", level, resolved.final_statuses),
     priorities: setting("priorities", level, resolved.priorities),
     workflows_path: setting("workflows_path", level, workflowsPath(root, resolved.workflows_path)),
+    default_agent: setting("default_agent", level, resolved.default_agent ?? null),
   };
 }

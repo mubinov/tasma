@@ -18,8 +18,8 @@ import {
   appliedValues,
   applyWrites,
   checkAnchor,
-  checkedDefaultStatus,
   checkedList,
+  checkedString,
   cleared,
   openDeclaration,
 } from "./declaration.js";
@@ -190,7 +190,7 @@ const VALUE_CHECKS: { [Key in keyof ProjectChange]-?: (stated: unknown) => unkno
   name: checkedName,
   path: checkedPath,
   statuses: (stated) => checkedList("statuses", stated, false),
-  default_status: checkedDefaultStatus,
+  default_status: (stated) => checkedString("default_status", stated),
   final_statuses: (stated) => checkedList("final_statuses", stated, false),
   priorities: (stated) => checkedList("priorities", stated, false),
   workflows: (stated) => checkedList("workflows", stated, true),

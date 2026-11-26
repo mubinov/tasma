@@ -11,13 +11,14 @@ import { once } from "node:events";
 import type { Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { parseArgs } from "node:util";
-import { openAgentDefaults, openAgentOptions, type TreeWatch, watchTree } from "@tasma/engine";
+import { openAgentDefaults, openAgentOptions, readDefaultAgent, type TreeWatch, watchTree } from "@tasma/engine";
 import { DAEMON_NAME, DEFAULT_DAEMON_HOST, printable } from "@tasma/protocol";
 import type { DaemonRecord } from "@tasma/protocol";
 import manifest from "../../../../package.json" with { type: "json" };
 import type { AgentAdapter, AgentEnv } from "../agents/adapter.js";
 import { claudeAdapter } from "../agents/claude.js";
 import { codexAdapter } from "../agents/codex.js";
+import { effectiveAgent } from "../agents/default-agent.js";
 import { agentRoutes } from "../chats/agent-routes.js";
 import { idleLimit } from "../chats/idle.js";
 import { chatListRoutes } from "../chats/list-routes.js";
@@ -267,7 +268,12 @@ export async function startDaemon(options: {
     agentOptions,
     publish,
   });
-  const agent = adapters.includes(codexAdapter) ? "codex" : "claude";
+  const offered = adapters.map((adapter) => adapter.agent);
+  const agent = () => effectiveAgent({
+    offered,
+    stored: () => readDefaultAgent(root),
+    ready: (one) => runner.ready(one),
+  });
   const starts = createStepChats({ root, host, chats, runner, agent });
   const setup = createSetupChecks({ root, host, adapters, env });
   const installer = createSkillInstaller({ adapters, env });
@@ -282,7 +288,7 @@ export async function startDaemon(options: {
       refresh: (agent, entry) => runner.refreshOptions(agent, entry),
     }),
     ...workflowRoutes({ root, writes, publish }),
-    ...configRoutes({ root, writes, publish }),
+    ...configRoutes({ root, writes, publish, agents: offered }),
     ...setupRoutes(setup, installer),
     ...eventRoutes(feed),
   ];

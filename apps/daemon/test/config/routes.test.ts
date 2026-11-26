@@ -2,7 +2,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { routes } from "@tasma/protocol";
-import type { Project, UserConfig } from "@tasma/protocol";
+import type { ChatAgent, Project, UserConfig } from "@tasma/protocol";
 import { configRoutes } from "../../src/config/routes.js";
 import type { HandlerRequest } from "../../src/http/router.js";
 import { createProjectHost } from "../../src/projects/host.js";
@@ -26,8 +26,8 @@ import {
 import type { TestServer } from "../helpers.js";
 
 /** A daemon serving the configuration routes over a tree, closed when the test ends. */
-async function serving(root: string): Promise<TestServer> {
-  return startTestServer(configRoutes({ root, writes: new WriteQueue() }));
+async function serving(root: string, agents: readonly ChatAgent[] = ["claude"]): Promise<TestServer> {
+  return startTestServer(configRoutes({ root, writes: new WriteQueue(), agents }));
 }
 
 describe("GET /config", () => {
@@ -47,6 +47,7 @@ describe("GET /config", () => {
         final_statuses: { value: ["Done"], set: false },
         priorities: { value: ["urgent", "later"], set: true },
         workflows_path: { value: join(root, "workflows"), set: false },
+        default_agent: { value: null, set: false },
       },
       diagnostics: [],
     });
@@ -80,8 +81,9 @@ describe("PATCH /config", () => {
   });
 
   it.each([
-    ["a key that is not one of the five", async () => ({ workflows: ["dev"] }), 400, "field-not-writable"],
+    ["a key that is not one of the six", async () => ({ workflows: ["dev"] }), 400, "field-not-writable"],
     ["an empty list", async () => ({ statuses: [] }), 400, "config-change-invalid"],
+    ["a default_agent that is no string", async () => ({ default_agent: 5 }), 400, "config-change-invalid"],
     ["a relative workflows_path", async () => ({ workflows_path: "flows" }), 400, "path-invalid"],
     [
       "a workflows_path that holds no workflow a project lists",
@@ -125,6 +127,61 @@ describe("PATCH /config", () => {
     await expect(failure(response)).resolves.toMatchObject({ kind: "store", code });
   });
 
+  it("stores an agent that the daemon offers, which the read gives back", async () => {
+    const root = await projectsRoot();
+    const server = await serving(root, ["claude", "codex"]);
+
+    const response = await send(server, "PATCH", "/config", { default_agent: "codex" });
+
+    expect(response.status).toBe(200);
+    expect((await success<UserConfig>(response)).data.default_agent).toEqual({ value: "codex", set: true });
+    const read = await success<UserConfig>(await get(server, "/config"));
+    expect(read.data.default_agent).toEqual({ value: "codex", set: true });
+    expect(await readFile(userConfig(root), "utf8")).toBe("default_agent: codex\n");
+  });
+
+  it.each([
+    ["an agent that the daemon does not offer", "codex"],
+    ["an empty name", ""],
+  ])("refuses %s, names the offered agents, and writes nothing", async (_case, agent) => {
+    const root = await projectsRoot();
+    const text = "# Kept.\npriorities: [urgent]\n";
+    await plant(userConfig(root), text);
+    const server = await serving(root);
+
+    const response = await send(server, "PATCH", "/config", { default_agent: agent, priorities: ["later"] });
+
+    expect(response.status).toBe(400);
+    await expect(failure(response)).resolves.toMatchObject({
+      kind: "store",
+      code: "config-change-invalid",
+      message: '"default_agent" must be an agent that Tasma runs: claude',
+    });
+    expect(await readFile(userConfig(root), "utf8")).toBe(text);
+  });
+
+  it("names every offered agent in a refusal", async () => {
+    const root = await projectsRoot();
+    const server = await serving(root, ["claude", "codex"]);
+
+    const response = await send(server, "PATCH", "/config", { default_agent: "gemini" });
+
+    await expect(failure(response)).resolves.toMatchObject({
+      message: '"default_agent" must be an agent that Tasma runs: claude, codex',
+    });
+  });
+
+  it("clears a stored agent", async () => {
+    const root = await projectsRoot();
+    await plant(userConfig(root), "default_agent: claude\n");
+    const server = await serving(root);
+
+    const response = await send(server, "PATCH", "/config", { default_agent: null });
+
+    expect((await success<UserConfig>(response)).data.default_agent).toEqual({ value: null, set: false });
+    expect(await readFile(userConfig(root), "utf8")).not.toContain("default_agent");
+  });
+
   it("takes turns with a project patch of the statuses", async () => {
     const root = await projectsRoot("SAGA");
     await plant(userConfig(root), "statuses: [Backlog, Review, Done]\n");
@@ -147,7 +204,7 @@ describe("PATCH /config", () => {
     const writes = new WriteQueue();
     // The project write is held until the configuration write has entered its
     // handler, so the order below is the queue's decision.
-    const entries = configRoutes({ root, writes }).map((entry) => {
+    const entries = configRoutes({ root, writes, agents: ["claude"] }).map((entry) => {
       if (entry.route !== routes.updateUserConfig) return entry;
       return {
         ...entry,

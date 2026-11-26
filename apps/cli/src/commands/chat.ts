@@ -22,7 +22,11 @@ const START_HELP = [
 
 /**
  * The route answers after the agent starts. Before that, a restart waits for the
- * old agent to stop, and a start can read the login shell for up to 10 s.
+ * old agent to stop, and a start can read the login shell for up to 10 s. With
+ * two agents offered and no agent binary on the PATH of the daemon, a start can
+ * read it three times: the readiness check of each agent, then the launch. Such
+ * a start can reach this limit before the answer; its chat fails anyway, since
+ * no read found a binary.
  */
 const START_TIMEOUT_MS = 30_000;
 

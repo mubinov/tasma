@@ -72,8 +72,8 @@ export function createStepChats(options: {
   host: ProjectHost;
   chats: ChatRegistry;
   runner: Pick<ChatRunner, "start" | "end" | "startProjectChat">;
-  /** The agent of each new chat. */
-  agent: ChatAgent;
+  /** The agent of a new chat, asked at each new chat. */
+  agent: () => Promise<ChatAgent>;
 }): StepChats {
   const { root, host, chats, runner, agent } = options;
   /** The last start of each task that runs or waits. */
@@ -117,8 +117,8 @@ export function createStepChats(options: {
     return { step, diagnostics };
   }
 
-  function launch(tag: string, task: string, step: string, client: string): Promise<LiveChat> {
-    return withDaemonRefusal(runner.start({ tag, task, step, agent, text: firstMessage(task), client }));
+  function launch(tag: string, task: string, step: string, client: string, chosen: ChatAgent): Promise<LiveChat> {
+    return withDaemonRefusal(runner.start({ tag, task, step, agent: chosen, text: firstMessage(task), client }));
   }
 
   async function startOf(tag: string, task: string, client: string, restart = false): ReturnType<StepChats["start"]> {
@@ -126,19 +126,21 @@ export function createStepChats(options: {
     const listed = await chats.list(tag, task);
     const latest = listed.chats.at(-1);
     if (restart && latest?.chat.step === step) {
+      // Asked before the end, so a refused agent leaves the old chat running.
+      const chosen = await agent();
       await runner.end(latest, { client });
       // The agent of the old chat can move the task to another step before it stops.
       const now = await stepOf(tag, task);
       if (now.step !== step) throw movedTo(latest, now.step);
       const diagnostics = [...now.diagnostics, ...listed.diagnostics];
-      return { live: await launch(tag, task, step, client), started: true, diagnostics };
+      return { live: await launch(tag, task, step, client, chosen), started: true, diagnostics };
     }
 
     const diagnostics = [...stepFindings, ...listed.diagnostics];
     if (!restart && latest !== undefined && continues(latest, step)) {
       return { live: latest, started: false, diagnostics };
     }
-    return { live: await launch(tag, task, step, client), started: true, diagnostics };
+    return { live: await launch(tag, task, step, client, await agent()), started: true, diagnostics };
   }
 
   return {
@@ -150,7 +152,7 @@ export function createStepChats(options: {
       return withDaemonRefusal(runner.startProjectChat({
         tag,
         title: titleOf(text),
-        agent,
+        agent: await agent(),
         text,
         client,
         ...(options === undefined ? {} : { options }),

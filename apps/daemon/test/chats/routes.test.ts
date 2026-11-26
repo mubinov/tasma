@@ -139,7 +139,7 @@ async function world(
     chats.close();
     await host.close();
   });
-  const steps = createStepChats({ root, host, chats, runner, agent: "claude" });
+  const steps = createStepChats({ root, host, chats, runner, agent: () => Promise.resolve("claude") });
   const projectStarts: ProjectChatStartInput[] = [];
   const starts: StepChats = {
     ...steps,

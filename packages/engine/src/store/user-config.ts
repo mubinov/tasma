@@ -7,6 +7,7 @@ import {
   declaredWorkflowsPath,
   type Level,
   readDeclared,
+  resolveDefaultAgent,
   resolveUserConfig,
   STATUS_AND_PRIORITY_KEYS,
 } from "./config.js";
@@ -14,8 +15,8 @@ import {
   appliedValues,
   applyWrites,
   checkAnchor,
-  checkedDefaultStatus,
   checkedList,
+  checkedString,
   cleared,
   openDeclaration,
   storedValues,
@@ -50,25 +51,32 @@ export async function readUserConfig(root?: string): Promise<UserConfigInfo> {
 }
 
 /**
+ * The agent the user's file of a tree names for a new chat, or `undefined` when
+ * it names none. A fault in another key of the file does not refuse the read.
+ */
+export async function readDefaultAgent(root?: string): Promise<string | undefined> {
+  return resolveDefaultAgent(userConfigPath(expandRoot(root)), []);
+}
+
+/**
  * The workflows directory a caller stated, stored as given. A relative value is
  * refused by the path check: the reader would resolve it against the root,
  * which is not what a caller means.
  */
 async function checkedWorkflowsPath(stated: unknown): Promise<string> {
-  if (typeof stated !== "string" || stated === "") {
-    fail("config-change-invalid", '"workflows_path" must be a string that is not empty');
-  }
-  await checkedDirectoryPath(stated, "workflows_path");
-  return stated;
+  const path = checkedString("workflows_path", stated);
+  await checkedDirectoryPath(path, "workflows_path");
+  return path;
 }
 
 /** The check of the value each writable key of the user's file sets, on its own. */
 const VALUE_CHECKS: { [Key in keyof UserConfigChange]-?: (stated: unknown) => unknown } = {
   statuses: (stated) => checkedList("statuses", stated, false),
-  default_status: checkedDefaultStatus,
+  default_status: (stated) => checkedString("default_status", stated),
   final_statuses: (stated) => checkedList("final_statuses", stated, false),
   priorities: (stated) => checkedList("priorities", stated, false),
   workflows_path: checkedWorkflowsPath,
+  default_agent: (stated) => checkedString("default_agent", stated),
 };
 
 const USER_WRITABLE = new Set(Object.keys(VALUE_CHECKS));

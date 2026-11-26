@@ -451,6 +451,77 @@ describe("createChatRunner.start with the environment of the login shell", () =>
     expect(processes).toEqual([]);
     expect(await logOf(live)).toEqual([USER]);
   });
+
+  describe("ready", () => {
+    /** As `pathAdapter`, with a login check that answers `login` and records the environment it gets. */
+    function loginAdapter(login: boolean | undefined, installed = { path: AGENT_PATH }) {
+      const checked: { env: AgentEnv; signal: AbortSignal }[] = [];
+      const adapter: AgentAdapter = {
+        ...pathAdapter(installed).adapter,
+        async loggedIn(env, signal) {
+          checked.push({ env, signal });
+          return login;
+        },
+      };
+      return { adapter, checked };
+    }
+
+    it("is true with a binary in the environment of the daemon and a login, and reads no shell", async () => {
+      const { adapter, checked } = loginAdapter(true, { path: DAEMON_ENV.PATH! });
+      const { shellEnv, signals } = shellReads({ env: SHELL_ENV });
+      const { runner } = await world({ adapter, env: DAEMON_ENV, shellEnv });
+
+      await expect(runner.ready("claude")).resolves.toBe(true);
+      expect(signals).toEqual([]);
+      expect(checked.map((check) => check.env)).toEqual([DAEMON_ENV]);
+    });
+
+    it("checks the login in the environment of the shell in which it found the binary", async () => {
+      const { adapter, checked } = loginAdapter(true);
+      const { shellEnv } = shellReads({ env: SHELL_ENV });
+      const { runner } = await world({ adapter, env: DAEMON_ENV, shellEnv });
+
+      await expect(runner.ready("claude")).resolves.toBe(true);
+      expect(checked.map((check) => check.env)).toEqual([SHELL_ENV]);
+    });
+
+    it("reads no shell at a second call when the kept environment has the binary", async () => {
+      const { adapter, checked } = loginAdapter(true);
+      const { shellEnv, signals } = shellReads({ env: SHELL_ENV });
+      const { runner, processes } = await world({ adapter, env: DAEMON_ENV, shellEnv });
+
+      await runner.ready("claude");
+      await runner.ready("claude");
+      await logUntil(await runner.start(START), "turn-end");
+
+      expect(signals).toHaveLength(1);
+      expect(checked.map((check) => check.env)).toEqual([SHELL_ENV, SHELL_ENV]);
+      expect(processes[0]?.launch.env).toEqual(SHELL_ENV);
+    });
+
+    it.each<[string, boolean | undefined, ShellEnv]>([
+      ["no binary in the environment of the shell either", true, { env: DAEMON_ENV }],
+      ["a failed read of the shell", true, { failed: "Tasma could not read the environment of your login shell (/bin/zsh): it broke" }],
+      ["a login check that cannot tell", undefined, { env: SHELL_ENV }],
+      ["no login", false, { env: SHELL_ENV }],
+    ])("is false with %s", async (_case, login, read) => {
+      const { adapter } = loginAdapter(login);
+      const { shellEnv } = shellReads(read);
+      const { runner } = await world({ adapter, env: DAEMON_ENV, shellEnv });
+
+      await expect(runner.ready("claude")).resolves.toBe(false);
+    });
+
+    it("gives the login check the signal that stopStarts aborts", async () => {
+      const { adapter, checked } = loginAdapter(true, { path: DAEMON_ENV.PATH! });
+      const { runner } = await world({ adapter, env: DAEMON_ENV });
+
+      await runner.ready("claude");
+      runner.stopStarts();
+
+      expect(checked[0]?.signal.aborted).toBe(true);
+    });
+  });
 });
 
 describe("createChatRunner.message", () => {

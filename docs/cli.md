@@ -92,17 +92,19 @@ Remove a project and all its tasks. The folder at the path of the project does n
 
 The main configuration file is `$HOME/.tasma/config.yml`. A project that does not set `statuses`, `default_status`, `final_statuses` or `priorities` in its own `config.yml` takes the value from this file.
 
+`default_agent` is the agent of each new chat: a step chat, a restart, `tasma chat start` and a project chat. With no value, a new chat takes the only ready agent (installed and logged in), else Claude. A chat that exists keeps its agent.
+
 ### `tasma config view`
 
-Print the main configuration file as key and value rows: `file` (the path of the file), then `statuses`, `default_status`, `final_statuses`, `priorities` and `workflows_path`. A list value continues on the next rows, with an empty key. A key that the file does not set shows its built-in default, marked `(built-in default)`.
+Print the main configuration file as key and value rows: `file` (the path of the file), then `statuses`, `default_status`, `final_statuses`, `priorities`, `workflows_path` and `default_agent`. A list value continues on the next rows, with an empty key. A key that the file does not set shows its built-in default, marked `(built-in default)`. `default_agent` has no built-in default: it shows `-` when the file does not set it.
 
 ### `tasma config edit [options]`
 
 Change the main configuration file. Each flag writes one key:
 
 - `--status`, `--final-status` and `--priority` write lists. Repeat a flag for each entry. The list replaces the stored list.
-- `--default-status` and `--workflows-path` write one value.
-- `--clear <field>` removes a key: `statuses`, `default_status`, `final_statuses`, `priorities` or `workflows_path`. A removed key takes its built-in default.
+- `--default-status`, `--workflows-path` and `--default-agent` write one value.
+- `--clear <field>` removes a key: `statuses`, `default_status`, `final_statuses`, `priorities`, `workflows_path` or `default_agent`. A removed key takes its built-in default. With `default_agent` removed, a new chat takes its agent by the rule above.
 
 A relative `--workflows-path` starts at the working directory, and `~/` starts at the home directory. The daemon checks the result before it writes:
 
@@ -110,6 +112,7 @@ A relative `--workflows-path` starts at the working directory, and `~/` starts a
 - Each key of the file must be valid, also a key that the change does not write.
 - The change must not break a project that resolves today. The error names the project.
 - Each workflow that a project lists must load from a new `workflows_path`. The error names the project and the workflow.
+- `default_agent` must be an agent that Tasma runs: `claude`.
 
 A change that fails the check writes nothing. Tasks are not checked. Prints the path of the file.
 
@@ -196,7 +199,7 @@ A chat runs a coding agent on one step of a task. The Tasma app shows it.
 
 ### `tasma chat start <task-id> [--restart]`
 
-Start the chat of the task's current step. For a task with no step, the chat is for the first step of its workflow. If the latest chat of the task is for the same step and has not failed, the command gives back that chat and starts no new one. The agent is Claude. Its first message asks it to run the current step of the task.
+Start the chat of the task's current step. For a task with no step, the chat is for the first step of its workflow. If the latest chat of the task is for the same step and has not failed, the command gives back that chat and starts no new one. The agent is the default agent (`default_agent` in `config`). Its first message asks it to run the current step of the task.
 
 `--restart` starts a new chat for the step, also when the step already has a chat. If the latest chat of the task is for the same step, its agent stops first. The old chat stays in the chats of the task, and a message in it starts its agent again.
 

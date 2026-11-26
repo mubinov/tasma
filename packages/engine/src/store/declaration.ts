@@ -128,10 +128,10 @@ export function checkedList(key: string, stated: unknown, emptyAllowed: boolean)
   return stated as string[];
 }
 
-/** The status a caller stated for `default_status`, which is text and never the empty string. */
-export function checkedDefaultStatus(stated: unknown): string {
+/** A value a caller stated for one key, which is text and never the empty string. */
+export function checkedString(key: string, stated: unknown): string {
   if (typeof stated !== "string" || stated === "") {
-    fail("config-change-invalid", '"default_status" must be a string that is not empty');
+    fail("config-change-invalid", `"${key}" must be a string that is not empty`);
   }
   return stated;
 }
