@@ -1234,6 +1234,42 @@ it("shows a fenced block in Shiki colours when a tool call follows its text, whi
   expect(screen.getByRole("button", { name: "Running tool: Read src/a.ts" })).toBeTruthy();
 });
 
+describe("the working mark", () => {
+  function marks(): Element[] {
+    return [...panel().querySelectorAll('[data-slot="aui_assistant-message-indicator"]')];
+  }
+
+  async function findMark(): Promise<Element> {
+    return waitFor(() => {
+      expect(marks()).toHaveLength(1);
+      return marks()[0]!;
+    });
+  }
+
+  it.each([
+    ["text", textChunk("The old parser is slow.", "msg_01"), ".aui-md"],
+    ["reasoning", thoughtChunk("Looking at both.", "msg_01"), ".aui-reasoning-root"],
+    ["a tool call", toolCall({ toolCallId: "t1", title: "Read src/a.ts", kind: "read", status: "in_progress" }), ".aui-tool-group-root"],
+  ])("shows under the last part of a running reply, outside it, when that part is %s", async (_kind, last, selector) => {
+    await renderPanel(logOf(chatEntries([userMessage("Compare the parsers."), last])));
+
+    const mark = await findMark();
+    const reply = panel().querySelector('[data-slot="aui_assistant-message-root"]')!;
+    expect(reply.querySelectorAll(selector)).toHaveLength(1);
+    expect(reply.querySelector(selector)!.compareDocumentPosition(mark)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("goes away when the turn ends", async () => {
+    const log = logOf(chatEntries([userMessage("Compare the parsers."), textChunk("The old parser is slow.", "msg_01")]));
+    await renderPanel(log);
+    await findMark();
+
+    log.answer(2, { cursor: 3, entries: chatEntries([turnEnd()], 3) });
+
+    await waitFor(() => expect(marks()).toEqual([]));
+  });
+});
+
 it("gives each kit element whose border has no colour a mark of the kit border rule", async () => {
   const user = userEvent.setup();
   await renderPanel(logOf(chatEntries([

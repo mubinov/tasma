@@ -621,7 +621,9 @@ const AssistantMessage: FC = () => {
         data-slot="aui_assistant-message-content"
         className="text-foreground px-2 leading-relaxed wrap-break-word"
       >
-        <MessagePrimitive.GroupedParts groupBy={groupBy}>
+        {/* tasma-edit: the working mark shows on its own line under the last part, whatever that part is */}
+        <MessagePrimitive.GroupedParts groupBy={groupBy} indicator="always">
+          {/* tasma-edit end */}
           {({ part, children }) => {
             switch (part.type) {
               case "group-chainOfThought":

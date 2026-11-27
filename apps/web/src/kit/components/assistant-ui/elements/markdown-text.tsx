@@ -1,6 +1,7 @@
 "use client";
 
-import "@assistant-ui/react-markdown/styles/dot.css";
+// tasma-edit: the working mark is the indicator part of the message, on its own line, so running text shows no inline mark
+// tasma-edit end
 
 import {
   type CodeHeaderProps,
