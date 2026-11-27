@@ -23,8 +23,16 @@ const INSTALL_PATH = "/setup/skill-install";
 const FULL = "/setup?mode=full";
 
 const WRITE: SkillInstallWrite = {
+  agents: ["claude", "codex"],
   failure: { title: "The install failed", line: (error) => `line of ${failureKind(error.cause)}` },
   offered: () => true,
+};
+
+const SENT = { agents: ["claude", "codex"] };
+
+const ENDED: SkillInstall = {
+  result: "ended",
+  agents: [{ agent: "claude", result: "installed" }, { agent: "codex", result: "failed", output: "no network" }],
 };
 
 const REFUSED = refusalReply(500, { kind: "daemon", code: "internal", message: "the action broke" });
@@ -55,12 +63,12 @@ beforeEach(() => {
 });
 
 describe("installSkillOptions", () => {
-  it("sends one request with no run, and gives a result that is not running", async () => {
-    const stub = setup({ [INSTALL]: answer({ result: "installed" }) });
+  it("sends one request with the agents, and gives a result that is not running", async () => {
+    const stub = setup({ [INSTALL]: answer(ENDED) });
 
-    await expect(stub.observer.mutate(WRITE)).resolves.toEqual({ result: "installed" });
+    await expect(stub.observer.mutate(WRITE)).resolves.toEqual(ENDED);
 
-    expect(bodies(stub)).toEqual([{}]);
+    expect(bodies(stub)).toEqual([SENT]);
   });
 
   it("repeats the request with the run id while the answer is running", async () => {
@@ -70,25 +78,26 @@ describe("installSkillOptions", () => {
     const stub = setup({ [INSTALL]: first.reply });
     const write = stub.observer.mutate(WRITE);
 
-    await expect.poll(() => bodies(stub)).toEqual([{}]);
+    await expect.poll(() => bodies(stub)).toEqual([SENT]);
 
     stub.replies[INSTALL] = second.reply;
     first.answer(answer({ result: "running", run: "run-1" }));
-    await expect.poll(() => bodies(stub)).toEqual([{}, { run: "run-1" }]);
+    await expect.poll(() => bodies(stub)).toEqual([SENT, { run: "run-1" }]);
 
     stub.replies[INSTALL] = third.reply;
     second.answer(answer({ result: "running", run: "run-1" }));
-    await expect.poll(() => bodies(stub)).toEqual([{}, { run: "run-1" }, { run: "run-1" }]);
+    await expect.poll(() => bodies(stub)).toEqual([SENT, { run: "run-1" }, { run: "run-1" }]);
 
     third.answer(answer({ result: "failed", output: "no network" }));
 
     await expect(write).resolves.toEqual({ result: "failed", output: "no network" });
   });
 
-  it.each([
+  it.each<[string, SkillInstall]>([
     ["npx-missing", { result: "npx-missing" }],
     ["failed", { result: "failed", output: "no network" }],
-  ] as const)("gives %s as an answer, with no notice", async (_name, result) => {
+    ["ended with a failed agent", ENDED],
+  ])("gives %s as an answer, with no notice", async (_name, result) => {
     const stub = setup({ [INSTALL]: answer(result) });
 
     await expect(stub.observer.mutate(WRITE)).resolves.toEqual(result);
@@ -98,7 +107,7 @@ describe("installSkillOptions", () => {
 
   it("stays pending until the status read after the result has ended", async () => {
     const held = heldBack();
-    const stub = setup({ [INSTALL]: answer({ result: "installed" }) });
+    const stub = setup({ [INSTALL]: answer(ENDED) });
     const unsubscribe = new QueryObserver(stub.queryClient, setupQuery(stub.client, { mode: "full" })).subscribe(() => {});
 
     await expect.poll(() => stub.paths.filter((path) => path === FULL).length).toBe(1);
@@ -121,7 +130,7 @@ describe("installSkillOptions", () => {
 
     await expect(stub.observer.mutate(WRITE)).rejects.toThrow("the action broke");
 
-    expect(bodies(stub)).toEqual([{}]);
+    expect(bodies(stub)).toEqual([SENT]);
     expect(notices()).toHaveLength(1);
     expect(notices()[0]).toMatchObject({ form: "failure", title: "The install failed", line: "line of refused" });
     expect(notices()[0]!.words.join()).toContain("the action broke");
@@ -132,12 +141,12 @@ describe("installSkillOptions", () => {
     const stub = setup({ [INSTALL]: first.reply });
     const write = stub.observer.mutate(WRITE);
 
-    await expect.poll(() => bodies(stub)).toEqual([{}]);
+    await expect.poll(() => bodies(stub)).toEqual([SENT]);
     stub.replies[INSTALL] = REFUSED;
     first.answer(answer({ result: "running", run: "run-1" }));
 
     await expect(write).rejects.toThrow("the action broke");
-    expect(bodies(stub)).toEqual([{}, { run: "run-1" }]);
+    expect(bodies(stub)).toEqual([SENT, { run: "run-1" }]);
     expect(notices()).toHaveLength(1);
   });
 

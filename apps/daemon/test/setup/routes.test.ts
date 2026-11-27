@@ -3,9 +3,10 @@ import { delimiter, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { readDefaultAgent } from "@tasma/engine";
-import type { AgentSetup, ChatAgent, SetupStatus, SkillInstall } from "@tasma/protocol";
+import type { AgentSetup, ChatAgent, SetupStatus, SkillInstall, SkillInstallRequest } from "@tasma/protocol";
 import type { AgentAdapter, AgentEnv, AgentLaunch, LaunchResult } from "../../src/agents/adapter.js";
 import type { ShellEnv } from "../../src/agents/shell-env.js";
+import { DaemonError } from "../../src/http/failure.js";
 import { createProjectHost } from "../../src/projects/host.js";
 import { createSetupChecks } from "../../src/setup/checks.js";
 import type { SetupChecks } from "../../src/setup/checks.js";
@@ -69,9 +70,11 @@ function shellGiving(result: ShellEnv) {
   return vi.fn<(signal: AbortSignal) => Promise<ShellEnv>>(async () => result);
 }
 
-/** An installer that answers `installed`, and records the run of each call. */
+const INSTALLED: SkillInstall = { result: "ended", agents: [{ agent: "claude", result: "installed" }] };
+
+/** An installer that answers `INSTALLED`, and records the request of each call. */
 function fakeInstaller() {
-  const install = vi.fn<(run?: string) => Promise<SkillInstall>>(async () => ({ result: "installed" }));
+  const install = vi.fn<(request: SkillInstallRequest) => Promise<SkillInstall>>(async () => INSTALLED);
   const installer: SkillInstaller = { install, stop: vi.fn() };
   return { installer, install };
 }
@@ -836,17 +839,121 @@ describe("the skill check of GET /setup", () => {
     expect((await reply).agents[0]?.skill).toBe("unknown");
   });
 
-  it("gives each adapter its own result, in the order of the adapters", async () => {
+  it("gives each adapter its own result in full mode, in the order of the adapters, and runs all the checks of each", async () => {
     const missing = await freePath();
     const codex = fakeAdapter({ agent: "codex", skillFiles: () => [missing] });
     const claude = fakeAdapter();
     const shellEnv = shellGiving({ env: SHELL_ENV });
     const { server } = await serving(await readyRoot(), { adapters: [codex.adapter, claude.adapter], shellEnv });
 
-    expect((await statusOf(server, "/setup")).agents).toEqual([
-      { agent: "codex", ...NOT_RUN, skill: "fail" },
-      { agent: "claude", ...NOT_RUN, skill: "pass" },
+    expect((await statusOf(server, "/setup?mode=full")).agents.map((entry) => [entry.agent, entry.skill])).toEqual([
+      ["codex", "fail"],
+      ["claude", "pass"],
     ]);
+    expect(codex.skillListed).toHaveBeenCalledTimes(1);
+  });
+
+  describe("in start mode with more than one agent", () => {
+    /** A promise and the function that resolves it. */
+    function gate(): { opened: Promise<void>; open: () => void } {
+      let open!: () => void;
+      const opened = new Promise<void>((resolve) => (open = resolve));
+      return { opened, open };
+    }
+
+    it.each<[ChatAgent, ChatAgent]>([
+      ["claude", "codex"],
+      ["codex", "claude"],
+    ])("gives %s with a file at a path of the daemon environment pass, and %s not-run, with no shell read and no skillListed", async (withFile, other) => {
+      const skill = await plantedSkill();
+      const missing = await freePath();
+      const agents = [
+        fakeAdapter({ skillFiles: () => [withFile === "claude" ? skill : missing] }),
+        fakeAdapter({ agent: "codex", skillFiles: () => [withFile === "codex" ? skill : missing] }),
+      ];
+      const shellEnv = shellGiving({ env: SHELL_ENV });
+      const { server } = await serving(await readyRoot(), { adapters: agents.map((entry) => entry.adapter), shellEnv });
+
+      const status = await statusOf(server, "/setup");
+
+      expect(status.agents.find((entry) => entry.agent === withFile)).toEqual({ agent: withFile, ...NOT_RUN, skill: "pass" });
+      expect(status.agents.find((entry) => entry.agent === other)).toEqual({ agent: other, ...NOT_RUN, skill: "not-run" });
+      expect(shellEnv).not.toHaveBeenCalled();
+      for (const { skillListed } of agents) expect(skillListed).not.toHaveBeenCalled();
+    });
+
+    it("gives pass to each agent with a file at a path of the daemon environment", async () => {
+      const skill = await plantedSkill();
+      const adapters = [
+        fakeAdapter({ skillFiles: () => [skill] }).adapter,
+        fakeAdapter({ agent: "codex", skillFiles: () => [skill] }).adapter,
+      ];
+      const { server } = await serving(await readyRoot(), { adapters });
+
+      expect((await statusOf(server, "/setup")).agents.map((entry) => entry.skill)).toEqual(["pass", "pass"]);
+    });
+
+    it("ends the skillListed of the other agents when one agent passes, and gives them not-run, with one shell read", async () => {
+      const missing = await freePath();
+      const codexAsked = gate();
+      const codex = fakeAdapter({
+        agent: "codex",
+        skillFiles: () => [missing],
+        skillListed: (_env, signal) => new Promise((resolve) => {
+          codexAsked.open();
+          signal.addEventListener("abort", () => resolve(undefined), { once: true });
+        }),
+      });
+      const claude = fakeAdapter({
+        skillFiles: () => [missing],
+        skillListed: async () => {
+          await codexAsked.opened;
+          return true;
+        },
+      });
+      const shellEnv = shellGiving({ env: SHELL_ENV });
+      const { server } = await serving(await readyRoot(), { adapters: [claude.adapter, codex.adapter], shellEnv });
+
+      expect((await statusOf(server, "/setup")).agents).toEqual([
+        { agent: "claude", ...NOT_RUN, skill: "pass" },
+        { agent: "codex", ...NOT_RUN, skill: "not-run" },
+      ]);
+      expect(codex.skillListed.mock.calls[0]?.[1].aborted).toBe(true);
+      expect(shellEnv).toHaveBeenCalledTimes(1);
+      expect(shellEnv.mock.calls[0]?.[0].aborted).toBe(false);
+    });
+
+    it("gives not-run to an agent whose check ended before another agent passed", async () => {
+      const missing = await freePath();
+      const codexAnswered = gate();
+      const codex = fakeAdapter({
+        agent: "codex",
+        skillFiles: () => [missing],
+        skillListed: async () => {
+          codexAnswered.open();
+          return false;
+        },
+      });
+      const claude = fakeAdapter({
+        skillFiles: () => [missing],
+        skillListed: async () => {
+          await codexAnswered.opened;
+          return true;
+        },
+      });
+      const { server } = await serving(await readyRoot(), { adapters: [claude.adapter, codex.adapter] });
+
+      expect((await statusOf(server, "/setup")).agents.map((entry) => entry.skill)).toEqual(["pass", "not-run"]);
+    });
+
+    it("gives each agent its own result when no agent passes", async () => {
+      const missing = await freePath();
+      const codex = fakeAdapter({ agent: "codex", skillFiles: () => [missing] });
+      const claude = fakeAdapter({ skillFiles: () => [missing], skillListed: async () => undefined });
+      const { server } = await serving(await readyRoot(), { adapters: [claude.adapter, codex.adapter] });
+
+      expect((await statusOf(server, "/setup")).agents.map((entry) => entry.skill)).toEqual(["unknown", "fail"]);
+    });
   });
 });
 
@@ -855,46 +962,58 @@ describe("POST /setup/skill-install", () => {
 
   const INSTALL_ROUTE = "/setup/skill-install";
 
-  async function installing(answer: SkillInstall = { result: "installed" }) {
+  async function installing(answer: SkillInstall = INSTALLED) {
     const { installer, install } = fakeInstaller();
     install.mockResolvedValue(answer);
     const { server } = await serving(await projectsRoot(), { installer });
     return { server, install };
   }
 
-  it.each([
-    ["{}", {}, undefined],
-    ["an empty body", undefined, undefined],
-    ["a run", { run: RUN }, RUN],
-  ])("takes %s, and gives the run to the installer", async (_name, body, run) => {
+  it.each<[string, SkillInstallRequest]>([
+    ["one agent", { agents: ["claude"] }],
+    ["two agents", { agents: ["codex", "claude"] }],
+    ["a run", { run: RUN }],
+  ])("takes %s, and gives the request to the installer", async (_name, body) => {
     const { server, install } = await installing();
 
     const response = await send(server, "POST", INSTALL_ROUTE, body);
 
     expect(response.status).toBe(200);
-    expect(await success<SkillInstall>(response)).toEqual({ data: { result: "installed" }, diagnostics: [] });
-    expect(install.mock.calls).toEqual([[run]]);
+    expect(await success<SkillInstall>(response)).toEqual({ data: INSTALLED, diagnostics: [] });
+    expect(install.mock.calls).toEqual([[body]]);
   });
 
   it.each<SkillInstall>([
     { result: "running", run: RUN },
     { result: "npx-missing" },
     { result: "failed", output: "Cloning failed" },
+    { result: "ended", agents: [{ agent: "claude", result: "installed" }, { agent: "codex", result: "failed", output: "Cloning failed" }] },
   ])("answers $result with status 200", async (answer) => {
     const { server } = await installing(answer);
 
-    const response = await send(server, "POST", INSTALL_ROUTE, {});
+    const response = await send(server, "POST", INSTALL_ROUTE, { agents: ["claude"] });
 
     expect(response.status).toBe(200);
     expect((await success<SkillInstall>(response)).data).toEqual(answer);
   });
 
   it.each([
+    ["an empty body", undefined],
     ["a body that is not an object", ["run"]],
     ["a body of null", null],
-    ["an unknown key", { run: RUN, force: true }],
+    ["a body with no key", {}],
+    ["a body with both keys", { agents: ["claude"], run: RUN }],
+    ["an unknown key", { force: true }],
+    ["an unknown key next to a run", { run: RUN, force: true }],
     ["a run that is not a string", { run: 1 }],
     ["a run of null", { run: null }],
+    ["agents that are not an array", { agents: "claude" }],
+    ["agents of null", { agents: null }],
+    ["an empty list of agents", { agents: [] }],
+    ["an unknown agent", { agents: ["claude", "gemini"] }],
+    ["an agent that is the name of an object property", { agents: ["toString"] }],
+    ["an agent that is not a string", { agents: [1] }],
+    ["an agent named twice", { agents: ["claude", "codex", "claude"] }],
   ])("refuses %s with malformed-request, and starts no install", async (_name, body) => {
     const { server, install } = await installing();
 
@@ -905,10 +1024,23 @@ describe("POST /setup/skill-install", () => {
     expect(install).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["skill-install-running", "an install of the skill for claude runs now"],
+    ["agent-not-supported", "Tasma cannot run codex yet"],
+  ] as const)("answers the refusal %s of the installer with status 409", async (code, message) => {
+    const { server, install } = await installing();
+    install.mockRejectedValue(new DaemonError(code, message));
+
+    const response = await send(server, "POST", INSTALL_ROUTE, { agents: ["codex"] });
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toEqual({ kind: "daemon", code, message });
+  });
+
   it("refuses a query with malformed-request, and starts no install", async () => {
     const { server, install } = await installing();
 
-    const response = await send(server, "POST", `${INSTALL_ROUTE}?run=${RUN}`, {});
+    const response = await send(server, "POST", `${INSTALL_ROUTE}?run=${RUN}`, { run: RUN });
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
@@ -921,7 +1053,7 @@ describe("POST /setup/skill-install", () => {
     const response = await fetch(`${server.url}${INSTALL_ROUTE}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: "{}",
+      body: JSON.stringify({ agents: ["claude"] }),
     });
 
     expect(response.status).toBe(401);

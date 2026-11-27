@@ -173,12 +173,14 @@ const DAEMON_STATUS = {
   "task-has-no-workflow": 409,
   "step-stale": 409,
   "project-has-no-folder": 409,
-  // No adapter runs the agent of a new chat; no change to the task or the project clears it.
+  // No adapter runs the agent of a new chat or of a skill install; no change to the task or the project clears it.
   "agent-not-supported": 409,
   // The path names no agent.
   "agent-unknown": 404,
   // The agent does not offer or does not take the value, whatever state the chat is in.
   "option-refused": 422,
+  // An install for other agents runs; the caller sends the request again after its end.
+  "skill-install-running": 409,
 } satisfies Record<DaemonErrorCode, number>;
 
 /** The status a refusal is sent with. Every success answers 200. */

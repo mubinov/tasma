@@ -1,5 +1,12 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
-import { ProtocolError, type Client, type Project, type SkillInstall, type StoreErrorCode } from "@tasma/protocol";
+import {
+  ProtocolError,
+  type ChatAgent,
+  type Client,
+  type Project,
+  type SkillInstall,
+  type StoreErrorCode,
+} from "@tasma/protocol";
 import { reopenNotice, useNoticeStore } from "../../store/notices";
 import { daemonKeys } from "../queries";
 import { refusalWords, WriteError, type WriteFailure } from "./notices";
@@ -10,6 +17,7 @@ const GENERIC_TAG = "PROJ";
 const SETUP_WORKFLOW = "dev";
 
 export type SkillInstallWrite = {
+  agents: ChatAgent[];
   failure: WriteFailure;
   /** The screen shows the install button, which the notice sends the user to. */
   offered: () => boolean;
@@ -21,23 +29,25 @@ export function closeSkillInstallFailure(): void {
   useNoticeStore.getState().closeNotice(SKILL_INSTALL_FAILURE_KEY);
 }
 
+export type SkillInstallEnd = Exclude<SkillInstall, { result: "running" }>;
+
 /** Each request is held by the daemon for up to 25 seconds, so the loop does not poll quickly. */
-async function installToEnd(client: Client): Promise<SkillInstall> {
-  let { data } = await client.installSkill();
+async function installToEnd(client: Client, agents: ChatAgent[]): Promise<SkillInstallEnd> {
+  let { data } = await client.installSkill({ agents });
 
   while (data.result === "running") {
-    ({ data } = await client.installSkill(data.run));
+    ({ data } = await client.installSkill({ run: data.run }));
   }
 
   return data;
 }
 
 export function installSkillOptions(queryClient: QueryClient, client: Client) {
-  return mutationOptions<SkillInstall, WriteError, SkillInstallWrite>({
+  return mutationOptions<SkillInstallEnd, WriteError, SkillInstallWrite>({
     mutationKey: [...daemonKeys.setup(), "skill-install"],
-    mutationFn: async () => {
+    mutationFn: async ({ agents }) => {
       try {
-        return await installToEnd(client);
+        return await installToEnd(client, agents);
       } catch (cause) {
         throw new WriteError(cause);
       }

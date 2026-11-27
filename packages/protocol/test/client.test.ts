@@ -453,15 +453,15 @@ const invocations: Invocation[] = [
     path: "/setup",
   },
   {
-    name: "installSkill",
-    send: (client) => client.installSkill(),
+    name: "installSkill with agents",
+    send: (client) => client.installSkill({ agents: ["claude", "codex"] }),
     method: "POST",
     path: "/setup/skill-install",
-    body: {},
+    body: { agents: ["claude", "codex"] },
   },
   {
     name: "installSkill with a run",
-    send: (client) => client.installSkill("2f6d1c0e-8a4b-4c3d-9e7f-1a2b3c4d5e6f"),
+    send: (client) => client.installSkill({ run: "2f6d1c0e-8a4b-4c3d-9e7f-1a2b3c4d5e6f" }),
     method: "POST",
     path: "/setup/skill-install",
     body: { run: "2f6d1c0e-8a4b-4c3d-9e7f-1a2b3c4d5e6f" },
@@ -658,17 +658,17 @@ describe("the client", () => {
     const { calls, transport } = recorder(ok({ result: "running", run: "2f6d1c0e-8a4b-4c3d-9e7f-1a2b3c4d5e6f" }));
     const { signal } = new AbortController();
 
-    await createClient(transport).installSkill(undefined, { signal });
+    await createClient(transport).installSkill({ agents: ["claude"] }, { signal });
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.signal).toBe(signal);
-    expect(calls[0]?.body).toEqual({});
+    expect(calls[0]?.body).toEqual({ agents: ["claude"] });
   });
 
   it("sends no signal key on a skill install with no options", async () => {
-    const { calls, transport } = recorder(ok({ result: "installed" }));
+    const { calls, transport } = recorder(ok({ result: "npx-missing" }));
 
-    await createClient(transport).installSkill("2f6d1c0e-8a4b-4c3d-9e7f-1a2b3c4d5e6f");
+    await createClient(transport).installSkill({ run: "2f6d1c0e-8a4b-4c3d-9e7f-1a2b3c4d5e6f" });
 
     expect(calls).toHaveLength(1);
     expect(calls[0]).not.toHaveProperty("signal");

@@ -31,14 +31,23 @@ export type SetupStatus = {
   defaultAgent?: ChatAgent;
 };
 
+/** `agents`: not empty, with no duplicate. `run`: the `run` of a `running` answer. */
+export type SkillInstallRequest = { agents: ChatAgent[] } | { run: string };
+
+export type AgentSkillInstall
+  = | { agent: ChatAgent; result: "installed" }
+    | { agent: ChatAgent; result: "failed"; output: string };
+
 /**
- * The answer to an install of the tasma skill for each agent. `running`: the
- * install did not end within the hold, and `run` names it in the next call.
- * `npx-missing`: the login shell has no `npx` on its `PATH`. `output` holds at
- * most the last 64 KiB of the output of the command.
+ * The answer to an install of the tasma skill. `running`: the install did not
+ * end within the hold, and `run` names it in the next call. `npx-missing`: the
+ * login shell has no `npx` on its `PATH`. `failed`: a fault before the command
+ * of any agent, or a `run` that the daemon does not know. `ended`: one entry
+ * for each agent of the request that started the install, in its order. Each
+ * `output` holds at most the last 64 KiB of the output.
  */
 export type SkillInstall
-  = | { result: "installed" }
-    | { result: "running"; run: string }
+  = | { result: "running"; run: string }
     | { result: "npx-missing" }
-    | { result: "failed"; output: string };
+    | { result: "failed"; output: string }
+    | { result: "ended"; agents: AgentSkillInstall[] };

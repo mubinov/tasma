@@ -89,7 +89,8 @@ export type DaemonErrorCode
     | "project-has-no-folder"
     | "agent-not-supported"
     | "agent-unknown"
-    | "option-refused";
+    | "option-refused"
+    | "skill-install-running";
 
 /**
  * Why a call was refused. Each arm carries only the fields its engine class has:

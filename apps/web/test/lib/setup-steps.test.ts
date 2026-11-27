@@ -3,6 +3,7 @@ import type { AgentSetup, SetupCheck, SetupStatus, Success } from "@tasma/protoc
 import { describe, expect, it } from "vitest";
 import { daemonKeys } from "../../src/api/queries";
 import {
+  claudeInstallOf,
   currentStep,
   doneCount,
   fullReadsFailing,
@@ -102,6 +103,23 @@ describe("screenNeeded", () => {
 
   it("does not count the skill after the check stopped", () => {
     expect(screenNeeded({ ...noFullEnd, fullAnswered: true, skillCheckStopped: true, status: setupStatus({}, { skill: "fail" }) })).toBe(false);
+  });
+});
+
+describe("claudeInstallOf", () => {
+  it("gives the Claude entry of an ended install, in any position", () => {
+    const claude = { agent: "claude", result: "failed", output: "an error of the command" } as const;
+
+    expect(claudeInstallOf({ result: "ended", agents: [{ agent: "codex", result: "installed" }, claude] })).toEqual(claude);
+  });
+
+  it("gives nothing for an ended install with no Claude entry", () => {
+    expect(claudeInstallOf({ result: "ended", agents: [{ agent: "codex", result: "installed" }] })).toBeUndefined();
+  });
+
+  it("gives the answer itself for a fault before the command of any agent", () => {
+    expect(claudeInstallOf({ result: "npx-missing" })).toEqual({ result: "npx-missing" });
+    expect(claudeInstallOf({ result: "failed", output: "the shell read failed" })).toEqual({ result: "failed", output: "the shell read failed" });
   });
 });
 

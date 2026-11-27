@@ -1,5 +1,6 @@
 import type { QueryClient, QueryState } from "@tanstack/react-query";
-import type { AgentSetup, SetupCheck, SetupStatus, Success } from "@tasma/protocol";
+import type { AgentSetup, AgentSkillInstall, SetupCheck, SetupStatus, Success } from "@tasma/protocol";
+import type { SkillInstallEnd } from "../api/mutations";
 import { daemonKeys } from "../api/queries";
 
 export const SETUP_PATH = "/setup";
@@ -97,6 +98,13 @@ function writeLabel(id: StepId, input: StepInput): string | undefined {
 
 function claudeOf(status: SetupStatus | undefined): AgentSetup | undefined {
   return status?.agents.find(({ agent }) => agent === "claude");
+}
+
+/** The install result of Claude: its entry, or the answer of a fault before the command of any agent. */
+export type ClaudeInstall = AgentSkillInstall | Exclude<SkillInstallEnd, { result: "ended" }>;
+
+export function claudeInstallOf(answer: SkillInstallEnd): ClaudeInstall | undefined {
+  return answer.result === "ended" ? answer.agents.find(({ agent }) => agent === "claude") : answer;
 }
 
 /**

@@ -26,6 +26,7 @@ import { projectsQuery, setupQuery } from "../api/queries";
 import { attended } from "../lib/attended";
 import { useDocumentTitle } from "../lib/document-title";
 import {
+  claudeInstallOf,
   currentStep,
   doneCount,
   fullReadsFailing,
@@ -245,7 +246,8 @@ export function SetupScreen(): ReactNode {
 
   // Here and not in the panel, which unmounts when step 4 closes or changes to Done.
   const install = useMutation(installSkillOptions(queryClient, client));
-  const cannotInstall = install.data?.result === "failed" || install.data?.result === "npx-missing";
+  const claudeInstall = install.data === undefined ? undefined : claudeInstallOf(install.data);
+  const cannotInstall = claudeInstall?.result === "failed" || claudeInstall?.result === "npx-missing";
   const skillInstall: SkillInstallState | undefined = install.isPending ? "running" : cannotInstall ? "cannot-install" : undefined;
 
   // Here for the same reason: step 5 changes to Done when its write succeeds.
@@ -505,12 +507,18 @@ export function SetupScreen(): ReactNode {
 
     const offered = (): boolean => stateNow("skill") === "to-do";
 
+    // The install button shows only in step 4 to do, which needs a status.
+    const agents = newestSetup(queryClient)!.agents.map(({ agent }) => agent);
+
     announce(INSTALL_STARTED_WORDS);
-    install.mutate({ failure: skillInstallFailure(), offered }, {
-      onSuccess: ({ result }) => {
+    install.mutate({ agents, failure: skillInstallFailure(), offered }, {
+      onSuccess: (answer) => {
         if (!offered()) {
           return;
         }
+
+        const result = claudeInstallOf(answer)?.result;
+
         if (result === "failed") {
           announce(installFailedWords(skillStep.number));
         } else if (result === "npx-missing") {
@@ -650,7 +658,7 @@ export function SetupScreen(): ReactNode {
             checking={checking === step.id}
             onCheckAgain={() => void checkAgain(step.id)}
             onStop={stopChecking}
-            install={{ state: skillInstall, answer: install.data, onInstall: startInstall }}
+            install={{ state: skillInstall, answer: claudeInstall, onInstall: startInstall }}
             project={{
               dialog: folderDialogAvailable(),
               picking,

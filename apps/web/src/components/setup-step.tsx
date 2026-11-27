@@ -1,10 +1,9 @@
 import { Accordion } from "@base-ui/react/accordion";
 import { Button } from "@base-ui/react/button";
 import { Field } from "@base-ui/react/field";
-import type { SkillInstall } from "@tasma/protocol";
 import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from "react";
 import { CaretDownIcon, CheckIcon, CircleNotchIcon } from "../lib/icons";
-import { isChangeToDone, type SetupStep, type SkillInstallState, type StepState } from "../lib/setup-steps";
+import { isChangeToDone, type ClaudeInstall, type SetupStep, type SkillInstallState, type StepState } from "../lib/setup-steps";
 import type { SetupFailure } from "../lib/write-failure";
 import { useNoticeStore } from "../store/notices";
 import { BUTTON_CLASS, BUTTON_FILLED_CLASS, FIELD_BORDER_CLASS, FIELD_ERROR_CLASS } from "./control-classes";
@@ -230,7 +229,7 @@ function Spinner(): ReactNode {
 /** What step 4 shows of the write that lives in the screen. */
 type SkillInstallRun = {
   state: SkillInstallState | undefined;
-  answer: SkillInstall | undefined;
+  answer: ClaudeInstall | undefined;
   onInstall: () => void;
 };
 

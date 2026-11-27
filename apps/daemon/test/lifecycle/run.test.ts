@@ -901,14 +901,17 @@ describe("the setup route", () => {
     const reply = fetch(`${start.url}/setup/skill-install`, {
       method: "POST",
       headers: { "content-type": "application/json", ...bearer(await tokenOf(root)) },
-      body: "{}",
+      body: JSON.stringify({ agents: ["claude"] }),
     });
     const npx = await untilPid(join(home, "npx"), "npx started");
     await start.stop();
 
     const response = await reply;
     expect(response.status).toBe(200);
-    expect((await success<SkillInstall>(response)).data).toEqual({ result: "failed", output: "The daemon stopped." });
+    expect((await success<SkillInstall>(response)).data).toEqual({
+      result: "ended",
+      agents: [{ agent: "claude", result: "failed", output: "The daemon stopped." }],
+    });
     await until(() => !alive(npx), "npx is gone");
   });
 });
