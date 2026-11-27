@@ -21,6 +21,7 @@ export {
   currentStep,
   foldChat,
   isActiveChat,
+  isChatAgent,
   PROJECT_CHAT_ACTIVE_MS,
   projectChatMark,
   projectChatSettled,
@@ -92,6 +93,7 @@ export type {
   TaskReadOptions,
   TaskTextOptions,
 } from "./routes.js";
+export { isAgentReady } from "./setup.js";
 export type { AgentSetup, SetupCheck, SetupStatus, SkillInstall } from "./setup.js";
 export type {
   Comment,

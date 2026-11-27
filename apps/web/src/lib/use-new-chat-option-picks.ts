@@ -17,8 +17,9 @@ export type NewChatOption = {
 export type DroppedPicks = { words: readonly string[] };
 
 export type NewChatOptionPicksInput = {
-  agent: ChatAgent;
-  /** The config options of the last list that a read gave, or undefined while no read has given one. */
+  /** The agent of the list, or undefined while it is not known: then the hook gives no pickers. */
+  agent: ChatAgent | undefined;
+  /** The config options of the last list that a read gave for `agent`, or undefined while no read has given one. */
   configOptions: readonly unknown[] | undefined;
   /** The options that the start that waits sent, or null while no start waits. */
   sent: Readonly<Record<string, string>> | null;
@@ -67,7 +68,8 @@ function droppedWords(pick: OptionPick, now: NewChatOption | undefined): string 
  * The pickers of New chat. The shown value of an option is, while a start
  * waits, the value that it sent or the start value; else an offered pick of
  * the user, or the start value. A change of the list drops each pick that it
- * does not offer, but only after the wait: the start has sent its picks.
+ * does not offer, but only after the wait: the start has sent its picks. A
+ * change of the agent drops every pick and says nothing.
  */
 export function useNewChatOptionPicks({ agent, configOptions, sent }: NewChatOptionPicksInput): NewChatOptionPicks {
   const rowOptions = configOptions === undefined ? [] : chatPickerOptions({ options: chatOptions(configOptions) });
@@ -75,20 +77,27 @@ export function useNewChatOptionPicks({ agent, configOptions, sent }: NewChatOpt
   const [picks, setPicks] = useState(() => sentPicks(sent, rowOptions));
   // No list has checked the picks of a start yet.
   const [checkedOn, setCheckedOn] = useState(sent === null ? configOptions : undefined);
+  const [picksAgent, setPicksAgent] = useState(agent);
   const [dropped, setDropped] = useState<DroppedPicks | null>(null);
 
-  const options = rowOptions.map((option): NewChatOption => {
-    const hidden = hiddenValues(agent, option.id);
-    const picked = picks.get(option.id)?.value;
-    const current = sent === null
-      ? (picked !== undefined && offers(option, hidden, picked) ? picked : option.current)
-      : (byOptionId(sent, option.id) ?? option.current);
-    return { shown: { ...option, current }, listed: option, hidden };
-  });
+  const options = agent === undefined
+    ? []
+    : rowOptions.map((option): NewChatOption => {
+        const hidden = hiddenValues(agent, option.id);
+        const picked = picks.get(option.id)?.value;
+        const current = sent === null
+          ? (picked !== undefined && offers(option, hidden, picked) ? picked : option.current)
+          : (byOptionId(sent, option.id) ?? option.current);
+        return { shown: { ...option, current }, listed: option, hidden };
+      });
   const optionOf = (configId: string): NewChatOption | undefined =>
     options.find((option) => option.listed.id === configId);
 
-  if (sent === null && checkedOn !== configOptions) {
+  if (agent !== picksAgent) {
+    setPicksAgent(agent);
+    setPicks(new Map());
+    setCheckedOn(configOptions);
+  } else if (sent === null && checkedOn !== configOptions) {
     setCheckedOn(configOptions);
     const entries = [...picks];
     const lost = entries.filter(([configId, { value }]) => {

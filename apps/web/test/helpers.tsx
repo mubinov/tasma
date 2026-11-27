@@ -261,11 +261,11 @@ export function testContext(transport?: Transport): RouterContext {
 }
 
 /** The `wrapper` of `renderHook` for a hook that takes the clients from the router, over a stub daemon. */
-export function routerWrapper(transport: Transport) {
+export function routerWrapper(context: RouterContext) {
   const router = createRouter({
     routeTree: createRootRouteWithContext<RouterContext>()(),
     history: createMemoryHistory({ initialEntries: ["/"] }),
-    context: testContext(transport),
+    context,
   });
 
   return function RouterWrapper({ children }: { children: ReactNode }): ReactNode {

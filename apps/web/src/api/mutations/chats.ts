@@ -3,6 +3,7 @@ import type { RegisteredRouter } from "@tanstack/react-router";
 import {
   ProtocolError,
   type Chat,
+  type ChatAgent,
   type ChatStart,
   type Client,
   type Diagnostic,
@@ -361,7 +362,7 @@ export function chatStartOptions(queryClient: QueryClient, client: Client, route
 }
 
 /** `options` holds the picks that differ from the start values, by option id. */
-export type NewChatStart = { tag: string; text: string; options?: Readonly<Record<string, string>> };
+export type NewChatStart = { tag: string; text: string; options?: Readonly<Record<string, string>>; agent?: ChatAgent };
 
 export type ProjectChatStartWrite = { start: NewChatStart; failure: WriteFailure };
 
@@ -447,9 +448,14 @@ async function openNewChat(router: RegisteredRouter, { tag, chat, title, words, 
 export function projectChatStartOptions(queryClient: QueryClient, client: Client, router: RegisteredRouter) {
   return mutationOptions<ProjectChatStart, WriteError, ProjectChatStartWrite>({
     mutationKey: projectChatStartKey(),
-    mutationFn: async ({ start: { tag, text, options } }) => {
+    mutationFn: async ({ start: { tag, text, options, agent } }) => {
       try {
-        const input = { text, client: CHAT_CLIENT, ...(options === undefined ? {} : { options }) };
+        const input = {
+          text,
+          client: CHAT_CLIENT,
+          ...(options === undefined ? {} : { options }),
+          ...(agent === undefined ? {} : { agent }),
+        };
         return (await client.startProjectChat(tag, input)).data;
       } catch (cause) {
         throw new WriteError(cause);

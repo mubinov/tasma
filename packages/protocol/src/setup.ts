@@ -12,6 +12,11 @@ export type SetupCheck = "pass" | "fail" | "not-run" | "unknown";
 
 export type AgentSetup = { agent: ChatAgent; installed: SetupCheck; loggedIn: SetupCheck; skill: SetupCheck };
 
+/** An agent is ready when it is installed and logged in. Only the full read runs these checks. */
+export function isAgentReady({ installed, loggedIn }: AgentSetup): boolean {
+  return installed === "pass" && loggedIn === "pass";
+}
+
 /**
  * `agents` holds one entry for each agent that a chat can run, in the same
  * order each time. `defaultAgent` is the agent of a new chat with no agent of

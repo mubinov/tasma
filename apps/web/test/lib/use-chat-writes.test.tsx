@@ -6,7 +6,7 @@ import { CHAT_CLIENT } from "../../src/api/mutations";
 import { useChatWrites } from "../../src/lib/use-chat-writes";
 import { chatDraft, useChatDraftStore } from "../../src/store/chat-drafts";
 import { useNoticeStore } from "../../src/store/notices";
-import { refusalReply, routerWrapper, stubTransport, successReply } from "../helpers";
+import { refusalReply, routerWrapper, stubTransport, successReply, testContext } from "../helpers";
 
 const PLACE = { tag: "SAGA", task: "SAGA-3", chat: 2 };
 
@@ -25,7 +25,7 @@ afterEach(() => {
 /** The writes of chat 2 of SAGA-3, under a router over the stub daemon. */
 function renderWrites(replies: Record<string, TransportReply> = {}) {
   const stub = stubTransport(replies);
-  const { result } = renderHook(() => useChatWrites(PLACE), { wrapper: routerWrapper(stub.transport) });
+  const { result } = renderHook(() => useChatWrites(PLACE), { wrapper: routerWrapper(testContext(stub.transport)) });
 
   return { ...stub, writes: result.current };
 }

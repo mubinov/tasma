@@ -13,6 +13,7 @@ import { createAppQueryClient, createDaemonClient, shouldRetry } from "../../src
 import { APP_PATH_PREFIX, DAEMON_PATH_PREFIX } from "../../src/api/paths";
 import {
   agentOptionsQuery,
+  agentSetupQuery,
   appKeys,
   chatItemQuery,
   chatListQuery,
@@ -624,5 +625,30 @@ describe("setupQuery", () => {
 
   it("keeps an entry for the whole session", () => {
     expect(setupQuery(createClient(stubTransport().transport), { mode: "start" }).gcTime).toBe(Infinity);
+  });
+});
+
+describe("agentSetupQuery", () => {
+  const STATUS = setupStatus({ defaultAgent: "claude" });
+
+  it("reads in full mode without the skill check, and gives the whole envelope", async () => {
+    const { transport, paths } = stubTransport({ "/setup?mode=full&skipSkill=true": successReply(STATUS) });
+
+    await expect(createAppQueryClient().query({ ...agentSetupQuery(createClient(transport)), staleTime: "static" }))
+      .resolves.toEqual({ data: STATUS, diagnostics: [] });
+    expect(paths).toEqual(["/setup?mode=full&skipSkill=true"]);
+  });
+
+  it("has a key that is under the daemon key and not under the setup key", () => {
+    const { queryKey } = agentSetupQuery(createClient(stubTransport().transport));
+
+    expect(queryKey).toEqual(["daemon", "agent-setup"]);
+    expect(queryKey.slice(0, daemonKeys.setup().length)).not.toEqual(daemonKeys.setup());
+  });
+
+  it("reads again at each mount, not at a focus of the window, and keeps its answer for the whole session", () => {
+    const options = agentSetupQuery(createClient(stubTransport().transport));
+
+    expect(options).toMatchObject({ staleTime: 0, gcTime: Infinity, refetchOnWindowFocus: false });
   });
 });

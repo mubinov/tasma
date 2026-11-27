@@ -1,4 +1,4 @@
-import type { TransportReply } from "@tasma/protocol";
+import type { AgentSetup, ChatAgent, TransportReply } from "@tasma/protocol";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,7 +23,8 @@ import {
   stubLayout,
   type DashboardStub,
 } from "../dashboard-fixtures";
-import { heldBack, refusalReply, stubThreadDom, successReply } from "../helpers";
+import { modelOption, modeOption } from "../chat-fixtures";
+import { heldBack, refusalReply, setupStatus, startOf, stubThreadDom, successReply } from "../helpers";
 import { stubWindowWidth } from "../setup/match-media";
 import { frame } from "../setup/notice-store";
 import { spoken } from "../update-fixtures";
@@ -48,8 +49,31 @@ function sendButton(): HTMLButtonElement {
   return screen.getByRole<HTMLButtonElement>("button", { name: "Send message" });
 }
 
+function region(): HTMLElement {
+  return screen.getByRole("region", { name: "New chat" });
+}
+
 function trigger(name: RegExp | string = /^Project/): HTMLElement {
-  return within(screen.getByRole("region", { name: "New chat" })).getByRole("button", { name });
+  return within(region()).getByRole("button", { name });
+}
+
+function findTrigger(name: RegExp | string): Promise<HTMLElement> {
+  return within(region()).findByRole("button", { name });
+}
+
+async function pickValue(user: ReturnType<typeof userEvent.setup>, name: RegExp | string, value: string) {
+  await user.click(trigger(name));
+  await user.click(await screen.findByRole("menuitemradio", { name: value }));
+  await waitFor(() => {
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+}
+
+async function waiting(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(field(), "Plan the release{Enter}");
+  await waitFor(() => {
+    expect(screen.getByText("Plan the release")).toBeTruthy();
+  });
 }
 
 function viewHeading(): HTMLElement {
@@ -58,6 +82,10 @@ function viewHeading(): HTMLElement {
 
 function posts(stub: DashboardStub) {
   return stub.requests.filter(({ method }) => method === "POST");
+}
+
+function startBody(stub: DashboardStub): unknown {
+  return posts(stub).find(({ path }) => path === "/projects/SAGA/chats")?.body;
 }
 
 function words(line: string): string[] {
@@ -351,19 +379,16 @@ describe("the selected project", () => {
 });
 
 describe("the wait", () => {
-  async function waiting() {
+  async function openWaiting() {
     const { reply, answer } = heldBack();
     const opened = await open(WITH_PROJECT, startDaemon({ [START_POST]: reply }));
 
-    await opened.user.type(field(), "Plan the release{Enter}");
-    await waitFor(() => {
-      expect(screen.getByText("Plan the release")).toBeTruthy();
-    });
+    await waiting(opened.user);
     return { ...opened, answer };
   }
 
   it("shows the message, the composer at the bottom and no Send and no Stop", async () => {
-    await waiting();
+    await openWaiting();
 
     expect(screen.getByRole("log").textContent).toContain("Plan the release");
     expect(screen.getByRole("log").querySelector('[data-role="assistant"]')).not.toBeNull();
@@ -374,7 +399,7 @@ describe("the wait", () => {
   });
 
   it("adds a line on Enter and sends nothing", async () => {
-    const { user, stub } = await waiting();
+    const { user, stub } = await openWaiting();
 
     await user.type(field(), "More{Enter}text");
 
@@ -383,7 +408,7 @@ describe("the wait", () => {
   });
 
   it("shows the project of the start in a Project trigger that does not open", async () => {
-    const { user } = await waiting();
+    const { user } = await openWaiting();
 
     const shown = trigger("Project Saga SAGA");
     expect(shown.getAttribute("aria-disabled")).toBe("true");
@@ -393,7 +418,7 @@ describe("the wait", () => {
   });
 
   it("says the start", async () => {
-    await waiting();
+    await openWaiting();
     await frame();
 
     expect(words("Starting a chat in SAGA")).toHaveLength(1);
@@ -711,24 +736,8 @@ describe("the Mode and Model pickers", () => {
     return successReply({ agent: "claude", options, updated: "2026-01-01T00:00:00.000Z" });
   }
 
-  function region(): HTMLElement {
-    return screen.getByRole("region", { name: "New chat" });
-  }
-
-  function findTrigger(name: RegExp | string): Promise<HTMLElement> {
-    return within(region()).findByRole("button", { name });
-  }
-
   function noOptionTriggers(): boolean {
     return within(region()).queryByRole("button", { name: /^(Mode|Model) / }) === null;
-  }
-
-  async function pickValue(user: ReturnType<typeof userEvent.setup>, name: RegExp | string, value: string) {
-    await user.click(trigger(name));
-    await user.click(await screen.findByRole("menuitemradio", { name: value }));
-    await waitFor(() => {
-      expect(screen.queryByRole("menu")).toBeNull();
-    });
   }
 
   async function withList(path = WITH_PROJECT, replies: Record<string, TransportReply | Promise<TransportReply>> = {}) {
@@ -752,17 +761,6 @@ describe("the Mode and Model pickers", () => {
     });
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
-    });
-  }
-
-  function startBody(stub: DashboardStub): unknown {
-    return posts(stub).find(({ path }) => path === "/projects/SAGA/chats")?.body;
-  }
-
-  async function waiting(user: ReturnType<typeof userEvent.setup>) {
-    await user.type(field(), "Plan the release{Enter}");
-    await waitFor(() => {
-      expect(screen.getByText("Plan the release")).toBeTruthy();
     });
   }
 
@@ -1069,6 +1067,184 @@ describe("the Mode and Model pickers", () => {
       });
       expect(posts(stub).at(-1)?.body).toEqual({ text: "Plan the release", client: CHAT_CLIENT, options: { mode: "acceptEdits" } });
     });
+  });
+});
+
+describe("the Agent picker", () => {
+  const FULL = "/setup?mode=full&skipSkill=true";
+
+  const READY = { installed: "pass", loggedIn: "pass", skill: "pass" } as const;
+
+  const CLAUDE: AgentSetup = { agent: "claude", ...READY };
+
+  const CODEX: AgentSetup = { agent: "codex", ...READY };
+
+  const CODEX_LOGGED_OUT: AgentSetup = { ...CODEX, loggedIn: "fail" };
+
+  const UPDATED = "2026-01-01T00:00:00.000Z";
+
+  const CODEX_MODES = [
+    { value: "read-only", name: "Read-only" },
+    { value: "agent", name: "Auto review" },
+    { value: "agent-full-access", name: "Full access" },
+  ];
+
+  const CLAUDE_LIST = successReply({ agent: "claude", options: [modelOption("default"), modeOption("auto")], updated: UPDATED });
+
+  const CODEX_LIST = successReply({
+    agent: "codex",
+    options: [modeOption("agent", CODEX_MODES), modelOption("model-b")],
+    updated: UPDATED,
+  });
+
+  function fullReply(agents: AgentSetup[], defaultAgent: ChatAgent = "claude"): TransportReply {
+    return successReply(setupStatus({ agents, defaultAgent }));
+  }
+
+  /** A daemon whose start read lists `offered`, and whose full read answers `full`. */
+  function agentDaemon(offered: AgentSetup[], full?: TransportReply | Promise<TransportReply>) {
+    return startDaemon({
+      "/setup?mode=start": successReply(startOf(setupStatus({ agents: offered }))),
+      ...(full === undefined ? {} : { [FULL]: full }),
+      "/agents/claude/options": CLAUDE_LIST,
+      "/agents/codex/options": CODEX_LIST,
+    });
+  }
+
+  function queryTrigger(name: RegExp): HTMLElement | null {
+    return within(region()).queryByRole("button", { name });
+  }
+
+  it("shows Project, Agent, Mode and Model in this order, and starts on the default agent", async () => {
+    await open(WITH_PROJECT, agentDaemon([CLAUDE, CODEX], fullReply([CLAUDE, CODEX], "codex")));
+
+    const agent = await findTrigger("Agent Codex");
+    const mode = await findTrigger("Mode Auto review");
+    const project = trigger(/^Project/);
+    const model = trigger("Model Model B");
+    expect(project.compareDocumentPosition(agent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(agent.compareDocumentPosition(mode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(mode.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(viewHeading().nextElementSibling?.textContent).toBe("Codex");
+  });
+
+  it("shows the lists of Codex at a pick of Codex, and sends codex and no pick of Claude", async () => {
+    const { user, stub } = await open(WITH_PROJECT, agentDaemon([CLAUDE, CODEX], fullReply([CLAUDE, CODEX])));
+    await findTrigger("Model Default");
+    await pickValue(user, /^Model /, "Model C");
+
+    await pickValue(user, /^Agent /, "Codex");
+
+    expect(document.activeElement).toBe(trigger("Agent Codex"));
+    expect(await findTrigger("Mode Auto review")).toBeTruthy();
+    expect(trigger("Model Model B")).toBeTruthy();
+    expect(viewHeading().nextElementSibling?.textContent).toBe("Codex");
+    await user.click(trigger("Agent Codex"));
+    const menu = await screen.findByRole("menu", { name: "Agent" });
+    expect(within(menu).getAllByRole("menuitemradio").map((item) => item.textContent)).toEqual(["Claude", "Codex"]);
+    await user.keyboard("{Escape}");
+    await user.type(field(), "Plan the release{Enter}");
+    await waitFor(() => {
+      expect(startBody(stub)).toEqual({ text: "Plan the release", client: CHAT_CLIENT, agent: "codex" });
+    });
+  });
+
+  it("shows no Agent picker with one ready agent, and sends that agent", async () => {
+    const stub = agentDaemon([CLAUDE, CODEX], fullReply([CLAUDE, CODEX_LOGGED_OUT]));
+    const { user } = await open(WITH_PROJECT, stub);
+
+    await findTrigger("Model Default");
+
+    expect(queryTrigger(/^Agent /)).toBeNull();
+    await user.type(field(), "Plan the release{Enter}");
+    await waitFor(() => {
+      expect(startBody(stub)).toEqual({ text: "Plan the release", client: CHAT_CLIENT, agent: "claude" });
+    });
+  });
+
+  it("reads no full setup with one offered agent, shows Claude, and sends no agent", async () => {
+    const { user, stub } = await open(WITH_PROJECT, agentDaemon([CLAUDE]));
+
+    await findTrigger("Model Default");
+
+    expect(stub.paths).not.toContain(FULL);
+    expect(queryTrigger(/^Agent /)).toBeNull();
+    expect(viewHeading().nextElementSibling?.textContent).toBe("Claude");
+    await user.type(field(), "Plan the release{Enter}");
+    await waitFor(() => {
+      expect(startBody(stub)).toEqual({ text: "Plan the release", client: CHAT_CLIENT });
+    });
+  });
+
+  it("shows no Agent, Mode or Model picker and no agent name while the full read waits, and sends no agent", async () => {
+    const { user, stub } = await open(WITH_PROJECT, agentDaemon([CLAUDE, CODEX], heldBack().reply));
+    await waitFor(() => {
+      expect(stub.paths).toContain(FULL);
+    });
+
+    expect(queryTrigger(/^(Agent|Mode|Model) /)).toBeNull();
+    expect(viewHeading().nextElementSibling).toBeNull();
+    await user.type(field(), "Plan the release{Enter}");
+    await waitFor(() => {
+      expect(startBody(stub)).toEqual({ text: "Plan the release", client: CHAT_CLIENT });
+    });
+    expect(stub.paths).not.toContain("/agents/claude/options");
+  });
+
+  it("shows a new default agent with no pick, and says it", async () => {
+    const line = "New chat uses Codex.";
+    const { stub } = await open(WITH_PROJECT, agentDaemon([CLAUDE, CODEX], fullReply([CLAUDE, CODEX])));
+    await findTrigger("Mode Auto");
+    expect(document.activeElement).toBe(field());
+
+    stub.replies[FULL] = fullReply([CLAUDE, CODEX], "codex");
+    await stub.send([{ kind: "config" }]);
+    await findTrigger("Agent Codex");
+    await findTrigger("Mode Auto review");
+    await frame();
+
+    expect(words(line)).toHaveLength(1);
+    expect(document.activeElement).toBe(field());
+    expect(viewHeading().nextElementSibling?.textContent).toBe("Codex");
+  });
+
+  it("shows the agent of the start in an Agent trigger that does not open while the start waits", async () => {
+    const stub = agentDaemon([CLAUDE, CODEX], fullReply([CLAUDE, CODEX]));
+    stub.replies[START_POST] = heldBack().reply;
+    const { user } = await open(WITH_PROJECT, stub);
+    await findTrigger("Agent Claude");
+    await pickValue(user, /^Agent /, "Codex");
+
+    await waiting(user);
+
+    const shown = trigger("Agent Codex");
+    expect(shown.getAttribute("aria-disabled")).toBe("true");
+    await user.click(shown);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(startBody(stub)).toEqual({ text: "Plan the release", client: CHAT_CLIENT, agent: "codex" });
+  });
+
+  it("moves the focus to the heading and says why when a new answer takes the Agent trigger that has the focus", async () => {
+    const line = "Codex is not ready anymore. New chat uses Claude.";
+    const { user, stub } = await open(WITH_PROJECT, agentDaemon([CLAUDE, CODEX], fullReply([CLAUDE, CODEX])));
+    await findTrigger("Agent Claude");
+    await pickValue(user, /^Agent /, "Codex");
+    await findTrigger("Mode Auto review");
+    expect(document.activeElement).toBe(trigger("Agent Codex"));
+    const reads = stub.readsOf(FULL);
+
+    stub.replies[FULL] = fullReply([CLAUDE, CODEX_LOGGED_OUT]);
+    await stub.send([{ kind: "config" }]);
+    await waitFor(() => {
+      expect(stub.readsOf(FULL)).toBe(reads + 1);
+      expect(queryTrigger(/^Agent /)).toBeNull();
+    });
+    await findTrigger("Mode Auto");
+    await frame();
+
+    expect(document.activeElement).toBe(viewHeading());
+    expect(words(line)).toHaveLength(1);
+    expect(viewHeading().nextElementSibling?.textContent).toBe("Claude");
   });
 });
 

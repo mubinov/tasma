@@ -604,6 +604,25 @@ describe("a start of a project chat", () => {
     expect(asked.agent).toBe(2);
   });
 
+  it("gives the runner the agent of the start, and does not ask the resolver", async () => {
+    const { starts, projectCalls, asked } = await world();
+
+    const live = await starts.startProject("ALPHA", { ...INPUT, agent: "codex" });
+
+    expect(live.chat).toMatchObject({ chat: 1, agent: "codex" });
+    expect(projectCalls.map((call) => call.agent)).toEqual(["codex"]);
+    expect(asked.agent).toBe(0);
+  });
+
+  it("asks the resolver one time for a start with no agent", async () => {
+    const { starts, projectCalls, asked } = await world("codex");
+
+    await starts.startProject("ALPHA", INPUT);
+
+    expect(projectCalls.map((call) => call.agent)).toEqual(["codex"]);
+    expect(asked.agent).toBe(1);
+  });
+
   it("gives the runner the options of the start", async () => {
     const { starts, projectCalls } = await world();
     const options = { model: "large", mode: "acceptEdits" };

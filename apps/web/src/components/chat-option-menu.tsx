@@ -33,9 +33,9 @@ export function ChatPickerRow({ children }: { children: ReactNode }): ReactNode 
 }
 
 /**
- * The menu of one `select` config option of a chat, with the names and the
- * descriptions that the agent sends. The wait for a pick stands in the
- * trigger's own name, as in `PropertyMenu`.
+ * The menu of one option of a chat: a `select` config option, with the names
+ * and the descriptions that the agent sends, or the agent of New chat. The wait
+ * for a pick stands in the trigger's own name, as in `PropertyMenu`.
  */
 export function ChatOptionMenu(
   { option, hidden, pending, waiting = false, onPick, onFocusLost }: ChatOptionMenuProps,

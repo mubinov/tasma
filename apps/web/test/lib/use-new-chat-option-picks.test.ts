@@ -139,6 +139,35 @@ describe("useNewChatOptionPicks", () => {
     expect(shown(rendered.result.current.options)).toEqual({ mode: "acceptEdits", model: "default" });
   });
 
+  it("gives no pickers with no agent, also with a list", () => {
+    const { result } = render({ agent: undefined });
+
+    expect(result.current).toMatchObject({ options: [], dropped: null, changed: undefined });
+  });
+
+  it("drops the picks at a change of the agent, says nothing, and shows the start values of the new list", () => {
+    const rendered = render();
+    pick(rendered, "model", "model-b");
+    pick(rendered, "mode", "acceptEdits");
+
+    rendered.rerender({ ...BASE, agent: "codex", configOptions: undefined });
+    expect(rendered.result.current).toMatchObject({ options: [], dropped: null, changed: undefined });
+
+    rendered.rerender({ ...BASE, agent: "codex", configOptions: NO_MODEL_B });
+    expect(shown(rendered.result.current.options)).toEqual({ mode: "auto", model: "default" });
+    expect(rendered.result.current).toMatchObject({ dropped: null, changed: undefined });
+  });
+
+  it("drops the picks at a change of the agent whose list is already read, and says nothing", () => {
+    const rendered = render();
+    pick(rendered, "model", "model-b");
+
+    rendered.rerender({ ...BASE, agent: "codex", configOptions: NO_MODEL });
+
+    expect(shown(rendered.result.current.options)).toEqual({ mode: "auto" });
+    expect(rendered.result.current).toMatchObject({ dropped: null, changed: undefined });
+  });
+
   it("names the picks of the start that waits by their ids when it mounts with no list", () => {
     const rendered = render({ configOptions: undefined, sent: { mode: "acceptEdits", model: "model-b" } });
 

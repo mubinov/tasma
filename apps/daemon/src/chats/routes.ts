@@ -5,9 +5,10 @@
 // cancel, an answer, a pick of a config option, a move of `seen` and a mark as
 // not active.
 
-import { routes } from "@tasma/protocol";
+import { isChatAgent, routes } from "@tasma/protocol";
 import type {
   Chat,
+  ChatAgent,
   ChatCancelInput,
   ChatEventsReply,
   ChatMessageInput,
@@ -48,7 +49,7 @@ type Decline = Extract<QuestionAnswer, { action: "decline" }>;
 const MESSAGE_KEYS = Object.keys({ text: true, client: true } satisfies Record<keyof ChatMessageInput, true>);
 
 const PROJECT_START_KEYS = Object.keys(
-  { text: true, client: true, options: true } satisfies Record<keyof ProjectChatStartInput, true>,
+  { text: true, client: true, options: true, agent: true } satisfies Record<keyof ProjectChatStartInput, true>,
 );
 
 const CANCEL_KEYS = Object.keys({ client: true } satisfies Record<keyof ChatCancelInput, true>);
@@ -142,15 +143,26 @@ function startOptionsOf(options: unknown): Record<string, string> {
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
+function agentOf(agent: unknown): ChatAgent {
+  if (typeof agent !== "string" || !isChatAgent(agent)) {
+    throw malformed('"agent" takes the name of an agent that Tasma knows');
+  }
+  return agent;
+}
+
 /** Empty `options` are the same as none. */
 function readProjectStart(raw: unknown): ProjectChatStartInput {
   const body = objectBody(raw);
-  const picking = Object.hasOwn(body, "options");
-  assertKeys(body, picking ? PROJECT_START_KEYS : MESSAGE_KEYS);
+  if (!Object.keys(body).every((key) => PROJECT_START_KEYS.includes(key))) {
+    throw malformed('the request body takes the keys "text", "client", and optionally "options" and "agent"');
+  }
   const message = messageOf(body);
-  if (!picking) return message;
-  const options = startOptionsOf(body.options);
-  return Object.keys(options).length === 0 ? message : { ...message, options };
+  const options = Object.hasOwn(body, "options") ? startOptionsOf(body.options) : {};
+  return {
+    ...message,
+    ...(Object.keys(options).length === 0 ? {} : { options }),
+    ...(Object.hasOwn(body, "agent") ? { agent: agentOf(body.agent) } : {}),
+  };
 }
 
 function readCancel(raw: unknown): ChatCancelInput {

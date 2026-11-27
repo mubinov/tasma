@@ -9,6 +9,7 @@ import {
   currentStep,
   foldChat,
   isActiveChat,
+  isChatAgent,
   PROJECT_CHAT_ACTIVE_MS,
   projectChatMark,
   projectChatSettled,
@@ -477,5 +478,15 @@ describe("currentStep", () => {
     ["no step for a task with no workflow", {}, dev, undefined],
   ])("gives %s", (_case, task, workflow, step) => {
     expect(currentStep(task, workflow)).toBe(step);
+  });
+});
+
+describe("isChatAgent", () => {
+  it.each(["claude", "codex"])("knows %s", (name) => {
+    expect(isChatAgent(name)).toBe(true);
+  });
+
+  it.each(["", "other", "Claude", "constructor", "toString"])("does not know %j", (name) => {
+    expect(isChatAgent(name)).toBe(false);
   });
 });

@@ -161,9 +161,16 @@ export type ChatStartInput = { client: string; restart?: boolean };
 
 /**
  * `text` is the first message of the chat. `options` holds the picks of the
- * user by option id; the session gets them before the first prompt.
+ * user by option id; the session gets them before the first prompt. `agent` is
+ * the agent of the chat; with none, the daemon uses the default agent. The
+ * daemon refuses an agent that it does not offer.
  */
-export type ProjectChatStartInput = { text: string; client: string; options?: Readonly<Record<string, string>> };
+export type ProjectChatStartInput = {
+  text: string;
+  client: string;
+  options?: Readonly<Record<string, string>>;
+  agent?: ChatAgent;
+};
 
 /** A value for one config option of the agent of a chat, as ACP's `session/set_config_option` takes it. */
 export type ChatOptionChange = { configId: string; value: string; client: string };
@@ -183,6 +190,10 @@ export const AGENT_OPTION_RULES: Readonly<Record<ChatAgent, { hidden: OptionValu
   claude: { hidden: { mode: ["plan"] }, unsaved: { mode: ["plan", "bypassPermissions"] } },
   codex: { hidden: { collaboration_mode: ["plan"] }, unsaved: { mode: ["agent-full-access"], collaboration_mode: ["plan"] } },
 };
+
+export function isChatAgent(name: string): name is ChatAgent {
+  return Object.hasOwn(AGENT_OPTION_RULES, name);
+}
 
 /**
  * The config options that the agent sent when it opened its last new session,

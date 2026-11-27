@@ -60,6 +60,8 @@ export const daemonKeys = {
   agentState: () => [...daemonKeys.chats(), "state"] as const,
   agentOptions: (agent: ChatAgent) => [...daemonKeys.all, "agent-options", agent] as const,
   setup: () => [...daemonKeys.all, "setup"] as const,
+  // Not under `setup()`: the gate reads every entry there, and opens Setup when a check of Claude fails.
+  agentSetup: () => [...daemonKeys.all, "agent-setup"] as const,
 };
 
 /** The key of the record read of a chat: under its task, or under its project when it has no task. */
@@ -208,6 +210,22 @@ export function setupQuery(client: Client, query: SetupQuery) {
     queryKey: [...daemonKeys.setup(), query.mode, query.skipSkill],
     queryFn: () => client.readSetup(query),
     gcTime: Infinity,
+  });
+}
+
+/**
+ * The agents of New chat, with their readiness, which only the full read checks.
+ * Each mount reads again and shows the last answer of the session meanwhile. A
+ * focus of the window does not read again, so the pickers do not change while
+ * the user types.
+ */
+export function agentSetupQuery(client: Client) {
+  return queryOptions({
+    queryKey: daemonKeys.agentSetup(),
+    queryFn: () => client.readSetup({ mode: "full", skipSkill: true }),
+    staleTime: 0,
+    gcTime: Infinity,
+    refetchOnWindowFocus: false,
   });
 }
 

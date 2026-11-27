@@ -988,6 +988,13 @@ describe("POST /projects/{project}/chats", () => {
     ["no client", { text: "Plan" }],
     ["a client of 101 characters", { text: "Plan", client: LONG_CLIENT }],
     ["an extra key", { text: "Plan", client: "app", restart: true }],
+    ["an agent with an extra key", { text: "Plan", client: "app", agent: "claude", restart: true }],
+    ["options and an agent with an extra key", { text: "Plan", client: "app", options: { mode: "auto" }, agent: "claude", restart: true }],
+    ["an agent that is not a string", { text: "Plan", client: "app", agent: 5 }],
+    ["an agent that is null", { text: "Plan", client: "app", agent: null }],
+    ["an empty agent", { text: "Plan", client: "app", agent: "" }],
+    ["an agent that Tasma does not know", { text: "Plan", client: "app", agent: "other" }],
+    ["an agent that names a property of every object", { text: "Plan", client: "app", agent: "toString" }],
   ])("refuses %s with 400 before it reads the project", async (_case, body) => {
     const { server } = await projectWorld();
 
@@ -995,6 +1002,48 @@ describe("POST /projects/{project}/chats", () => {
 
     expect(response.status).toBe(400);
     await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "malformed-request" });
+  });
+
+  it.each([
+    ["an extra key", { ...FIRST_MESSAGE, restart: true }, 'the request body takes the keys "text", "client", and optionally "options" and "agent"'],
+    ["an agent that Tasma does not know", { ...FIRST_MESSAGE, agent: "other" }, '"agent" takes the name of an agent that Tasma knows'],
+  ])("names the rule that %s breaks", async (_case, body, message) => {
+    const { server } = await projectWorld();
+
+    const response = await send(server, "POST", PROJECT_CHATS, body);
+
+    await expect(failure(response)).resolves.toMatchObject({ code: "malformed-request", message });
+  });
+
+  it.each([
+    ["no options", {}],
+    ["options", { options: { mode: "auto" } }],
+  ])("starts a chat with the agent of the body, with %s", async (_case, extra) => {
+    const { server, projectStarts } = await projectWorld({ adapters: [ADAPTER, { ...ADAPTER, agent: "codex" }] });
+
+    const response = await send(server, "POST", PROJECT_CHATS, { ...FIRST_MESSAGE, ...extra, agent: "codex" });
+
+    expect(response.status).toBe(200);
+    expect((await success<ProjectChatStart>(response)).data.chat).toMatchObject({ chat: 1, agent: "codex" });
+    expect(projectStarts).toEqual([{ ...FIRST_MESSAGE, ...extra, agent: "codex" }]);
+  });
+
+  it("starts a chat with no agent in the start when the body has none", async () => {
+    const { server, projectStarts } = await projectWorld();
+
+    await send(server, "POST", PROJECT_CHATS, FIRST_MESSAGE);
+
+    expect(projectStarts[0]).not.toHaveProperty("agent");
+  });
+
+  it("refuses an agent that the daemon does not offer with agent-not-supported and 409, and creates no chat", async () => {
+    const { server, chats } = await projectWorld();
+
+    const response = await send(server, "POST", PROJECT_CHATS, { ...FIRST_MESSAGE, agent: "codex" });
+
+    expect(response.status).toBe(409);
+    await expect(failure(response)).resolves.toMatchObject({ kind: "daemon", code: "agent-not-supported" });
+    await expect(chats.getProjectChat("ALPHA", 1)).rejects.toMatchObject({ code: "chat-not-found" });
   });
 
   it("starts a chat with options, whose agent gets them before the first prompt", async () => {

@@ -5,7 +5,7 @@
 import { stat } from "node:fs/promises";
 import { delimiter, isAbsolute, join } from "node:path";
 import { openProject, readDefaultAgent } from "@tasma/engine";
-import type { AgentSetup, ChatAgent, SetupCheck, SetupStatus } from "@tasma/protocol";
+import { isAgentReady, type AgentSetup, type ChatAgent, type SetupCheck, type SetupStatus } from "@tasma/protocol";
 import type { AgentAdapter, AgentEnv } from "../agents/adapter.js";
 import { effectiveAgent, offersOnlyClaude } from "../agents/default-agent.js";
 import { isExecutableFile } from "../agents/process.js";
@@ -135,8 +135,7 @@ function defaultAgentOf(agents: AgentSetup[], stored: string | undefined): Promi
   return effectiveAgent({
     offered: agents.map((entry) => entry.agent),
     stored: () => Promise.resolve(stored),
-    ready: (agent) => Promise.resolve(agents.some((entry) =>
-      entry.agent === agent && entry.installed === "pass" && entry.loggedIn === "pass")),
+    ready: (agent) => Promise.resolve(agents.some((entry) => entry.agent === agent && isAgentReady(entry))),
   });
 }
 

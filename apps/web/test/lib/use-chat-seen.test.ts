@@ -3,7 +3,7 @@ import { cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CHAT_CLIENT } from "../../src/api/mutations";
 import { endInView, useChatSeen, type SeenWatch } from "../../src/lib/use-chat-seen";
-import { refusalReply, routerWrapper, stubTransport, successReply } from "../helpers";
+import { refusalReply, routerWrapper, stubTransport, successReply, testContext } from "../helpers";
 import { chatRecord, projectChatPath, projectChatRecord } from "../chat-daemon";
 
 const SEEN_PATH = "/projects/SAGA/tasks/SAGA-3/chats/2/seen";
@@ -80,7 +80,7 @@ describe("useChatSeen", () => {
     };
     const hook = renderHook((props: SeenWatch) => {
       useChatSeen(props);
-    }, { initialProps, wrapper: routerWrapper(stub.transport) });
+    }, { initialProps, wrapper: routerWrapper(testContext(stub.transport)) });
 
     return {
       box,

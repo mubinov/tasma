@@ -1,7 +1,7 @@
 // The routes over the agents that a chat can run, apart from any chat.
 
 import type { AgentDefaultsStore, AgentOptionsEntry, AgentOptionsStore } from "@tasma/engine";
-import { AGENT_OPTION_RULES, routes } from "@tasma/protocol";
+import { isChatAgent, routes } from "@tasma/protocol";
 import type { AgentOptions, ChatAgent, Success } from "@tasma/protocol";
 import { DaemonError } from "../http/failure.js";
 import type { RouteEntry } from "../http/router.js";
@@ -23,11 +23,10 @@ export function agentRoutes(parts: {
       route: routes.readAgentOptions,
       handler: async (request): Promise<Success<AgentOptions>> => {
         assertNoQuery(request.query);
-        const name = request.params.agent!;
-        if (!Object.hasOwn(AGENT_OPTION_RULES, name)) {
-          throw new DaemonError("agent-unknown", `Tasma knows no agent "${name}"`);
+        const agent = request.params.agent!;
+        if (!isChatAgent(agent)) {
+          throw new DaemonError("agent-unknown", `Tasma knows no agent "${agent}"`);
         }
-        const agent = name as ChatAgent;
         const [optionsRead, defaultsRead] = await Promise.all([parts.options.read(), parts.defaults.read()]);
         const diagnostics = [...optionsRead.diagnostics, ...defaultsRead.diagnostics];
         const entry = optionsRead.lists[agent];
