@@ -708,15 +708,16 @@ pub(crate) mod fixtures {
     use crate::record::fixtures::write_record;
     use crate::testing::{dead_port, directory, script_file};
 
-    /// How long a test gives a stub that does serve. Generous rather than
-    /// tight: a wait that a daemon answers ends on the answer, so the budget
-    /// costs nothing but the headroom a loaded machine running the whole suite
-    /// at once needs.
-    pub(crate) const TEST_BUDGET: Duration = Duration::from_secs(5);
+    /// How long a test gives a stub that does serve. A wait that a daemon
+    /// answers ends on the answer, so the budget lengthens only a test that
+    /// fails. It is large because macOS checks each new executable before its
+    /// first run, one at a time, so a new stub can start seconds late while
+    /// the whole suite runs.
+    pub(crate) const TEST_BUDGET: Duration = Duration::from_secs(30);
 
-    /// How long a test gives a stub that does not. It is the whole cost of
-    /// such a test, and it still has to outlast a shell starting on a machine
-    /// running the rest of the suite beside it.
+    /// How long a test gives a stub that does not serve. It is the whole cost
+    /// of such a test, so a test on it must not depend on its stub starting
+    /// within it: macOS can start a new script later than that.
     pub(crate) const TEST_GIVE_UP: Duration = Duration::from_secs(2);
 
     /// A health answer naming a daemon, as the daemon composes it: the envelope
@@ -838,11 +839,10 @@ pub(crate) mod fixtures {
         }
     }
 
-    /// The same supervisor, with the budget a test gives a stub that does not
-    /// serve.
-    pub(crate) fn giving_up(supervisor: Supervisor) -> Supervisor {
+    /// The same supervisor, on another budget.
+    pub(crate) fn with_budget(supervisor: Supervisor, budget: Duration) -> Supervisor {
         Supervisor {
-            budget: TEST_GIVE_UP,
+            budget,
             ..supervisor
         }
     }
@@ -902,6 +902,23 @@ mod tests {
 
     fn block_on<T>(future: impl Future<Output = T>) -> T {
         tauri::async_runtime::block_on(future)
+    }
+
+    /// A child that exits at once. A system binary, because macOS starts it
+    /// without the check that can start a new stub script late.
+    fn exits_at_once() -> Option<PathBuf> {
+        Some(PathBuf::from("/usr/bin/true"))
+    }
+
+    /// The pid of each spawn the log of `supervisor` records, in log order.
+    fn spawned_pids(supervisor: &Supervisor) -> Vec<libc::pid_t> {
+        let marker = format!("spawned {DAEMON_EXECUTABLE} as process ");
+
+        logged(supervisor)
+            .lines()
+            .filter_map(|line| line.split_once(&marker))
+            .map(|(_, pid)| pid.trim().parse().unwrap())
+            .collect()
     }
 
     #[test]
@@ -1344,7 +1361,7 @@ mod tests {
         let directory = directory("exits-zero");
         let supervisor = Supervisor {
             budget: TEST_GIVE_UP,
-            ..supervising(&directory, Some(stub(&directory, "exit 0")))
+            ..supervising(&directory, exits_at_once())
         };
         write_record(supervisor.record.as_deref().unwrap(), no_daemon());
 
@@ -1362,16 +1379,9 @@ mod tests {
     #[test]
     fn a_child_still_running_at_the_budget_is_no_daemon_either() {
         let directory = directory("still-running");
-        let pidfile = directory.join("pid");
         let supervisor = Supervisor {
             budget: TEST_GIVE_UP,
-            ..supervising(
-                &directory,
-                Some(stub(
-                    &directory,
-                    &format!("printf '%s' \"$$\" > {}\nsleep 30", pidfile.display()),
-                )),
-            )
+            ..supervising(&directory, Some(stub(&directory, "sleep 30")))
         };
         write_record(supervisor.record.as_deref().unwrap(), no_daemon());
 
@@ -1385,13 +1395,8 @@ mod tests {
         );
         assert!(written.contains("attempt 1 reached no daemon"), "{written}");
 
-        let pid: i32 = std::fs::read_to_string(&pidfile)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
         // Safety: the pid is the child this test spawned, still running.
-        unsafe { libc::kill(pid, libc::SIGTERM) };
+        unsafe { libc::kill(spawned_pids(&supervisor)[0], libc::SIGTERM) };
     }
 
     #[test]
@@ -1476,23 +1481,16 @@ mod tests {
     #[test]
     fn a_call_inside_a_backoff_spawns_nothing_and_holds_nothing() {
         let directory = directory("inside-a-backoff");
-        let runs = directory.join("runs");
         let supervisor = Supervisor {
             budget: TEST_GIVE_UP,
-            ..supervising(
-                &directory,
-                Some(stub(
-                    &directory,
-                    &format!("echo ran >> {}\nexit 0", runs.display()),
-                )),
-            )
+            ..supervising(&directory, exits_at_once())
         };
         write_record(supervisor.record.as_deref().unwrap(), no_daemon());
 
         assert_eq!(block_on(supervisor.ensure_serving()), None);
         assert_eq!(block_on(supervisor.ensure_serving()), None);
 
-        assert_eq!(std::fs::read_to_string(&runs).unwrap().lines().count(), 1);
+        assert_eq!(spawned_pids(&supervisor).len(), 1);
     }
 
     #[test]
@@ -1693,7 +1691,7 @@ mod tests {
         let directory = directory("retire-ended");
         let supervisor = Supervisor {
             budget: Duration::from_millis(200),
-            ..supervising(&directory, Some(stub(&directory, "exit 0")))
+            ..supervising(&directory, exits_at_once())
         };
         write_record(supervisor.record.as_deref().unwrap(), no_daemon());
 
@@ -1911,17 +1909,10 @@ mod tests {
     fn a_held_supervisor_starts_and_stops_nothing() {
         let directory = directory("held");
         let runs = directory.join("runs");
-        let spawned = directory.join("spawned");
         let supervisor = Supervisor {
             budget: TEST_GIVE_UP,
             cli: cli(&directory, &runs, "exit 0"),
-            ..supervising(
-                &directory,
-                Some(stub(
-                    &directory,
-                    &format!("echo ran >> {}\nexit 0", spawned.display()),
-                )),
-            )
+            ..supervising(&directory, exits_at_once())
         };
         let record = supervisor.record.clone().unwrap();
 
@@ -1929,7 +1920,11 @@ mod tests {
 
         write_record(&record, no_daemon());
         assert_eq!(block_on(supervisor.ensure_serving()), None);
-        assert!(!spawned.exists(), "a held supervisor spawns nothing");
+        assert_eq!(
+            spawned_pids(&supervisor).len(),
+            0,
+            "a held supervisor spawns nothing"
+        );
 
         let older = answering(health_of("0.9.0"));
         write_record(&record, older);
@@ -1939,6 +1934,10 @@ mod tests {
         supervisor.hold(false);
         write_record(&record, no_daemon());
         assert_eq!(block_on(supervisor.ensure_serving()), None);
-        assert!(spawned.exists(), "a released supervisor spawns again");
+        assert_eq!(
+            spawned_pids(&supervisor).len(),
+            1,
+            "a released supervisor spawns again"
+        );
     }
 }

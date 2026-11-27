@@ -357,8 +357,9 @@ mod tests {
     use super::*;
     use crate::record::fixtures::{record_naming, write_record, write_record_with_token};
     use crate::supervisor::fixtures::{
-        a_daemon_serving_nothing_else, answering, giving_up, health, health_of_another_user,
-        listening, ok, records_with_token, stub, supervising, supervising_a_stub,
+        TEST_BUDGET, TEST_GIVE_UP, a_daemon_serving_nothing_else, answering, health,
+        health_of_another_user, listening, ok, records_with_token, stub, supervising,
+        supervising_a_stub, with_budget,
     };
     use crate::testing::{dead_port, directory, temp_file};
 
@@ -760,16 +761,21 @@ mod tests {
         (port, receiver)
     }
 
-    /// A daemon over a record that names `port` with a token, supervised by a
-    /// stub that runs `stub_body`.
-    fn refused_at(test: &str, port: u16, stub_body: impl Fn(&Path) -> String) -> Daemon {
+    /// A daemon over a record that names `port` with a token, supervised on
+    /// `budget` by a stub that runs `stub_body`.
+    fn refused_at(
+        test: &str,
+        port: u16,
+        budget: Duration,
+        stub_body: impl Fn(&Path) -> String,
+    ) -> Daemon {
         let directory = directory(test);
         let record = directory.join("daemon.json");
         write_record_with_token(&record, port, "ab12");
-        let supervisor = giving_up(supervising(
-            &directory,
-            Some(stub(&directory, &stub_body(&record))),
-        ));
+        let supervisor = with_budget(
+            supervising(&directory, Some(stub(&directory, &stub_body(&record)))),
+            budget,
+        );
 
         Daemon::with_supervisor(Some(record), supervisor, TIMEOUT, REPLY_LIMIT)
     }
@@ -778,7 +784,7 @@ mod tests {
     fn a_write_the_daemon_of_another_user_refused_is_sent_whole_to_the_daemon_a_start_brings_up() {
         let (other, refused) = refusing(health_of_another_user());
         let (port, seen) = a_daemon_of_this_user();
-        let daemon = refused_at("refused-by-another-user", other, |record| {
+        let daemon = refused_at("refused-by-another-user", other, TEST_BUDGET, |record| {
             records_with_token(record, port, "cd34")
         });
 
@@ -806,7 +812,7 @@ mod tests {
     #[test]
     fn a_refusal_reaches_the_board_where_no_daemon_of_this_user_comes_up() {
         let (other, refused) = refusing(health_of_another_user());
-        let daemon = refused_at("refused-and-nothing-started", other, |_| {
+        let daemon = refused_at("refused-and-nothing-started", other, TEST_GIVE_UP, |_| {
             "exit 0".to_string()
         });
 
@@ -821,7 +827,9 @@ mod tests {
     #[test]
     fn a_refusal_reaches_the_board_where_the_record_still_names_the_daemon_that_refused() {
         let (port, refused) = refusing(health());
-        let daemon = refused_at("refused-by-this-user", port, |_| "exit 1".to_string());
+        let daemon = refused_at("refused-by-this-user", port, TEST_GIVE_UP, |_| {
+            "exit 1".to_string()
+        });
 
         let answer =
             tauri::async_runtime::block_on(daemon.forward("/projects", &write("/projects")));
@@ -834,9 +842,12 @@ mod tests {
     fn a_refused_request_sent_again_to_a_daemon_that_cannot_answer_is_a_bad_gateway() {
         let (other, _) = refusing(health_of_another_user());
         let port = a_daemon_serving_nothing_else();
-        let daemon = refused_at("refused-and-sent-to-nothing", other, |record| {
-            records_with_token(record, port, "cd34")
-        });
+        let daemon = refused_at(
+            "refused-and-sent-to-nothing",
+            other,
+            TEST_BUDGET,
+            |record| records_with_token(record, port, "cd34"),
+        );
 
         let answer =
             tauri::async_runtime::block_on(daemon.forward("/projects", &write("/projects")));
