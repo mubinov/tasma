@@ -1,6 +1,6 @@
 import { ProtocolError, TransportError, type SerializeErrorCode } from "@tasma/protocol";
 import { describe, expect, it } from "vitest";
-import { failureKind, TaskWriteError, WriteError, type FailureKind } from "../../src/api/mutations";
+import { failureKind, skillAgentFailureKey, TaskWriteError, WriteError, type FailureKind } from "../../src/api/mutations";
 import {
   boardFailureLine,
   BROWSER_OPEN_FAILURE_KEY,
@@ -23,6 +23,7 @@ import {
   pageFailureLine,
   projectAddFailure,
   projectChatStartFailure,
+  skillAgentFailure,
   skillInstallFailure,
   workflowAddFailure,
 } from "../../src/lib/write-failure";
@@ -247,7 +248,7 @@ describe("projectChatStartFailure", () => {
 
 describe("skillInstallFailure", () => {
   const NO_ANSWER = "Tasma did not get an answer from the daemon. The install can still run. "
-    + "Select \"Install in Claude Code\" to see its result.";
+    + "Select \"Install in Codex\" to see its result.";
   const LINES: Record<FailureKind, string> = {
     refused: "The daemon refused the request.",
     unanswered: NO_ANSWER,
@@ -257,11 +258,24 @@ describe("skillInstallFailure", () => {
   const CASES = KINDS.map((kind) => ({ ...CAUSES[kind], line: LINES[kind] }));
 
   it("titles the failure", () => {
-    expect(skillInstallFailure().title).toBe("Cannot install the skill");
+    expect(skillInstallFailure("Install in Codex").title).toBe("Cannot install the skill");
   });
 
-  it.each(CASES)("says what happened to the request for $label", ({ cause, line }) => {
-    expect(skillInstallFailure().line(new WriteError(cause))).toBe(line);
+  it.each(CASES)("says what happened to the request for $label, and names the button", ({ cause, line }) => {
+    expect(skillInstallFailure("Install in Codex").line(new WriteError(cause))).toBe(line);
+  });
+});
+
+describe("skillAgentFailure", () => {
+  it("names the agent whose install failed and the agents that have the skill, under a key of its own", () => {
+    expect(skillAgentFailure("codex", ["claude"])).toEqual({
+      key: skillAgentFailureKey("codex"),
+      form: "failure",
+      title: "Cannot install the skill for Codex",
+      line: "The skill is installed for Claude. Codex needs it to run workflow steps.",
+      words: [],
+    });
+    expect(skillAgentFailureKey("codex")).not.toBe(skillAgentFailureKey("claude"));
   });
 });
 

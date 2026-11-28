@@ -1,16 +1,54 @@
 import type { QueryClient, QueryState } from "@tanstack/react-query";
-import type { AgentSetup, AgentSkillInstall, SetupCheck, SetupStatus, Success } from "@tasma/protocol";
+import {
+  isAgentReady,
+  type AgentSetup,
+  type AgentSkillInstall,
+  type ChatAgent,
+  type SetupCheck,
+  type SetupStatus,
+  type Success,
+} from "@tasma/protocol";
 import type { SkillInstallEnd } from "../api/mutations";
 import { daemonKeys } from "../api/queries";
+import { useUiStore } from "../store/ui";
+import { agentTexts } from "./agent-texts";
 
 export const SETUP_PATH = "/setup";
 
-export type StepId = "install" | "login" | "command" | "skill" | "project" | "workflow";
+export const READ_INTERVAL_MS = 5000;
+
+export const READ_FAILED_WORDS = `Tasma cannot check the steps now. It tries again every ${String(READ_INTERVAL_MS / 1000)} seconds.`;
+
+export const STILL_CANNOT_CHECK_WORDS = "Tasma still cannot check this.";
+
+/** The daemon gives the install of each agent 2 minutes, one agent after the other. */
+export function installMinutes(agentCount: number): number {
+  return 2 * agentCount;
+}
+
+export function installStartedWords(agentCount: number): string {
+  return `Install in progress. This can take up to ${String(installMinutes(agentCount))} minutes.`;
+}
+
+export function installFailedWords(step: number): string {
+  return `Tasma cannot install the skill. The output is in step ${String(step)}, above the Try again button.`;
+}
+
+export function noNpxWords(step: number): string {
+  return `Tasma cannot find npx. The plugin commands are in step ${String(step)}, above the Try again button.`;
+}
+
+export type ScreenStepId = "agent" | "command" | "skill" | "project" | "workflow";
+
+/** The steps of the dialog of one agent. */
+export type AgentStepId = "install" | "login" | "skill";
+
+export type StepId = ScreenStepId | AgentStepId;
 
 /**
- * In the order in which a step takes its state: `stopped` is step 4 after the
- * check stopped, `waits` a step whose needed step is not done, and `not-run` a
- * check that did not run although nothing holds it back.
+ * In the order in which a step takes its state: `stopped` is the skill step
+ * after the check stopped, `waits` a step whose needed step is not done, and
+ * `not-run` a check that did not run although nothing holds it back.
  */
 export type StepState = "stopped" | "done" | "in-progress" | "cannot-check" | "waits" | "not-run" | "to-do";
 
@@ -19,11 +57,11 @@ export type SetupOwner = "you" | "tasma";
 /** The write that installs the skill runs, or ended with a result that installed nothing. */
 export type SkillInstallState = "running" | "cannot-install";
 
-/** The writes of steps 5 and 6 run, or the last workflow write failed. */
+/** The writes of steps 4 and 5 run, or the last workflow write failed. */
 export type WorkflowWriteState = "running" | "cannot-add";
 
-export type SetupStep = {
-  id: StepId;
+export type SetupStep<Id extends StepId = StepId> = {
+  id: Id;
   number: number;
   name: string;
   owner: SetupOwner;
@@ -43,34 +81,92 @@ export type StepInput = {
   /** A full read failed. */
   fullFailed: boolean;
   skillCheckStopped: boolean;
-  /** The state of the write that installs the skill, for the label of step 4. */
+  /** The state of the write that installs the skill, for the label of the skill step. */
   skillInstall?: SkillInstallState | undefined;
-  /** The app created a project, and no status since then gave `project: "pass"`. Step 5 is then done. */
+  /** The app created a project, and no status since then gave `project: "pass"`. Step 4 is then done. */
   projectAdded?: boolean;
-  /** The state of the writes that add the workflow, for the label of step 6. */
+  /** The state of the writes that add the workflow, for the label of step 5. */
   workflowWrite?: WorkflowWriteState | undefined;
 };
 
 const OWNER_LABELS: Record<SetupOwner, string> = { you: "You do this", tasma: "Tasma does this" };
 
-type StepDefinition = {
-  id: StepId;
+type StepDefinition<Source, Id extends StepId> = {
+  id: Id;
   name: string;
   owner: SetupOwner;
-  needs?: StepId;
+  needs?: Id;
   /** Only a full read answers its check. */
   fullOnly?: boolean;
-  check: (status: SetupStatus | undefined, agent: AgentSetup | undefined) => SetupCheck | undefined;
+  check: (source: Source) => SetupCheck | undefined;
 };
 
-const DEFINITIONS: readonly StepDefinition[] = [
-  { id: "install", name: "Install the Claude Code CLI", owner: "you", fullOnly: true, check: (_status, agent) => agent?.installed },
-  { id: "login", name: "Log in to Claude Code", owner: "you", fullOnly: true, needs: "install", check: (_status, agent) => agent?.loggedIn },
+/** One pass is enough. */
+function anyPasses(checks: readonly SetupCheck[]): SetupCheck {
+  if (checks.includes("pass")) {
+    return "pass";
+  }
+  if (checks.every((check) => check === "fail")) {
+    return "fail";
+  }
+
+  return checks.includes("unknown") ? "unknown" : "not-run";
+}
+
+/** Whether an agent is ready, as one check. */
+function readiness(entry: AgentSetup): SetupCheck {
+  const { installed, loggedIn } = entry;
+
+  if (isAgentReady(entry)) {
+    return "pass";
+  }
+  if (installed === "fail" || loggedIn === "fail") {
+    return "fail";
+  }
+
+  return installed === "unknown" || loggedIn === "unknown" ? "unknown" : "not-run";
+}
+
+/** The skill of a ready agent counts. With no ready agent, as in a start read, the skill of each agent counts. */
+function skillCheck(status: SetupStatus): SetupCheck {
+  const ready = status.agents.filter(isAgentReady);
+
+  return anyPasses((ready.length > 0 ? ready : status.agents).map(({ skill }) => skill));
+}
+
+type Status = SetupStatus | undefined;
+
+const SCREEN_STEPS: readonly StepDefinition<Status, ScreenStepId>[] = [
+  {
+    id: "agent",
+    name: "Set up a coding agent",
+    owner: "you",
+    fullOnly: true,
+    check: (status) => (status === undefined ? undefined : anyPasses(status.agents.map(readiness))),
+  },
   { id: "command", name: "Add the tasma command", owner: "tasma", fullOnly: true, check: (status) => status?.cli },
-  { id: "skill", name: "Install the tasma skill in Claude Code", owner: "tasma", check: (_status, agent) => agent?.skill },
+  {
+    id: "skill",
+    name: "Install the tasma skill",
+    owner: "tasma",
+    needs: "agent",
+    check: (status) => (status === undefined ? undefined : skillCheck(status)),
+  },
   { id: "project", name: "Add a project", owner: "you", check: (status) => status?.project },
   { id: "workflow", name: "Add a workflow", owner: "tasma", needs: "project", check: (status) => status?.workflow },
 ];
+
+type Entry = AgentSetup | undefined;
+
+function agentDefinitions(agent: ChatAgent): StepDefinition<Entry, AgentStepId>[] {
+  const { cli, account } = agentTexts(agent);
+
+  return [
+    { id: "install", name: `Install the ${cli}`, owner: "you", fullOnly: true, check: (entry) => entry?.installed },
+    { id: "login", name: `Log in to ${account}`, owner: "you", fullOnly: true, needs: "install", check: (entry) => entry?.loggedIn },
+    { id: "skill", name: `Install the tasma skill in ${account}`, owner: "tasma", needs: "login", check: (entry) => entry?.skill },
+  ];
+}
 
 const STATE_LABELS: Partial<Record<StepState, string>> = {
   "stopped": "Not checked",
@@ -96,29 +192,43 @@ function writeLabel(id: StepId, input: StepInput): string | undefined {
   return undefined;
 }
 
-function claudeOf(status: SetupStatus | undefined): AgentSetup | undefined {
-  return status?.agents.find(({ agent }) => agent === "claude");
+/** The agents that step 3 of the screen installs the skill for. */
+export function skillTargets(status: SetupStatus): ChatAgent[] {
+  return status.agents.filter(isAgentReady).map(({ agent }) => agent);
 }
 
-/** The install result of Claude: its entry, or the answer of a fault before the command of any agent. */
-export type ClaudeInstall = AgentSkillInstall | Exclude<SkillInstallEnd, { result: "ended" }>;
+/** An install that installed the skill for no agent: each entry failed. */
+export type NothingInstalled
+  = | Exclude<SkillInstallEnd, { result: "ended" }>
+    | { result: "ended"; agents: Extract<AgentSkillInstall, { result: "failed" }>[] };
 
-export function claudeInstallOf(answer: SkillInstallEnd): ClaudeInstall | undefined {
-  return answer.result === "ended" ? answer.agents.find(({ agent }) => agent === "claude") : answer;
+/** Its step shows the result of such an install. */
+export function installsNothing(answer: SkillInstallEnd): answer is NothingInstalled {
+  return answer.result !== "ended" || !answer.agents.some(({ result }) => result === "installed");
+}
+
+/** The answer of an install that installed nothing, and the agents that it was for. */
+export type InstallResult = { answer: NothingInstalled; agents: readonly ChatAgent[] };
+
+/** An install of any place runs, or the last install of this place installed nothing. */
+export function skillInstallState(running: boolean, result: InstallResult | undefined): SkillInstallState | undefined {
+  if (running) {
+    return "running";
+  }
+
+  return result === undefined ? undefined : "cannot-install";
 }
 
 /**
- * Whether a step of setup fails. Each step counts, but steps 1 to 3 cannot open
- * the screen at start, because a start read gives `not-run` for them. `unknown`
- * and `not-run` never count, and neither does no status.
+ * Whether a step of setup fails. Each step counts, but steps 1 and 2 cannot
+ * open the screen at start, because a start read gives `not-run` for them.
+ * `unknown` and `not-run` never count, and neither does no status.
  */
 export function setupNeeded(status: SetupStatus | undefined, skillCheckStopped: boolean): boolean {
-  const claude = claudeOf(status);
-
-  return DEFINITIONS.some(({ id, check }) => (id !== "skill" || !skillCheckStopped) && check(status, claude) === "fail");
+  return SCREEN_STEPS.some(({ id, check }) => (id !== "skill" || !skillCheckStopped) && check(status) === "fail");
 }
 
-/** The open screen also waits for the first end of a full read, as steps 1 to 3 have no state before it. */
+/** The open screen also waits for the first end of a full read, as steps 1 and 2 have no state before it. */
 export function screenNeeded({
   status,
   fullAnswered,
@@ -171,8 +281,18 @@ export function fullReadsFailing(queryClient: QueryClient): boolean {
   return failedAt > answeredAt;
 }
 
-function stateOf(
-  definition: StepDefinition,
+/** A render holds the state of the answers before it, and an end of a read or a write needs the newest. */
+export function stepInputNow(queryClient: QueryClient): StepInput {
+  return {
+    status: newestSetup(queryClient),
+    fullAnswered: hasFullAnswer(queryClient),
+    fullFailed: hasFullFailure(queryClient),
+    skillCheckStopped: useUiStore.getState().skillCheckStopped,
+  };
+}
+
+function stateOf<Source, Id extends StepId>(
+  definition: StepDefinition<Source, Id>,
   check: SetupCheck | undefined,
   needDone: boolean,
   input: StepInput,
@@ -198,14 +318,17 @@ function stateOf(
   return check === "not-run" ? "not-run" : "to-do";
 }
 
-export function setupSteps(input: StepInput): SetupStep[] {
-  const agent = claudeOf(input.status);
-  const steps: SetupStep[] = [];
+function stepsOf<Source, Id extends StepId>(
+  definitions: readonly StepDefinition<Source, Id>[],
+  source: Source,
+  input: StepInput,
+): SetupStep<Id>[] {
+  const steps: SetupStep<Id>[] = [];
 
-  DEFINITIONS.forEach((definition, index) => {
+  definitions.forEach((definition, index) => {
     const needed = steps.find(({ id }) => id === definition.needs);
     const needDone = needed === undefined || needed.state === "done";
-    const check = definition.id === "project" && input.projectAdded === true ? "pass" : definition.check(input.status, agent);
+    const check = definition.id === "project" && input.projectAdded === true ? "pass" : definition.check(source);
     const state = stateOf(definition, check, needDone, input);
     const stateLabel = state === "to-do" ? writeLabel(definition.id, input) : STATE_LABELS[state];
 
@@ -225,8 +348,21 @@ export function setupSteps(input: StepInput): SetupStep[] {
   return steps;
 }
 
+export function setupSteps(input: StepInput): SetupStep<ScreenStepId>[] {
+  return stepsOf(SCREEN_STEPS, input.status, input);
+}
+
+/** The steps of the dialog of one agent, from its entry in the status. */
+export function agentSteps(agent: ChatAgent, input: StepInput): SetupStep<AgentStepId>[] {
+  return stepsOf(agentDefinitions(agent), input.status?.agents.find((entry) => entry.agent === agent), input);
+}
+
+export function agentSetUp(steps: readonly SetupStep<AgentStepId>[]): boolean {
+  return steps.every(({ state }) => state === "done" || state === "stopped");
+}
+
 /** No step is current while a step of the full read has no state yet. */
-export function currentStep(steps: readonly SetupStep[]): SetupStep | undefined {
+export function currentStep<Id extends StepId>(steps: readonly SetupStep<Id>[]): SetupStep<Id> | undefined {
   return steps.some(({ state }) => state === "in-progress")
     ? undefined
     : steps.find(({ state }) => state === "cannot-check" || state === "to-do");
@@ -244,6 +380,9 @@ export function isChangeToDone(from: StepState, to: StepState): boolean {
 }
 
 /** The steps that the answer after `before` completed. */
-export function stepsNowDone(before: readonly SetupStep[], after: readonly SetupStep[]): SetupStep[] {
+export function stepsNowDone<Id extends StepId>(
+  before: readonly SetupStep<Id>[],
+  after: readonly SetupStep<Id>[],
+): SetupStep<Id>[] {
   return after.filter(({ state }, index) => isChangeToDone(before[index]!.state, state));
 }

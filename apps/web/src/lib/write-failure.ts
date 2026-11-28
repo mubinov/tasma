@@ -6,6 +6,7 @@ import {
   failureKind,
   refusalPath,
   refusalWords,
+  skillAgentFailureKey,
   titleCorrection,
   type ChatWrite,
   type ClosedNotice,
@@ -16,8 +17,11 @@ import {
   type WriteError,
   type WriteFailure,
 } from "../api/mutations";
+import type { ChatAgent } from "@tasma/protocol";
 import type { ChatPlace } from "../api/queries";
 import type { Notice } from "../store/notices";
+import { agentNames } from "./agent-texts";
+import { chatAgentName } from "./chat-messages";
 
 /** Nothing was written. */
 const WHOLE_FAILURE_LINES: Record<FailureKind, string> = {
@@ -81,13 +85,8 @@ const CHAT_RESTART_FAILURE_LINES: Record<FailureKind, string> = {
   unsent: "The request did not start, so nothing changed.",
 };
 
-const SKILL_INSTALL_NO_ANSWER_LINE = "Tasma did not get an answer from the daemon. The install can still run. "
-  + "Select \"Install in Claude Code\" to see its result.";
-
-const SKILL_INSTALL_FAILURE_LINES: Record<FailureKind, string> = {
+const SKILL_INSTALL_FAILURE_LINES: Record<Exclude<FailureKind, "unanswered" | "address">, string> = {
   refused: "The daemon refused the request.",
-  unanswered: SKILL_INSTALL_NO_ANSWER_LINE,
-  address: SKILL_INSTALL_NO_ANSWER_LINE,
   unsent: "Tasma could not send the request to the daemon.",
 };
 
@@ -208,10 +207,30 @@ export function chatRestartFailure(step: string, id: string, chat: number): Writ
   };
 }
 
-export function skillInstallFailure(): WriteFailure {
+/** `button` holds the words of the install button, which shows the result of an install that still runs. */
+export function skillInstallFailure(button: string): WriteFailure {
   return {
     title: "Cannot install the skill",
-    line: (error) => SKILL_INSTALL_FAILURE_LINES[failureKind(error.cause)],
+    line: (error) => {
+      const kind = failureKind(error.cause);
+
+      return kind === "unanswered" || kind === "address"
+        ? `Tasma did not get an answer from the daemon. The install can still run. Select "${button}" to see its result.`
+        : SKILL_INSTALL_FAILURE_LINES[kind];
+    },
+  };
+}
+
+/** The notice of an agent whose install failed while the install of the agents in `installed` succeeded. */
+export function skillAgentFailure(agent: ChatAgent, installed: readonly ChatAgent[]): Notice {
+  const name = chatAgentName(agent);
+
+  return {
+    key: skillAgentFailureKey(agent),
+    form: "failure",
+    title: `Cannot install the skill for ${name}`,
+    line: `The skill is installed for ${agentNames(installed)}. ${name} needs it to run workflow steps.`,
+    words: [],
   };
 }
 

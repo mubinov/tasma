@@ -1,14 +1,24 @@
 import { Accordion } from "@base-ui/react/accordion";
 import { Button } from "@base-ui/react/button";
 import { Field } from "@base-ui/react/field";
-import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from "react";
+import type { AgentSetup, ChatAgent } from "@tasma/protocol";
+import { Fragment, useEffect, useId, useRef, useState, type MouseEvent, type ReactElement, type ReactNode, type RefObject } from "react";
+import { agentTexts, type SkillTexts } from "../lib/agent-texts";
 import { CaretDownIcon, CheckIcon, CircleNotchIcon } from "../lib/icons";
-import { isChangeToDone, type ClaudeInstall, type SetupStep, type SkillInstallState, type StepState } from "../lib/setup-steps";
+import {
+  installMinutes,
+  isChangeToDone,
+  type AgentStepId,
+  type InstallResult,
+  type ScreenStepId,
+  type SetupStep,
+  type SkillInstallState,
+  type StepState,
+} from "../lib/setup-steps";
 import type { SetupFailure } from "../lib/write-failure";
 import { useNoticeStore } from "../store/notices";
 import { BUTTON_CLASS, BUTTON_FILLED_CLASS, FIELD_BORDER_CLASS, FIELD_ERROR_CLASS } from "./control-classes";
 
-const INSTALL_GUIDE_URL = "https://code.claude.com/docs/en/setup";
 const SKILL_INSTALL_URL = "https://github.com/mubinov/tasma-skill#install";
 
 const COPY_WORDS_MS = 1500;
@@ -27,6 +37,8 @@ const RUN_CLASS = "mt-3.5 max-w-lg text-sm text-subtle";
 const ACTIONS_CLASS = "mt-3.5 flex flex-wrap items-center gap-x-3 gap-y-2";
 
 const PROBLEM_CLASS = "mt-3.5 max-w-lg text-sm font-medium text-text";
+
+const LINK_CLASS = "text-sm text-subtle underline underline-offset-2 hover:text-text";
 
 const PATH_CLASS = `mt-1 h-8 w-full rounded-control bg-bg px-2.5 text-sm text-text placeholder:text-dim ${FIELD_BORDER_CLASS}`;
 
@@ -179,13 +191,13 @@ function RunCommand({ command }: { command: string }): ReactNode {
   );
 }
 
-function InstallOutput({ output }: { output: string }): ReactNode {
+function InstallOutput({ line, output }: { line: string; output: string }): ReactNode {
   const outputRef = useRef<HTMLPreElement>(null);
   const lineId = useId();
 
   return (
     <>
-      <p id={lineId} className={PROBLEM_CLASS}>Tasma cannot install the skill. The command gave this output:</p>
+      <p id={lineId} className={PROBLEM_CLASS}>{line}</p>
       <div className="mt-1.5 flex w-full max-w-lg items-start gap-3 rounded-control bg-surface-2 py-1.5 pr-1.5 pl-3">
         <pre
           ref={outputRef}
@@ -202,7 +214,22 @@ function InstallOutput({ output }: { output: string }): ReactNode {
   );
 }
 
-function NoNpx(): ReactNode {
+function PluginCommands({ agent }: { agent: ChatAgent }): ReactNode {
+  const { account, pluginPlace, pluginCommands } = agentTexts(agent);
+
+  return (
+    <>
+      <p className={RUN_CLASS}>{`To install the skill as a ${account} plugin, run these commands ${pluginPlace}:`}</p>
+      {/* WebKit removes the list role from a list with no list style. */}
+      <ol role="list">
+        <li><CommandBox command={pluginCommands[0]} number={1} /></li>
+        <li><CommandBox command={pluginCommands[1]} number={2} /></li>
+      </ol>
+    </>
+  );
+}
+
+function NoNpx({ agents }: { agents: readonly ChatAgent[] }): ReactNode {
   return (
     <>
       <p className={PROBLEM_CLASS}>
@@ -211,12 +238,7 @@ function NoNpx(): ReactNode {
         <code className="font-mono text-xs-plus">npx</code>
         , which comes with Node.js.
       </p>
-      <p className={RUN_CLASS}>To install the skill as a Claude Code plugin, run these commands in Claude Code:</p>
-      {/* WebKit removes the list role from a list with no list style. */}
-      <ol role="list">
-        <li><CommandBox command="/plugin marketplace add mubinov/tasma-skill" number={1} /></li>
-        <li><CommandBox command="/plugin install tasma@tasma" number={2} /></li>
-      </ol>
+      {agents.map((agent) => <PluginCommands key={agent} agent={agent} />)}
       <p className={RUN_CLASS}>Or install Node.js, and then select &quot;Try again&quot;.</p>
     </>
   );
@@ -226,50 +248,76 @@ function Spinner(): ReactNode {
   return <CircleNotchIcon size={14} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />;
 }
 
-/** What step 4 shows of the write that lives in the screen. */
-type SkillInstallRun = {
+/** What a skill step shows of the install of its place: the screen, or the dialog of one agent. */
+export type SkillInstallRun = {
   state: SkillInstallState | undefined;
-  answer: ClaudeInstall | undefined;
+  /** Shown while `state` is `cannot-install`. */
+  result: InstallResult | undefined;
+  /** The number of agents of the install that runs, in any place. */
+  runningAgentCount: number;
+  texts: SkillTexts;
+  /** A request of the install that failed. */
+  failure: SetupFailure | undefined;
   onInstall: () => void;
 };
 
 const INSTALL_WORDS: Record<SkillInstallState, string> = { "running": "Install in progress", "cannot-install": "Try again" };
 
+function ResultContent({ result: { answer, agents } }: { result: InstallResult }): ReactNode {
+  switch (answer.result) {
+    case "npx-missing":
+      return <NoNpx agents={agents} />;
+    case "failed":
+      return <InstallOutput line="Tasma cannot install the skill. The command gave this output:" output={answer.output} />;
+    case "ended":
+      return answer.agents.map(({ agent, output }) => (
+        <InstallOutput
+          key={agent}
+          line={`Tasma cannot install the skill for ${agentTexts(agent).name}. The command gave this output:`}
+          output={output}
+        />
+      ));
+  }
+}
+
 function SkillContent({ install, onStop }: { install: SkillInstallRun; onStop: () => void }): ReactNode {
-  const { state, answer, onInstall } = install;
+  const { state, result, runningAgentCount, texts, failure, onInstall } = install;
   const running = state === "running";
+  const shown = state === "cannot-install" ? result : undefined;
   const warningId = useId();
   const descriptionId = useId();
+  const ids = useFailureIds();
 
   return (
     <>
-      <p className={WHY_CLASS}>Claude Code needs this skill to run workflow steps.</p>
-      {answer?.result === "failed" && <InstallOutput output={answer.output} />}
-      {answer?.result === "npx-missing" && <NoNpx />}
+      <p className={WHY_CLASS}>{texts.line}</p>
+      {shown !== undefined && <ResultContent result={shown} />}
+      {failure !== undefined && <FailureBlock failure={failure} ids={ids} />}
       <div className={ACTIONS_CLASS}>
         {/* One element in all states, and aria-disabled: `disabled` would drop the focus resting here. */}
         <Button
           type="button"
           aria-disabled={running}
-          aria-describedby={warningId}
+          aria-describedby={idRefs([...failureWordIds(failure, ids), warningId])}
           onClick={onInstall}
-          className={answer?.result === "npx-missing" ? BUTTON_CLASS : BUTTON_FILLED_CLASS}
+          className={shown?.answer.result === "npx-missing" ? BUTTON_CLASS : BUTTON_FILLED_CLASS}
         >
           {running && <Spinner />}
-          {state === undefined ? "Install in Claude Code" : INSTALL_WORDS[state]}
+          {state === undefined ? texts.button : INSTALL_WORDS[state]}
         </Button>
-        <ExternalLink href={SKILL_INSTALL_URL} className="text-sm text-subtle underline underline-offset-2 hover:text-text">
+        <ExternalLink href={SKILL_INSTALL_URL} className={LINK_CLASS}>
           Other ways to install the skill
         </ExternalLink>
       </div>
-      {running && <p className={RUN_CLASS}>Tasma downloads the skill from GitHub. This can take up to 2 minutes.</p>}
+      {running && (
+        <p className={RUN_CLASS}>
+          {`Tasma downloads the skill from GitHub. This can take up to ${String(installMinutes(runningAgentCount))} minutes.`}
+        </p>
+      )}
       <p id={descriptionId} className={RUN_CLASS}>
-        <span id={warningId}>
-          If the skill is already in a different folder, Tasma cannot find it, and a second install makes Claude Code
-          load two copies.
-        </span>
+        <span id={warningId}>{texts.warning}</span>
         {" "}
-        In that case, stop the check. Tasma then does not check for the skill again, also after a restart.
+        {texts.stopNote}
       </p>
       <div className="mt-2">
         <Button type="button" aria-describedby={descriptionId} onClick={onStop} className={BUTTON_CLASS}>
@@ -280,7 +328,10 @@ function SkillContent({ install, onStop }: { install: SkillInstallRun; onStop: (
   );
 }
 
-function CheckAgain({ checking, onCheckAgain }: { checking: boolean; onCheckAgain: () => void }): ReactNode {
+/** The "Check again" of a step that cannot be checked. */
+type CheckAgainProps = { checking: boolean; onCheckAgain: () => void };
+
+function CheckAgain({ checking, onCheckAgain }: CheckAgainProps): ReactNode {
   return (
     <>
       <p className={WHY_CLASS}>Tasma cannot check this now.</p>
@@ -318,7 +369,7 @@ function idRefs(ids: readonly string[]): string | undefined {
   return ids.length === 0 ? undefined : ids.join(" ");
 }
 
-/** Not a live region: the screen announces the failure. */
+/** Not a live region: the place that shows it announces the failure. */
 function FailureBlock({ failure, ids }: { failure: SetupFailure; ids: FailureIds }): ReactNode {
   return (
     <div className="mt-3.5 w-full max-w-lg">
@@ -329,7 +380,7 @@ function FailureBlock({ failure, ids }: { failure: SetupFailure; ids: FailureIds
   );
 }
 
-/** What step 5 shows of the pick and the write that live in the screen. */
+/** What step 4 shows of the pick and the write that live in the screen. */
 type ProjectStepRun = {
   /** The macOS app offers the folder dialog. The browser shows a path field. */
   dialog: boolean;
@@ -442,14 +493,14 @@ function ProjectContent({ run }: { run: ProjectStepRun }): ReactNode {
 
   return (
     <>
-      <p className={WHY_CLASS}>Choose the folder with your code. Claude Code works in this folder.</p>
+      <p className={WHY_CLASS}>Choose the folder with your code. Your coding agent works in this folder.</p>
       {run.failure !== undefined && <FailureBlock failure={run.failure} ids={ids} />}
       {run.dialog ? <ChooseFolder run={run} failureIds={failureIds} /> : <PathForm run={run} failureIds={failureIds} />}
     </>
   );
 }
 
-/** What step 6 shows of the write that lives in the screen. */
+/** What step 5 shows of the write that lives in the screen. */
 type WorkflowStepRun = {
   /** The name of the project that gets the workflow, or its tag. */
   project: string | undefined;
@@ -503,50 +554,154 @@ function WorkflowContent({ run }: { run: WorkflowStepRun }): ReactNode {
   );
 }
 
-type StepContentProps = Omit<SetupStepRowProps, "current" | "onPressInside">;
+/** The line under the name of an agent that is not ready. */
+function agentStateLine({ installed, loggedIn }: AgentSetup): string {
+  if (installed === "fail") {
+    return "Not installed.";
+  }
+  if (installed !== "pass") {
+    return "Tasma cannot check if it is installed.";
+  }
 
-function StepContent(props: StepContentProps): ReactNode {
-  const { step, checking, onCheckAgain, onStop, install, project, workflow } = props;
+  return loggedIn === "fail" ? "Installed. Not logged in." : "Installed. Tasma cannot check the login.";
+}
 
+/** What step 1 of the screen shows of the agents. */
+type AgentRowsRun = {
+  /** The entries of the newest status, while it comes from a full read. */
+  entries: readonly AgentSetup[] | undefined;
+  onSetUp: (agent: ChatAgent, opener: HTMLElement) => void;
+};
+
+function AgentRow({ entry, onSetUp }: { entry: AgentSetup; onSetUp: AgentRowsRun["onSetUp"] }): ReactNode {
+  const stateId = useId();
+  const { name } = agentTexts(entry.agent);
+
+  return (
+    <li className="flex items-center justify-between gap-4 border-b border-line py-3">
+      <div className="min-w-0">
+        <p className="font-chrome text-base font-medium">{name}</p>
+        <p id={stateId} className="text-sm text-subtle">{agentStateLine(entry)}</p>
+      </div>
+      <Button
+        type="button"
+        aria-describedby={stateId}
+        onClick={(event) => {
+          onSetUp(entry.agent, event.currentTarget);
+        }}
+        className={BUTTON_CLASS}
+      >
+        {`Set up ${name}`}
+      </Button>
+    </li>
+  );
+}
+
+type AgentContentProps = { step: SetupStep; rows: AgentRowsRun; check: CheckAgainProps };
+
+function AgentContent({ step, rows, check }: AgentContentProps): ReactNode {
+  const cannotCheck = step.state === "cannot-check" || step.state === "not-run";
+
+  if (rows.entries === undefined) {
+    return <CheckAgain {...check} />;
+  }
+
+  return (
+    <>
+      <p className={WHY_CLASS}>Tasma runs your workflows with a coding agent. One agent is enough.</p>
+      {/* WebKit removes the list role from a list with no list style. */}
+      <ul role="list" className="mt-3.5 max-w-lg border-t border-line">
+        {rows.entries.map((entry) => <AgentRow key={entry.agent} entry={entry} onSetUp={rows.onSetUp} />)}
+      </ul>
+      {cannotCheck && <div className="mt-3.5"><CheckAgain {...check} /></div>}
+    </>
+  );
+}
+
+function InstallContent({ agent }: { agent: ChatAgent }): ReactNode {
+  const { account, installCommands, guide } = agentTexts(agent);
+
+  return (
+    <>
+      <p className={WHY_CLASS}>{`Tasma runs your workflows with ${account}.`}</p>
+      {installCommands.map(({ intro, command }) => (
+        <Fragment key={command}>
+          <p className={RUN_CLASS}>{intro}</p>
+          <CommandBox command={command} />
+        </Fragment>
+      ))}
+      <div className={ACTIONS_CLASS}>
+        {/* A guide with no command above it is the action of the step. */}
+        <ExternalLink href={guide.url} className={installCommands.length === 0 ? BUTTON_FILLED_CLASS : LINK_CLASS}>
+          {guide.words}
+        </ExternalLink>
+      </div>
+    </>
+  );
+}
+
+function LoginContent({ agent }: { agent: ChatAgent }): ReactNode {
+  const { account, loginCommand } = agentTexts(agent);
+
+  return (
+    <>
+      <p className={WHY_CLASS}>{`Chats run with your ${account} account.`}</p>
+      <RunCommand command={loginCommand} />
+    </>
+  );
+}
+
+/**
+ * The content of a step that is stopped, cannot be checked or waits, which is the same in each list. Null when the
+ * step shows its own content.
+ */
+function stateContent(step: SetupStep, check: CheckAgainProps, stopped: string): ReactElement | null {
   if (step.state === "stopped") {
-    return (
-      <p className={WHY_CLASS}>
-        Tasma does not check for the skill now. Claude Code needs the skill to run workflow steps.
-      </p>
-    );
+    return <p className={WHY_CLASS}>{stopped}</p>;
   }
   if (step.state === "cannot-check" || step.state === "not-run") {
-    return <CheckAgain checking={checking} onCheckAgain={onCheckAgain} />;
+    return <CheckAgain {...check} />;
   }
   if (step.waitsFor !== undefined) {
     return <p className={WHY_CLASS}>{`First, complete step ${String(step.waitsFor.number)}: ${step.waitsFor.name}.`}</p>;
   }
 
+  return null;
+}
+
+/** What the steps of the screen show of the reads and the writes of the screen. */
+export type ScreenStepRuns = {
+  agents: AgentRowsRun;
+  install: SkillInstallRun;
+  project: ProjectStepRun;
+  workflow: WorkflowStepRun;
+};
+
+type ScreenStepContentProps = {
+  step: SetupStep<ScreenStepId>;
+  check: CheckAgainProps;
+  onStop: () => void;
+  runs: ScreenStepRuns;
+};
+
+export function ScreenStepContent({ step, check, onStop, runs }: ScreenStepContentProps): ReactNode {
+  if (step.id === "agent") {
+    return <AgentContent step={step} rows={runs.agents} check={check} />;
+  }
+
+  const shared = stateContent(step, check, runs.install.texts.stopped);
+
+  if (shared !== null) {
+    return shared;
+  }
+
   switch (step.id) {
-    case "install":
-      return (
-        <>
-          <p className={WHY_CLASS}>Tasma runs your workflows with Claude Code.</p>
-          <div className={ACTIONS_CLASS}>
-            <ExternalLink href={INSTALL_GUIDE_URL} className={BUTTON_FILLED_CLASS}>
-              Open the Claude Code CLI install guide
-            </ExternalLink>
-          </div>
-        </>
-      );
-    case "login":
-      return (
-        <>
-          <p className={WHY_CLASS}>Chats run with your Claude Code account.</p>
-          <RunCommand command="claude auth login" />
-        </>
-      );
     case "command":
       return (
         <>
           <p className={WHY_CLASS}>
-            Claude Code uses this command to read and write tasks. Tasma adds it when the app opens, and macOS asks for
-            your password one time.
+            Your coding agent uses this command to read and write tasks. Tasma adds it when the app opens, and macOS
+            asks for your password one time.
           </p>
           <p className={RUN_CLASS}>
             If you did not allow this, in the menu bar, select
@@ -556,39 +711,49 @@ function StepContent(props: StepContentProps): ReactNode {
         </>
       );
     case "skill":
-      return <SkillContent install={install} onStop={onStop} />;
+      return <SkillContent install={runs.install} onStop={onStop} />;
     case "project":
-      return <ProjectContent run={project} />;
+      return <ProjectContent run={runs.project} />;
     case "workflow":
-      return <WorkflowContent run={workflow} />;
+      return <WorkflowContent run={runs.workflow} />;
+  }
+}
+
+type AgentStepContentProps = {
+  step: SetupStep<AgentStepId>;
+  check: CheckAgainProps;
+  onStop: () => void;
+  agent: ChatAgent;
+  install: SkillInstallRun;
+};
+
+export function AgentStepContent({ step, check, onStop, agent, install }: AgentStepContentProps): ReactNode {
+  const shared = stateContent(step, check, install.texts.stopped);
+
+  if (shared !== null) {
+    return shared;
+  }
+
+  switch (step.id) {
+    case "install":
+      return <InstallContent agent={agent} />;
+    case "login":
+      return <LoginContent agent={agent} />;
+    case "skill":
+      return <SkillContent install={install} onStop={onStop} />;
   }
 }
 
 type SetupStepRowProps = {
   step: SetupStep;
   current: boolean;
-  /** The read of its "Check again" runs. */
-  checking: boolean;
-  onCheckAgain: () => void;
-  onStop: () => void;
-  install: SkillInstallRun;
-  project: ProjectStepRun;
-  workflow: WorkflowStepRun;
   /** The user pressed a control inside the panel. */
   onPressInside: () => void;
+  /** The content of the panel. */
+  children: ReactNode;
 };
 
-export function SetupStepRow({
-  step,
-  current,
-  checking,
-  onCheckAgain,
-  onStop,
-  install,
-  project,
-  workflow,
-  onPressInside,
-}: SetupStepRowProps): ReactNode {
+export function SetupStepRow({ step, current, onPressInside, children }: SetupStepRowProps): ReactNode {
   const [shown, setShown] = useState({ state: step.state, settling: false });
 
   if (shown.state !== step.state) {
@@ -624,15 +789,7 @@ export function SetupStepRow({
         </Accordion.Trigger>
       </Accordion.Header>
       <Accordion.Panel onClickCapture={pressInside} className="animate-enter pb-6 pl-10">
-        <StepContent
-          step={step}
-          checking={checking}
-          onCheckAgain={onCheckAgain}
-          onStop={onStop}
-          install={install}
-          project={project}
-          workflow={workflow}
-        />
+        {children}
       </Accordion.Panel>
     </Accordion.Item>
   );

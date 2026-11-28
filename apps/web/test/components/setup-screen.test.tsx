@@ -8,10 +8,19 @@ import { useNoticeStore } from "../../src/store/notices";
 import { browserPreferenceStorage, setPreferenceStorage, useUiStore } from "../../src/store/ui";
 import {
   advance,
+  agentEntry,
   countReads,
+  descriptionOf,
+  FULL,
+  FULL_SKIPPED,
   heldBack,
+  INSTALL,
+  installBodies,
+  nextAnswer,
+  NOT_INSTALLED,
   openWithFeed,
   projectEvent,
+  READ_FAILED,
   refusalReply,
   renderWithRouter,
   setupStatus,
@@ -31,17 +40,16 @@ vi.mock(import("../../src/api/folder-dialog"), async (importOriginal) => ({
 }));
 
 const START = "/setup?mode=start";
-const FULL = "/setup?mode=full";
-const FULL_SKIPPED = "/setup?mode=full&skipSkill=true";
 
 const CHECK_IN_PROGRESS = "Check in progress";
-
-const READ_FAILED = "Tasma cannot check the steps now. It tries again every 5 seconds.";
 
 const NEW_MACHINE = setupStatus(
   { cli: "fail", project: "fail", workflow: "fail" },
   { installed: "fail", loggedIn: "not-run", skill: "fail" },
 );
+
+/** Claude is not installed, and Codex is ready with its skill. */
+const CODEX_SET_UP = setupStatus({ agents: [agentEntry("claude", NOT_INSTALLED), agentEntry("codex")] });
 
 const REFUSED = refusalReply(500, { kind: "daemon", code: "internal", message: "the check broke" });
 
@@ -63,12 +71,6 @@ function isOpen(name: string): boolean {
   return trigger(name).getAttribute("aria-expanded") === "true";
 }
 
-function descriptionOf(element: HTMLElement): string {
-  return element.getAttribute("aria-describedby")!.split(" ")
-    .map((id) => document.getElementById(id)!.textContent)
-    .join(" | ");
-}
-
 /** Opens the screen with its full read held back, so a test chooses when the answer comes. */
 async function openHeld(status: SetupStatus = NEW_MACHINE) {
   const held = heldBack();
@@ -78,33 +80,17 @@ async function openHeld(status: SetupStatus = NEW_MACHINE) {
   return { stub, router, held };
 }
 
-/** Opens the screen, and waits for the first full answer. */
-async function openAnswered(status: SetupStatus = NEW_MACHINE) {
-  const stub = stubTransport({ [START]: successReply(startOf(status)), [FULL]: successReply(status) });
+/** Opens the screen, and waits for the first full answer. `start` must fail a check, or the board opens. */
+async function openAnswered(status: SetupStatus = NEW_MACHINE, start: SetupStatus = startOf(status)) {
+  const stub = stubTransport({ [START]: successReply(start), [FULL]: successReply(status) });
   const router = await renderWithRouter("/", stub.transport);
 
-  await screen.findByText(/of 6 done/);
+  await screen.findByText(/of 5 done/);
   await waitFor(() => {
     expect(words().some((spoken) => spoken.startsWith("The check is complete."))).toBe(true);
   });
 
   return { stub, router };
-}
-
-/** Sends the next full read through a window focus event, and waits for it to land. */
-async function nextAnswer(stub: ReturnType<typeof stubTransport>, reply: TransportReply, path = FULL): Promise<void> {
-  const before = stub.paths.filter((sent) => sent === path).length;
-
-  stub.replies[path] = reply;
-  await act(async () => {
-    window.dispatchEvent(new Event("focus"));
-    await vi.waitFor(() => {
-      expect(stub.paths.filter((sent) => sent === path).length).toBeGreaterThan(before);
-    });
-    await new Promise((resolve) => {
-      setTimeout(resolve, 20);
-    });
-  });
 }
 
 beforeEach(() => {
@@ -159,16 +145,16 @@ describe("the layout", () => {
     expect(screen.getByRole("main").classList.contains("pt-[calc(clamp(1.5rem,11vh,6.5rem)+var(--title-band))]")).toBe(true);
   });
 
-  it("lists the 6 steps in an ordered list that the heading names", async () => {
+  it("lists the 5 steps in an ordered list that the heading names", async () => {
     await openAnswered();
 
     const list = screen.getByRole("list", { name: "Set up Tasma" });
 
     expect(list.tagName).toBe("OL");
-    expect(within(list).getAllByRole("listitem")).toHaveLength(6);
-    expect(list.textContent).toContain("Install the Claude Code CLI");
+    expect(within(list).getAllByRole("listitem").filter((item) => item.parentElement === list)).toHaveLength(5);
+    expect(list.textContent).toContain("Set up a coding agent");
     expect(list.textContent).toContain("Add a workflow");
-    expect(screen.getByText("0 of 6 done")).toBeTruthy();
+    expect(screen.getByText("0 of 5 done")).toBeTruthy();
   });
 
   it("names a trigger with the step and its label", async () => {
@@ -180,24 +166,24 @@ describe("the layout", () => {
   it("makes a done step a plain row, outside the Tab order", async () => {
     await openAnswered(setupStatus({ project: "fail", workflow: "fail" }));
 
-    expect(screen.queryByRole("button", { name: /^Install the Claude Code CLI/ })).toBeNull();
-    expect(screen.getByText("Install the Claude Code CLI")).toBeTruthy();
-    expect(screen.getByText("4 of 6 done")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Set up a coding agent/ })).toBeNull();
+    expect(screen.getByText("Set up a coding agent")).toBeTruthy();
+    expect(screen.getByText("3 of 5 done")).toBeTruthy();
   });
 
   it("does not make the name of a step a heading", async () => {
     await openAnswered();
 
-    expect(screen.queryByRole("heading", { name: /Install the Claude Code CLI/ })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /Set up a coding agent/ })).toBeNull();
   });
 });
 
 describe("before the first full answer", () => {
-  it("shows steps 1 to 3 in progress, as plain rows", async () => {
+  it("shows steps 1 and 2 in progress, as plain rows", async () => {
     await openHeld();
 
-    expect(screen.getAllByText(CHECK_IN_PROGRESS)).toHaveLength(3);
-    expect(screen.queryByRole("button", { name: /^Install the Claude Code CLI/ })).toBeNull();
+    expect(screen.getAllByText(CHECK_IN_PROGRESS)).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /^Set up a coding agent/ })).toBeNull();
     expect(trigger("Add a project")).toBeTruthy();
   });
 
@@ -208,7 +194,7 @@ describe("before the first full answer", () => {
     expect(document.querySelector("[aria-expanded=\"true\"]")).toBeNull();
   });
 
-  it("lets the user open steps 4 to 6", async () => {
+  it("lets the user open steps 3 to 5", async () => {
     await openHeld();
 
     await userEvent.click(trigger("Add a project"));
@@ -227,11 +213,11 @@ describe("the first full answer", () => {
     });
 
     await waitFor(() => {
-      expect(isOpen("Log in to Claude Code")).toBe(true);
+      expect(isOpen("Set up a coding agent")).toBe(true);
     });
-    expect(trigger("Log in to Claude Code").getAttribute("aria-current")).toBe("step");
-    expect(words()).toEqual(["The check is complete. 2 of 6 steps are done. Next: Log in to Claude Code."]);
-    expect(screen.getByText("claude auth login")).toBeTruthy();
+    expect(trigger("Set up a coding agent").getAttribute("aria-current")).toBe("step");
+    expect(words()).toEqual(["The check is complete. 1 of 5 steps are done. Next: Set up a coding agent."]);
+    expect(screen.getByRole("button", { name: "Set up Claude" })).toBeTruthy();
   });
 
   it("does not announce a change to done for a step that was in progress", async () => {
@@ -243,43 +229,55 @@ describe("the first full answer", () => {
   it("leaves out the next step when no step is current", async () => {
     await openAnswered(setupStatus({ project: "not-run", workflow: "fail" }));
 
-    expect(words()).toEqual(["The check is complete. 4 of 6 steps are done."]);
+    expect(words()).toEqual(["The check is complete. 3 of 5 steps are done."]);
   });
 
   it("gives each step its content", async () => {
     await openAnswered(setupStatus({ project: "fail", workflow: "fail", cli: "fail" }, { installed: "fail", loggedIn: "not-run", skill: "fail" }));
 
-    expect(isOpen("Install the Claude Code CLI")).toBe(true);
-    expect(screen.getByText("Tasma runs your workflows with Claude Code.")).toBeTruthy();
-
-    const guide = screen.getByRole("link", { name: "Open the Claude Code CLI install guide" });
-
-    expect(guide.getAttribute("href")).toBe("https://code.claude.com/docs/en/setup");
-    expect(guide.getAttribute("target")).toBe("_blank");
-
-    await userEvent.click(trigger("Log in to Claude Code"));
-    expect(screen.getByText("First, complete step 1: Install the Claude Code CLI.")).toBeTruthy();
+    expect(isOpen("Set up a coding agent")).toBe(true);
+    expect(screen.getByText("Tasma runs your workflows with a coding agent. One agent is enough.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Set up Claude" })).toBeTruthy();
 
     await userEvent.click(trigger("Add the tasma command"));
     expect(screen.getByText(/macOS asks for your password one time/)).toBeTruthy();
     expect(screen.getByText("Tasma > Install Command Line Tool…")).toBeTruthy();
 
-    await userEvent.click(trigger("Install the tasma skill in Claude Code"));
-    expect(screen.getByRole("button", { name: "Install in Claude Code" })).toBeTruthy();
-    expect(screen.queryByText("npx skills add mubinov/tasma-skill -g")).toBeNull();
-    expect(screen.getByRole("link", { name: "Other ways to install the skill" }).getAttribute("href"))
-      .toBe("https://github.com/mubinov/tasma-skill#install");
+    await userEvent.click(trigger("Install the tasma skill"));
+    expect(screen.getByText("First, complete step 1: Set up a coding agent.")).toBeTruthy();
 
     await userEvent.click(trigger("Add a project"));
-    expect(screen.getByText("Choose the folder with your code. Claude Code works in this folder.")).toBeTruthy();
+    expect(screen.getByText("Choose the folder with your code. Your coding agent works in this folder.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Choose folder" }).className).toContain("bg-text");
     expect(screen.queryByText("tasma project create --path .")).toBeNull();
 
     await userEvent.click(trigger("Add a workflow"));
-    expect(screen.getByText("First, complete step 5: Add a project.")).toBeTruthy();
+    expect(screen.getByText("First, complete step 4: Add a project.")).toBeTruthy();
   });
 
-  it("gives step 6 its content when step 5 is done", async () => {
+  it("gives step 3 its content when an agent is ready", async () => {
+    await openAnswered(setupStatus({}, { skill: "fail" }));
+
+    expect(isOpen("Install the tasma skill")).toBe(true);
+    expect(screen.getByText("The skill lets Claude run workflow steps.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Install the skill" })).toBeTruthy();
+    expect(screen.queryByText("npx skills add mubinov/tasma-skill -g")).toBeNull();
+    expect(screen.getByRole("link", { name: "Other ways to install the skill" }).getAttribute("href"))
+      .toBe("https://github.com/mubinov/tasma-skill#install");
+  });
+
+  it("names no agent in the texts of steps 2 and 4", async () => {
+    await openAnswered(setupStatus({ cli: "fail", project: "fail", workflow: "fail" }));
+
+    expect(isOpen("Add the tasma command")).toBe(true);
+    expect(screen.getByText(/^Your coding agent uses this command to read and write tasks\./)).toBeTruthy();
+
+    await userEvent.click(trigger("Add a project"));
+    expect(screen.getByText("Choose the folder with your code. Your coding agent works in this folder.")).toBeTruthy();
+    expect(screen.getByRole("main").textContent).not.toContain("Claude Code");
+  });
+
+  it("gives step 5 its content when step 4 is done", async () => {
     const stub = stubTransport({
       [START]: successReply(startOf(setupStatus({ workflow: "fail" }))),
       [FULL]: successReply(setupStatus({ workflow: "fail" })),
@@ -299,11 +297,11 @@ describe("the current step", () => {
   it("keeps its mark when it is collapsed", async () => {
     await openAnswered();
 
-    await userEvent.click(trigger("Install the Claude Code CLI"));
+    await userEvent.click(trigger("Set up a coding agent"));
 
-    expect(isOpen("Install the Claude Code CLI")).toBe(false);
-    expect(trigger("Install the Claude Code CLI").getAttribute("aria-current")).toBe("step");
-    expect(trigger("Install the Claude Code CLI").querySelector(".bg-signal")).not.toBeNull();
+    expect(isOpen("Set up a coding agent")).toBe(false);
+    expect(trigger("Set up a coding agent").getAttribute("aria-current")).toBe("step");
+    expect(trigger("Set up a coding agent").querySelector(".bg-signal")).not.toBeNull();
   });
 
   it("is the only current step", async () => {
@@ -331,8 +329,8 @@ describe("the current step", () => {
   it("does not colour the label of a current step that names its state", async () => {
     await openAnswered(setupStatus({ project: "fail", workflow: "fail" }, { installed: "unknown" }));
 
-    expect(trigger("Install the Claude Code CLI").getAttribute("aria-current")).toBe("step");
-    expect(within(trigger("Install the Claude Code CLI")).getByText("Cannot check").className).toContain("text-dim");
+    expect(trigger("Set up a coding agent").getAttribute("aria-current")).toBe("step");
+    expect(within(trigger("Set up a coding agent")).getByText("Cannot check").className).toContain("text-dim");
   });
 });
 
@@ -343,7 +341,7 @@ describe("opening by itself", () => {
     await userEvent.click(trigger("Add a project"));
 
     expect(isOpen("Add a project")).toBe(true);
-    expect(isOpen("Install the Claude Code CLI")).toBe(false);
+    expect(isOpen("Set up a coding agent")).toBe(false);
   });
 
   it("opens the next step when the current step changes to done", async () => {
@@ -363,11 +361,11 @@ describe("opening by itself", () => {
       held.answer(successReply(NEW_MACHINE));
     });
     await waitFor(() => {
-      expect(trigger("Install the Claude Code CLI").getAttribute("aria-current")).toBe("step");
+      expect(trigger("Set up a coding agent").getAttribute("aria-current")).toBe("step");
     });
 
     expect(isOpen("Add a project")).toBe(true);
-    expect(isOpen("Install the Claude Code CLI")).toBe(false);
+    expect(isOpen("Set up a coding agent")).toBe(false);
   });
 
   it("keeps a panel that the user opened with Enter while focus stays on its trigger", async () => {
@@ -379,7 +377,7 @@ describe("opening by itself", () => {
       held.answer(successReply(NEW_MACHINE));
     });
     await waitFor(() => {
-      expect(trigger("Install the Claude Code CLI").getAttribute("aria-current")).toBe("step");
+      expect(trigger("Set up a coding agent").getAttribute("aria-current")).toBe("step");
     });
 
     expect(isOpen("Add a project")).toBe(true);
@@ -392,9 +390,9 @@ describe("opening by itself", () => {
     trigger("Add a project").focus();
     await nextAnswer(stub, successReply(setupStatus({ project: "fail", workflow: "fail" }, { loggedIn: "fail" })));
 
-    expect(trigger("Log in to Claude Code").getAttribute("aria-current")).toBe("step");
+    expect(trigger("Set up a coding agent").getAttribute("aria-current")).toBe("step");
     expect(isOpen("Add a project")).toBe(true);
-    expect(isOpen("Log in to Claude Code")).toBe(false);
+    expect(isOpen("Set up a coding agent")).toBe(false);
   });
 
   it("opens the new current step when focus is on the trigger of a closed step", async () => {
@@ -403,7 +401,7 @@ describe("opening by itself", () => {
     trigger("Add a workflow").focus();
     await nextAnswer(stub, successReply(setupStatus({ project: "fail", workflow: "fail" }, { loggedIn: "fail" })));
 
-    expect(isOpen("Log in to Claude Code")).toBe(true);
+    expect(isOpen("Set up a coding agent")).toBe(true);
     expect(document.activeElement).toBe(trigger("Add a workflow"));
   });
 
@@ -416,7 +414,7 @@ describe("opening by itself", () => {
     await nextAnswer(stub, successReply(setupStatus({ project: "fail", workflow: "fail" }, { loggedIn: "fail" })));
 
     expect(isOpen("Add a project")).toBe(true);
-    expect(isOpen("Log in to Claude Code")).toBe(false);
+    expect(isOpen("Set up a coding agent")).toBe(false);
   });
 
   it("does not count a press on the text of a panel as opened by hand", async () => {
@@ -426,7 +424,7 @@ describe("opening by itself", () => {
     (document.activeElement as HTMLElement).blur();
     await nextAnswer(stub, successReply(setupStatus({ project: "fail", workflow: "fail" }, { loggedIn: "fail" })));
 
-    expect(isOpen("Log in to Claude Code")).toBe(true);
+    expect(isOpen("Set up a coding agent")).toBe(true);
   });
 
   it("opens the current step when the user closes the panel opened by hand", async () => {
@@ -435,20 +433,20 @@ describe("opening by itself", () => {
     await userEvent.click(trigger("Add a project"));
     await userEvent.click(trigger("Add a project"));
 
-    expect(isOpen("Install the Claude Code CLI")).toBe(true);
+    expect(isOpen("Set up a coding agent")).toBe(true);
   });
 
   it("leaves the current step closed when the user closes it", async () => {
     await openAnswered();
 
-    await userEvent.click(trigger("Install the Claude Code CLI"));
-    expect(isOpen("Install the Claude Code CLI")).toBe(false);
+    await userEvent.click(trigger("Set up a coding agent"));
+    expect(isOpen("Set up a coding agent")).toBe(false);
 
-    await userEvent.click(trigger("Install the Claude Code CLI"));
-    expect(isOpen("Install the Claude Code CLI")).toBe(true);
+    await userEvent.click(trigger("Set up a coding agent"));
+    expect(isOpen("Set up a coding agent")).toBe(true);
 
-    await userEvent.click(trigger("Install the Claude Code CLI"));
-    expect(isOpen("Install the Claude Code CLI")).toBe(false);
+    await userEvent.click(trigger("Set up a coding agent"));
+    expect(isOpen("Set up a coding agent")).toBe(false);
   });
 
   it("opens no step when the user closes a panel before the first full answer", async () => {
@@ -466,7 +464,7 @@ describe("opening by itself", () => {
     await userEvent.click(trigger("Add a project"));
     await nextAnswer(stub, successReply(setupStatus({ workflow: "fail" }, { skill: "fail" })));
 
-    expect(isOpen("Install the tasma skill in Claude Code")).toBe(true);
+    expect(isOpen("Install the tasma skill")).toBe(true);
   });
 
   it("closes the panel of a step that changes to done when no step is current", async () => {
@@ -474,7 +472,7 @@ describe("opening by itself", () => {
 
     await nextAnswer(stub, successReply(setupStatus({ project: "not-run", workflow: "fail" })));
 
-    expect(screen.getByText("Install the tasma skill in Claude Code").closest("button")).toBeNull();
+    expect(screen.getByText("Install the tasma skill").closest("button")).toBeNull();
     expect(document.querySelector("[aria-expanded=\"true\"]")).toBeNull();
   });
 });
@@ -517,7 +515,7 @@ describe("the reads", () => {
     });
 
     expect(screen.queryByText(CHECK_IN_PROGRESS)).toBeNull();
-    expect(screen.getByText("4 of 6 done")).toBeTruthy();
+    expect(screen.getByText("3 of 5 done")).toBeTruthy();
   });
 
   it("reads again on a project event", async () => {
@@ -550,7 +548,7 @@ describe("a change to done", () => {
   it("plays no effect on a step that was in progress", async () => {
     await openAnswered(setupStatus({ project: "fail", workflow: "fail" }));
 
-    expect(screen.getByText("Install the Claude Code CLI").closest("li")!.querySelector(".animate-step-done")).toBeNull();
+    expect(screen.getByText("Set up a coding agent").closest("li")!.querySelector(".animate-step-done")).toBeNull();
   });
 
   it("announces nothing for a read that changes no step", async () => {
@@ -564,15 +562,15 @@ describe("a change to done", () => {
 });
 
 describe("a failed read", () => {
-  it("shows steps 1 to 3 as cannot check after a failed first read, and step 1 as current", async () => {
+  it("shows steps 1 and 2 as cannot check after a failed first read, and step 1 as current", async () => {
     const stub = stubTransport({ [START]: successReply(startOf(NEW_MACHINE)), [FULL]: REFUSED });
     await renderWithRouter("/", stub.transport);
 
     await screen.findByText(READ_FAILED);
 
     expect(screen.queryByText(CHECK_IN_PROGRESS)).toBeNull();
-    expect(screen.getAllByText("Cannot check")).toHaveLength(3);
-    expect(trigger("Install the Claude Code CLI").getAttribute("aria-current")).toBe("step");
+    expect(screen.getAllByText("Cannot check")).toHaveLength(2);
+    expect(trigger("Set up a coding agent").getAttribute("aria-current")).toBe("step");
     expect(document.querySelector("[aria-expanded=\"true\"]")).toBeNull();
     expect(words()).toEqual([READ_FAILED]);
   });
@@ -583,7 +581,7 @@ describe("a failed read", () => {
     await nextAnswer(stub, REFUSED);
 
     expect(screen.getByText(READ_FAILED)).toBeTruthy();
-    expect(screen.getByText("4 of 6 done")).toBeTruthy();
+    expect(screen.getByText("3 of 5 done")).toBeTruthy();
     expect(words().filter((spoken) => spoken === READ_FAILED)).toHaveLength(1);
 
     await nextAnswer(stub, successReply(setupStatus({ project: "fail", workflow: "fail" })));
@@ -606,7 +604,7 @@ describe("Check again", () => {
   it("shows cannot check for a step that the answer did not run", async () => {
     await openAnswered(setupStatus({ project: "fail", workflow: "fail" }, { skill: "not-run" }));
 
-    await userEvent.click(trigger("Install the tasma skill in Claude Code"));
+    await userEvent.click(trigger("Install the tasma skill"));
 
     expect(screen.getByText("Tasma cannot check this now.")).toBeTruthy();
   });
@@ -697,19 +695,19 @@ describe("Stop checking for the skill", () => {
     });
     await renderWithRouter("/", stub.transport);
     await waitFor(() => {
-      expect(isOpen("Install the tasma skill in Claude Code")).toBe(true);
+      expect(isOpen("Install the tasma skill")).toBe(true);
     });
 
     await userEvent.click(screen.getByRole("button", { name: STOP }));
 
     expect(window.localStorage.getItem("tasma.setup.skillCheck")).toBe("stopped");
     expect(words()).toContain("Tasma does not check for the skill now.");
-    expect(screen.getByRole("button", { name: /^Install the tasma skill in Claude Code, Not checked/ })).toBeTruthy();
-    expect(screen.getByText(/Claude Code needs the skill to run workflow steps/)).toBeTruthy();
-    expect(isOpen("Install the tasma skill in Claude Code")).toBe(true);
+    expect(screen.getByRole("button", { name: /^Install the tasma skill, Not checked/ })).toBeTruthy();
+    expect(screen.getByText("Tasma does not check for the skill now. A coding agent needs the skill to run workflow steps.")).toBeTruthy();
+    expect(isOpen("Install the tasma skill")).toBe(true);
     expect(trigger("Add a project").getAttribute("aria-current")).toBe("step");
     expect(isOpen("Add a project")).toBe(false);
-    expect(trigger("Install the tasma skill in Claude Code").querySelector(".border-dashed")).not.toBeNull();
+    expect(trigger("Install the tasma skill").querySelector(".border-dashed")).not.toBeNull();
 
     await waitFor(() => {
       expect(stub.paths).toContain(FULL_SKIPPED);
@@ -725,7 +723,7 @@ describe("Stop checking for the skill", () => {
     const router = await renderWithRouter("/", stub.transport);
 
     await waitFor(() => {
-      expect(isOpen("Install the tasma skill in Claude Code")).toBe(true);
+      expect(isOpen("Install the tasma skill")).toBe(true);
     });
     said = [];
     await userEvent.click(screen.getByRole("button", { name: STOP }));
@@ -742,167 +740,61 @@ describe("Stop checking for the skill", () => {
   });
 
   it("keeps the screen open on step 2 after the first full answer, while step 2 fails", async () => {
-    const LOGIN_AND_SKILL = setupStatus({}, { loggedIn: "fail", skill: "fail" });
+    const COMMAND_AND_SKILL = setupStatus({ cli: "fail" }, { skill: "fail" });
     const stub = stubTransport({
-      [START]: successReply(startOf(LOGIN_AND_SKILL)),
-      [FULL]: successReply(LOGIN_AND_SKILL),
-      [FULL_SKIPPED]: successReply(setupStatus({}, { loggedIn: "fail", skill: "not-run" })),
+      [START]: successReply(startOf(COMMAND_AND_SKILL)),
+      [FULL]: successReply(COMMAND_AND_SKILL),
+      [FULL_SKIPPED]: successReply(setupStatus({ cli: "fail" }, { skill: "not-run" })),
     });
     const router = await renderWithRouter("/", stub.transport);
 
     await waitFor(() => {
-      expect(isOpen("Log in to Claude Code")).toBe(true);
+      expect(isOpen("Add the tasma command")).toBe(true);
     });
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
 
-    await user.click(trigger("Install the tasma skill in Claude Code"));
+    await user.click(trigger("Install the tasma skill"));
     await user.click(screen.getByRole("button", { name: STOP }));
     await advance(2000);
 
     expect(stub.paths).toContain(FULL_SKIPPED);
     expect(router.state.location.pathname).toBe("/setup");
     expect(words()).toContain("Tasma does not check for the skill now.");
-    expect(trigger("Log in to Claude Code").getAttribute("aria-current")).toBe("step");
-  });
-
-  describe("before the first full answer", () => {
-    /** Stops the check while the first full read runs, and holds back the read with the skip flag. */
-    async function stopEarly() {
-      const skipped = heldBack();
-      const { stub, router } = await openHeld(SKILL_ONLY);
-
-      stub.replies[FULL_SKIPPED] = skipped.reply;
-      await userEvent.click(trigger("Install the tasma skill in Claude Code"));
-      await userEvent.click(screen.getByRole("button", { name: STOP }));
-      await waitFor(() => {
-        expect(stub.paths).toContain(FULL_SKIPPED);
-      });
-
-      expect(screen.getByRole("button", { name: /^Install the tasma skill in Claude Code, Not checked/ })).toBeTruthy();
-      expect(words()).toEqual(["Tasma does not check for the skill now."]);
-      expect(router.state.location.pathname).toBe("/setup");
-      said = [];
-
-      return { router, answer: skipped.answer };
-    }
-
-    it("closes after a full answer with no failed step, and says only that setup is complete after the move", async () => {
-      const { router, answer } = await stopEarly();
-
-      await act(async () => {
-        answer(successReply(setupStatus({}, { skill: "not-run" })));
-      });
-
-      await waitFor(() => {
-        expect(router.state.location.pathname).toBe("/tasks");
-      }, { timeout: 3000 });
-      await waitFor(() => {
-        expect(words()).toEqual(["Setup is complete."]);
-      });
-    });
-
-    it("stays open on step 2 after a full answer in which step 2 fails", async () => {
-      const { router, answer } = await stopEarly();
-
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      await act(async () => {
-        answer(successReply(setupStatus({}, { loggedIn: "fail", skill: "not-run" })));
-      });
-      await advance(2000);
-
-      expect(router.state.location.pathname).toBe("/setup");
-      expect(trigger("Log in to Claude Code").getAttribute("aria-current")).toBe("step");
-      expect(isOpen("Install the tasma skill in Claude Code")).toBe(true);
-      expect(words()).toEqual(["The check is complete. 4 of 6 steps are done. Next: Log in to Claude Code."]);
-    });
-
-    it("closes after a failed full read, with no failed-read line, and says only that setup is complete after the move", async () => {
-      const { router, answer } = await stopEarly();
-
-      await act(async () => {
-        answer(REFUSED);
-      });
-
-      expect(await screen.findAllByText("Cannot check")).toHaveLength(3);
-      expect(screen.queryByText(READ_FAILED)).toBeNull();
-
-      await waitFor(() => {
-        expect(router.state.location.pathname).toBe("/tasks");
-      }, { timeout: 3000 });
-      await waitFor(() => {
-        expect(words()).toEqual(["Setup is complete."]);
-      });
-    });
+    expect(trigger("Add the tasma command").getAttribute("aria-current")).toBe("step");
   });
 
   describe("with a failed read", () => {
-    const SKIPPED_MACHINE = setupStatus(
-      { cli: "fail", project: "fail", workflow: "fail" },
-      { installed: "fail", loggedIn: "not-run", skill: "not-run" },
-    );
-
-    async function stop(): Promise<void> {
-      await userEvent.click(trigger("Install the tasma skill in Claude Code"));
-      await userEvent.click(screen.getByRole("button", { name: STOP }));
-    }
+    const READY_MACHINE = setupStatus({ cli: "fail", project: "fail", workflow: "fail" }, { skill: "fail" });
+    const SKIPPED_MACHINE = setupStatus({ cli: "fail", project: "fail", workflow: "fail" }, { skill: "not-run" });
 
     it("keeps the full answer when the first read with the skip flag fails, and says the result one time", async () => {
-      const { stub } = await openAnswered();
+      const { stub } = await openAnswered(READY_MACHINE);
 
       stub.replies[FULL_SKIPPED] = REFUSED;
-      await stop();
+      await userEvent.click(trigger("Install the tasma skill"));
+      await userEvent.click(screen.getByRole("button", { name: STOP }));
       await screen.findByText(READ_FAILED);
 
       expect(screen.queryByText("Cannot check")).toBeNull();
-      expect(trigger("Install the Claude Code CLI").textContent).toContain("You do this");
+      expect(trigger("Add the tasma command").textContent).toContain("Tasma does this");
 
       await nextAnswer(stub, successReply(SKIPPED_MACHINE), FULL_SKIPPED);
 
       expect(screen.queryByText(READ_FAILED)).toBeNull();
       expect(words().filter((spoken) => spoken.startsWith("The check is complete."))).toHaveLength(1);
     });
-
-    it("keeps steps 1 to 3 as cannot check, and the failed-read line, until a read with the skip flag succeeds", async () => {
-      const held = heldBack();
-      const stub = stubTransport({
-        [START]: successReply(startOf(NEW_MACHINE)),
-        [FULL]: REFUSED,
-        [FULL_SKIPPED]: held.reply,
-      });
-
-      await renderWithRouter("/", stub.transport);
-      await screen.findByText(READ_FAILED);
-      await stop();
-      await waitFor(() => {
-        expect(stub.paths).toContain(FULL_SKIPPED);
-      });
-
-      expect(screen.getAllByText("Cannot check")).toHaveLength(3);
-      expect(screen.queryByText(CHECK_IN_PROGRESS)).toBeNull();
-      expect(screen.getByText(READ_FAILED)).toBeTruthy();
-
-      await act(async () => {
-        held.answer(successReply(SKIPPED_MACHINE));
-      });
-
-      await waitFor(() => {
-        expect(screen.queryByText(READ_FAILED)).toBeNull();
-      });
-      expect(screen.queryByText("Cannot check")).toBeNull();
-      expect(words().filter((spoken) => spoken === READ_FAILED)).toHaveLength(1);
-    });
   });
 });
 
-describe("a failed step of Claude Code or of the tasma command", () => {
+describe("a failed step of the agent or of the tasma command", () => {
   const START_REPLY = successReply(startOf(setupStatus({ workflow: "fail" })));
 
   it.each([
-    ["Install the Claude Code CLI", setupStatus({}, { installed: "fail", loggedIn: "not-run" })],
-    ["Log in to Claude Code", setupStatus({}, { loggedIn: "fail" })],
-    ["Add the tasma command", setupStatus({ cli: "fail" })],
-  ])("keeps the screen open while %s fails, and closes it 1 second after the step passes", async (name, status) => {
+    ["the install of the agent", "Set up a coding agent", setupStatus({}, NOT_INSTALLED)],
+    ["the login of the agent", "Set up a coding agent", setupStatus({}, { loggedIn: "fail" })],
+    ["the tasma command", "Add the tasma command", setupStatus({ cli: "fail" })],
+  ])("keeps the screen open while %s fails, and closes it 1 second after the step passes", async (_check, name, status) => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const stub = stubTransport({ [START]: START_REPLY, [FULL]: successReply(status) });
     const router = await renderWithRouter("/", stub.transport);
@@ -919,7 +811,7 @@ describe("a failed step of Claude Code or of the tasma command", () => {
     window.dispatchEvent(new Event("focus"));
     await advance(20);
 
-    expect(screen.getByText("6 of 6 done")).toBeTruthy();
+    expect(screen.getByText("5 of 5 done")).toBeTruthy();
 
     await advance(900);
     expect(router.state.location.pathname).toBe("/setup");
@@ -948,7 +840,7 @@ describe("closing", () => {
   const PROJECT_ONLY = setupStatus({ workflow: "fail" });
 
   describe("the reader in the window", () => {
-    /** Opens the screen with step 6 to do, and waits for its first full answer. */
+    /** Opens the screen with step 5 to do, and waits for its first full answer. */
     async function openOnWorkflow() {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       const stub = stubTransport({ [START]: successReply(startOf(PROJECT_ONLY)), [FULL]: successReply(PROJECT_ONLY) });
@@ -966,7 +858,7 @@ describe("closing", () => {
       hasFocus.mockReturnValue(false);
       await advance(5000);
 
-      expect(screen.getByText("6 of 6 done")).toBeTruthy();
+      expect(screen.getByText("5 of 5 done")).toBeTruthy();
 
       await advance(2000);
       expect(router.state.location.pathname).toBe("/setup");
@@ -999,7 +891,7 @@ describe("closing", () => {
       window.dispatchEvent(new Event("focus"));
       await advance(20);
 
-      expect(screen.getByText("6 of 6 done")).toBeTruthy();
+      expect(screen.getByText("5 of 5 done")).toBeTruthy();
 
       window.dispatchEvent(new Event("focus"));
       await advance(2000);
@@ -1022,7 +914,7 @@ describe("closing", () => {
       hasFocus.mockReturnValue(false);
       await advance(5000);
 
-      expect(screen.getByText("6 of 6 done")).toBeTruthy();
+      expect(screen.getByText("5 of 5 done")).toBeTruthy();
 
       said = [];
       hasFocus.mockReturnValue(true);
@@ -1048,12 +940,12 @@ describe("closing", () => {
       hasFocus.mockReturnValue(false);
       await advance(5000);
 
-      expect(screen.getByText("6 of 6 done")).toBeTruthy();
+      expect(screen.getByText("5 of 5 done")).toBeTruthy();
 
       stub.replies[FULL] = successReply(PROJECT_ONLY);
       await advance(5000);
 
-      expect(screen.getByText("5 of 6 done")).toBeTruthy();
+      expect(screen.getByText("4 of 5 done")).toBeTruthy();
 
       said = [];
       hasFocus.mockReturnValue(true);
@@ -1078,7 +970,7 @@ describe("closing", () => {
     window.dispatchEvent(new Event("focus"));
     await advance(20);
 
-    expect(screen.getByText("6 of 6 done")).toBeTruthy();
+    expect(screen.getByText("5 of 5 done")).toBeTruthy();
     expect(router.state.location.pathname).toBe("/setup");
     expect(words()).toEqual([]);
 
@@ -1117,7 +1009,7 @@ describe("closing", () => {
     await act(async () => {
       held.answer(successReply(setupStatus()));
     });
-    await screen.findByText("6 of 6 done");
+    await screen.findByText("5 of 5 done");
 
     expect(router.state.location.pathname).toBe("/setup");
     expect(document.querySelector("[aria-expanded=\"true\"]")).toBeNull();
@@ -1137,7 +1029,7 @@ describe("closing", () => {
     screen.getByRole("button", { name: /^Add a workflow/ }).focus();
     await nextAnswer(stub, successReply(setupStatus()));
 
-    expect(screen.getByText("6 of 6 done")).toBeTruthy();
+    expect(screen.getByText("5 of 5 done")).toBeTruthy();
     expect(document.activeElement).toBe(document.body);
   });
 
@@ -1185,80 +1077,29 @@ describe("closing", () => {
   });
 });
 
-describe("Copy", () => {
-  const LOGIN = setupStatus({ project: "fail", workflow: "fail" }, { loggedIn: "fail" });
-
-  function stubClipboard(writeText: (text: string) => Promise<void>): void {
-    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
-  }
-
-  it("copies the command, and reads Copied for 1.5 seconds", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
-    const writeText = vi.fn(() => Promise.resolve());
-
-    stubClipboard(writeText);
-    await openAnswered(LOGIN);
-    await user.click(screen.getByRole("button", { name: "Copy" }));
-
-    expect(writeText).toHaveBeenCalledWith("claude auth login");
-    expect(screen.getByRole("button", { name: "Copied" })).toBeTruthy();
-    expect(words()).toContain("Copied");
-
-    await advance(1600);
-
-    expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
-  });
-
-  it("selects the command when the copy fails, and says how to copy it", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
-
-    stubClipboard(() => Promise.reject(new Error("not allowed")));
-    await openAnswered(LOGIN);
-    await user.click(screen.getByRole("button", { name: "Copy" }));
-
-    expect(screen.getByRole("button", { name: "Cannot copy" })).toBeTruthy();
-    expect(window.getSelection()?.toString()).toBe("claude auth login");
-    expect(words()).toContain("Cannot copy. The command is selected. Press Command-C to copy it.");
-
-    await advance(1600);
-
-    expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
-  });
-});
-
 describe("installing the skill", () => {
-  const INSTALL = "POST /setup/skill-install";
-  const INSTALL_PATH = "/setup/skill-install";
-  const SKILL = "Install the tasma skill in Claude Code";
+  const SKILL = "Install the tasma skill";
   const SKILL_AND_PROJECT = setupStatus({ project: "fail", workflow: "fail" }, { skill: "fail" });
   const ONLY_PROJECT = setupStatus({ project: "fail", workflow: "fail" });
   const ONLY_SKILL = setupStatus({}, { skill: "fail" });
-  const INSTALL_WORDS = "Install in Claude Code";
+  const INSTALL_WORDS = "Install the skill";
   const BUSY_WORDS = "Install in progress";
   const AGAIN_WORDS = "Try again";
   const STARTED = "Install in progress. This can take up to 2 minutes.";
-  const FAILED = "Tasma cannot install the skill. The output is in step 4, above the Try again button.";
-  const NO_NPX = "Tasma cannot find npx. The plugin commands are in step 4, above the Try again button.";
+  const FAILED = "Tasma cannot install the skill. The output is in step 3, above the Try again button.";
+  const NO_NPX = "Tasma cannot find npx. The plugin commands are in step 3, above the Try again button.";
   const OUTPUT = "npm error network request failed\nnpm error code ENOTFOUND";
   const OUTPUT_LINE = "Tasma cannot install the skill. The command gave this output:";
+  const CLAUDE_OUTPUT_LINE = "Tasma cannot install the skill for Claude. The command gave this output:";
   const FIRST_COMMAND = "/plugin marketplace add mubinov/tasma-skill";
   const SECOND_COMMAND = "/plugin install tasma@tasma";
   const CLAUDE_ONLY = { agents: ["claude"] };
   const CLAUDE_INSTALLED: SkillInstall = { result: "ended", agents: [{ agent: "claude", result: "installed" }] };
-  const CLAUDE_FAILED: SkillInstall = {
-    result: "ended",
-    agents: [{ agent: "claude", result: "failed", output: OUTPUT }, { agent: "codex", result: "installed" }],
-  };
+  const CLAUDE_FAILED: SkillInstall = { result: "ended", agents: [{ agent: "claude", result: "failed", output: OUTPUT }] };
   const CODEX_FAILED: SkillInstall = {
     result: "ended",
     agents: [{ agent: "claude", result: "installed" }, { agent: "codex", result: "failed", output: OUTPUT }],
   };
-
-  function installBodies(stub: ReturnType<typeof stubTransport>): unknown[] {
-    return stub.requests.filter(({ path }) => path === INSTALL_PATH).map(({ body }) => body);
-  }
 
   function installButton(name = INSTALL_WORDS): HTMLElement {
     return screen.getByRole("button", { name });
@@ -1305,7 +1146,7 @@ describe("installing the skill", () => {
   it("describes the install button by the first sentence, and the stop button by the whole text", async () => {
     await openAnswered(SKILL_AND_PROJECT);
 
-    const first = "If the skill is already in a different folder, Tasma cannot find it, and a second install makes Claude Code load two copies.";
+    const first = "If the skill is already in a different folder, Tasma cannot find it, and a second install makes the agent load two copies.";
 
     expect(descriptionOf(installButton())).toBe(first);
     expect(descriptionOf(screen.getByRole("button", { name: "Stop checking for the skill" })))
@@ -1362,7 +1203,7 @@ describe("installing the skill", () => {
     });
   });
 
-  it("reads the full status after installed, then shows Done and moves focus to the trigger of step 5", async () => {
+  it("reads the full status after installed, then shows Done and moves focus to the trigger of step 4", async () => {
     const { stub } = await openAnswered(SKILL_AND_PROJECT);
     const read = heldBack();
     const reads = countReads(stub, FULL);
@@ -1399,7 +1240,7 @@ describe("installing the skill", () => {
     expect(again.getAttribute("aria-disabled")).toBe("false");
     expect(screen.getByRole("button", { name: `${SKILL}, Cannot install` })).toBeTruthy();
 
-    const box = screen.getByRole("group", { name: OUTPUT_LINE });
+    const box = screen.getByRole("group", { name: CLAUDE_OUTPUT_LINE });
 
     expect(box.textContent).toBe(OUTPUT);
     expect(box.tagName).toBe("PRE");
@@ -1411,8 +1252,25 @@ describe("installing the skill", () => {
     stub.replies[INSTALL] = heldBack().reply;
     await userEvent.click(again);
 
-    expect(screen.queryByRole("group", { name: OUTPUT_LINE })).toBeNull();
+    expect(screen.queryByRole("group", { name: CLAUDE_OUTPUT_LINE })).toBeNull();
     expect(installBodies(stub)).toEqual([CLAUDE_ONLY, CLAUDE_ONLY]);
+  });
+
+  it("shows one output block for each agent of an install that installed nothing", async () => {
+    const both = setupStatus({ project: "fail", workflow: "fail", agents: [agentEntry("claude", { skill: "fail" }), agentEntry("codex", { skill: "fail" })] });
+    const { stub } = await openAnswered(both);
+
+    await press(stub, successReply({
+      result: "ended",
+      agents: [{ agent: "claude", result: "failed", output: OUTPUT }, { agent: "codex", result: "failed", output: "no network" }],
+    }));
+    await screen.findByRole("button", { name: AGAIN_WORDS });
+
+    expect(screen.getByRole("button", { name: `${SKILL}, Cannot install` })).toBeTruthy();
+    expect(screen.getByRole("group", { name: CLAUDE_OUTPUT_LINE }).textContent).toBe(OUTPUT);
+    expect(screen.getByRole("group", { name: "Tasma cannot install the skill for Codex. The command gave this output:" }).textContent)
+      .toBe("no network");
+    expect(words()).toContain(FAILED);
   });
 
   it("goes from Try again to the Copy of the output and then to the output box with Shift+Tab", async () => {
@@ -1422,7 +1280,7 @@ describe("installing the skill", () => {
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Copy" }));
 
     await userEvent.tab({ shift: true });
-    expect(document.activeElement).toBe(screen.getByRole("group", { name: OUTPUT_LINE }));
+    expect(document.activeElement).toBe(screen.getByRole("group", { name: CLAUDE_OUTPUT_LINE }));
   });
 
   it("copies the output, and describes its Copy by the line above the output", async () => {
@@ -1511,7 +1369,7 @@ describe("installing the skill", () => {
     expect(copies.map(descriptionOf)).toEqual([FIRST_COMMAND, SECOND_COMMAND]);
   });
 
-  it("says the end of the write with step 4 collapsed", async () => {
+  it("says the end of the write with step 3 collapsed", async () => {
     const { stub } = await openAnswered(SKILL_AND_PROJECT);
     const held = heldBack();
 
@@ -1531,7 +1389,7 @@ describe("installing the skill", () => {
     expect(screen.getByRole("group", { name: OUTPUT_LINE })).toBeTruthy();
   });
 
-  it("says the end of the write with step 5 open", async () => {
+  it("says the end of the write with step 4 open", async () => {
     const { stub } = await openAnswered(SKILL_AND_PROJECT);
     const held = heldBack();
 
@@ -1548,15 +1406,15 @@ describe("installing the skill", () => {
     expect(isOpen(SKILL)).toBe(false);
   });
 
-  it("keeps the panel open by hand while step 4 shows a result", async () => {
+  it("keeps the panel open by hand while step 3 shows a result", async () => {
     const stub = await openFailed();
 
     (document.activeElement as HTMLElement).blur();
-    await nextAnswer(stub, successReply(setupStatus({ project: "fail", workflow: "fail" }, { loggedIn: "fail", skill: "fail" })));
+    await nextAnswer(stub, successReply(setupStatus({ cli: "fail", project: "fail", workflow: "fail" }, { skill: "fail" })));
 
-    expect(trigger("Log in to Claude Code").getAttribute("aria-current")).toBe("step");
+    expect(trigger("Add the tasma command").getAttribute("aria-current")).toBe("step");
     expect(isOpen(SKILL)).toBe(true);
-    expect(screen.getByRole("group", { name: OUTPUT_LINE })).toBeTruthy();
+    expect(screen.getByRole("group", { name: CLAUDE_OUTPUT_LINE })).toBeTruthy();
   });
 
   it("says no end of the write and shows no result after Stop checking for the skill during the run", async () => {
@@ -1618,7 +1476,7 @@ describe("installing the skill", () => {
 
     expect(screen.getByRole("button", { name: `${SKILL}, Tasma does this` })).toBeTruthy();
     expect(installButton()).toBeTruthy();
-    expect(screen.queryByText(OUTPUT_LINE)).toBeNull();
+    expect(screen.queryByText(CLAUDE_OUTPUT_LINE)).toBeNull();
   });
 
   it("shows the install button again when the read after installed still fails", async () => {
@@ -1684,7 +1542,7 @@ describe("installing the skill", () => {
       useNoticeStore.setState({ notices: [], dismissed: new Map() });
     });
 
-    it("closes when step 4 changes to Done", async () => {
+    it("closes when step 3 changes to Done", async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       const { stub } = await failByTransport();
 
@@ -1706,7 +1564,7 @@ describe("installing the skill", () => {
       expect(noticeTitles()).toEqual([]);
     });
 
-    it("closes when step 4 changes to Done and the screen closes", async () => {
+    it("closes when step 3 changes to Done and the screen closes", async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       const { stub, router } = await failByTransport(ONLY_SKILL);
 
@@ -1751,17 +1609,42 @@ describe("installing the skill", () => {
     expect(screen.getByRole("button", { name: `${SKILL}, Tasma does this` })).toBeTruthy();
   });
 
-  it("sends the agents of the newest status, in its order", async () => {
-    const codex = { agent: "codex", installed: "pass", loggedIn: "pass", skill: "fail" } as const;
-    const { stub } = await openAnswered({ ...SKILL_AND_PROJECT, agents: [...SKILL_AND_PROJECT.agents, codex] });
+  it("installs for each ready agent, in the order of the status, and names them in its texts", async () => {
+    const both = setupStatus({ agents: [agentEntry("claude", { skill: "fail" }), agentEntry("codex", { skill: "fail" })] });
+    const { stub } = await openAnswered(both);
     const held = heldBack();
 
+    expect(screen.getByText("The skill lets Claude and Codex run workflow steps.")).toBeTruthy();
+
+    said = [];
     await press(stub, held.reply);
 
     expect(installBodies(stub)).toEqual([{ agents: ["claude", "codex"] }]);
+    expect(screen.getByText("Tasma downloads the skill from GitHub. This can take up to 4 minutes.")).toBeTruthy();
+    expect(words()).toEqual(["Install in progress. This can take up to 4 minutes."]);
 
     await act(async () => {
-      held.answer(successReply(CLAUDE_INSTALLED));
+      held.answer(successReply({ result: "ended", agents: [{ agent: "claude", result: "installed" }, { agent: "codex", result: "installed" }] }));
+    });
+  });
+
+  it("installs only for the ready agents", async () => {
+    const codexReady = setupStatus({
+      project: "fail",
+      workflow: "fail",
+      agents: [agentEntry("claude", { ...NOT_INSTALLED, skill: "fail" }), agentEntry("codex", { skill: "fail" })],
+    });
+    const { stub } = await openAnswered(codexReady);
+    const held = heldBack();
+
+    expect(screen.getByText("The skill lets Codex run workflow steps.")).toBeTruthy();
+
+    await press(stub, held.reply);
+
+    expect(installBodies(stub)).toEqual([{ agents: ["codex"] }]);
+
+    await act(async () => {
+      held.answer(successReply({ result: "ended", agents: [{ agent: "codex", result: "installed" }] }));
     });
   });
 
@@ -1775,18 +1658,41 @@ describe("installing the skill", () => {
     expect(screen.getByRole("group", { name: OUTPUT_LINE }).textContent).toBe(OUTPUT);
   });
 
-  it("shows no result of a failed Codex entry next to an installed Claude", async () => {
-    const { stub } = await openAnswered(SKILL_AND_PROJECT);
+  describe("a failed Codex entry next to an installed Claude", () => {
+    const BOTH = setupStatus({ agents: [agentEntry("claude", { skill: "fail" }), agentEntry("codex", { skill: "fail" })] });
 
-    said = [];
-    await press(stub, successReply(CODEX_FAILED));
-    await waitFor(() => {
-      expect(installButton()).toBeTruthy();
+    beforeEach(() => {
+      useNoticeStore.setState({ notices: [], dismissed: new Map() });
     });
 
-    expect(screen.getByRole("button", { name: `${SKILL}, Tasma does this` })).toBeTruthy();
-    expect(screen.queryByText(OUTPUT_LINE)).toBeNull();
-    expect(words()).toEqual([STARTED]);
+    afterEach(() => {
+      useNoticeStore.setState({ notices: [], dismissed: new Map() });
+    });
+
+    it("opens the notice of Codex, which stays after step 3 changes to Done and after the screen closes", async () => {
+      const { stub, router } = await openAnswered(BOTH);
+
+      stub.replies[FULL] = successReply(setupStatus({ agents: [agentEntry("claude"), agentEntry("codex", { skill: "fail" })] }));
+      said = [];
+      await press(stub, successReply(CODEX_FAILED));
+
+      await waitFor(() => {
+        expect(screen.getByText(SKILL).closest("button")).toBeNull();
+      });
+      expect(useNoticeStore.getState().notices).toEqual([expect.objectContaining({
+        key: "skill-install-failure:codex",
+        title: "Cannot install the skill for Codex",
+        line: "The skill is installed for Claude. Codex needs it to run workflow steps.",
+      })]);
+      expect(words()).not.toContain(FAILED);
+      expect(screen.queryByText(OUTPUT_LINE)).toBeNull();
+
+      await waitFor(() => {
+        expect(router.state.location.pathname).toBe("/tasks");
+      }, { timeout: 3000 });
+
+      expect(useNoticeStore.getState().notices.map(({ key }) => key)).toEqual(["skill-install-failure:codex"]);
+    });
   });
 });
 
@@ -1802,12 +1708,12 @@ describe("adding the project and the workflow", () => {
   const GONE = refusalReply(404, { kind: "store", code: "project-not-found", message: "no project ORBI" });
   const PROJECT_NEEDED = setupStatus({ project: "fail", workflow: "fail" });
   const WORKFLOW_NEEDED = setupStatus({ workflow: "fail" });
-  const SKILL = "Install the tasma skill in Claude Code";
+  const SKILL = "Install the tasma skill";
   const PROJECT_STARTED = "Tasma adds the project.";
   const WORKFLOW_STARTED = "Tasma adds the workflow to orbit-notes.";
   const WORKFLOW_FAILED = "Tasma cannot add the workflow. store/path-taken · this path is not free";
-  const SHOWN = "Step 6 shows the reason and a Try again button.";
-  const OPEN_IT = "Open step 6 to read the reason and to try again.";
+  const SHOWN = "Step 5 shows the reason and a Try again button.";
+  const OPEN_IT = "Open step 5 to read the reason and to try again.";
   const LIST_FAILED = "Tasma cannot read your projects. It tries again every 5 seconds.";
 
   function writes(stub: ReturnType<typeof stubTransport>): { key: string; body: unknown }[] {
@@ -1853,7 +1759,7 @@ describe("adding the project and the workflow", () => {
 
     await renderWithRouter("/", stub.transport);
     await waitFor(() => {
-      expect(screen.getByText(/of 6 done/)).toBeTruthy();
+      expect(screen.getByText(/of 5 done/)).toBeTruthy();
     });
 
     return stub;
@@ -2065,7 +1971,7 @@ describe("adding the project and the workflow", () => {
     );
   });
 
-  it("changes step 5 to Done before a status read answers, starts the workflow write, and starts no second pick", async () => {
+  it("changes step 4 to Done before a status read answers, starts the workflow write, and starts no second pick", async () => {
     const read = heldBack();
     const install = heldBack();
     const { stub } = await pickWith(PROJECT_NEEDED, {
@@ -2156,7 +2062,7 @@ describe("adding the project and the workflow", () => {
     expect(screen.queryByText(/Tasma cannot add/)).toBeNull();
   });
 
-  it("shows a failed install in step 6 before a status read answers, keeps the project, and succeeds on Try again", async () => {
+  it("shows a failed install in step 5 before a status read answers, keeps the project, and succeeds on Try again", async () => {
     const read = heldBack();
     const { stub } = await pickWith(PROJECT_NEEDED, {
       [CREATE]: successReply(ORBIT),
@@ -2200,7 +2106,7 @@ describe("adding the project and the workflow", () => {
     expect(button("Try again")).toBeTruthy();
   });
 
-  it("returns step 5 to its start state when a later status gives project fail", async () => {
+  it("returns step 4 to its start state when a later status gives project fail", async () => {
     const { stub } = await pickWith(PROJECT_NEEDED, {
       [CREATE]: successReply(ORBIT),
       [INSTALL_DEV]: TAKEN,
@@ -2250,7 +2156,7 @@ describe("adding the project and the workflow", () => {
     });
   });
 
-  it("says only the failure when project-not-found returns step 5 to its start state", async () => {
+  it("says only the failure when project-not-found returns step 4 to its start state", async () => {
     await pickWith(PROJECT_NEEDED, {
       [CREATE]: successReply(ORBIT),
       [INSTALL_DEV]: INSTALLED,
@@ -2371,10 +2277,10 @@ describe("adding the project and the workflow", () => {
     });
   });
 
-  describe("a failure of step 6 while steps 1 to 4 are not done", () => {
+  describe("a failure of step 5 while steps 1 to 3 are not done", () => {
     const SKILL_AND_PROJECT = setupStatus({ project: "fail", workflow: "fail" }, { skill: "fail" });
 
-    /** Opens step 5 by hand, with an install that the test answers after step 5 is done. */
+    /** Opens step 4 by hand, with an install that the test answers after step 4 is done. */
     async function openWithWrites() {
       const opened = await openAnswered(SKILL_AND_PROJECT);
       const install = heldBack();
@@ -2396,7 +2302,7 @@ describe("adding the project and the workflow", () => {
       });
     }
 
-    it("leaves step 6 closed after a press with focus on the button, and says to open it", async () => {
+    it("leaves step 5 closed after a press with focus on the button, and says to open it", async () => {
       const { install } = await openWithWrites();
 
       await userEvent.click(button("Choose folder"));
@@ -2414,7 +2320,7 @@ describe("adding the project and the workflow", () => {
       expect(trigger("Add a workflow").getAttribute("aria-label")).toBe("Add a workflow, Cannot add");
     });
 
-    it("opens step 6 and scrolls it into view after a press with no focus on the button", async () => {
+    it("opens step 5 and scrolls it into view after a press with no focus on the button", async () => {
       const scrollIntoView = stubScrollIntoView();
       const { install } = await openWithWrites();
 
@@ -2596,7 +2502,7 @@ describe("focus", () => {
     await userEvent.keyboard("{Enter}");
 
     await waitFor(() => {
-      expect(document.activeElement).toBe(trigger("Install the tasma skill in Claude Code"));
+      expect(document.activeElement).toBe(trigger("Install the tasma skill"));
     });
   });
 
@@ -2607,14 +2513,14 @@ describe("focus", () => {
     await nextAnswer(stub, successReply(setupStatus({ workflow: "fail" }, { skill: "fail" })));
 
     await waitFor(() => {
-      expect(document.activeElement).toBe(trigger("Install the tasma skill in Claude Code"));
+      expect(document.activeElement).toBe(trigger("Install the tasma skill"));
     });
   });
 
   it("moves to the h1 when the step that held focus changes to done and no step is current", async () => {
     const { stub } = await openAnswered(setupStatus({ project: "not-run", workflow: "fail" }, { skill: "fail" }));
 
-    trigger("Install the tasma skill in Claude Code").focus();
+    trigger("Install the tasma skill").focus();
     await nextAnswer(stub, successReply(setupStatus({ project: "not-run", workflow: "fail" })));
 
     await waitFor(() => {
@@ -2627,15 +2533,15 @@ describe("focus", () => {
     await renderWithRouter("/", stub.transport);
 
     await waitFor(() => {
-      expect(trigger("Install the Claude Code CLI")).toBeTruthy();
+      expect(trigger("Set up a coding agent")).toBeTruthy();
     });
-    await userEvent.click(trigger("Install the Claude Code CLI"));
+    await userEvent.click(trigger("Set up a coding agent"));
     screen.getByRole("button", { name: "Check again" }).focus();
     stub.replies[FULL] = successReply(NEW_MACHINE);
     await userEvent.keyboard("{Enter}");
 
     await waitFor(() => {
-      expect(document.activeElement).toBe(trigger("Install the Claude Code CLI"));
+      expect(document.activeElement).toBe(trigger("Set up a coding agent"));
     });
   });
 
@@ -2646,5 +2552,187 @@ describe("focus", () => {
     await nextAnswer(stub, successReply(setupStatus({ project: "fail", workflow: "fail" })));
 
     expect(document.activeElement).toBe(trigger("Add a workflow"));
+  });
+});
+
+/** A start read that opens the screen, whose full reads then decide. */
+const GATE = startOf(setupStatus({ workflow: "fail" }));
+
+describe("the agents of step 1", () => {
+  const ROWS_LINE = "Tasma runs your workflows with a coding agent. One agent is enough.";
+
+  function agentRows(): HTMLElement[] {
+    const list = screen.getAllByRole("list").find(({ tagName }) => tagName === "UL")!;
+
+    return within(list).getAllByRole("listitem");
+  }
+
+  it("shows one row for each agent of the status, with its name, its state and its button", async () => {
+    await openAnswered(setupStatus({ agents: [agentEntry("claude", NOT_INSTALLED), agentEntry("codex", { loggedIn: "fail" })] }), GATE);
+
+    expect(isOpen("Set up a coding agent")).toBe(true);
+    expect(screen.getByText(ROWS_LINE)).toBeTruthy();
+    expect(agentRows().map(({ textContent }) => textContent)).toEqual([
+      "ClaudeNot installed.Set up Claude",
+      "CodexInstalled. Not logged in.Set up Codex",
+    ]);
+    expect(descriptionOf(screen.getByRole("button", { name: "Set up Claude" }))).toBe("Not installed.");
+    expect(descriptionOf(screen.getByRole("button", { name: "Set up Codex" }))).toBe("Installed. Not logged in.");
+  });
+
+  it.each([
+    ["Not installed.", NOT_INSTALLED],
+    ["Tasma cannot check if it is installed.", { installed: "unknown", loggedIn: "not-run" }],
+    ["Installed. Not logged in.", { loggedIn: "fail" }],
+    ["Installed. Tasma cannot check the login.", { loggedIn: "unknown" }],
+  ] as const)("shows one row with one agent, with the state line \"%s\"", async (line, checks) => {
+    await openAnswered(setupStatus({ project: "fail", workflow: "fail" }, checks), GATE);
+
+    expect(agentRows()).toHaveLength(1);
+    expect(descriptionOf(screen.getByRole("button", { name: "Set up Claude" }))).toBe(line);
+  });
+
+  it("shows the rows and Check again when step 1 cannot be checked", async () => {
+    await openAnswered(setupStatus({ project: "fail", workflow: "fail" }, { installed: "unknown", loggedIn: "not-run" }), GATE);
+
+    expect(trigger("Set up a coding agent").getAttribute("aria-label")).toBe("Set up a coding agent, Cannot check");
+    expect(screen.getByText(ROWS_LINE)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Set up Claude" })).toBeTruthy();
+    expect(screen.getByText("Tasma cannot check this now.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
+  });
+
+  it("shows only Check again when no full read answered", async () => {
+    const stub = stubTransport({ [START]: successReply(startOf(NEW_MACHINE)), [FULL]: REFUSED });
+    await renderWithRouter("/", stub.transport);
+
+    await screen.findByText(READ_FAILED);
+    await userEvent.click(trigger("Set up a coding agent"));
+
+    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
+    expect(screen.queryByText(ROWS_LINE)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Set up Claude" })).toBeNull();
+  });
+
+  it.each([
+    ["Codex", "Claude", CODEX_SET_UP],
+    ["Claude", "Codex", setupStatus({ agents: [agentEntry("claude"), agentEntry("codex", NOT_INSTALLED)] })],
+  ])("completes setup when only %s is ready, without %s", async (_ready, _missing, status) => {
+    const { stub, router } = await openAnswered(setupStatus({ agents: [agentEntry("claude", NOT_INSTALLED), agentEntry("codex", NOT_INSTALLED)] }), GATE);
+
+    expect(trigger("Set up a coding agent").getAttribute("aria-current")).toBe("step");
+
+    await nextAnswer(stub, successReply(status));
+
+    expect(screen.getByText("Set up a coding agent").closest("button")).toBeNull();
+    expect(screen.getByText("5 of 5 done")).toBeTruthy();
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/tasks");
+    }, { timeout: 3000 });
+  });
+});
+
+describe("the dialog of an agent", () => {
+  /** Claude is not installed, and Codex is installed but not logged in. */
+  const CODEX_LOGIN = setupStatus({ agents: [agentEntry("claude", NOT_INSTALLED), agentEntry("codex", { loggedIn: "fail", skill: "fail" })] });
+  /** The same machine after the login of Codex. */
+  const CODEX_READY = setupStatus({ agents: [agentEntry("claude", NOT_INSTALLED), agentEntry("codex", { skill: "fail" })] });
+
+  /** The skill trigger of the screen, which the modal dialog hides from the accessibility tree. */
+  function screenSkillLabel(): string | null {
+    return document.querySelector("main [data-setup-step=\"skill\"] [data-setup-trigger]")!.getAttribute("aria-label");
+  }
+
+  it("opens from the row of Codex, with the title of Codex", async () => {
+    await openAnswered(CODEX_LOGIN, GATE);
+
+    await userEvent.click(screen.getByRole("button", { name: "Set up Codex" }));
+
+    expect(await screen.findByRole("dialog", { name: "Set up Codex" })).toBeTruthy();
+  });
+
+  it("makes step 3 of the screen show the install of the dialog while it runs", async () => {
+    const { stub } = await openAnswered(CODEX_LOGIN, GATE);
+    const held = heldBack();
+
+    await userEvent.click(screen.getByRole("button", { name: "Set up Codex" }));
+    const dialogPanel = await screen.findByRole("dialog", { name: "Set up Codex" });
+
+    await nextAnswer(stub, successReply(CODEX_READY));
+    stub.replies[INSTALL] = held.reply;
+    await userEvent.click(await within(dialogPanel).findByRole("button", { name: "Install in Codex" }));
+
+    expect(installBodies(stub)).toEqual([{ agents: ["codex"] }]);
+    expect(screenSkillLabel()).toBe("Install the tasma skill, Install in progress");
+
+    await act(async () => {
+      held.answer(successReply({ result: "ended", agents: [{ agent: "codex", result: "installed" }] }));
+    });
+  });
+
+  it("stops the 5-second read of the screen while it is open", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    const stub = stubTransport({ [START]: successReply(GATE), [FULL]: successReply(CODEX_LOGIN) });
+
+    await renderWithRouter("/", stub.transport);
+    await advance(20);
+    await user.click(screen.getByRole("button", { name: "Set up Codex" }));
+    await screen.findByRole("dialog", { name: "Set up Codex" });
+    await advance(1000);
+
+    const reads = countReads(stub, FULL);
+
+    await advance(10000);
+
+    expect(reads()).toBe(2);
+  });
+
+  it("keeps the screen open while it is open, and lets the screen close after it closes", async () => {
+    const { stub, router } = await openAnswered(CODEX_LOGIN, GATE);
+
+    await userEvent.click(screen.getByRole("button", { name: "Set up Codex" }));
+    const dialogPanel = await screen.findByRole("dialog", { name: "Set up Codex" });
+
+    said = [];
+    await nextAnswer(stub, successReply(CODEX_SET_UP));
+    await act(async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 1500);
+      });
+    });
+
+    expect(router.state.location.pathname).toBe("/setup");
+    expect(words()).not.toContain("Set up a coding agent: done.");
+    expect(words()).toContain("Codex is set up. Close this dialog to continue.");
+
+    await userEvent.click(within(dialogPanel).getByRole("button", { name: "Close" }));
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/tasks");
+    }, { timeout: 3000 });
+    await waitFor(() => {
+      expect(words()).toContain("Setup is complete.");
+    });
+  });
+
+  it("unmounts with the screen when a link moves the route while it is open after its opener left", async () => {
+    const { stub, router } = await openAnswered(CODEX_LOGIN, GATE);
+
+    await userEvent.click(screen.getByRole("button", { name: "Set up Codex" }));
+    await screen.findByRole("dialog", { name: "Set up Codex" });
+    await nextAnswer(stub, successReply(CODEX_SET_UP));
+
+    expect(screen.queryByRole("button", { name: "Set up Codex" })).toBeNull();
+
+    await act(async () => {
+      await router.navigate({ to: "/tasks" });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("navigation")).toBeTruthy();
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByText("tasma stopped rendering")).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { mutationOptions, type QueryClient } from "@tanstack/react-query";
+import { mutationOptions, useMutationState, type QueryClient } from "@tanstack/react-query";
 import {
   ProtocolError,
   type ChatAgent,
@@ -7,7 +7,7 @@ import {
   type SkillInstall,
   type StoreErrorCode,
 } from "@tasma/protocol";
-import { reopenNotice, useNoticeStore } from "../../store/notices";
+import { reopenNotice, useNoticeStore, type Notice } from "../../store/notices";
 import { daemonKeys } from "../queries";
 import { refusalWords, WriteError, type WriteFailure } from "./notices";
 
@@ -21,12 +21,29 @@ export type SkillInstallWrite = {
   failure: WriteFailure;
   /** The screen shows the install button, which the notice sends the user to. */
   offered: () => boolean;
+  /** The notice of an agent whose install failed while the install of the agents in `installed` succeeded. */
+  agentFailure: (agent: ChatAgent, installed: readonly ChatAgent[]) => Notice;
 };
 
 const SKILL_INSTALL_FAILURE_KEY = "skill-install-failure";
 
 export function closeSkillInstallFailure(): void {
   useNoticeStore.getState().closeNotice(SKILL_INSTALL_FAILURE_KEY);
+}
+
+/** The key of the notice of one agent, apart from the notice of a failed request. */
+export function skillAgentFailureKey(agent: ChatAgent): string {
+  return `${SKILL_INSTALL_FAILURE_KEY}:${agent}`;
+}
+
+const SKILL_INSTALL_KEY = [...daemonKeys.setup(), "skill-install"] as const;
+
+/** The agents of the skill install that runs. The screen and each dialog have their own install. */
+export function usePendingSkillInstall(): readonly ChatAgent[] | undefined {
+  return useMutationState({
+    filters: { mutationKey: SKILL_INSTALL_KEY, status: "pending" },
+    select: ({ state }) => (state.variables as SkillInstallWrite).agents,
+  })[0];
 }
 
 export type SkillInstallEnd = Exclude<SkillInstall, { result: "running" }>;
@@ -44,7 +61,7 @@ async function installToEnd(client: Client, agents: ChatAgent[]): Promise<SkillI
 
 export function installSkillOptions(queryClient: QueryClient, client: Client) {
   return mutationOptions<SkillInstallEnd, WriteError, SkillInstallWrite>({
-    mutationKey: [...daemonKeys.setup(), "skill-install"],
+    mutationKey: SKILL_INSTALL_KEY,
     mutationFn: async ({ agents }) => {
       try {
         return await installToEnd(client, agents);
@@ -54,10 +71,23 @@ export function installSkillOptions(queryClient: QueryClient, client: Client) {
     },
     // A write whose answer is lost may have been carried out.
     retry: 0,
-    onSuccess: () => {
+    // Here and not in a callback of `mutate`: an installed entry changes the skill step to Done during the status
+    // read below, and the step then resets its observer, which drops those callbacks.
+    onSuccess: (answer, { agentFailure }) => {
       closeSkillInstallFailure();
+      if (answer.result === "ended") {
+        const installed = answer.agents.filter(({ result }) => result === "installed").map(({ agent }) => agent);
 
-      // Returned, so step 4 goes from the run to Done with no idle state between them.
+        for (const { agent, result } of answer.agents) {
+          if (result === "installed") {
+            useNoticeStore.getState().closeNotice(skillAgentFailureKey(agent));
+          } else if (installed.length > 0) {
+            reopenNotice(agentFailure(agent, installed));
+          }
+        }
+      }
+
+      // Returned, so the skill step goes from the run to Done with no idle state between them.
       return queryClient.invalidateQueries({ queryKey: daemonKeys.setup() });
     },
     onError: (error, { failure, offered }) => {
@@ -134,7 +164,7 @@ export function addWorkflowOptions(queryClient: QueryClient, client: Client) {
       void queryClient.invalidateQueries({ queryKey: daemonKeys.workflows() });
       void queryClient.invalidateQueries({ queryKey: daemonKeys.workflowList() });
 
-      // Returned, so step 6 goes from the write to Done with no idle state between them.
+      // Returned, so the workflow step goes from the write to Done with no idle state between them.
       return queryClient.invalidateQueries({ queryKey: daemonKeys.setup() });
     },
     onError: (error) => {

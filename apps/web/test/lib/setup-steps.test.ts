@@ -1,25 +1,34 @@
 import { QueryClient } from "@tanstack/react-query";
 import type { AgentSetup, SetupCheck, SetupStatus, Success } from "@tasma/protocol";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { daemonKeys } from "../../src/api/queries";
 import {
-  claudeInstallOf,
+  agentSetUp,
+  agentSteps,
   currentStep,
   doneCount,
   fullReadsFailing,
   hasFullAnswer,
   hasFullFailure,
+  installMinutes,
+  installsNothing,
   isChangeToDone,
   newestSetup,
   screenNeeded,
   setupNeeded,
   setupSteps,
+  skillInstallState,
+  skillTargets,
+  stepInputNow,
   stepsNowDone,
+  type ScreenStepId,
   type SetupStep,
   type StepId,
   type StepInput,
+  type StepState,
 } from "../../src/lib/setup-steps";
-import { setupStatus, startOf } from "../helpers";
+import { useUiStore } from "../../src/store/ui";
+import { agentEntry, NOT_INSTALLED, setupStatus, startOf } from "../helpers";
 
 function input(overrides: Partial<StepInput> = {}): StepInput {
   return { status: setupStatus(), fullAnswered: true, fullFailed: false, skillCheckStopped: false, ...overrides };
@@ -29,10 +38,22 @@ function stepOf(steps: readonly SetupStep[], id: StepId): SetupStep {
   return steps.find((step) => step.id === id)!;
 }
 
+/** A status with Claude and Codex, and the checks of the machine. */
+function twoAgents(
+  claude: Partial<AgentSetup>,
+  codex: Partial<AgentSetup>,
+  checks: Partial<SetupStatus> = {},
+): SetupStatus {
+  return setupStatus({ ...checks, agents: [agentEntry("claude", claude), agentEntry("codex", codex)] });
+}
+
+function stateOf(status: SetupStatus, id: StepId): StepState {
+  return stepOf(setupSteps(input({ status })), id).state;
+}
+
 describe("setupNeeded", () => {
-  const FAILING: Record<StepId, SetupStatus> = {
-    install: setupStatus({}, { installed: "fail" }),
-    login: setupStatus({}, { loggedIn: "fail" }),
+  const FAILING: Record<ScreenStepId, SetupStatus> = {
+    agent: setupStatus({}, NOT_INSTALLED),
     command: setupStatus({ cli: "fail" }),
     skill: setupStatus({}, { skill: "fail" }),
     project: setupStatus({ project: "fail" }),
@@ -51,7 +72,7 @@ describe("setupNeeded", () => {
   it.each(steps)("is true when the check of %s fails", (_name, id) => {
     const status = FAILING[id];
 
-    expect(stepOf(setupSteps(input({ status })), id).state).toBe("to-do");
+    expect(stateOf(status, id)).toBe("to-do");
     expect(setupNeeded(status, false)).toBe(true);
   });
 
@@ -71,13 +92,27 @@ describe("setupNeeded", () => {
     expect(setupNeeded(setupStatus(checks, agent), false)).toBe(false);
   });
 
-  it("counts only the entry of Claude Code", () => {
-    const other = { agent: "codex", installed: "fail", loggedIn: "fail", skill: "fail" } as unknown as AgentSetup;
+  describe("the start gate with two agents", () => {
+    it("is false when the skill of Claude passes and the check of Codex did not run", () => {
+      expect(setupNeeded(startOf(twoAgents({}, { skill: "not-run" })), false)).toBe(false);
+    });
 
-    expect(setupNeeded(setupStatus({ agents: [other] }), false)).toBe(false);
-    expect(setupNeeded(setupStatus({ agents: [other, ...setupStatus({}, { skill: "fail" }).agents] }), false)).toBe(true);
-    expect(setupNeeded(setupStatus({ agents: [other, ...setupStatus({}, { installed: "fail" }).agents] }), false)).toBe(true);
-    expect(setupNeeded(setupStatus({ agents: [other, ...setupStatus({}, { loggedIn: "fail" }).agents] }), false)).toBe(true);
+    it("is true when the skill check of each agent fails", () => {
+      expect(setupNeeded(startOf(twoAgents({ skill: "fail" }, { skill: "fail" })), false)).toBe(true);
+    });
+
+    it("is false when one skill check is unknown and the other fails", () => {
+      expect(setupNeeded(startOf(twoAgents({ skill: "unknown" }, { skill: "fail" })), false)).toBe(false);
+    });
+
+    it("gives the result of one agent when only Claude is offered", () => {
+      expect(setupNeeded(startOf(setupStatus({}, { skill: "fail" })), false)).toBe(true);
+      expect(setupNeeded(startOf(setupStatus()), false)).toBe(false);
+    });
+  });
+
+  it("does not count a failed agent when another agent is ready with its skill", () => {
+    expect(setupNeeded(twoAgents({}, { ...NOT_INSTALLED, skill: "fail" }), false)).toBe(false);
   });
 });
 
@@ -106,20 +141,57 @@ describe("screenNeeded", () => {
   });
 });
 
-describe("claudeInstallOf", () => {
-  it("gives the Claude entry of an ended install, in any position", () => {
-    const claude = { agent: "claude", result: "failed", output: "an error of the command" } as const;
-
-    expect(claudeInstallOf({ result: "ended", agents: [{ agent: "codex", result: "installed" }, claude] })).toEqual(claude);
+describe("installsNothing", () => {
+  it("is false for an ended install with an installed entry", () => {
+    expect(installsNothing({
+      result: "ended",
+      agents: [{ agent: "codex", result: "failed", output: "an error" }, { agent: "claude", result: "installed" }],
+    })).toBe(false);
   });
 
-  it("gives nothing for an ended install with no Claude entry", () => {
-    expect(claudeInstallOf({ result: "ended", agents: [{ agent: "codex", result: "installed" }] })).toBeUndefined();
+  it("is true for an ended install with no installed entry", () => {
+    expect(installsNothing({ result: "ended", agents: [{ agent: "codex", result: "failed", output: "an error" }] })).toBe(true);
   });
 
-  it("gives the answer itself for a fault before the command of any agent", () => {
-    expect(claudeInstallOf({ result: "npx-missing" })).toEqual({ result: "npx-missing" });
-    expect(claudeInstallOf({ result: "failed", output: "the shell read failed" })).toEqual({ result: "failed", output: "the shell read failed" });
+  it("is true for a fault before the command of any agent", () => {
+    expect(installsNothing({ result: "npx-missing" })).toBe(true);
+    expect(installsNothing({ result: "failed", output: "the shell read failed" })).toBe(true);
+  });
+});
+
+describe("skillTargets", () => {
+  it("gives the ready agents, in the order of the status", () => {
+    expect(skillTargets(setupStatus({ agents: [agentEntry("codex"), agentEntry("claude")] }))).toEqual(["codex", "claude"]);
+  });
+
+  it("leaves out an agent that is not installed or not logged in", () => {
+    expect(skillTargets(twoAgents(NOT_INSTALLED, {}))).toEqual(["codex"]);
+    expect(skillTargets(twoAgents({}, { loggedIn: "fail" }))).toEqual(["claude"]);
+    expect(skillTargets(twoAgents({ loggedIn: "unknown" }, NOT_INSTALLED))).toEqual([]);
+  });
+});
+
+describe("skillInstallState", () => {
+  const RESULT = { answer: { result: "npx-missing" }, agents: ["codex"] } as const;
+
+  it("is running while an install of any place runs, also with a result of this place", () => {
+    expect(skillInstallState(true, undefined)).toBe("running");
+    expect(skillInstallState(true, RESULT)).toBe("running");
+  });
+
+  it("is cannot-install after an install of this place that installed nothing", () => {
+    expect(skillInstallState(false, RESULT)).toBe("cannot-install");
+  });
+
+  it("is none with no install and no result", () => {
+    expect(skillInstallState(false, undefined)).toBeUndefined();
+  });
+});
+
+describe("installMinutes", () => {
+  it("gives 2 minutes for each agent", () => {
+    expect(installMinutes(1)).toBe(2);
+    expect(installMinutes(2)).toBe(4);
   });
 });
 
@@ -236,23 +308,53 @@ describe("the full reads", () => {
   });
 });
 
+describe("stepInputNow", () => {
+  afterEach(() => {
+    useUiStore.setState({ skillCheckStopped: false });
+  });
+
+  it("is the newest answer, the full reads and the stored stop of the skill check", () => {
+    const queryClient = new QueryClient();
+    const failed = queryClient.getQueryCache().build(queryClient, { queryKey: [...daemonKeys.setup(), "full", true] });
+    const status = setupStatus({ project: "fail" });
+
+    queryClient.setQueryData([...daemonKeys.setup(), "full", undefined], { data: status, diagnostics: [] });
+    failed.setState({ ...failed.state, errorUpdateCount: 1, errorUpdatedAt: 1 });
+    useUiStore.setState({ skillCheckStopped: true });
+
+    expect(stepInputNow(queryClient)).toEqual({
+      status,
+      fullAnswered: true,
+      fullFailed: true,
+      skillCheckStopped: true,
+    });
+  });
+
+  it("has no status and no full read with an empty cache", () => {
+    expect(stepInputNow(new QueryClient())).toEqual({
+      status: undefined,
+      fullAnswered: false,
+      fullFailed: false,
+      skillCheckStopped: false,
+    });
+  });
+});
+
 describe("setupSteps", () => {
-  it("lists the 6 steps in the order in which they depend on each other", () => {
+  it("lists the 5 steps in the order in which they depend on each other", () => {
     expect(setupSteps(input()).map(({ number, name }) => [number, name])).toEqual([
-      [1, "Install the Claude Code CLI"],
-      [2, "Log in to Claude Code"],
-      [3, "Add the tasma command"],
-      [4, "Install the tasma skill in Claude Code"],
-      [5, "Add a project"],
-      [6, "Add a workflow"],
+      [1, "Set up a coding agent"],
+      [2, "Add the tasma command"],
+      [3, "Install the tasma skill"],
+      [4, "Add a project"],
+      [5, "Add a workflow"],
     ]);
   });
 
   it("gives each step its owner label", () => {
-    const fails = setupStatus({ cli: "fail", project: "fail", workflow: "fail" }, { installed: "fail", loggedIn: "fail", skill: "fail" });
+    const fails = setupStatus({ cli: "fail", project: "fail", workflow: "fail" }, { ...NOT_INSTALLED, skill: "fail" });
 
     expect(setupSteps(input({ status: fails })).map(({ label }) => label)).toEqual([
-      "You do this",
       "You do this",
       "Tasma does this",
       "Tasma does this",
@@ -262,7 +364,7 @@ describe("setupSteps", () => {
   });
 
   it("gives each step its owner, in every state", () => {
-    const owners = ["you", "you", "tasma", "tasma", "you", "tasma"];
+    const owners = ["you", "tasma", "tasma", "you", "tasma"];
 
     expect(setupSteps(input()).map(({ owner }) => owner)).toEqual(owners);
     expect(setupSteps(input({ status: undefined })).map(({ owner }) => owner)).toEqual(owners);
@@ -271,11 +373,11 @@ describe("setupSteps", () => {
   it("tells when the label names the owner", () => {
     const steps = setupSteps(input({ status: setupStatus({ project: "fail", workflow: "fail", cli: "unknown" }, { skill: "not-run" }) }));
 
-    expect(steps.map(({ labelIsOwner }) => labelIsOwner)).toEqual([false, false, false, false, true, true]);
+    expect(steps.map(({ labelIsOwner }) => labelIsOwner)).toEqual([false, false, false, true, true]);
   });
 
   describe("the state table, in its order", () => {
-    it("a: step 4 reads as not checked after the check stopped, whatever the answer says", () => {
+    it("a: step 3 reads as not checked after the check stopped, whatever the answer says", () => {
       for (const skill of ["pass", "fail", "unknown", "not-run"] as const) {
         const step = stepOf(setupSteps(input({ status: setupStatus({}, { skill }), skillCheckStopped: true })), "skill");
 
@@ -284,8 +386,8 @@ describe("setupSteps", () => {
       }
     });
 
-    it("a: step 4 also wins over no entry of Claude Code", () => {
-      expect(stepOf(setupSteps(input({ status: setupStatus({ agents: [] }), skillCheckStopped: true })), "skill").state).toBe("stopped");
+    it("a: step 3 also wins over no status", () => {
+      expect(stepOf(setupSteps(input({ status: undefined, skillCheckStopped: true })), "skill").state).toBe("stopped");
     });
 
     it("b: a pass is done", () => {
@@ -295,22 +397,22 @@ describe("setupSteps", () => {
       }
     });
 
-    it("c: steps 1 to 3 are in progress with no full answer and no failed read", () => {
+    it("c: steps 1 and 2 are in progress with no full answer and no failed read", () => {
       const steps = setupSteps(input({ fullAnswered: false, status: startOf(setupStatus()) }));
 
-      for (const id of ["install", "login", "command"] as const) {
+      for (const id of ["agent", "command"] as const) {
         expect(stepOf(steps, id).state).toBe("in-progress");
         expect(stepOf(steps, id).label).toBe("Check in progress");
       }
     });
 
-    it("b wins over c: a step that passed in the start answer is done", () => {
+    it("b wins over c: a step that passed in the answer is done", () => {
       const steps = setupSteps(input({ fullAnswered: false }));
 
-      expect(stepOf(steps, "install").state).toBe("done");
+      expect(stepOf(steps, "agent").state).toBe("done");
     });
 
-    it("c applies only to steps 1 to 3", () => {
+    it("c applies only to steps 1 and 2", () => {
       const steps = setupSteps(input({ fullAnswered: false, status: setupStatus({ project: "fail" }, { skill: "fail" }) }));
 
       expect(stepOf(steps, "skill").state).toBe("to-do");
@@ -324,29 +426,16 @@ describe("setupSteps", () => {
       expect(stepOf(steps, "project").label).toBe("Cannot check");
     });
 
-    it("d: with no entry of Claude Code, steps 1, 2 and 4 cannot be checked", () => {
-      const steps = setupSteps(input({ status: setupStatus({ agents: [] }) }));
-
-      expect(["install", "login", "skill"].map((id) => stepOf(steps, id as StepId).state)).toEqual(["cannot-check", "cannot-check", "cannot-check"]);
-      expect(stepOf(steps, "command").state).toBe("done");
-    });
-
-    it("d: steps 1 to 3 cannot be checked after a failed read with no full answer", () => {
+    it("d: steps 1 and 2 cannot be checked after a failed read with no full answer", () => {
       const steps = setupSteps(input({
         fullAnswered: false,
         fullFailed: true,
         status: startOf(setupStatus()),
       }));
 
-      for (const id of ["install", "login", "command"] as const) {
+      for (const id of ["agent", "command"] as const) {
         expect(stepOf(steps, id).state).toBe("cannot-check");
       }
-    });
-
-    it("c wins over d: with no full answer, no entry of Claude Code is still in progress", () => {
-      const steps = setupSteps(input({ fullAnswered: false, status: setupStatus({ agents: [] }) }));
-
-      expect(stepOf(steps, "install").state).toBe("in-progress");
     });
 
     it("d wins over e: unknown of a step that waits cannot be checked", () => {
@@ -356,19 +445,19 @@ describe("setupSteps", () => {
       expect(stepOf(steps, "workflow").state).toBe("cannot-check");
     });
 
-    it("e: step 2 waits for step 1, and takes the owner label", () => {
-      const step = stepOf(setupSteps(input({ status: setupStatus({}, { installed: "fail", loggedIn: "not-run" }) })), "login");
+    it("e: step 3 waits for step 1, and takes the owner label", () => {
+      const step = stepOf(setupSteps(input({ status: setupStatus({}, { ...NOT_INSTALLED, skill: "fail" }) })), "skill");
 
       expect(step.state).toBe("waits");
-      expect(step.label).toBe("You do this");
-      expect(step.waitsFor).toEqual({ number: 1, name: "Install the Claude Code CLI" });
+      expect(step.label).toBe("Tasma does this");
+      expect(step.waitsFor).toEqual({ number: 1, name: "Set up a coding agent" });
     });
 
-    it("e: step 6 waits for step 5", () => {
+    it("e: step 5 waits for step 4", () => {
       const step = stepOf(setupSteps(input({ status: setupStatus({ project: "fail", workflow: "fail" }) })), "workflow");
 
       expect(step.state).toBe("waits");
-      expect(step.waitsFor).toEqual({ number: 5, name: "Add a project" });
+      expect(step.waitsFor).toEqual({ number: 4, name: "Add a project" });
     });
 
     it("e wins over f: not-run of a step that waits waits", () => {
@@ -394,11 +483,55 @@ describe("setupSteps", () => {
     it("reads as cannot-check with no status at all", () => {
       const steps = setupSteps(input({ status: undefined }));
 
-      expect(steps.map(({ state }) => state)).toEqual(Array<string>(6).fill("cannot-check"));
+      expect(steps.map(({ state }) => state)).toEqual(Array<string>(5).fill("cannot-check"));
     });
   });
 
-  describe("the label of step 4 and the write", () => {
+  describe("step 1, over the agents of the status", () => {
+    it("is done when one agent is ready, whichever agent it is", () => {
+      expect(stateOf(twoAgents(NOT_INSTALLED, {}), "agent")).toBe("done");
+      expect(stateOf(twoAgents({}, NOT_INSTALLED), "agent")).toBe("done");
+    });
+
+    it("is to do when each agent fails its install or its login", () => {
+      expect(stateOf(twoAgents(NOT_INSTALLED, { loggedIn: "fail" }), "agent")).toBe("to-do");
+    });
+
+    it("cannot be checked when an install or a login check is unknown and no agent is ready", () => {
+      expect(stateOf(twoAgents(NOT_INSTALLED, { installed: "unknown", loggedIn: "not-run" }), "agent")).toBe("cannot-check");
+      expect(stateOf(twoAgents(NOT_INSTALLED, { loggedIn: "unknown" }), "agent")).toBe("cannot-check");
+    });
+
+    it("did not run when no check decides", () => {
+      expect(stateOf(startOf(setupStatus()), "agent")).toBe("not-run");
+      expect(stateOf(startOf(twoAgents(NOT_INSTALLED, {})), "agent")).toBe("not-run");
+    });
+  });
+
+  describe("step 3, over the agents of the status", () => {
+    it("counts only the skill of a ready agent", () => {
+      expect(stateOf(twoAgents({ ...NOT_INSTALLED, skill: "pass" }, { skill: "fail" }), "skill")).toBe("to-do");
+    });
+
+    it("is done when one ready agent has the skill", () => {
+      expect(stateOf(twoAgents({ skill: "fail" }, { skill: "pass" }), "skill")).toBe("done");
+    });
+
+    it("counts the skill of each agent when no agent is ready", () => {
+      expect(stateOf(twoAgents(NOT_INSTALLED, { ...NOT_INSTALLED, skill: "fail" }), "skill")).toBe("done");
+      expect(stateOf(twoAgents({ ...NOT_INSTALLED, skill: "fail" }, { ...NOT_INSTALLED, skill: "fail" }), "skill")).toBe("waits");
+    });
+
+    it("cannot be checked when a check is unknown and none passes", () => {
+      expect(stateOf(twoAgents({ skill: "unknown" }, { skill: "fail" }), "skill")).toBe("cannot-check");
+    });
+
+    it("did not run when no check decides", () => {
+      expect(stateOf(twoAgents({ skill: "not-run" }, { skill: "fail" }), "skill")).toBe("not-run");
+    });
+  });
+
+  describe("the label of step 3 and the write", () => {
     const FAILS = setupStatus({}, { skill: "fail" });
 
     it("names the owner when the write has not started", () => {
@@ -430,14 +563,14 @@ describe("setupSteps", () => {
     });
 
     it.each(["running", "cannot-install"] as const)("changes no other step with %s", (skillInstall) => {
-      const fails = setupStatus({ cli: "fail", project: "fail", workflow: "fail" }, { installed: "fail", loggedIn: "fail", skill: "fail" });
+      const fails = setupStatus({ cli: "fail", project: "fail", workflow: "fail" }, { loggedIn: "fail", skill: "fail" });
       const labels = setupSteps(input({ status: fails, skillInstall })).map(({ label }) => label);
 
-      expect(labels.toSpliced(3, 1)).toEqual(["You do this", "You do this", "Tasma does this", "You do this", "Tasma does this"]);
+      expect(labels.toSpliced(2, 1)).toEqual(["You do this", "Tasma does this", "You do this", "Tasma does this"]);
     });
   });
 
-  describe("step 5 and the project that the app added", () => {
+  describe("step 4 and the project that the app added", () => {
     it("is done while the status does not see the project yet", () => {
       const steps = setupSteps(input({ status: setupStatus({ project: "fail", workflow: "fail" }), projectAdded: true }));
 
@@ -446,7 +579,7 @@ describe("setupSteps", () => {
       expect(stepOf(steps, "workflow").state).toBe("to-do");
     });
 
-    it("is done also when the check of step 5 is unknown or did not run", () => {
+    it("is done also when the check of step 4 is unknown or did not run", () => {
       for (const project of ["unknown", "not-run"] as const) {
         const steps = setupSteps(input({ status: setupStatus({ project, workflow: "fail" }), projectAdded: true }));
 
@@ -454,7 +587,7 @@ describe("setupSteps", () => {
       }
     });
 
-    it("leaves step 6 done when its check passes", () => {
+    it("leaves step 5 done when its check passes", () => {
       const steps = setupSteps(input({ status: setupStatus({ project: "fail" }), projectAdded: true }));
 
       expect(stepOf(steps, "workflow").state).toBe("done");
@@ -468,7 +601,7 @@ describe("setupSteps", () => {
     });
   });
 
-  describe("the label of step 6 and the write", () => {
+  describe("the label of step 5 and the write", () => {
     const FAILS = setupStatus({ workflow: "fail" });
 
     it("names the owner when the write has not started", () => {
@@ -499,10 +632,10 @@ describe("setupSteps", () => {
     });
 
     it.each(["running", "cannot-add"] as const)("changes no other step with %s", (workflowWrite) => {
-      const fails = setupStatus({ cli: "fail", workflow: "fail" }, { installed: "fail", loggedIn: "fail", skill: "fail" });
+      const fails = setupStatus({ cli: "fail", workflow: "fail" }, { loggedIn: "fail", skill: "fail" });
       const labels = setupSteps(input({ status: fails, workflowWrite })).map(({ label }) => label);
 
-      expect(labels.slice(0, 5)).toEqual(["You do this", "You do this", "Tasma does this", "Tasma does this", "Done"]);
+      expect(labels.slice(0, 4)).toEqual(["You do this", "Tasma does this", "Tasma does this", "Done"]);
     });
   });
 
@@ -510,13 +643,81 @@ describe("setupSteps", () => {
     const opens = (checks: Partial<StepInput>, id: StepId): boolean => stepOf(setupSteps(input(checks)), id).canOpen;
 
     expect(opens({}, "project")).toBe(false);
-    expect(opens({ fullAnswered: false, status: setupStatus({}, { installed: "not-run" }) }, "install")).toBe(false);
+    expect(opens({ fullAnswered: false, status: startOf(setupStatus()) }, "agent")).toBe(false);
     expect(opens({ skillCheckStopped: true }, "skill")).toBe(true);
     expect(opens({ status: setupStatus({ project: "unknown" }) }, "project")).toBe(true);
     expect(opens({ status: setupStatus({ project: "fail" }) }, "workflow")).toBe(false);
     expect(opens({ status: setupStatus({ project: "fail", workflow: "fail" }) }, "workflow")).toBe(true);
     expect(opens({ status: setupStatus({}, { skill: "not-run" }) }, "skill")).toBe(true);
     expect(opens({ status: setupStatus({ project: "fail" }) }, "project")).toBe(true);
+  });
+});
+
+describe("agentSteps", () => {
+  it("lists the 3 steps of Claude, with its texts and owners", () => {
+    expect(agentSteps("claude", input()).map(({ number, name, owner }) => [number, name, owner])).toEqual([
+      [1, "Install the Claude Code CLI", "you"],
+      [2, "Log in to Claude Code", "you"],
+      [3, "Install the tasma skill in Claude Code", "tasma"],
+    ]);
+  });
+
+  it("lists the 3 steps of Codex, with its texts", () => {
+    expect(agentSteps("codex", input()).map(({ name }) => name)).toEqual([
+      "Install the Codex CLI",
+      "Log in to Codex",
+      "Install the tasma skill in Codex",
+    ]);
+  });
+
+  it("takes the states from the entry of its agent", () => {
+    const status = twoAgents({}, { ...NOT_INSTALLED, skill: "fail" });
+
+    expect(agentSteps("claude", input({ status })).map(({ state }) => state)).toEqual(["done", "done", "done"]);
+    expect(agentSteps("codex", input({ status })).map(({ state }) => state)).toEqual(["to-do", "waits", "waits"]);
+  });
+
+  it("makes step 2 wait for step 1, and step 3 for step 2", () => {
+    const steps = agentSteps("claude", input({ status: setupStatus({}, { loggedIn: "fail", skill: "fail" }) }));
+
+    expect(steps.map(({ state }) => state)).toEqual(["done", "to-do", "waits"]);
+    expect(steps[2]!.waitsFor).toEqual({ number: 2, name: "Log in to Claude Code" });
+  });
+
+  it("shows steps 1 and 2 in progress before the first full answer", () => {
+    const steps = agentSteps("codex", input({ fullAnswered: false, status: startOf(twoAgents({}, {})) }));
+
+    expect(steps.map(({ state }) => state)).toEqual(["in-progress", "in-progress", "done"]);
+  });
+
+  it("cannot check a step whose check is unknown", () => {
+    const steps = agentSteps("claude", input({ status: setupStatus({}, { installed: "unknown", loggedIn: "not-run" }) }));
+
+    expect(steps[0]!.state).toBe("cannot-check");
+  });
+
+  it("shows step 3 as not checked after the check stopped, and with the label of the write", () => {
+    const stopped = agentSteps("claude", input({ skillCheckStopped: true }));
+    const running = agentSteps("claude", input({ status: setupStatus({}, { skill: "fail" }), skillInstall: "running" }));
+
+    expect(stopped[2]!.state).toBe("stopped");
+    expect(running[2]!.label).toBe("Install in progress");
+  });
+});
+
+describe("agentSetUp", () => {
+  it("is true when each step is done", () => {
+    expect(agentSetUp(agentSteps("codex", input({ status: twoAgents({}, {}) })))).toBe(true);
+  });
+
+  it("is true when the skill check stopped after the install and the login are done", () => {
+    expect(agentSetUp(agentSteps("codex", input({ status: twoAgents({}, { skill: "fail" }), skillCheckStopped: true })))).toBe(true);
+  });
+
+  it("is false while a step is not done", () => {
+    expect(agentSetUp(agentSteps("codex", input({ status: twoAgents({}, { skill: "fail" }) })))).toBe(false);
+    expect(agentSetUp(agentSteps("codex", input({ status: twoAgents({}, { loggedIn: "fail" }), skillCheckStopped: true })))).toBe(false);
+    expect(agentSetUp(agentSteps("codex", input({ status: twoAgents({}, NOT_INSTALLED) })))).toBe(false);
   });
 });
 
@@ -547,7 +748,7 @@ describe("currentStep", () => {
       status: startOf(setupStatus()),
     }));
 
-    expect(currentStep(steps)?.id).toBe("install");
+    expect(currentStep(steps)?.id).toBe("agent");
   });
 
   it("is a step that cannot be checked", () => {
@@ -571,9 +772,9 @@ describe("doneCount", () => {
   it("counts only the steps that are done", () => {
     const check: SetupCheck = "fail";
 
-    expect(doneCount(setupSteps(input()))).toBe(6);
-    expect(doneCount(setupSteps(input({ status: setupStatus({ project: check, workflow: check }) })))).toBe(4);
-    expect(doneCount(setupSteps(input({ skillCheckStopped: true })))).toBe(5);
+    expect(doneCount(setupSteps(input()))).toBe(5);
+    expect(doneCount(setupSteps(input({ status: setupStatus({ project: check, workflow: check }) })))).toBe(3);
+    expect(doneCount(setupSteps(input({ skillCheckStopped: true })))).toBe(4);
   });
 });
 

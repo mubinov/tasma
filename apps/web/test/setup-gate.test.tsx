@@ -8,11 +8,13 @@ import { createAppRouter } from "../src/routes";
 import { useUiStore } from "../src/store/ui";
 import {
   advance,
+  agentEntry,
   completeSetup,
   heldBack,
   refusalReply,
   renderWithRouter,
   setupStatus,
+  startOf,
   stubTransport,
   successReply,
   testContext,
@@ -56,6 +58,22 @@ it("opens the setup screen on an empty tree, with no sidebar", async () => {
   expect(router.state.location.pathname).toBe("/setup");
   expect(screen.getByRole("heading", { level: 1, name: "Set up Tasma" })).toBeTruthy();
   expect(screen.queryByRole("navigation")).toBeNull();
+});
+
+it("opens the requested route with two agents when the skill of Claude passes and the check of Codex did not run", async () => {
+  const start = startOf(setupStatus({ agents: [agentEntry("claude"), agentEntry("codex", { skill: "not-run" })] }));
+  const { transport } = stubTransport({ [START]: successReply(start) });
+  const router = await renderWithRouter("/", transport);
+
+  expect(router.state.location.pathname).toBe("/");
+});
+
+it("opens the setup screen with two agents when the skill check of each agent fails", async () => {
+  const status = setupStatus({ agents: [agentEntry("claude", { skill: "fail" }), agentEntry("codex", { skill: "fail" })] });
+  const { transport } = stubTransport({ [START]: successReply(startOf(status)), [FULL]: successReply(status) });
+  const router = await renderWithRouter("/", transport);
+
+  expect(router.state.location.pathname).toBe("/setup");
 });
 
 it("replaces the entry of the first address, so Back does not lead to it", async () => {

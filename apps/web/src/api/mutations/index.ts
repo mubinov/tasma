@@ -40,7 +40,15 @@ export {
 export type { CommentWrite } from "./comments";
 export { bodyCorrection, failureKind, refusalPath, refusalWords, titleCorrection, WriteError } from "./notices";
 export type { FailureKind, WriteFailure } from "./notices";
-export { addWorkflowOptions, closeSkillInstallFailure, createProjectOptions, installSkillOptions, projectGone } from "./setup";
+export {
+  addWorkflowOptions,
+  closeSkillInstallFailure,
+  createProjectOptions,
+  installSkillOptions,
+  projectGone,
+  skillAgentFailureKey,
+  usePendingSkillInstall,
+} from "./setup";
 export type { SkillInstallEnd, SkillInstallWrite } from "./setup";
 export {
   createRefusal,

@@ -12,6 +12,7 @@ import {
 import {
   createClient,
   type AgentSetup,
+  type ChatAgent,
   type Diagnostic,
   type Failure,
   type FeedEvent,
@@ -238,6 +239,14 @@ export function setupStatus(checks: Partial<SetupStatus> = {}, agent: Partial<Ag
   };
 }
 
+/** The checks of an agent whose binary is not found. */
+export const NOT_INSTALLED = { installed: "fail", loggedIn: "not-run" } as const;
+
+/** The entry of one agent, ready and with its skill unless `checks` says otherwise. */
+export function agentEntry(agent: ChatAgent, checks: Partial<AgentSetup> = {}): AgentSetup {
+  return { agent, installed: "pass", loggedIn: "pass", skill: "pass", ...checks };
+}
+
 /** What a start read gives for the same machine: the checks of a full read did not run. */
 export function startOf(status: SetupStatus): SetupStatus {
   return {
@@ -250,6 +259,46 @@ export function startOf(status: SetupStatus): SetupStatus {
 /** A start read of a complete setup. */
 export function completeSetup(): TransportReply {
   return successReply(startOf(setupStatus()));
+}
+
+export const FULL = "/setup?mode=full";
+
+export const FULL_SKIPPED = "/setup?mode=full&skipSkill=true";
+
+export const INSTALL = "POST /setup/skill-install";
+
+const INSTALL_PATH = "/setup/skill-install";
+
+export const READ_FAILED = "Tasma cannot check the steps now. It tries again every 5 seconds.";
+
+export function installBodies(stub: Pick<ReturnType<typeof stubTransport>, "requests">): unknown[] {
+  return stub.requests.filter(({ path }) => path === INSTALL_PATH).map(({ body }) => body);
+}
+
+/** Sends the next full read through a window focus event, and waits for it to land. */
+export async function nextAnswer(
+  stub: Pick<ReturnType<typeof stubTransport>, "replies" | "paths">,
+  reply: TransportReply,
+  path = FULL,
+): Promise<void> {
+  const before = stub.paths.filter((sent) => sent === path).length;
+
+  stub.replies[path] = reply;
+  await act(async () => {
+    window.dispatchEvent(new Event("focus"));
+    await vi.waitFor(() => {
+      expect(stub.paths.filter((sent) => sent === path).length).toBeGreaterThan(before);
+    });
+    await new Promise((resolve) => {
+      setTimeout(resolve, 20);
+    });
+  });
+}
+
+export function descriptionOf(element: HTMLElement): string {
+  return element.getAttribute("aria-describedby")!.split(" ")
+    .map((id) => document.getElementById(id)!.textContent)
+    .join(" | ");
 }
 
 /** The context every loader and every screen is handed, over a stub daemon. */

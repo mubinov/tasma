@@ -1,6 +1,7 @@
 import { Accordion } from "@base-ui/react/accordion";
-import { keepPreviousData, notifyManager, useMutation, useQuery, type QueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
+import type { ChatAgent } from "@tasma/protocol";
 import {
   useEffect,
   useEffectEvent,
@@ -8,7 +9,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   type FocusEvent,
   type ReactNode,
   type RefObject,
@@ -19,66 +19,63 @@ import {
   closeSkillInstallFailure,
   createProjectOptions,
   failureKind,
-  installSkillOptions,
   projectGone,
 } from "../api/mutations";
-import { projectsQuery, setupQuery } from "../api/queries";
+import { projectsQuery } from "../api/queries";
+import { screenSkillTexts } from "../lib/agent-texts";
 import { attended } from "../lib/attended";
 import { useDocumentTitle } from "../lib/document-title";
+import { triggerIn } from "../lib/setup-step-elements";
 import {
-  claudeInstallOf,
   currentStep,
   doneCount,
   fullReadsFailing,
   hasFullAnswer,
   hasFullFailure,
+  installFailedWords,
+  installsNothing,
+  installStartedWords,
   newestSetup,
+  noNpxWords,
+  READ_FAILED_WORDS,
+  READ_INTERVAL_MS,
   screenNeeded,
   SETUP_PATH,
   setupSteps,
+  skillTargets,
+  stepInputNow,
   stepsNowDone,
-  type SkillInstallState,
+  STILL_CANNOT_CHECK_WORDS,
   type StepId,
-  type StepInput,
   type StepState,
   type WorkflowWriteState,
 } from "../lib/setup-steps";
-import { focusDropped } from "../lib/use-focus-lost";
+import { useFullSetupRead } from "../lib/use-full-setup-read";
+import { useQueryCache } from "../lib/use-query-cache";
+import { useSetupFocusFallback } from "../lib/use-setup-focus-fallback";
+import { useSkillInstall } from "../lib/use-skill-install";
+import { useStepPanels } from "../lib/use-step-panels";
 import {
   FOLDER_DIALOG_FAILURE,
   projectAddFailure,
+  skillAgentFailure,
   skillInstallFailure,
   workflowAddFailure,
   type SetupFailure,
 } from "../lib/write-failure";
 import { useNoticeStore } from "../store/notices";
 import { useUiStore } from "../store/ui";
+import { AgentSetupDialog } from "./agent-setup-dialog";
 import { ScreenHeading } from "./screen-heading";
-import { SetupStepRow } from "./setup-step";
+import { ScreenStepContent, SetupStepRow, type ScreenStepRuns } from "./setup-step";
 
 const route = getRouteApi(SETUP_PATH);
-
-const READ_INTERVAL_MS = 5000;
 
 const CLOSE_DELAY_MS = 1000;
 
 const STOPPED_WORDS = "Tasma does not check for the skill now.";
 
 const COMPLETE_WORDS = "Setup is complete.";
-
-const READ_FAILED_WORDS = `Tasma cannot check the steps now. It tries again every ${String(READ_INTERVAL_MS / 1000)} seconds.`;
-
-const STILL_CANNOT_CHECK_WORDS = "Tasma still cannot check this.";
-
-const INSTALL_STARTED_WORDS = "Install in progress. This can take up to 2 minutes.";
-
-function installFailedWords(step: number): string {
-  return `Tasma cannot install the skill. The output is in step ${String(step)}, above the Try again button.`;
-}
-
-function noNpxWords(step: number): string {
-  return `Tasma cannot find npx. The plugin commands are in step ${String(step)}, above the Try again button.`;
-}
 
 const LIST_FAILED_WORDS = `Tasma cannot read your projects. It tries again every ${String(READ_INTERVAL_MS / 1000)} seconds.`;
 
@@ -92,74 +89,14 @@ function failureSpoken({ title, line }: SetupFailure): string {
   return `${title} ${line}`;
 }
 
-/** A project that step 6 names, and the tag that its write sends. */
+/** A project that step 5 names, and the tag that its write sends. */
 type NamedProject = { tag: string; words: string };
+
+/** The agent whose dialog is open, and the control that opened it. */
+type OpenDialog = { agent: ChatAgent; opener: HTMLElement };
 
 function announce(words: string): void {
   useNoticeStore.getState().announce(words);
-}
-
-function useQueryCache<T>(queryClient: QueryClient, read: (queryClient: QueryClient) => T): T {
-  return useSyncExternalStore(
-    (onChange) => queryClient.getQueryCache().subscribe(notifyManager.batchCalls(onChange)),
-    () => read(queryClient),
-  );
-}
-
-function stepOfElement(element: Element | null): StepId | null {
-  return (element?.closest<HTMLElement>("[data-setup-step]")?.dataset.setupStep ?? null) as StepId | null;
-}
-
-/**
- * A panel that the user opened, or that holds focus, stays open. WebKit does not focus a button on a
- * pointer press, so focus alone does not protect a panel that a mouse user opened.
- */
-function keptOpen(step: StepId | null, byHand: boolean): boolean {
-  return step !== null && (byHand || stepOfElement(document.activeElement) === step);
-}
-
-/**
- * The element that held focus, and its step. Focus drops to <body> when the
- * element leaves the page, and by then the element no longer names its step.
- */
-type HeldFocus = { element: Element; step: StepId | null };
-
-function useFocusFallback(
-  mainRef: RefObject<HTMLElement | null>,
-  headingRef: RefObject<HTMLHeadingElement | null>,
-  current: StepId | undefined,
-  active: boolean,
-): (event: FocusEvent) => void {
-  const heldRef = useRef<HeldFocus | null>(null);
-
-  const restoreFocus = useEffectEvent(() => {
-    const held = heldRef.current;
-
-    if (held === null || held.element.isConnected || !focusDropped() || !active) {
-      return;
-    }
-
-    const main = mainRef.current!;
-    const triggerOf = (step: StepId | null | undefined): HTMLElement | null =>
-      main.querySelector<HTMLElement>(`[data-setup-step="${String(step)}"] [data-setup-trigger]`);
-
-    (triggerOf(held.step) ?? triggerOf(current) ?? headingRef.current!).focus();
-  });
-
-  useEffect(() => {
-    const observer = new MutationObserver(() => {
-      restoreFocus();
-    });
-
-    observer.observe(mainRef.current!, { childList: true, subtree: true });
-    return () => {
-      observer.disconnect();
-    };
-  }, [mainRef]);
-
-  return ({ target }) => {
-    heldRef.current = { element: target, step: stepOfElement(target) };
-  };
 }
 
 /**
@@ -229,28 +166,23 @@ export function SetupScreen(): ReactNode {
   const { queryClient, client } = route.useRouteContext();
   const navigate = useNavigate();
   const skillCheckStopped = useUiStore((state) => state.skillCheckStopped);
-  const status = useQueryCache(queryClient, newestSetup);
+  // The route opens the screen only with a status, and setup entries stay in the cache.
+  const status = useQueryCache(queryClient, newestSetup)!;
   const fullAnswered = useQueryCache(queryClient, hasFullAnswer);
   const fullFailed = useQueryCache(queryClient, hasFullFailure);
   const readFailing = useQueryCache(queryClient, fullReadsFailing);
   const needed = screenNeeded({ status, fullAnswered, fullFailed, skillCheckStopped });
   // The reads stop when the screen closes.
   const readFailedShown = readFailing && needed;
+  const [dialog, setDialog] = useState<OpenDialog | null>(null);
 
-  // The route does not wait for this read, because it can take up to 15 seconds.
-  const full = useQuery({
-    ...setupQuery(client, skillCheckStopped ? { mode: "full", skipSkill: true } : { mode: "full" }),
-    refetchInterval: READ_INTERVAL_MS,
-    placeholderData: keepPreviousData,
-  });
+  // The route does not wait for this read, because it can take up to 15 seconds. An open dialog polls it.
+  const readNow = useFullSetupRead(client, dialog === null);
 
-  // Here and not in the panel, which unmounts when step 4 closes or changes to Done.
-  const install = useMutation(installSkillOptions(queryClient, client));
-  const claudeInstall = install.data === undefined ? undefined : claudeInstallOf(install.data);
-  const cannotInstall = claudeInstall?.result === "failed" || claudeInstall?.result === "npx-missing";
-  const skillInstall: SkillInstallState | undefined = install.isPending ? "running" : cannotInstall ? "cannot-install" : undefined;
+  // Here and not in the panel, which unmounts when step 3 closes or changes to Done.
+  const { install, result, state: skillInstall, runningAgentCount } = useSkillInstall(queryClient, client);
 
-  // Here for the same reason: step 5 changes to Done when its write succeeds.
+  // Here for the same reason: step 4 changes to Done when its write succeeds.
   const createProject = useMutation(createProjectOptions(queryClient, client));
   const addWorkflow = useMutation(addWorkflowOptions(queryClient, client));
   const [picking, setPicking] = useState(false);
@@ -264,7 +196,7 @@ export function SetupScreen(): ReactNode {
   const workflowFailure = addWorkflow.error === null ? undefined : workflowAddFailure(addWorkflow.error);
 
   // From the first status that sees the project, the status alone decides.
-  if (projectAdded && status?.project === "pass") {
+  if (projectAdded && status.project === "pass") {
     setProjectAdded(false);
   }
 
@@ -282,6 +214,8 @@ export function SetupScreen(): ReactNode {
   const current = currentStep(steps);
   const stateKey = steps.map(({ state }) => state).join();
   const doneWords = `${String(doneCount(steps))} of ${String(steps.length)}`;
+  const targets = skillTargets(status);
+  const skillTexts = screenSkillTexts(targets);
 
   const listRead = workflowStep.state === "to-do" && created === null;
   const projects = useQuery({
@@ -294,69 +228,49 @@ export function SetupScreen(): ReactNode {
   const target = created ?? (first === undefined ? undefined : { tag: first.tag, words: first.name ?? first.tag });
   const listFailing = listRead && target === undefined && projects.isError;
 
-  const [open, setOpen] = useState<StepId | null>(null);
-  // Two effects of one commit can each open a panel, and the second needs what the first chose.
-  const openNowRef = useRef<StepId | null>(null);
   const [checking, setChecking] = useState<StepId | null>(null);
   const headingId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const mainRef = useRef<HTMLElement>(null);
-  // The panel that is open is one the user opened or pressed a control in, or step 6 opened to show a failure.
-  const byHandRef = useRef(false);
+  const [main, setMain] = useState<HTMLElement | null>(null);
+  const panels = useStepPanels(main, steps, current, fullAnswered);
   const stopClosedRef = useRef(false);
-  const lastRef = useRef({ steps, fullAnswered, opener: null as StepId | null });
-  const holdFocus = useFocusFallback(mainRef, headingRef, current?.id, needed);
+  const lastRef = useRef({ steps, fullAnswered });
+  const holdFocus = useSetupFocusFallback(main, headingRef, current?.id, needed && dialog === null);
   const headingFocus = useMountFocus(headingRef);
 
   useDocumentTitle("Set up");
 
-  function showStep(step: StepId | null): void {
-    openNowRef.current = step;
-    setOpen(step);
-  }
-
-  const readAgain = useEffectEvent(() => {
-    void full.refetch({ cancelRefetch: false });
-  });
-
-  // The library itself reacts only to `visibilitychange`, and a switch to
-  // another app usually leaves the window visible.
-  useEffect(() => {
-    function onFocus(): void {
-      readAgain();
-    }
-
-    window.addEventListener("focus", onFocus);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-    };
-  }, []);
-
-  useCloseWhenAttended(!needed, () => {
+  useCloseWhenAttended(!needed && dialog === null, () => {
     // The screen unmounts on the move, so the shell says the words after it moves focus.
     useUiStore.getState().setArrivalWords(stopClosedRef.current ? `${STOPPED_WORDS} ${COMPLETE_WORDS}` : COMPLETE_WORDS);
     void navigate({ to: "/tasks", replace: true });
   });
 
+  // An open dialog says what the reads and the steps change.
+  const sayHere = useEffectEvent((words: string) => {
+    if (dialog === null) {
+      announce(words);
+    }
+  });
+
   useEffect(() => {
     if (readFailedShown) {
-      announce(READ_FAILED_WORDS);
+      sayHere(READ_FAILED_WORDS);
     }
   }, [readFailedShown]);
 
   useEffect(() => {
     if (listFailing) {
-      announce(LIST_FAILED_WORDS);
+      sayHere(LIST_FAILED_WORDS);
     }
   }, [listFailing]);
 
   const followChange = useEffectEvent(() => {
     const last = lastRef.current;
-    const opener = fullAnswered ? current?.id ?? null : null;
     const nowDone = stepsNowDone(last.steps, steps);
     const changedToDone = (step: StepId): boolean => nowDone.some(({ id }) => id === step);
 
-    lastRef.current = { steps, fullAnswered, opener };
+    lastRef.current = { steps, fullAnswered };
 
     // The notice of a failed install sends the user to the install button, which only this state shows.
     if (skillStep.state !== "to-do") {
@@ -378,33 +292,18 @@ export function SetupScreen(): ReactNode {
     }
 
     // The change that closes the screen opens nothing and says nothing.
-    if (!needed) {
-      return;
+    if (needed) {
+      for (const { name } of nowDone) {
+        sayHere(`${name}: done.`);
+      }
+      if (fullAnswered && !last.fullAnswered) {
+        const next = current === undefined ? "" : ` Next: ${current.name}.`;
+
+        sayHere(`The check is complete. ${doneWords} steps are done.${next}`);
+      }
     }
 
-    for (const { name } of nowDone) {
-      announce(`${name}: done.`);
-    }
-    if (fullAnswered && !last.fullAnswered) {
-      const next = current === undefined ? "" : ` Next: ${current.name}.`;
-
-      announce(`The check is complete. ${doneWords} steps are done.${next}`);
-    }
-
-    const openStep = steps.find(({ id }) => id === open);
-    const openLeft = openStep !== undefined && !openStep.canOpen;
-
-    if (openLeft) {
-      byHandRef.current = false;
-    }
-    if (opener === last.opener && !openLeft) {
-      return;
-    }
-    if (!openLeft && keptOpen(open, byHandRef.current)) {
-      return;
-    }
-
-    showStep(opener);
+    panels.follow(needed);
   });
 
   useLayoutEffect(() => {
@@ -413,7 +312,7 @@ export function SetupScreen(): ReactNode {
 
   const revealRef = useRef(false);
 
-  /** Opens step 6 to show the failure, unless another panel is kept open. */
+  /** Opens step 5 to show the failure, unless another panel is kept open. */
   const showWorkflowFailure = useEffectEvent(() => {
     if (workflowFailure === undefined) {
       return;
@@ -421,14 +320,14 @@ export function SetupScreen(): ReactNode {
 
     const failure = failureSpoken(workflowFailure);
 
-    // After `project-not-found`, step 5 can be back in its start state, and step 6 then shows no failure.
+    // After `project-not-found`, step 4 can be back in its start state, and step 5 then shows no failure.
     if (workflowStep.state !== "to-do") {
       announce(failure);
       return;
     }
 
-    const shown = openNowRef.current;
-    const kept = shown !== "workflow" && keptOpen(shown, byHandRef.current);
+    const shown = panels.openNow();
+    const kept = shown !== "workflow" && panels.kept(shown);
     const step = String(workflowStep.number);
 
     if (kept) {
@@ -436,9 +335,8 @@ export function SetupScreen(): ReactNode {
       return;
     }
     if (shown !== "workflow") {
-      byHandRef.current = true;
       revealRef.current = true;
-      showStep("workflow");
+      panels.showByHand("workflow");
     }
     announce(`${failure} Step ${step} shows the reason and a Try again button.`);
   });
@@ -448,40 +346,14 @@ export function SetupScreen(): ReactNode {
   }, [addWorkflow.error]);
 
   useEffect(() => {
-    if (open === "workflow" && revealRef.current) {
+    if (panels.open === "workflow" && revealRef.current) {
       revealRef.current = false;
-      mainRef.current!.querySelector("[data-setup-step=\"workflow\"]")!.scrollIntoView({ block: "nearest" });
+      main!.querySelector("[data-setup-step=\"workflow\"]")!.scrollIntoView({ block: "nearest" });
     }
-  }, [open]);
-
-  function changeOpen(value: StepId[]): void {
-    const next = value[0] ?? null;
-
-    if (next !== null) {
-      byHandRef.current = true;
-      showStep(next);
-      return;
-    }
-
-    // The current step stays closed when it is the panel the user closed.
-    const reopens = byHandRef.current && fullAnswered && current !== undefined && current.id !== open;
-
-    byHandRef.current = false;
-    showStep(reopens ? current.id : null);
-  }
-
-  /** A render holds the state of the answers before it, and an end of a read or a write needs the newest. */
-  function inputNow(): StepInput {
-    return {
-      status: newestSetup(queryClient),
-      fullAnswered: hasFullAnswer(queryClient),
-      fullFailed: hasFullFailure(queryClient),
-      skillCheckStopped: useUiStore.getState().skillCheckStopped,
-    };
-  }
+  }, [panels.open, main]);
 
   function stateNow(step: StepId): StepState | undefined {
-    return setupSteps(inputNow()).find(({ id }) => id === step)?.state;
+    return setupSteps(stepInputNow(queryClient)).find(({ id }) => id === step)?.state;
   }
 
   async function checkAgain(step: StepId): Promise<void> {
@@ -490,39 +362,31 @@ export function SetupScreen(): ReactNode {
     }
 
     setChecking(step);
-    const result = await full.refetch({ cancelRefetch: false });
+    const answer = await readNow();
     setChecking(null);
 
     const state = stateNow(step);
 
-    if (screenNeeded(inputNow()) && (result.isError || state === "cannot-check" || state === "not-run")) {
+    if (screenNeeded(stepInputNow(queryClient)) && (answer.isError || state === "cannot-check" || state === "not-run")) {
       announce(STILL_CANNOT_CHECK_WORDS);
     }
   }
 
   function startInstall(): void {
-    if (install.isPending) {
+    if (skillInstall === "running") {
       return;
     }
 
     const offered = (): boolean => stateNow("skill") === "to-do";
 
-    // The install button shows only in step 4 to do, which needs a status.
-    const agents = newestSetup(queryClient)!.agents.map(({ agent }) => agent);
+    announce(installStartedWords(targets.length));
+    const failure = skillInstallFailure(skillTexts.button);
+    const write = { agents: targets, failure, offered, agentFailure: skillAgentFailure };
 
-    announce(INSTALL_STARTED_WORDS);
-    install.mutate({ agents, failure: skillInstallFailure(), offered }, {
+    install.mutate(write, {
       onSuccess: (answer) => {
-        if (!offered()) {
-          return;
-        }
-
-        const result = claudeInstallOf(answer)?.result;
-
-        if (result === "failed") {
-          announce(installFailedWords(skillStep.number));
-        } else if (result === "npx-missing") {
-          announce(noNpxWords(skillStep.number));
+        if (installsNothing(answer) && offered()) {
+          announce(answer.result === "npx-missing" ? noNpxWords(skillStep.number) : installFailedWords(skillStep.number));
         }
       },
     });
@@ -620,68 +484,106 @@ export function SetupScreen(): ReactNode {
   function stopChecking(): void {
     useUiStore.getState().setSkillCheckStopped(true);
 
-    if (screenNeeded(inputNow())) {
+    if (screenNeeded(stepInputNow(queryClient))) {
       announce(STOPPED_WORDS);
     } else {
       stopClosedRef.current = true;
     }
   }
 
+  const runs: ScreenStepRuns = {
+    agents: {
+      entries: fullAnswered ? status.agents : undefined,
+      onSetUp: (agent, opener) => {
+        setDialog({ agent, opener });
+      },
+    },
+    install: {
+      state: skillInstall,
+      result,
+      runningAgentCount,
+      texts: skillTexts,
+      failure: undefined,
+      onInstall: startInstall,
+    },
+    project: {
+      dialog: folderDialogAvailable(),
+      picking,
+      adding: createProject.isPending,
+      failure: projectFailure,
+      retry: retryPath,
+      path: pickedPath ?? "",
+      onPress: pressProject,
+      onAdd: addProject,
+    },
+    workflow: {
+      project: target?.words,
+      listFailure: listFailing ? LIST_FAILED_WORDS : undefined,
+      running: workflowWrite === "running",
+      failure: workflowFailure,
+      onAdd: pressAddWorkflow,
+    },
+  };
+
   return (
-    <main
-      ref={mainRef}
-      tabIndex={-1}
-      onFocus={holdFocus}
-      onBlur={headingFocus.onBlur}
-      className="grid flex-1 grid-cols-[minmax(0,37rem)] content-start items-start justify-center gap-y-8 px-6 pt-[calc(clamp(1.5rem,11vh,6.5rem)+var(--title-band))] pb-[calc(--spacing(18)+var(--notice-stack-height,0px))] min-[58rem]:grid-cols-[minmax(15rem,19rem)_minmax(0,37rem)] min-[58rem]:gap-x-24 min-[58rem]:px-10"
-    >
-      <div className="min-[58rem]:sticky min-[58rem]:top-[calc(--spacing(12)+var(--title-band))]">
-        <ScreenHeading ref={headingRef} id={headingId} tabIndex={-1} className={headingFocus.className}>
-          Set up Tasma
-        </ScreenHeading>
-        <p className="mt-2.5 text-base text-subtle">Complete these steps to run your first task.</p>
-        <p className="mt-6 font-chrome text-base font-medium">{`${doneWords} done`}</p>
-        {readFailedShown && <p className="mt-2 text-sm text-subtle">{READ_FAILED_WORDS}</p>}
-      </div>
-      {/* WebKit removes the list role from a list with no list style. */}
-      <Accordion.Root<StepId>
-        value={open === null ? [] : [open]}
-        onValueChange={changeOpen}
-        aria-labelledby={headingId}
-        render={<ol role="list" />}
+    <>
+      <main
+        ref={setMain}
+        tabIndex={-1}
+        onFocus={holdFocus}
+        onBlur={headingFocus.onBlur}
+        className="grid flex-1 grid-cols-[minmax(0,37rem)] content-start items-start justify-center gap-y-8 px-6 pt-[calc(clamp(1.5rem,11vh,6.5rem)+var(--title-band))] pb-[calc(--spacing(18)+var(--notice-stack-height,0px))] min-[58rem]:grid-cols-[minmax(15rem,19rem)_minmax(0,37rem)] min-[58rem]:gap-x-24 min-[58rem]:px-10"
       >
-        {steps.map((step) => (
-          <SetupStepRow
-            key={step.id}
-            step={step}
-            current={step.id === current?.id}
-            checking={checking === step.id}
-            onCheckAgain={() => void checkAgain(step.id)}
-            onStop={stopChecking}
-            install={{ state: skillInstall, answer: claudeInstall, onInstall: startInstall }}
-            project={{
-              dialog: folderDialogAvailable(),
-              picking,
-              adding: createProject.isPending,
-              failure: projectFailure,
-              retry: retryPath,
-              path: pickedPath ?? "",
-              onPress: pressProject,
-              onAdd: addProject,
-            }}
-            workflow={{
-              project: target?.words,
-              listFailure: listFailing ? LIST_FAILED_WORDS : undefined,
-              running: workflowWrite === "running",
-              failure: workflowFailure,
-              onAdd: pressAddWorkflow,
-            }}
-            onPressInside={() => {
-              byHandRef.current = true;
-            }}
-          />
-        ))}
-      </Accordion.Root>
-    </main>
+        <div className="min-[58rem]:sticky min-[58rem]:top-[calc(--spacing(12)+var(--title-band))]">
+          <ScreenHeading ref={headingRef} id={headingId} tabIndex={-1} className={headingFocus.className}>
+            Set up Tasma
+          </ScreenHeading>
+          <p className="mt-2.5 text-base text-subtle">Complete these steps to run your first task.</p>
+          <p className="mt-6 font-chrome text-base font-medium">{`${doneWords} done`}</p>
+          {readFailedShown && <p className="mt-2 text-sm text-subtle">{READ_FAILED_WORDS}</p>}
+        </div>
+        {/* WebKit removes the list role from a list with no list style. */}
+        <Accordion.Root<StepId>
+          value={panels.open === null ? [] : [panels.open]}
+          onValueChange={panels.changeOpen}
+          aria-labelledby={headingId}
+          render={<ol role="list" />}
+        >
+          {steps.map((step) => (
+            <SetupStepRow
+              key={step.id}
+              step={step}
+              current={step.id === current?.id}
+              onPressInside={panels.pressInside}
+            >
+              <ScreenStepContent
+                step={step}
+                check={{ checking: checking === step.id, onCheckAgain: () => void checkAgain(step.id) }}
+                onStop={stopChecking}
+                runs={runs}
+              />
+            </SetupStepRow>
+          ))}
+        </Accordion.Root>
+      </main>
+      {/* Outside <main>, whose focus handlers would hear the focus events of the dialog through the portal. */}
+      {dialog !== null && (
+        <AgentSetupDialog
+          agent={dialog.agent}
+          opener={dialog.opener}
+          focusFallback={() => {
+            const heading = headingRef.current;
+
+            // Null while the screen unmounts, which unmounts the dialog with it.
+            if (heading !== null) {
+              (triggerIn(main!, current?.id) ?? heading).focus();
+            }
+          }}
+          onClose={() => {
+            setDialog(null);
+          }}
+        />
+      )}
+    </>
   );
 }

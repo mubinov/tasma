@@ -9,6 +9,7 @@ import {
   failureKind,
   installSkillOptions,
   projectGone,
+  skillAgentFailureKey,
   WriteError,
   type SkillInstallWrite,
 } from "../../../src/api/mutations";
@@ -26,6 +27,13 @@ const WRITE: SkillInstallWrite = {
   agents: ["claude", "codex"],
   failure: { title: "The install failed", line: (error) => `line of ${failureKind(error.cause)}` },
   offered: () => true,
+  agentFailure: (agent, installed) => ({
+    key: skillAgentFailureKey(agent),
+    form: "failure",
+    title: `No skill for ${agent}`,
+    line: `Installed for ${installed.join(", ")}`,
+    words: [],
+  }),
 };
 
 const SENT = { agents: ["claude", "codex"] };
@@ -96,7 +104,7 @@ describe("installSkillOptions", () => {
   it.each<[string, SkillInstall]>([
     ["npx-missing", { result: "npx-missing" }],
     ["failed", { result: "failed", output: "no network" }],
-    ["ended with a failed agent", ENDED],
+    ["ended with only a failed agent", { result: "ended", agents: [{ agent: "codex", result: "failed", output: "no network" }] }],
   ])("gives %s as an answer, with no notice", async (_name, result) => {
     const stub = setup({ [INSTALL]: answer(result) });
 
@@ -177,6 +185,50 @@ describe("installSkillOptions", () => {
     await expect(stub.observer.mutate({ ...WRITE, offered: () => false })).rejects.toThrow("the action broke");
 
     expect(notices()).toEqual([]);
+  });
+
+  it("opens the notice of each failed agent when another agent got the skill, before the status read ends", async () => {
+    const held = heldBack();
+    const stub = setup({ [INSTALL]: answer(ENDED) });
+    const unsubscribe = new QueryObserver(stub.queryClient, setupQuery(stub.client, { mode: "full" })).subscribe(() => {});
+
+    await expect.poll(() => stub.paths.filter((path) => path === FULL).length).toBe(1);
+    stub.replies[FULL] = held.reply;
+
+    const write = stub.observer.mutate(WRITE);
+
+    await expect.poll(() => stub.paths.filter((path) => path === FULL).length).toBe(2);
+    expect(notices()).toEqual([expect.objectContaining({
+      key: skillAgentFailureKey("codex"),
+      title: "No skill for codex",
+      line: "Installed for claude",
+    })]);
+
+    held.answer(successReply(setupStatus()));
+    await write;
+    unsubscribe();
+  });
+
+  it("closes the notice of each agent that the install gives installed", async () => {
+    const stub = setup({ [INSTALL]: answer({ result: "ended", agents: [{ agent: "claude", result: "installed" }] }) });
+    const { showNotice, dismissNotice } = useNoticeStore.getState();
+
+    showNotice({ key: skillAgentFailureKey("claude"), form: "failure", title: "Claude", words: [] });
+    dismissNotice(skillAgentFailureKey("claude"));
+    showNotice({ key: skillAgentFailureKey("codex"), form: "failure", title: "Codex", words: [] });
+    await stub.observer.mutate(WRITE);
+
+    expect(notices().map(({ key }) => key)).toEqual([skillAgentFailureKey("codex")]);
+    expect(useNoticeStore.getState().dismissed.size).toBe(0);
+  });
+
+  it("keeps the notices of the agents after a fault before the command of any agent", async () => {
+    const stub = setup({ [INSTALL]: answer({ result: "npx-missing" }) });
+
+    useNoticeStore.getState().showNotice({ key: skillAgentFailureKey("claude"), form: "failure", title: "Claude", words: [] });
+    await stub.observer.mutate(WRITE);
+
+    expect(notices()).toHaveLength(1);
   });
 });
 
